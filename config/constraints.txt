@@ -1,0 +1,12 @@
+# config/constraints.txt — Restricciones de versión para pip (REP-01 / REP-02 / ALTA-05)
+# Fija la terna de PyTorch CUDA 12.8 y acota superior e inferiormente paquetes críticos
+# para evitar incompatibilidades con custom nodes (ej. OpenCV 5.x o NumPy >= 2.3).
+
+torch==2.9.1+cu128
+torchvision==0.24.1+cu128
+torchaudio==2.9.1+cu128
+numpy>=1.26.4,<2.3.0
+huggingface-hub>=1.0.0,<3.0.0
+onnxruntime-gpu>=1.20.0,<2.0.0
+opencv-python-headless>=4.10.0.84,<5.0.0
+facexlib==0.3.0

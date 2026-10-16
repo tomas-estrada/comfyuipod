@@ -1,0 +1,16 @@
+# config/nodes.lock — Versiones fijadas por commit SHA (verificadas el 2026-10-16)
+# Formato: <tipo> <nombre_directorio> <repo_url> <commit_sha>
+# Para actualizar: ejecutar git ls-remote <repo_url> HEAD y reemplazar el SHA.
+
+core ComfyUI https://github.com/Comfy-Org/ComfyUI.git bdc63e72f5ab29fde448c161db3057827148c0ef
+dep sam2 https://github.com/facebookresearch/sam2.git 2b90b9f5ceec907a1c18123530e92e794ad901a4
+node ComfyUI-Manager https://github.com/Comfy-Org/ComfyUI-Manager.git 4d3bed4b569205124a52444caf25de1719fae0de
+node ComfyUI-VideoHelperSuite https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git 4d907bee61e92c2e65af3bd6383a4e4d356126d1
+node ComfyUI-ReActor https://github.com/Gourieff/ComfyUI-ReActor.git 3be5f356fe5b120a7a274d2509c0ecef5d0a7498
+node ComfyUI-Impact-Pack https://github.com/ltdrdata/ComfyUI-Impact-Pack.git 429d0159ad429e64d2b3916e6e7be9c22d025c3c
+node ComfyUI-Impact-Subpack https://github.com/ltdrdata/ComfyUI-Impact-Subpack.git 50c7b71a6a224734cc9b21963c6d1926816a97f1
+node comfyui_controlnet_aux https://github.com/Fannovel16/comfyui_controlnet_aux.git a587a4c1594524c1d2de5cd1a86cd868ff448e1c
+node ComfyUI_IPAdapter_plus https://github.com/cubiq/ComfyUI_IPAdapter_plus.git a0f451a5113cf9becb0847b92884cb10cbdec0ef
+node ComfyUI-Frame-Interpolation https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git 26545cc2dd95bc3d27f056016300673bdeee78f5
+node rgthree-comfy https://github.com/rgthree/rgthree-comfy.git 5f940ddfbb83ff9c667f32ae7d0c3ad0bb8cc9ee
+node ComfyUI-KJNodes https://github.com/kijai/ComfyUI-KJNodes.git 17195fcfa8a05f601b766a0f09c9733284f47416

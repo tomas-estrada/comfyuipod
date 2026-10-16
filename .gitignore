@@ -1,0 +1,10 @@
+# Archivos temporales y de sistema
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc

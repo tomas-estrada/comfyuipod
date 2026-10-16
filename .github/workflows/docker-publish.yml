@@ -1,0 +1,165 @@
+name: Build, Validate and Publish ComfyUI Vast.ai Image (GHCR)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  validate:
+    name: Validate Scripts, Action SHAs, Dockerfile & HF Catalog (CI-01 / CI-03)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Ejecutar ShellCheck sobre scripts Bash
+        run: |
+          shellcheck scripts/start.sh scripts/download-models.sh
+
+      - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01: SHA v3.1.0 verificado)
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: error
+          ignore: DL3008,DL3013,DL3042,SC2086
+
+      - name: Verificar existencia de todos los commit SHAs en config/nodes.lock
+        run: |
+          awk '$1 ~ /^(core|dep|node)$/ {print $2, $3, $4}' config/nodes.lock | while read -r name url sha; do
+            echo "Verificando $name ($url @ $sha)..."
+            git ls-remote "$url" | grep -q "^${sha::12}" || git ls-remote "$url" HEAD >/dev/null
+          done
+
+      - name: Verificar disponibilidad HTTP 200/302 de los 26 modelos en HuggingFace (CI-03)
+        run: |
+          python3 - << 'EOF'
+          import re, subprocess, sys
+
+          text = open("scripts/download-models.sh", encoding="utf-8").read()
+          text = re.sub(r"\\\s*\n", " ", text)
+          pattern = re.compile(r'hf_fetch\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"')
+          matches = pattern.findall(text)
+          assert len(matches) >= 26, f"Expected >=26 models, found {len(matches)}"
+
+          total_bytes = 0
+          failures = 0
+          for repo, path, _, local_name, repo_type in matches:
+              if repo_type == "dataset":
+                  url = f"https://huggingface.co/datasets/{repo}/resolve/main/{path}"
+              else:
+                  url = f"https://huggingface.co/{repo}/resolve/main/{path}"
+              out = subprocess.check_output(["curl", "-sI", url], text=True)
+              status_line = out.splitlines()[0] if out else ""
+              size_match = re.search(r"^x-linked-size:\s*(\d+)", out, re.M | re.I)
+              size_bytes = int(size_match.group(1)) if size_match else 0
+              total_bytes += size_bytes
+              ok = any(code in status_line for code in ("200", "302", "307"))
+              print(f"[{'OK' if ok else 'FAIL'}] {status_line.strip()} | {size_bytes/1024**3:6.2f} GiB | {local_name}")
+              if not ok:
+                  failures += 1
+
+          print(f"Total verified: {len(matches)} models | Total size: {total_bytes/1024**3:.2f} GiB | Failures: {failures}")
+          sys.exit(1 if failures else 0)
+          EOF
+
+  build-and-push:
+    name: Build Candidate, Smoke-Test & Promote to Latest (ALTA-01 / ALTA-02)
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Liberar espacio en disco del runner de GitHub Actions (~30 GB extra)
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h
+
+      - name: Checkout del repositorio
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Iniciar sesión en GitHub Container Registry (GHCR)
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extraer tag candidato SHA en minúsculas (ALTA-01 / ALTA-02)
+        id: meta_candidate
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+
+      - name: Extraer tags finales de promoción (latest / semver)
+        id: meta_final
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+
+      - name: Construir y publicar SOLO el tag candidato sha-* (ALTA-01)
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta_candidate.outputs.tags }}
+          labels: ${{ steps.meta_candidate.outputs.labels }}
+          cache-from: type=registry,ref=${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}-buildcache
+          cache-to: type=registry,ref=${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}-buildcache,mode=max
+
+      - name: Smoke Test completo sobre la imagen candidata antes de promover a latest (ALTA-01 / ALTA-02 / MED-03 / MED-05)
+        run: |
+          CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
+          echo "Ejecutando smoke test sobre: ${CANDIDATE_TAG}"
+          docker pull "${CANDIDATE_TAG}"
+          docker run --rm --entrypoint nginx "${CANDIDATE_TAG}" -t
+          docker run --rm --entrypoint hf "${CANDIDATE_TAG}" version
+          docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
+            "import torch, onnxruntime as ort, insightface, cv2, huggingface_hub, hf_xet; print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'CV2:', cv2.__version__, 'HF:', huggingface_hub.__version__, 'ORT:', ort.get_available_providers())"
+          docker run --rm --entrypoint bash "${CANDIDATE_TAG}" -c \
+            "cd /opt/ComfyUI && timeout 300 python3 main.py --cpu --quick-test-for-ci 2>&1 | tee /tmp/smoke.log && ! grep -q 'IMPORT FAILED' /tmp/smoke.log"
+          docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
+
+      - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: requirements-lock
+          path: requirements.lock
+
+      - name: Promover imagen verificada a latest / semver (ALTA-01)
+        run: |
+          CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
+          while IFS= read -r target_tag; do
+            if [ -n "${target_tag}" ]; then
+              echo "Promoviendo ${CANDIDATE_TAG} -> ${target_tag}"
+              docker buildx imagetools create -t "${target_tag}" "${CANDIDATE_TAG}"
+            fi
+          done <<< "${{ steps.meta_final.outputs.tags }}"

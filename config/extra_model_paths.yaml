@@ -1,0 +1,28 @@
+# config/extra_model_paths.yaml — Cruce de directorios nativos de ComfyUI (CFG-01 / CFG-03)
+# Nota de diseño (CFG-03):
+# No se pre-registran claves de custom nodes (ipadapter, insightface, facerestore_models, etc.)
+# porque folder_paths.add_model_folder_path() de ComfyUI inicializa claves desconocidas con un
+# conjunto de extensiones vacío (set()), lo que puede dejar vacíos los desplegables de esos nodos.
+# Como /opt/ComfyUI/models está enlazado a /workspace/comfyui-data/models, todos los custom nodes
+# encuentran sus subcarpetas estándar automáticamente sin necesidad de listarlas aquí.
+
+comfyui_shared_loaders:
+    base_path: /workspace/comfyui-data/
+    checkpoints: |
+        models/checkpoints
+        models/diffusion_models
+        models/unet
+    diffusion_models: |
+        models/diffusion_models
+        models/checkpoints
+        models/unet
+    unet: |
+        models/unet
+        models/diffusion_models
+        models/checkpoints
+    clip: |
+        models/clip
+        models/text_encoders
+    text_encoders: |
+        models/text_encoders
+        models/clip
