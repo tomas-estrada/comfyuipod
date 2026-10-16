@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         apache2-utils \
         build-essential \
         g++ \
+        cmake \
+        pkg-config \
         python3 \
         python3-dev \
         python3-pip \
@@ -54,8 +56,7 @@ RUN sed -i 's/\r$//' /etc/comfyui/constraints.txt /etc/comfyui/nodes.lock
 
 # 3. Instalar terna fijada de PyTorch CUDA 12.8 (ALTA-05: soporta Blackwell sm_120 y Ada sm_89),
 #    clonar ComfyUI y sam2 por SHA fijado, y compilar paquetes base.
-RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config \
-    && pip3 install --upgrade pip setuptools wheel \
+RUN pip3 install --upgrade pip setuptools wheel \
     && pip3 install \
         torch==2.9.1+cu128 \
         torchvision==0.24.1+cu128 \
@@ -98,7 +99,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-confi
 #    - Soporta tanto requirements.txt como requirements-no-cupy.txt (ComfyUI-Frame-Interpolation).
 #    - Filtra paquetes que pisan PyTorch/OpenCV/ONNX o sam2 (ya instalado por SHA en paso 3).
 #    - Limpia todas las variantes de OpenCV/ONNX y reinstala con --force-reinstall --no-deps (CRIT-02).
-#    - Ejecuta warm-up (--cpu --quick-test-for-ci) verificando que ningún nodo falle al importar (MED-03).
 WORKDIR /opt/ComfyUI/custom_nodes
 RUN awk '$1 == "node" {print $2, $3, $4}' /etc/comfyui/nodes.lock | while read -r dir_name repo_url sha; do \
         echo "=== Clonando ${dir_name} (${sha}) ===" && \
@@ -118,8 +118,6 @@ RUN awk '$1 == "node" {print $2, $3, $4}' /etc/comfyui/nodes.lock | while read -
         done && \
         cd /opt/ComfyUI/custom_nodes; \
     done \
-    && apt-get purge -y --auto-remove cmake pkg-config \
-    && rm -rf /var/lib/apt/lists/* \
     && pip3 uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless onnxruntime onnxruntime-gpu || true \
     && pip3 install --no-deps --force-reinstall "opencv-python-headless>=4.10.0.84,<5.0.0" "onnxruntime-gpu>=1.20.0,<2.0.0" \
     && pip3 freeze > /etc/comfyui/requirements.lock \
@@ -166,7 +164,7 @@ RUN mkdir -p /etc/comfyui/models_configs \
     && ln -sfn /workspace/comfyui-data/user /opt/ComfyUI/user \
     && ln -sfn /opt/ComfyUI /workspace/ComfyUI
 
-# 6. Copiar archivos de configuración y scripts de arranque + warm-up de nodos (MED-03)
+# 6. Copiar archivos de configuración y scripts de arranque + warm-up con timeout y limpieza (MED-03 / M-03 / L-07)
 COPY config/extra_model_paths.yaml /etc/comfyui/extra_model_paths.yaml
 COPY config/manager-config.ini /etc/comfyui/manager-config.ini
 COPY config/_starting.html /etc/comfyui/_starting.html
@@ -185,13 +183,20 @@ RUN sed -i 's/\r$//' /usr/local/bin/download-models.sh /start.sh \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini && \
     nginx -t && \
     cd /opt/ComfyUI && \
-    python3 main.py --cpu --quick-test-for-ci 2>&1 | tee /tmp/comfy_warmup.log && \
-    if grep -q "IMPORT FAILED" /tmp/comfy_warmup.log; then \
-        echo "[FATAL] Al menos un custom node falló al importar durante el warm-up:"; \
-        grep -B 2 -A 5 "IMPORT FAILED" /tmp/comfy_warmup.log; \
-        exit 1; \
-    fi && \
-    rm -f /tmp/comfy_warmup.log
+    ( \
+        rc=0; \
+        timeout 600 python3 main.py --cpu --quick-test-for-ci > /tmp/comfy_warmup.log 2>&1 || rc=$?; \
+        cat /tmp/comfy_warmup.log; \
+        if [ "$rc" -ne 0 ] || grep -q "IMPORT FAILED" /tmp/comfy_warmup.log; then \
+            echo "[FATAL] Warm-up falló (rc=${rc}) o al menos un custom node tuvo IMPORT FAILED:"; \
+            grep -B 2 -A 5 "IMPORT FAILED" /tmp/comfy_warmup.log || true; \
+            exit 1; \
+        fi \
+    ) && \
+    rm -rf /tmp/comfy_warmup.log /opt/ComfyUI/temp /workspace/comfyui-data/temp /workspace/comfyui-data/user/default/comfy.settings.json /workspace/comfyui-data/user/__manager /root/.config /root/.cache && \
+    mkdir -p /workspace/comfyui-data/user/__manager /workspace/comfyui-data/user/default/ComfyUI-Manager && \
+    cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/__manager/config.ini && \
+    cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini
 
 EXPOSE 8188
 

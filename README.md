@@ -150,7 +150,7 @@ vastai create instance <OFFER_ID> \
   --image ghcr.io/<tu-usuario>/<tu-repo>:latest \
   --disk 150 \
   --env "-p 8188:8188 -e OPEN_BUTTON_PORT=8188 -e COMFY_USER=admin -e COMFY_PASS=TuClaveLargaUnica123 -e MODEL_PROFILE=all" \
-  --args --direct
+  --direct
 ```
 
 ---

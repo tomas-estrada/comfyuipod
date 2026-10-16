@@ -41,11 +41,14 @@ jobs:
           failure-threshold: error
           ignore: DL3008,DL3013,DL3042,SC2086
 
-      - name: Verificar existencia de todos los commit SHAs en config/nodes.lock
+      - name: Verificar existencia real de todos los commit SHAs en config/nodes.lock (M-01)
         run: |
           awk '$1 ~ /^(core|dep|node)$/ {print $2, $3, $4}' config/nodes.lock | while read -r name url sha; do
             echo "Verificando $name ($url @ $sha)..."
-            git ls-remote "$url" | grep -q "^${sha::12}" || git ls-remote "$url" HEAD >/dev/null
+            rm -rf /tmp/chk_sha
+            git init -q /tmp/chk_sha
+            git -C /tmp/chk_sha fetch -q --depth=1 --filter=tree:0 "$url" "$sha"
+            rm -rf /tmp/chk_sha
           done
 
       - name: Verificar disponibilidad HTTP 200/302 de los 26 modelos en HuggingFace (CI-03)
@@ -81,7 +84,7 @@ jobs:
           EOF
 
   build-and-push:
-    name: Build Candidate, Smoke-Test & Promote to Latest (ALTA-01 / ALTA-02)
+    name: Build Candidate, Smoke-Test & Promote to Latest (ALTA-01 / ALTA-02 / H-01 / M-02)
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -116,6 +119,14 @@ jobs:
           tags: |
             type=sha,prefix=sha-
 
+      - name: Extraer referencia fija en minúsculas para caché de BuildKit (H-01)
+        id: meta_cache
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=buildcache
+
       - name: Extraer tags finales de promoción (latest / semver)
         id: meta_final
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
@@ -125,27 +136,35 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
 
-      - name: Construir y publicar SOLO el tag candidato sha-* (ALTA-01)
+      - name: Construir y publicar SOLO el tag candidato sha-* (ALTA-01 / H-01)
         uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
         with:
           context: .
           push: true
           tags: ${{ steps.meta_candidate.outputs.tags }}
           labels: ${{ steps.meta_candidate.outputs.labels }}
-          cache-from: type=registry,ref=${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}-buildcache
-          cache-to: type=registry,ref=${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}-buildcache,mode=max
+          cache-from: type=registry,ref=${{ fromJSON(steps.meta_cache.outputs.json).tags[0] }}
+          cache-to: type=registry,ref=${{ fromJSON(steps.meta_cache.outputs.json).tags[0] }},mode=max
+
+      - name: Purgar caché local de BuildKit antes del pull del candidato (M-02)
+        run: |
+          df -h
+          docker buildx prune --all --force
+          sudo docker system prune --all --force
+          df -h
 
       - name: Smoke Test completo sobre la imagen candidata antes de promover a latest (ALTA-01 / ALTA-02 / MED-03 / MED-05)
         run: |
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           echo "Ejecutando smoke test sobre: ${CANDIDATE_TAG}"
           docker pull "${CANDIDATE_TAG}"
+          docker images "${CANDIDATE_TAG}"
           docker run --rm --entrypoint nginx "${CANDIDATE_TAG}" -t
           docker run --rm --entrypoint hf "${CANDIDATE_TAG}" version
           docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
             "import torch, onnxruntime as ort, insightface, cv2, huggingface_hub, hf_xet; print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'CV2:', cv2.__version__, 'HF:', huggingface_hub.__version__, 'ORT:', ort.get_available_providers())"
           docker run --rm --entrypoint bash "${CANDIDATE_TAG}" -c \
-            "cd /opt/ComfyUI && timeout 300 python3 main.py --cpu --quick-test-for-ci 2>&1 | tee /tmp/smoke.log && ! grep -q 'IMPORT FAILED' /tmp/smoke.log"
+            'cd /opt/ComfyUI && rc=0; timeout 300 python3 main.py --cpu --quick-test-for-ci > /tmp/smoke.log 2>&1 || rc=$?; cat /tmp/smoke.log; if [ "$rc" -ne 0 ] || grep -q "IMPORT FAILED" /tmp/smoke.log; then exit 1; fi'
           docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
 
       - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)

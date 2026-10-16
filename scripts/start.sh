@@ -153,7 +153,7 @@ nginx -t
 nginx
 
 # ------------------------------------------------------------------------------
-# 5. Ejecutar Fase 1 (con timeout no-fatal, REL-03) y lanzar Fase 2 con setsid (INF-02)
+# 5. Ejecutar Fase 1 (con timeout no-fatal, REL-03) y lanzar Fase 2 con setsid -f (INF-02 / L-03)
 # ------------------------------------------------------------------------------
 if [ "${SKIP_MODEL_DOWNLOAD:-0}" != "1" ]; then
     echo "[5/6] Ejecutando Fase 1 de descarga de modelos críticos (2.79 GiB)..."
@@ -161,7 +161,7 @@ if [ "${SKIP_MODEL_DOWNLOAD:-0}" != "1" ]; then
         echo "[WARN] Fase 1 terminó con advertencias o timeout; continuando con el arranque de ComfyUI..." | tee -a /var/log/download-models.log
 
     echo "[5/6] Lanzando Fase 2 de descarga de checkpoints en segundo plano (Perfil: ${MODEL_PROFILE:-all})..."
-    setsid /usr/local/bin/download-models.sh --phase2 >> /var/log/download-models.log 2>&1 < /dev/null &
+    setsid -f /usr/local/bin/download-models.sh --phase2 >> /var/log/download-models.log 2>&1 < /dev/null
 else
     echo "[5/6] [SKIP] SKIP_MODEL_DOWNLOAD=1 activo; omitiendo descarga automática." | tee -a /var/log/download-models.log
 fi
