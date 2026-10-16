@@ -33,7 +33,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nginx \
         apache2-utils \
         build-essential \
-        g++ \
         cmake \
         pkg-config \
         python3 \
@@ -193,7 +192,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/download-models.sh /start.sh \
             exit 1; \
         fi \
     ) && \
-    rm -rf /tmp/comfy_warmup.log /opt/ComfyUI/temp /workspace/comfyui-data/temp /workspace/comfyui-data/user/default/comfy.settings.json /workspace/comfyui-data/user/__manager /root/.config /root/.cache && \
+    rm -rf /tmp/comfy_warmup.log /opt/ComfyUI/temp /workspace/comfyui-data/temp /workspace/comfyui-data/user/default/comfy.settings.json /workspace/comfyui-data/user/__manager /workspace/comfyui-data/user/default/ComfyUI-Manager /root/.config /root/.cache && \
     mkdir -p /workspace/comfyui-data/user/__manager /workspace/comfyui-data/user/default/ComfyUI-Manager && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/__manager/config.ini && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini

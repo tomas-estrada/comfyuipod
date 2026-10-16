@@ -41,13 +41,17 @@ jobs:
           failure-threshold: error
           ignore: DL3008,DL3013,DL3042,SC2086
 
-      - name: Verificar existencia real de todos los commit SHAs en config/nodes.lock (M-01)
+      - name: Verificar existencia real de todos los commit SHAs en config/nodes.lock (M-01 / N-03)
         run: |
+          set -euo pipefail
           awk '$1 ~ /^(core|dep|node)$/ {print $2, $3, $4}' config/nodes.lock | while read -r name url sha; do
             echo "Verificando $name ($url @ $sha)..."
             rm -rf /tmp/chk_sha
             git init -q /tmp/chk_sha
-            git -C /tmp/chk_sha fetch -q --depth=1 --filter=tree:0 "$url" "$sha"
+            git -C /tmp/chk_sha fetch -q --depth=1 --filter=tree:0 "$url" "$sha" || {
+              echo "::error::SHA $sha no existe en $url ($name)"
+              exit 1
+            }
             rm -rf /tmp/chk_sha
           done
 
@@ -95,7 +99,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
+          docker image prune --all --force
           df -h
 
       - name: Checkout del repositorio
@@ -150,21 +154,22 @@ jobs:
         run: |
           df -h
           docker buildx prune --all --force
-          sudo docker system prune --all --force
+          docker system prune --all --force
           df -h
 
-      - name: Smoke Test completo sobre la imagen candidata antes de promover a latest (ALTA-01 / ALTA-02 / MED-03 / MED-05)
+      - name: Smoke Test completo sobre la imagen candidata antes de promover a latest (ALTA-01 / ALTA-02 / MED-03 / MED-05 / N-01 / N-04)
         run: |
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           echo "Ejecutando smoke test sobre: ${CANDIDATE_TAG}"
           docker pull "${CANDIDATE_TAG}"
           docker images "${CANDIDATE_TAG}"
+          docker run --rm --entrypoint find "${CANDIDATE_TAG}" /workspace/comfyui-data/user -type f
           docker run --rm --entrypoint nginx "${CANDIDATE_TAG}" -t
           docker run --rm --entrypoint hf "${CANDIDATE_TAG}" version
           docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
             "import torch, onnxruntime as ort, insightface, cv2, huggingface_hub, hf_xet; print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'CV2:', cv2.__version__, 'HF:', huggingface_hub.__version__, 'ORT:', ort.get_available_providers())"
           docker run --rm --entrypoint bash "${CANDIDATE_TAG}" -c \
-            'cd /opt/ComfyUI && rc=0; timeout 300 python3 main.py --cpu --quick-test-for-ci > /tmp/smoke.log 2>&1 || rc=$?; cat /tmp/smoke.log; if [ "$rc" -ne 0 ] || grep -q "IMPORT FAILED" /tmp/smoke.log; then exit 1; fi'
+            'cd /opt/ComfyUI && rc=0; timeout 600 python3 main.py --cpu --quick-test-for-ci > /tmp/smoke.log 2>&1 || rc=$?; cat /tmp/smoke.log; if [ "$rc" -ne 0 ] || grep -q "IMPORT FAILED" /tmp/smoke.log; then exit 1; fi'
           docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
 
       - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)

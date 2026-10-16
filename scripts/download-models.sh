@@ -277,6 +277,9 @@ case "${1:---all}" in
         run_phase1
         ;;
     --phase2)
+        # N-02: Completar cualquier modelo de Fase 1 que haya quedado pendiente si se alcanzó
+        # el timeout de 600s en start.sh (idempotente: los archivos ya existentes hacen SKIP en <1ms).
+        run_phase1
         run_phase2
         ;;
     --all|*)

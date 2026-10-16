@@ -61,8 +61,19 @@
 | **L-04 (`albumentations` y `albumentationsx`)** | Documentado en la Sección 3 de este archivo por qué coexisten ambos paquetes y la regla de no desinstalar ninguno por separado. |
 | **L-05 (Precisión documental en `walkthrough.md` y `decisiones.md`)** | Alineadas todas las afirmaciones de verificación con la implementación real (`git fetch --depth=1 --filter=tree:0` y `setsid -f`). |
 | **L-06 (Procedimiento de actualización de SHAs y constraints)** | Documentado en la Sección 3 de este archivo. |
-| **L-07 (Limpieza tras el warm-up del build)** | Al terminar el warm-up en el paso 6 del [`Dockerfile`](../Dockerfile), se eliminan `/opt/ComfyUI/temp`, `/workspace/comfyui-data/temp`, `/workspace/comfyui-data/user/default/comfy.settings.json`, `/workspace/comfyui-data/user/__manager`, `/root/.config` y `/root/.cache`, y se vuelven a copiar los `config.ini` limpios de ComfyUI-Manager. |
+| **L-07 (Limpieza tras el warm-up del build)** | Al terminar el warm-up en el paso 6 del [`Dockerfile`](../Dockerfile), se eliminan `/opt/ComfyUI/temp`, `/workspace/comfyui-data/temp`, `/workspace/comfyui-data/user/default/comfy.settings.json`, `/workspace/comfyui-data/user/__manager`, `/workspace/comfyui-data/user/default/ComfyUI-Manager`, `/root/.config` y `/root/.cache`, y se vuelven a copiar los `config.ini` limpios de ComfyUI-Manager. |
 | **L-08 (Repositorio local en OneDrive)** | Riesgo residual aceptado en el entorno local de desarrollo; el árbol git está limpio y normalizado a `LF` mediante `.gitattributes`. |
+
+### Ronda V4 ([`docs/auditorias/AUDITORIA_AGENTE_V4.md`](auditorias/AUDITORIA_AGENTE_V4.md))
+
+| ID V4 | Decisión implementada |
+|---|---|
+| **N-01 (Unificar `timeout 600` en smoke test)** | Actualizado el timeout del warm-up en el smoke test de [`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml) de `300` a `600` segundos para igualar el `timeout 600` del paso 6 en [`Dockerfile`](../Dockerfile). |
+| **N-02 (`--phase2` completa pendientes de Fase 1)** | En [`scripts/download-models.sh`](../scripts/download-models.sh), el bloque `--phase2` invoca primero `run_phase1` de forma idempotente (los archivos ya descargados hacen `SKIP` en `<1 ms`) antes de `run_phase2`, garantizando que ningún modelo de Fase 1 quede ausente si se alcanzó el `timeout 600` durante el arranque. |
+| **N-03 (`set -euo pipefail` y `::error::` en M-01)** | Añadido `set -euo pipefail` explícito y reporte `::error::SHA $sha no existe en $url ($name)` al paso de verificación de SHAs de `nodes.lock` en [`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml). |
+| **N-04 (Limpieza e inspección de `user/default/ComfyUI-Manager`)** | Añadido `/workspace/comfyui-data/user/default/ComfyUI-Manager` al `rm -rf` posterior al warm-up en [`Dockerfile`](../Dockerfile) antes de recrear el directorio y copiar `config.ini`, e incorporado `find /workspace/comfyui-data/user -type f` en el smoke test de CI (`V12`). |
+| **N-05 (Atestación de procedencia SLSA en `build-push-action` v6)** | Se conserva el comportamiento por defecto (`provenance: mode=min`) para mantener trazabilidad SLSA en GHCR sin impacto funcional en `docker pull` ni en Vast.ai. |
+| **N-06 (Limpieza de redundancias menores)** | Eliminado `g++` redundante en [`Dockerfile`](../Dockerfile) (ya incluido por `build-essential`) y `sudo` redundante antes de `docker` en [`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml). |
 
 ---
 
