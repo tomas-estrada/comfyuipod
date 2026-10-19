@@ -270,27 +270,22 @@ fn graceful_shutdown_nginx() {
 
 /// Bucle principal de `comfyctl supervise`.
 #[allow(clippy::too_many_lines)]
-pub fn run_supervise_cmd(cfg: &RuntimeConfig, external_status_server: bool) -> Result<i32, String> {
+pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
     sys::install_signal_handlers();
 
     let mut sup_state = SupervisorState::new(cfg.comfy_max_restarts);
     write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
 
-    if external_status_server {
-        log_sup("Modo --external-status-server activo (status-server gestionado externamente).");
-    } else {
-        log_sup("Iniciando servidor HTTP de observabilidad integrado en 127.0.0.1:18189...");
-        crate::http::spawn_background_status_server(cfg.clone())?;
-        let cfg_diag = cfg.clone();
-        thread::spawn(move || {
-            let _ = crate::diag::run_diag_cmd(&cfg_diag, None);
-        });
-    }
+    log_sup("Iniciando servidor HTTP de observabilidad integrado en 127.0.0.1:18189...");
+    crate::http::spawn_background_status_server(cfg.clone())?;
 
     // 1. Ejecutar strict-check (§6)
     let snap = SystemSnapshot::collect_live(cfg);
     let strict_report = evaluate_strict_checks(cfg, &snap);
     write_and_print_strict_report(cfg, &strict_report)?;
+
+    // 2. Ejecutar diag de arranque (acotado por timeouts de sonda, antes de Fase 1 / ComfyUI, R-07)
+    let _ = crate::diag::run_diag_cmd(cfg, None);
 
     if strict_report.result == "fatal" {
         let now = sys::now_unix_secs();
@@ -316,7 +311,7 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig, external_status_server: bool) -> R
         return Ok(20);
     }
 
-    // 2. Ejecutar Fase 1 y lanzar Fase 2 en segundo plano
+    // 3. Ejecutar Fase 1 y lanzar Fase 2 en segundo plano
     run_model_downloads_if_enabled(cfg);
     if sys::is_shutdown_requested() {
         graceful_shutdown_nginx();

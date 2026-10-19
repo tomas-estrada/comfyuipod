@@ -41,9 +41,9 @@ impl ModelProfile {
             return 5;
         }
         match self {
-            Self::All => 80,
+            Self::All => 75,
             Self::General | Self::Realistic | Self::Anime => 45,
-            Self::Minimal => 15,
+            Self::Minimal => 10,
         }
     }
 }
@@ -71,8 +71,10 @@ pub struct RuntimeConfig {
     pub strict_start: bool,
     pub strict_require_gpu: bool,
     pub strict_min_vram_mb: u64,
+    pub strict_warn_vram_mb: u64,
     pub strict_min_driver: u32,
     pub strict_min_ram_mb: u64,
+    pub strict_warn_ram_mb: u64,
     pub strict_min_disk_gb: u64,
     pub strict_fatal_grace_s: u64,
     pub status_server_port: u16,
@@ -80,20 +82,46 @@ pub struct RuntimeConfig {
     pub strict_json_path: PathBuf,
     pub started_at_path: PathBuf,
     pub image_json_path: PathBuf,
+    pub htpasswd_path: PathBuf,
+    pub require_htpasswd: bool,
     pub nvidia_smi_bin: PathBuf,
     pub vast_containerlabel: String,
     pub vast_tcp_port_8188: String,
 }
 
 impl RuntimeConfig {
+    /// Carga la configuración para subcomandos CLI (`strict-check`, `report`, `diag`, `serve`).
+    /// Lee `/run/comfyui-pass` sin borrarlo (`R-11`) y no exige `.htpasswd` si aún no corrió `start.sh` (`R-02`).
     pub fn from_env() -> Self {
         let mut map = BTreeMap::new();
         for (k, v) in env::vars() {
             map.insert(k, v);
         }
         let pass_file = Path::new("/run/comfyui-pass");
+        let file_pass = sys::read_secret_file(pass_file, false);
+        let mut cfg = Self::from_map(&map, file_pass);
+        if !matches!(
+            map.get("STRICT_REQUIRE_HTPASSWD").map(String::as_str),
+            Some("1" | "true")
+        ) {
+            cfg.require_htpasswd = false;
+        }
+        cfg
+    }
+
+    /// Carga la configuración para el demonio residente (`comfyctl supervise`),
+    /// leyendo y borrando inmediatamente `/run/comfyui-pass` (`unlink`, §9 / `R-11`)
+    /// y exigiendo `/etc/nginx/.htpasswd` válido (`R-02`).
+    pub fn from_env_supervise() -> Self {
+        let mut map = BTreeMap::new();
+        for (k, v) in env::vars() {
+            map.insert(k, v);
+        }
+        let pass_file = Path::new("/run/comfyui-pass");
         let file_pass = sys::read_and_unlink_secret(pass_file);
-        Self::from_map(&map, file_pass)
+        let mut cfg = Self::from_map(&map, file_pass);
+        cfg.require_htpasswd = true;
+        cfg
     }
 
     pub fn from_map(vars: &BTreeMap<String, String>, secret_file_pass: Option<String>) -> Self {
@@ -144,6 +172,8 @@ impl RuntimeConfig {
             .and_then(|s| s.trim().parse::<u16>().ok())
             .unwrap_or(18189);
 
+        let require_htpasswd = !matches!(get("STRICT_REQUIRE_HTPASSWD"), Some("0" | "false"));
+
         Self {
             model_profile,
             model_profile_raw: if raw_profile.is_empty() {
@@ -170,9 +200,11 @@ impl RuntimeConfig {
             hf_hub_disable_xet: get("HF_HUB_DISABLE_XET").map(ToString::to_string),
             strict_start,
             strict_require_gpu,
-            strict_min_vram_mb: get_u64("STRICT_MIN_VRAM_MB", 16000),
+            strict_min_vram_mb: get_u64("STRICT_MIN_VRAM_MB", 20000),
+            strict_warn_vram_mb: get_u64("STRICT_WARN_VRAM_MB", 22000),
             strict_min_driver: get_u32("STRICT_MIN_DRIVER", 570),
             strict_min_ram_mb: get_u64("STRICT_MIN_RAM_MB", 16384),
+            strict_warn_ram_mb: get_u64("STRICT_WARN_RAM_MB", 32768),
             strict_min_disk_gb,
             strict_fatal_grace_s: get_u64("STRICT_FATAL_GRACE", 600),
             status_server_port,
@@ -188,6 +220,10 @@ impl RuntimeConfig {
             image_json_path: PathBuf::from(
                 get("COMFY_IMAGE_JSON").unwrap_or("/etc/comfyui/image.json"),
             ),
+            htpasswd_path: PathBuf::from(
+                get("COMFY_HTPASSWD_PATH").unwrap_or("/etc/nginx/.htpasswd"),
+            ),
+            require_htpasswd,
             nvidia_smi_bin: PathBuf::from(get("COMFY_NVIDIA_SMI_BIN").unwrap_or("nvidia-smi")),
             vast_containerlabel: get("VAST_CONTAINERLABEL").unwrap_or("local").to_string(),
             vast_tcp_port_8188: get("VAST_TCP_PORT_8188").unwrap_or("8188").to_string(),

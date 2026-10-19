@@ -12,12 +12,12 @@ fn print_help() {
     println!(
         "comfyctl {} — Control de arranque, supervisión y observabilidad de ComfyUIPod\n\n\
          Subcomandos:\n  \
-           comfyctl strict-check                          Valida invariantes S1..S9 y escribe /run/comfyui-strict.json\n  \
-           comfyctl supervise [--external-status-server]  Ejecuta strict-check, servidor HTTP :18189, Fase 1/2 y supervisa ComfyUI\n  \
-           comfyctl serve [--bind 127.0.0.1:18189]        Ejecuta el servidor HTTP de observabilidad en solitario\n  \
-           comfyctl report                                Genera y vuelca /report.md por stdout\n  \
-           comfyctl diag                                  Ejecuta las 10 sondas de arranque y escribe /var/log/diag.txt\n  \
-           comfyctl version                               Muestra versión y metadatos de compilación",
+           comfyctl strict-check                   Valida invariantes S1..S10 y escribe /run/comfyui-strict.json\n  \
+           comfyctl supervise                      Ejecuta strict-check, servidor HTTP :18189, Fase 1/2 y supervisa ComfyUI\n  \
+           comfyctl serve [--bind 127.0.0.1:18189] Ejecuta el servidor HTTP de observabilidad en solitario\n  \
+           comfyctl report                         Genera y vuelca /report.md por stdout\n  \
+           comfyctl diag                           Ejecuta las 10 sondas de arranque y escribe /var/log/diag.txt\n  \
+           comfyctl version                        Muestra versión y metadatos de compilación",
         env!("CARGO_PKG_VERSION")
     );
 }
@@ -45,9 +45,8 @@ fn run() -> Result<u8, String> {
             Ok(u8::try_from(rc).unwrap_or(1))
         }
         "supervise" => {
-            let external_status = args.contains("--external-status-server");
-            let cfg = RuntimeConfig::from_env();
-            let rc = supervisor::run_supervise_cmd(&cfg, external_status)?;
+            let cfg = RuntimeConfig::from_env_supervise();
+            let rc = supervisor::run_supervise_cmd(&cfg)?;
             Ok(u8::try_from(rc).unwrap_or(1))
         }
         "serve" => {

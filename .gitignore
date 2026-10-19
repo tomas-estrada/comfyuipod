@@ -2,6 +2,7 @@
 .DS_Store
 Thumbs.db
 *.log
+!comfyctl/tests/fixtures/*.log
 *.tmp
 .env
 .env.*

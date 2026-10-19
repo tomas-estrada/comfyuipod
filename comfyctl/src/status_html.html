@@ -191,7 +191,7 @@
           sc.style.display = "block";
           const fatals = (d.strict.checks || []).filter(c => c.status === "fatal");
           document.getElementById("strict-body").innerHTML = fatals.map(c =>
-            `<p><strong>${esc(c.id)}</strong> (observado: <code>${esc(c.observed)}</code>, esperado: <code>${esc(c.expected)}</code>): ${esc(c.message)}<br>` +
+            `<p><strong>${esc(c.id)} (${esc(c.name)})</strong>: ${esc(c.detail)}<br>` +
             `Remediación: <code>${esc(c.remediation || "comfy destroy <id>")}</code></p>`
           ).join("");
         } else {

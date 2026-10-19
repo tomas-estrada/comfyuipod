@@ -5,7 +5,10 @@
 FROM rust:1.86.0-slim-bookworm@sha256:57d415bbd61ce11e2d5f73de068103c7bd9f3188dc132c97cef4a8f62989e944 AS builder
 WORKDIR /build/comfyctl
 
-COPY comfyctl/Cargo.toml comfyctl/Cargo.lock comfyctl/rust-toolchain.toml ./
+# Nota (R-09): No se copia rust-toolchain.toml al stage builder porque la imagen base
+# ya es exactamente Rust 1.86.0 fijada por digest y copiar components = ["rustfmt", "clippy"]
+# forzaría una descarga de red innecesaria de rustup durante docker build.
+COPY comfyctl/Cargo.toml comfyctl/Cargo.lock ./
 RUN mkdir -p src && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
     && cargo build --release --locked \
     && rm -rf src

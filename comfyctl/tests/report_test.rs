@@ -68,6 +68,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
             vram_used_mb: 1024,
             util_pct: 10,
             temp_c: 42,
+            processes: Vec::new(),
             reason: None,
         },
         memory: MemoryStatus {
@@ -145,6 +146,8 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
         drift: DriftSummary::default(),
         folder_stats: vec!["- `checkpoints`: 3 ficheros (19.50 GB)".to_string()],
         missing_models: Vec::new(),
+        refreshed_at_unix: 1_760_000_000,
+        cache_age_s: 0,
     };
 
     let redactor = SecretRedactor::new(Some("secret-pass-123"), None);

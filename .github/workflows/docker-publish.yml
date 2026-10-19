@@ -76,14 +76,60 @@ jobs:
               f"Model mismatch between download-models.sh ({dl_files}) and comfyctl EXPECTED_MODELS ({expected_files})"
           )
 
-          # Validar estructura de los esquemas congelados docs/contratos/*.schema.json
+          # Validar estructura de los esquemas congelados docs/contratos/*.schema.json y bloque strict (R-04 / R-08 / R-13)
           status_schema = json.loads(pathlib.Path("docs/contratos/status-api.schema.json").read_text(encoding="utf-8"))
           sup_schema = json.loads(pathlib.Path("docs/contratos/supervisor-state.schema.json").read_text(encoding="utf-8"))
           assert "generated_at" in status_schema.get("required", []), "status-api.schema.json inválido"
           assert "state" in sup_schema.get("required", []), "supervisor-state.schema.json inválido"
+          strict_props = status_schema["properties"]["strict"]["properties"]
+          check_item_props = set(strict_props["checks"]["items"]["properties"].keys())
+          assert check_item_props == {"id", "name", "status", "detail", "remediation"}, f"Unexpected strict check item props: {check_item_props}"
 
-          print(f"Validated {len(patterns)} triage patterns, {len(expected_files)} expected models, frozen schemas, and portal ({portal_bytes} bytes, 0 external CDN refs).")
+          for view_path in (pathlib.Path("config/portal/index.html"), pathlib.Path("comfyctl/src/status_html.html"), pathlib.Path("tools/mac/comfy")):
+              vtxt = view_path.read_text(encoding="utf-8")
+              for forbidden in ("c.message", "c.observed", "c.expected", 'c.get("message")', 'c.get("observed")', 'c.get("expected")'):
+                  assert forbidden not in vtxt, f"Forbidden legacy strict field {forbidden} in {view_path}"
+
+          print(f"Validated {len(patterns)} triage patterns, {len(expected_files)} expected models, frozen schemas (incl. strict), and portal ({portal_bytes} bytes, 0 external CDN refs).")
           EOF
+
+      - name: Ejecutar download-models.sh en seco con HF_CLI simulado y contrastar formato con parser (R-01 / R-08)
+        run: |
+          set -euo pipefail
+          tmp_root="$(mktemp -d)"
+          trap 'rm -rf "$tmp_root"' EXIT
+          mkdir -p "$tmp_root/bin" "$tmp_root/data"
+          cat > "$tmp_root/bin/fake-hf" << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          # Extraer repo_path (arg 3) y --local-dir (arg 5)
+          repo_path="$3"
+          stage_dir="$5"
+          mkdir -p "$(dirname "${stage_dir}/${repo_path}")"
+          if [[ "$repo_path" == *.zip ]]; then
+            python3 - "${stage_dir}/${repo_path}" << 'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1], "w") as zf:
+              zf.writestr("buffalo_l/det_10g.onnx", b"fake-onnx-bytes")
+          PY
+          else
+            printf 'fake-model-bytes' > "${stage_dir}/${repo_path}"
+          fi
+          EOF
+          chmod +x "$tmp_root/bin/fake-hf"
+          COMFY_DATA_DIR="$tmp_root/data" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=general \
+            bash scripts/download-models.sh --phase1 > "$tmp_root/dl.log" 2>&1
+          COMFY_DATA_DIR="$tmp_root/data" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=general \
+            bash scripts/download-models.sh --phase2 >> "$tmp_root/dl.log" 2>&1
+          grep -q "INICIANDO FASE 1 (2.79 GiB):" "$tmp_root/dl.log"
+          grep -q "PLAN FASE 1: 12 archivos" "$tmp_root/dl.log"
+          grep -q "OK: InsightFace buffalo_l listo en" "$tmp_root/dl.log"
+          grep -q "FASE 1 COMPLETADA." "$tmp_root/dl.log"
+          grep -q "INICIANDO FASE 2 (Segundo plano" "$tmp_root/dl.log"
+          grep -q "PLAN FASE 2: 8 archivos (MODEL_PROFILE=general)" "$tmp_root/dl.log"
+          grep -q "SKIP (ya existe): det_10g.onnx" "$tmp_root/dl.log"
+          grep -q "FASE 2 COMPLETADA." "$tmp_root/dl.log"
+          echo "[OK] download-models.sh en seco produjo todas las trazas reales esperadas por phases.rs (R-01)"
 
       - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01: SHA v3.1.0 verificado)
         uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
@@ -271,6 +317,8 @@ jobs:
           echo "=== Iniciando Smoke Test Full-Stack del contenedor (§9.2) ==="
           cid="$(docker run -d --name smoke -p 18188:8188 \
             -e SKIP_MODEL_DOWNLOAD=1 \
+            -e STRICT_MIN_RAM_MB=4096 \
+            -e STRICT_MIN_DISK_GB=1 \
             -e COMFYUI_EXTRA_ARGS="--cpu" \
             -e COMFY_USER=admin \
             -e COMFY_PASS=ci-secret-9f8e7d \
@@ -456,32 +504,49 @@ jobs:
           [ "$exit_code" = "0" ] || { docker logs "$cid"; echo "::error::docker stop devolvió ExitCode=${exit_code} (esperado 0)"; exit 1; }
           echo "[OK] Contenedor apagado limpiamente con ExitCode=0"
 
-          # 11. comfyctl strict-check en modo --cpu devuelve 0 y genera /run/comfyui-strict.json con result in (ok, warn) (§8.2)
+          # 11. comfyctl strict-check en modo --cpu devuelve 0 y genera /run/comfyui-strict.json con result in (ok, warn) (§8.2 / R-02 / R-03)
           docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
             set -eu
-            STRICT_START=1 COMFYUI_EXTRA_ARGS="--cpu" /usr/local/bin/comfyctl strict-check
-            python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] in (\"ok\", \"warn\"), d"
+            SKIP_MODEL_DOWNLOAD=1 STRICT_MIN_RAM_MB=4096 STRICT_MIN_DISK_GB=1 STRICT_START=1 COMFYUI_EXTRA_ARGS="--cpu" /usr/local/bin/comfyctl strict-check
+            python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] == \"warn\", d; s7 = [c for c in d[\"checks\"] if c[\"id\"] == \"S7\"][0]; assert s7[\"status\"] == \"warn\", s7"
+            printf "admin:{PLAIN}test\n" > /etc/nginx/.htpasswd
+            chmod 640 /etc/nginx/.htpasswd
+            SKIP_MODEL_DOWNLOAD=1 STRICT_MIN_RAM_MB=4096 STRICT_MIN_DISK_GB=1 STRICT_START=1 COMFYUI_EXTRA_ARGS="--cpu" /usr/local/bin/comfyctl strict-check
+            python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] in (\"ok\", \"warn\"), d; s7 = [c for c in d[\"checks\"] if c[\"id\"] == \"S7\"][0]; assert s7[\"status\"] == \"ok\", s7"
           '
-          echo "[OK] Paso 11: comfyctl strict-check en modo --cpu -> 0"
+          echo "[OK] Paso 11: comfyctl strict-check en modo --cpu -> 0 (S7 warn sin .htpasswd y ok con .htpasswd)"
 
-          # 12. comfyctl strict-check con nvidia-smi simulado (driver 550.54.14) devuelve 20 con STRICT_START=1 y 0 con STRICT_START=0 (§8.2)
-          docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
+          # 12. comfyctl strict-check con nvidia-smi simulado (driver 550.54.14) devuelve 20 con STRICT_START=1 y 0 con STRICT_START=0 y cumple el esquema strict (§8.2 / R-02 / R-04 / R-13)
+          strict_json_fatal="$(docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
             set -eu
+            printf "admin:{PLAIN}test\n" > /etc/nginx/.htpasswd
+            chmod 640 /etc/nginx/.htpasswd
             cat > /usr/local/bin/fake-nvidia-smi << "EOF"
           #!/bin/sh
           echo "NVIDIA GeForce RTX 5090, 550.54.14, 32768, 256, 0, 35"
           EOF
             chmod +x /usr/local/bin/fake-nvidia-smi
             rc_strict=0
-            COMFY_NVIDIA_SMI_BIN=/usr/local/bin/fake-nvidia-smi STRICT_START=1 COMFYUI_EXTRA_ARGS="" /usr/local/bin/comfyctl strict-check || rc_strict=$?
-            [ "$rc_strict" = "20" ] || { echo "Expected exit 20 with STRICT_START=1, got $rc_strict"; exit 1; }
-            python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] == \"fatal\", d"
-            COMFY_NVIDIA_SMI_BIN=/usr/local/bin/fake-nvidia-smi STRICT_START=0 COMFYUI_EXTRA_ARGS="" /usr/local/bin/comfyctl strict-check
+            COMFY_NVIDIA_SMI_BIN=/usr/local/bin/fake-nvidia-smi SKIP_MODEL_DOWNLOAD=1 STRICT_MIN_RAM_MB=4096 STRICT_MIN_DISK_GB=1 STRICT_START=1 COMFYUI_EXTRA_ARGS="" /usr/local/bin/comfyctl strict-check >/dev/null || rc_strict=$?
+            [ "$rc_strict" = "20" ] || { echo "Expected exit 20 with STRICT_START=1, got $rc_strict" >&2; exit 1; }
+            cat /run/comfyui-strict.json
+            COMFY_NVIDIA_SMI_BIN=/usr/local/bin/fake-nvidia-smi SKIP_MODEL_DOWNLOAD=1 STRICT_MIN_RAM_MB=4096 STRICT_MIN_DISK_GB=1 STRICT_START=0 COMFYUI_EXTRA_ARGS="" /usr/local/bin/comfyctl strict-check >/dev/null
             python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] == \"warn\", d"
+          ')"
+          STRICT_JSON="$strict_json_fatal" python3 -c '
+          import json, os, pathlib
+          d = json.loads(os.environ["STRICT_JSON"])
+          schema = json.loads(pathlib.Path("docs/contratos/status-api.schema.json").read_text(encoding="utf-8"))["properties"]["strict"]
+          for req in schema["required"]:
+              assert req in d, f"Missing {req} in strict JSON"
+          assert d["result"] == "fatal", d
+          item_req = set(schema["properties"]["checks"]["items"]["required"])
+          for c in d["checks"]:
+              assert item_req.issubset(c.keys()), f"Check item missing keys: {c}"
           '
-          echo "[OK] Paso 12: comfyctl strict-check con driver 550.54.14 -> 20 (STRICT_START=1) y 0 (STRICT_START=0)"
+          echo "[OK] Paso 12: comfyctl strict-check con driver 550.54.14 -> 20 (STRICT_START=1), 0 (STRICT_START=0) y validado contra status-api.schema.json"
 
-          # 13. Verificar tamaño (<= 5 MB), dependencias dinámicas (sin librustc*) y versión de /usr/local/bin/comfyctl (§8.2)
+          # 13. Verificar tamaño (<= 5 MB), dependencias dinámicas glibc base (sin librustc* ni not found, R-09) y versión de /usr/local/bin/comfyctl (§8.2)
           docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
             set -eu
             sz="$(stat -c%s /usr/local/bin/comfyctl)"
@@ -489,15 +554,24 @@ jobs:
             [ "$sz" -le 5242880 ] || { echo "comfyctl supera 5 MiB (${sz} bytes)"; exit 1; }
             ldd_out="$(ldd /usr/local/bin/comfyctl)"
             echo "$ldd_out"
-            if echo "$ldd_out" | grep -q "librustc"; then
-              echo "comfyctl enlaza librustc* inesperadamente"
-              exit 1
-            fi
+            LDD_OUT="$ldd_out" python3 -c "
+          import os, re
+          out = os.environ[\"LDD_OUT\"]
+          assert \"not found\" not in out, f\"Missing shared lib: {out}\"
+          assert \"librustc\" not in out, f\"Unexpected librustc: {out}\"
+          allowed = {\"linux-vdso.so.1\", \"libgcc_s.so.1\", \"libm.so.6\", \"libc.so.6\", \"ld-linux-x86-64.so.2\", \"libpthread.so.0\", \"libdl.so.2\", \"librt.so.1\"}
+          for ln in out.splitlines():
+              ln = ln.strip()
+              if not ln:
+                  continue
+              name = ln.split()[0].split(\"/\")[-1]
+              assert name in allowed, f\"Unexpected dynamic library {name!r} in ldd output: {ln}\"
+          "
             ver_out="$(/usr/local/bin/comfyctl version)"
             echo "Versión comfyctl: ${ver_out}"
             echo "$ver_out" | grep -q "^comfyctl 0.1.0"
           '
-          echo "[OK] Paso 13: /usr/local/bin/comfyctl <= 5 MB, sin librustc* y comfyctl version OK"
+          echo "[OK] Paso 13: /usr/local/bin/comfyctl <= 5 MB, ldd restringido a glibc base (R-09) y comfyctl version OK"
 
           # 14. Paridad Fase 2 (§8.2 / §10.2): verificar cabeceras ## 0. .. ## 10. en /report.md y [DIAG] resumen: en comfyctl diag
           for hdr_idx in 0 1 2 3 4 5 6 7 8 9 10; do

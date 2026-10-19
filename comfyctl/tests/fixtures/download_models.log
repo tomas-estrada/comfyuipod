@@ -1,0 +1,48 @@
+[2026-10-19 10:00:01] [MODELS] ======================================================================
+[2026-10-19 10:00:01] [MODELS] INICIANDO FASE 1 (Síncrona — Modelos base indispensables)
+[2026-10-19 10:00:01] [MODELS] ======================================================================
+[2026-10-19 10:00:01] [MODELS] PLAN FASE 1: 12 archivos (11 vía hf_fetch + 1 paquete InsightFace buffalo_l)
+[2026-10-19 10:00:02] [MODELS] SKIP (ya existe): sdxl_vae.safetensors
+[2026-10-19 10:00:03] [MODELS] INICIO: 4x-UltraSharp.pth (Kim2091/UltraSharp/4x-UltraSharp.pth)
+[2026-10-19 10:00:05] [MODELS] OK: /workspace/comfyui-data/models/upscale_models/4x-UltraSharp.pth (64M)
+[2026-10-19 10:00:05] [MODELS] SKIP (ya existe): 4x-AnimeSharp.pth
+[2026-10-19 10:00:05] [MODELS] SKIP (ya existe): RealESRGAN_x4plus_anime_6B.pth
+[2026-10-19 10:00:06] [MODELS] SKIP (ya existe): CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors
+[2026-10-19 10:00:06] [MODELS] SKIP (ya existe): CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors
+[2026-10-19 10:00:07] [MODELS] SKIP (ya existe): ip-adapter-plus_sdxl_vit-h.safetensors
+[2026-10-19 10:00:07] [MODELS] SKIP (ya existe): ip-adapter-plus-face_sdxl_vit-h.safetensors
+[2026-10-19 10:00:08] [MODELS] SKIP (ya existe): controlnet-union-sdxl-1.0-promax.safetensors
+[2026-10-19 10:00:09] [MODELS] SKIP (ya existe): face_yolov8m.pt
+[2026-10-19 10:00:09] [MODELS] SKIP (ya existe): hand_yolov8n.pt
+[2026-10-19 10:00:10] [MODELS] INICIO: buffalo_l.zip (iahispano/applio/Resources/antelopev2/buffalo_l.zip)
+[2026-10-19 10:00:30] [MODELS] OK: /workspace/comfyui-data/models/insightface/.hf_stage/buffalo_l.zip (275M)
+[2026-10-19 10:00:32] [MODELS] OK: InsightFace buffalo_l listo en /workspace/comfyui-data/models/insightface/models/buffalo_l
+[2026-10-19 10:00:33] [MODELS] RESUMEN FASE 1: 0 fallo(s) de 12 archivos.
+[2026-10-19 10:00:33] [MODELS] FASE 1 COMPLETADA.
+[2026-10-19 10:00:34] [MODELS] ======================================================================
+[2026-10-19 10:00:34] [MODELS] INICIANDO FASE 1 (Síncrona — Modelos base indispensables)
+[2026-10-19 10:00:34] [MODELS] ======================================================================
+[2026-10-19 10:00:34] [MODELS] PLAN FASE 1: 12 archivos (11 vía hf_fetch + 1 paquete InsightFace buffalo_l)
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): sdxl_vae.safetensors
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): 4x-UltraSharp.pth
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): 4x-AnimeSharp.pth
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): RealESRGAN_x4plus_anime_6B.pth
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): ip-adapter-plus_sdxl_vit-h.safetensors
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): ip-adapter-plus-face_sdxl_vit-h.safetensors
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): controlnet-union-sdxl-1.0-promax.safetensors
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): face_yolov8m.pt
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): hand_yolov8n.pt
+[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): InsightFace buffalo_l
+[2026-10-19 10:00:34] [MODELS] RESUMEN FASE 1: 0 fallo(s) de 12 archivos.
+[2026-10-19 10:00:34] [MODELS] FASE 1 COMPLETADA.
+[2026-10-19 10:00:35] [MODELS] ======================================================================
+[2026-10-19 10:00:35] [MODELS] INICIANDO FASE 2 (Asíncrona en segundo plano — Perfil: anime)
+[2026-10-19 10:00:35] [MODELS] ======================================================================
+[2026-10-19 10:00:35] [MODELS] PLAN FASE 2: 3 archivos para MODEL_PROFILE=anime
+[2026-10-19 10:00:36] [MODELS] INICIO: animagine-xl-4.0-opt.safetensors (cagliostrolab/animagine-xl-4.0/animagine-xl-4.0-opt.safetensors)
+[2026-10-19 10:00:55] [MODELS] OK: /workspace/comfyui-data/models/checkpoints/animagine-xl-4.0-opt.safetensors (6.5G)
+[2026-10-19 10:00:56] [MODELS] INICIO: noobaiXLNAIXL_vPred10Version.safetensors (Laxhar/noobai-XL-Vpred-1.0/noobai-XL-Vpred-1.0.safetensors)
+[2026-10-19 10:01:15] [MODELS] OK: /workspace/comfyui-data/models/checkpoints/noobaiXLNAIXL_vPred10Version.safetensors (6.5G)
+[2026-10-19 10:01:16] [MODELS] INICIO: waiNSFWIllustrious_v120.safetensors (LaunchpadORT/WAI-NSFW-illustrious-SDXL/waiNSFWIllustrious_v120.safetensors)

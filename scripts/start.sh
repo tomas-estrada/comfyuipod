@@ -2,15 +2,13 @@
 # ==============================================================================
 # start.sh — Entrypoint principal del contenedor ComfyUI "Everything-Ready"
 # ==============================================================================
-# 1. Inicializa logs en /var/log/{start,comfyui,supervisor,status-server,diag}.log
-# 2. Muestra banner con metadatos de imagen (/etc/comfyui/image.json, §7.2)
-# 3. Verifica ffmpeg + libx264 + h264_nvenc sin SIGPIPE (Lección 1 / REL-02)
-# 4. Prepara datos en COMFY_DATA_DIR (incluyendo models/configs) y enlaza /opt/ComfyUI
-# 5. Configura HTTP Basic Auth en Nginx por stdin y sin exponer clave (SEC-01/02/04)
-# 6. Arranca Nginx + status-server.py (127.0.0.1:18189) + ttyd opcional (§5.4 / §8.1)
-# 7. Ejecuta autodiagnóstico no bloqueante /usr/local/bin/diag.sh (§7.1)
-# 8. Ejecuta Fase 1 (con timeout no-fatal) y lanza Fase 2 con setsid en background (INF-02)
-# 9. Supervisa ComfyUI en 127.0.0.1:18188 con clasificación de salidas y reinicio (§5)
+# 0. Inicializa logs en /var/log/{start,comfyui,supervisor,download-models}.log y diag.txt
+# 1. Muestra banner con metadatos de imagen (/etc/comfyui/image.json, §7.2) y verifica ffmpeg
+# 2. Prepara datos en COMFY_DATA_DIR (incluyendo models/configs) y enlaza /opt/ComfyUI
+# 3. Configura HTTP Basic Auth en Nginx por stdin y escribe /run/comfyui-pass (0600, §9)
+# 4. Arranca Nginx y ttyd opcional (127.0.0.1:7681) antes de ceder el control (§5.3)
+# 5. Ejecuta exec /usr/local/bin/comfyctl supervise (servidor HTTP :18189, strict-check,
+#    diag, Fase 1/2 y bucle supervisor de ComfyUI en 127.0.0.1:18188)
 # ==============================================================================
 
 set -euo pipefail
@@ -40,14 +38,12 @@ touch \
     /var/log/start.log \
     /var/log/comfyui.log \
     /var/log/supervisor.log \
-    /var/log/status-server.log \
     /var/log/download-models.log \
     /var/log/diag.txt
 chmod 644 \
     /var/log/start.log \
     /var/log/comfyui.log \
     /var/log/supervisor.log \
-    /var/log/status-server.log \
     /var/log/download-models.log \
     /var/log/diag.txt
 
@@ -68,7 +64,7 @@ except Exception:
 fi
 echo "======================================================================"
 
-# Inicializar /run/comfyui-supervisor.json antes de arrancar status-server.py
+# Inicializar /run/comfyui-supervisor.json antes de ceder el control a comfyctl supervise
 printf '{"state":"starting","attempt":0,"restarts":0,"healthy_resets":0,"max":%s,"pid":null,"started_at":null,"last_exit":null}\n' "${COMFY_MAX_RESTARTS}" > /run/comfyui-supervisor.json
 
 # ------------------------------------------------------------------------------

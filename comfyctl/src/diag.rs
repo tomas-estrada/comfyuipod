@@ -4,9 +4,11 @@
 use crate::collect::procfs::collect_memory_and_disk;
 use crate::config::RuntimeConfig;
 use crate::redact::SecretRedactor;
+use crate::sys;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+use std::time::Duration;
 
 struct DiagAggregator {
     lines: Vec<String>,
@@ -67,6 +69,12 @@ impl DiagAggregator {
 }
 
 fn resolve_probe_script(filename: &str) -> PathBuf {
+    if let Ok(custom_dir) = std::env::var("COMFY_PROBES_DIR") {
+        let custom_path = Path::new(&custom_dir).join(filename);
+        if custom_path.is_file() {
+            return custom_path;
+        }
+    }
     let etc_path = Path::new("/etc/comfyui/probes").join(filename);
     if etc_path.is_file() {
         return etc_path;
@@ -78,17 +86,34 @@ fn resolve_probe_script(filename: &str) -> PathBuf {
     etc_path
 }
 
-fn run_python_probe(script_name: &str) -> String {
+fn probe_timeout_secs(default_s: u64) -> Duration {
+    let secs = std::env::var("COMFY_DIAG_PROBE_TIMEOUT_S")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(default_s);
+    Duration::from_secs(secs)
+}
+
+fn run_python_probe(script_name: &str, default_timeout_s: u64) -> String {
     let script_path = resolve_probe_script(script_name);
-    match Command::new("python3").arg(&script_path).output() {
-        Ok(out) => {
-            let mut txt = String::from_utf8_lossy(&out.stdout).into_owned();
-            let err = String::from_utf8_lossy(&out.stderr);
-            if !err.trim().is_empty() {
+    let py_bin = std::env::var("COMFY_PROBE_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let timeout = probe_timeout_secs(default_timeout_s);
+    let mut cmd = Command::new(py_bin);
+    cmd.arg(&script_path);
+    match sys::run_command_with_timeout(&mut cmd, timeout) {
+        Ok((_, _, _, true)) => format!(
+            "FAIL|timeout (>{}s) ejecutando {}",
+            timeout.as_secs(),
+            script_name
+        ),
+        Ok((_, stdout, stderr, false)) => {
+            let mut txt = stdout;
+            if !stderr.trim().is_empty() {
                 if !txt.is_empty() {
                     txt.push(' ');
                 }
-                txt.push_str(err.trim());
+                txt.push_str(stderr.trim());
             }
             txt
         }
@@ -101,65 +126,72 @@ pub fn run_diag_cmd(cfg: &RuntimeConfig, output_path: Option<&Path>) -> Result<i
     let redactor = SecretRedactor::from_config(cfg);
     let mut agg = DiagAggregator::new(redactor);
 
-    // 1. GPU (nvidia-smi)
-    if let Ok(out) = Command::new(&cfg.nvidia_smi_bin)
-        .args([
-            "--query-gpu=name,driver_version,memory.total,compute_cap",
-            "--format=csv,noheader",
-        ])
-        .output()
-    {
-        let first = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if out.status.success() && !first.is_empty() {
-            agg.emit("OK", "gpu", &first);
-        } else {
+    // 1. GPU (nvidia-smi, timeout 10s)
+    let mut smi_cmd = Command::new(&cfg.nvidia_smi_bin);
+    smi_cmd.args([
+        "--query-gpu=name,driver_version,memory.total,compute_cap",
+        "--format=csv,noheader",
+    ]);
+    match sys::run_command_with_timeout(&mut smi_cmd, probe_timeout_secs(10)) {
+        Ok((_, _, _, true)) => {
+            agg.emit("FAIL", "gpu", "timeout ejecutando nvidia-smi");
+        }
+        Ok((Some(0), stdout, _, false)) => {
+            let first = stdout.lines().next().unwrap_or("").trim().to_string();
+            if first.is_empty() {
+                agg.emit(
+                    "WARN",
+                    "gpu",
+                    "nvidia-smi presente pero sin GPU accesible (modo CPU o contenedor sin --gpus)",
+                );
+            } else {
+                agg.emit("OK", "gpu", &first);
+            }
+        }
+        Ok((_, _, _, false)) => {
             agg.emit(
                 "WARN",
                 "gpu",
                 "nvidia-smi presente pero sin GPU accesible (modo CPU o contenedor sin --gpus)",
             );
         }
-    } else {
-        agg.emit(
-            "WARN",
-            "gpu",
-            "nvidia-smi no instalado o no disponible en PATH (modo CPU)",
-        );
+        Err(_) => {
+            agg.emit(
+                "WARN",
+                "gpu",
+                "nvidia-smi no instalado o no disponible en PATH (modo CPU)",
+            );
+        }
     }
 
-    // 2. PyTorch + CUDA + matmul 1024x1024
-    let torch_out = run_python_probe("torch_cuda.py");
+    // 2. PyTorch + CUDA + matmul 1024x1024 (timeout 15s)
+    let torch_out = run_python_probe("torch_cuda.py", 15);
     agg.emit_probe_line("torch", &torch_out);
 
-    // 3. ONNX Runtime
-    let ort_out = run_python_probe("ort_cuda.py");
+    // 3. ONNX Runtime (timeout 15s)
+    let ort_out = run_python_probe("ort_cuda.py", 15);
     agg.emit_probe_line("ort", &ort_out);
 
-    // 4. ffmpeg NVENC (h264_nvenc)
-    let nvenc_ok = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=duration=1:size=640x360:rate=30",
-            "-c:v",
-            "h264_nvenc",
-            "-f",
-            "null",
-            "-",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|st| st.success());
+    // 4. ffmpeg NVENC (h264_nvenc, timeout 15s)
+    let mut nvenc_cmd = Command::new("ffmpeg");
+    nvenc_cmd.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=1:size=640x360:rate=30",
+        "-c:v",
+        "h264_nvenc",
+        "-f",
+        "null",
+        "-",
+    ]);
+    let nvenc_ok = matches!(
+        sys::run_command_with_timeout(&mut nvenc_cmd, probe_timeout_secs(15)),
+        Ok((Some(0), _, _, false))
+    );
     if nvenc_ok {
         agg.emit(
             "OK",
@@ -174,50 +206,52 @@ pub fn run_diag_cmd(cfg: &RuntimeConfig, output_path: Option<&Path>) -> Result<i
         );
     }
 
-    // 5. ffmpeg libx264 (CPU)
-    let x264_ok = Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=duration=1:size=640x360:rate=30",
-            "-c:v",
-            "libx264",
-            "-f",
-            "null",
-            "-",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|st| st.success());
-    if x264_ok {
-        agg.emit(
-            "OK",
-            "libx264",
-            "Codificación de prueba 640x360@30fps con libx264 exitosa",
-        );
-    } else {
-        agg.emit("FAIL", "libx264", "Codificación con libx264 falló");
+    // 5. ffmpeg libx264 (CPU, timeout 15s)
+    let mut x264_cmd = Command::new("ffmpeg");
+    x264_cmd.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc=duration=1:size=640x360:rate=30",
+        "-c:v",
+        "libx264",
+        "-f",
+        "null",
+        "-",
+    ]);
+    match sys::run_command_with_timeout(&mut x264_cmd, probe_timeout_secs(15)) {
+        Ok((Some(0), _, _, false)) => {
+            agg.emit(
+                "OK",
+                "libx264",
+                "Codificación de prueba 640x360@30fps con libx264 exitosa",
+            );
+        }
+        Ok((_, _, _, true)) => {
+            agg.emit("FAIL", "libx264", "timeout ejecutando ffmpeg libx264");
+        }
+        _ => {
+            agg.emit("FAIL", "libx264", "Codificación con libx264 falló");
+        }
     }
 
-    // 6. Nginx (sintaxis + workers como www-data)
-    let nginx_t_ok = Command::new("nginx")
-        .arg("-t")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|st| st.success());
+    // 6. Nginx (sintaxis + workers como www-data, timeout 5s)
+    let mut nginx_cmd = Command::new("nginx");
+    nginx_cmd.arg("-t");
+    let nginx_t_ok = matches!(
+        sys::run_command_with_timeout(&mut nginx_cmd, probe_timeout_secs(5)),
+        Ok((Some(0), _, _, false))
+    );
     if nginx_t_ok {
-        let users = Command::new("ps")
-            .args(["-o", "user=", "-C", "nginx"])
-            .output()
+        let mut ps_cmd = Command::new("ps");
+        ps_cmd.args(["-o", "user=", "-C", "nginx"]);
+        let users = sys::run_command_with_timeout(&mut ps_cmd, probe_timeout_secs(5))
             .ok()
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
+            .map(|(_, stdout, _, _)| {
+                stdout
                     .lines()
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
@@ -266,20 +300,24 @@ pub fn run_diag_cmd(cfg: &RuntimeConfig, output_path: Option<&Path>) -> Result<i
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     agg.emit("OK", "cpu", &format!("nproc={cores}"));
 
-    // 8. Python imports críticos
-    let py_out = run_python_probe("python_imports.py");
+    // 8. Python imports críticos (timeout 10s)
+    let py_out = run_python_probe("python_imports.py", 10);
     agg.emit_probe_line("python-imports", &py_out);
 
-    // 9. ldconfig (libcudnn / libcublas)
-    let ld_count = Command::new("ldconfig")
-        .arg("-p")
-        .output()
+    // 9. ldconfig (libcudnn / libcublas, timeout 5s)
+    let mut ld_cmd = Command::new("ldconfig");
+    ld_cmd.arg("-p");
+    let ld_count = sys::run_command_with_timeout(&mut ld_cmd, probe_timeout_secs(5))
         .ok()
-        .map_or(0_usize, |o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .filter(|ln| ln.contains("libcudnn") || ln.contains("libcublas"))
-                .count()
+        .map_or(0_usize, |(_, stdout, _, timed_out)| {
+            if timed_out {
+                0
+            } else {
+                stdout
+                    .lines()
+                    .filter(|ln| ln.contains("libcudnn") || ln.contains("libcublas"))
+                    .count()
+            }
         });
     if ld_count > 0 {
         agg.emit(

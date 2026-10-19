@@ -524,7 +524,7 @@
         const strictEl = document.getElementById("strict-fatal-banner");
         if (api.strict && api.strict.result === "fatal") {
           const fatals = (api.strict.checks || []).filter(c => c.status === "fatal");
-          const details = fatals.map(c => `${c.id}: ${c.message} (${c.remediation || "comfy destroy <id>"})`).join(" | ");
+          const details = fatals.map(c => `${c.id} (${c.name}): ${c.detail} — ${c.remediation || "comfy destroy <id>"}`).join(" | ");
           strictEl.style.display = "block";
           strictEl.textContent = `ARRANQUE ESTRICTO FALLIDO (FATAL): ${details || "Host incompatible"}. Destruye la instancia con comfy destroy <id> para evitar cargos de almacenamiento.`;
         } else {

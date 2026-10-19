@@ -322,27 +322,27 @@ pub fn collect_services_status(cfg: &RuntimeConfig) -> ServicesStatus {
     let mut nginx_running = false;
     let mut workers_user = "none".to_string();
 
-    if let Ok(out) = Command::new("ps")
-        .args(["-o", "user=", "-C", "nginx"])
-        .output()
+    let mut ps_cmd = Command::new("ps");
+    ps_cmd.args(["-o", "user=", "-C", "nginx"]);
+    if let Ok((Some(0), txt, _, false)) =
+        sys::run_command_with_timeout(&mut ps_cmd, Duration::from_secs(5))
     {
-        if out.status.success() {
-            let txt = String::from_utf8_lossy(&out.stdout);
-            let users: Vec<&str> = txt
-                .lines()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !users.is_empty() {
-                nginx_running = true;
-                if users.contains(&"www-data") {
-                    workers_user = "www-data".to_string();
-                } else if let Some(first) = users.first() {
-                    workers_user = (*first).to_string();
-                }
+        let users: Vec<&str> = txt
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !users.is_empty() {
+            nginx_running = true;
+            if users.contains(&"www-data") {
+                workers_user = "www-data".to_string();
+            } else if let Some(first) = users.first() {
+                workers_user = (*first).to_string();
             }
         }
     }
+
+    let status_srv_running = check_tcp_port(cfg.status_server_port, 100);
 
     let term_running = if cfg.enable_web_terminal {
         check_tcp_port(7681, 200)
@@ -355,7 +355,9 @@ pub fn collect_services_status(cfg: &RuntimeConfig) -> ServicesStatus {
             running: nginx_running,
             workers_user,
         },
-        status_server: StatusServerServiceStatus { running: true },
+        status_server: StatusServerServiceStatus {
+            running: status_srv_running,
+        },
         terminal: TerminalServiceStatus {
             enabled: cfg.enable_web_terminal,
             running: term_running,

@@ -1,5 +1,5 @@
 //! `strict` — Validación estricta de arranque (`comfyctl strict-check`, §6).
-//! Evalúa las 9 invariantes S1..S9 antes de iniciar Fase 1 o `ComfyUI`,
+//! Evalúa las 10 invariantes S1..S10 antes de iniciar Fase 1 o `ComfyUI`,
 //! persiste `/run/comfyui-strict.json` de forma atómica e imprime el banner.
 
 use crate::config::RuntimeConfig;
@@ -7,8 +7,9 @@ use crate::sys;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StrictCheckItem {
@@ -27,7 +28,7 @@ pub struct StrictReport {
     pub checks: Vec<StrictCheckItem>,
 }
 
-/// Datos del sistema sondeados para evaluar S1..S9 (inyectables en tests).
+/// Datos del sistema sondeados para evaluar S1..S10 (inyectables en tests).
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct SystemSnapshot {
@@ -35,23 +36,28 @@ pub struct SystemSnapshot {
     pub gpu_name: String,
     pub driver_version: String,
     pub vram_total_mb: u64,
+    pub ram_probe_ok: bool,
     pub ram_total_mb: u64,
     pub disk_free_gb: f64,
     pub workspace_writable: bool,
     pub nginx_config_ok: bool,
     pub nginx_detail: String,
     pub htpasswd_ok: bool,
+    pub htpasswd_missing: bool,
     pub htpasswd_detail: String,
     pub comfy_install_ok: bool,
     pub comfy_install_detail: String,
+    pub cuda_torch_ok: bool,
+    pub cuda_torch_detail: String,
 }
 
 impl SystemSnapshot {
-    /// Recolecta el estado real del contenedor invocando `nvidia-smi`, `/proc/meminfo`, `statvfs`, etc.
+    /// Recolecta el estado real del contenedor invocando `nvidia-smi`, `/proc/meminfo` + cgroups,
+    /// `statvfs`, `nginx -t` y `torch_cuda.py` con timeouts estrictos (`R-02`, `R-03`, `R-06`, `R-07`).
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn collect_live(cfg: &RuntimeConfig) -> Self {
         let (gpu_query_ok, gpu_name, driver_version, vram_total_mb) = probe_nvidia_smi();
-        let ram_total_mb = probe_mem_total_mb();
+        let (ram_probe_ok, ram_total_mb) = probe_mem_total_mb();
         let disk_path = if cfg.comfy_data_dir.exists() {
             cfg.comfy_data_dir.as_path()
         } else if Path::new("/workspace").exists() {
@@ -62,37 +68,43 @@ impl SystemSnapshot {
         let disk_free_gb = sys::disk_stats_gb(disk_path).map_or(0.0, |(_, _, free)| free);
         let workspace_writable = probe_dir_writable(&cfg.comfy_data_dir);
         let (nginx_config_ok, nginx_detail) = probe_nginx_t();
-        let (htpasswd_ok, htpasswd_detail) = probe_htpasswd(Path::new("/etc/nginx/.htpasswd"));
+        let (htpasswd_ok, htpasswd_missing, htpasswd_detail) = probe_htpasswd(&cfg.htpasswd_path);
         let (comfy_install_ok, comfy_install_detail) = probe_comfy_install(&cfg.comfy_app_dir);
+        let (cuda_torch_ok, cuda_torch_detail) = probe_cuda_torch(cfg.strict_require_gpu);
 
         Self {
             gpu_query_ok,
             gpu_name,
             driver_version,
             vram_total_mb,
+            ram_probe_ok,
             ram_total_mb,
             disk_free_gb,
             workspace_writable,
             nginx_config_ok,
             nginx_detail,
             htpasswd_ok,
+            htpasswd_missing,
             htpasswd_detail,
             comfy_install_ok,
             comfy_install_detail,
+            cuda_torch_ok,
+            cuda_torch_detail,
         }
     }
 }
 
 pub fn probe_nvidia_smi() -> (bool, String, String, u64) {
     let bin = std::env::var("COMFY_NVIDIA_SMI_BIN").unwrap_or_else(|_| "nvidia-smi".to_string());
-    let output = Command::new(&bin)
-        .args([
-            "--query-gpu=name,driver_version,memory.total",
-            "--format=csv,noheader,nounits",
-        ])
-        .output();
+    let mut cmd = Command::new(&bin);
+    cmd.args([
+        "--query-gpu=name,driver_version,memory.total",
+        "--format=csv,noheader,nounits",
+    ]);
 
-    let Ok(out) = output else {
+    let Ok((code, stdout, stderr, timed_out)) =
+        sys::run_command_with_timeout(&mut cmd, Duration::from_secs(10))
+    else {
         return (
             false,
             "nvidia-smi no encontrado".to_string(),
@@ -100,21 +112,28 @@ pub fn probe_nvidia_smi() -> (bool, String, String, u64) {
             0,
         );
     };
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let msg = if !stderr.is_empty() {
-            stderr
-        } else if !stdout.is_empty() {
-            stdout
+    if timed_out {
+        return (
+            false,
+            "timeout (>10s) ejecutando nvidia-smi".to_string(),
+            String::new(),
+            0,
+        );
+    }
+    if code != Some(0) {
+        let err_trim = stderr.trim();
+        let out_trim = stdout.trim();
+        let msg = if !err_trim.is_empty() {
+            err_trim.to_string()
+        } else if !out_trim.is_empty() {
+            out_trim.to_string()
         } else {
-            format!("rc={}", out.status.code().unwrap_or(1))
+            format!("rc={}", code.unwrap_or(1))
         };
         return (false, msg, String::new(), 0);
     }
 
-    let text = String::from_utf8_lossy(&out.stdout);
-    let first_line = text.lines().next().unwrap_or("").trim();
+    let first_line = stdout.lines().next().unwrap_or("").trim();
     let mut parts = first_line.split(',').map(str::trim);
     let Some(name) = parts.next() else {
         return (
@@ -154,21 +173,49 @@ pub fn probe_nvidia_smi() -> (bool, String, String, u64) {
     (true, name.to_string(), driver.to_string(), vram_mb)
 }
 
-fn probe_mem_total_mb() -> u64 {
+/// Lee la RAM disponible en MiB desde `/proc/meminfo` y aplica el límite de cgroup v2/v1 si existe (`R-03`).
+/// Nunca devuelve un valor ficticio silencioso: si `/proc/meminfo` no es legible devuelve `(false, 0)`.
+pub fn probe_mem_total_mb() -> (bool, u64) {
     let Ok(content) = fs::read_to_string("/proc/meminfo") else {
-        return 32768;
+        return (false, 0);
     };
+    let mut mem_mb = 0_u64;
+    let mut found = false;
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("MemTotal:") {
-            let kb = rest
+            if let Some(kb) = rest
                 .split_whitespace()
                 .next()
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
-            return kb / 1024;
+            {
+                mem_mb = kb / 1024;
+                found = true;
+                break;
+            }
         }
     }
-    0
+    if !found || mem_mb == 0 {
+        return (false, 0);
+    }
+
+    for cg_path in [
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ] {
+        if let Ok(raw) = fs::read_to_string(cg_path) {
+            if let Ok(bytes) = raw.trim().parse::<u64>() {
+                // Ignorar "max" o límites ilimitados (~PAGE_COUNTER_MAX >= 1 PiB)
+                if bytes > 0 && bytes < (1_u64 << 50) {
+                    let cg_mb = bytes / (1024 * 1024);
+                    if cg_mb > 0 && cg_mb < mem_mb {
+                        mem_mb = cg_mb;
+                    }
+                }
+            }
+        }
+    }
+
+    (true, mem_mb)
 }
 
 fn probe_dir_writable(dir: &Path) -> bool {
@@ -191,10 +238,13 @@ fn probe_dir_writable(dir: &Path) -> bool {
 
 fn probe_nginx_t() -> (bool, String) {
     let bin = std::env::var("COMFY_NGINX_BIN").unwrap_or_else(|_| "nginx".to_string());
-    match Command::new(bin).arg("-t").output() {
-        Ok(out) if out.status.success() => (true, "nginx -t OK".to_string()),
-        Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let mut cmd = Command::new(bin);
+    cmd.arg("-t");
+    match sys::run_command_with_timeout(&mut cmd, Duration::from_secs(5)) {
+        Ok((_, _, _, true)) => (false, "timeout (>5s) ejecutando nginx -t".to_string()),
+        Ok((Some(0), _, _, false)) => (true, "nginx -t OK".to_string()),
+        Ok((_, _, stderr, false)) => {
+            let err = stderr.trim().to_string();
             (
                 false,
                 if err.is_empty() {
@@ -208,12 +258,17 @@ fn probe_nginx_t() -> (bool, String) {
     }
 }
 
-fn probe_htpasswd(path: &Path) -> (bool, String) {
+/// Devuelve `(ok, missing, detail)` para `/etc/nginx/.htpasswd` (`R-02`).
+pub fn probe_htpasswd(path: &Path) -> (bool, bool, String) {
     let Ok(meta) = fs::metadata(path) else {
-        return (false, format!("No existe {}", path.display()));
+        return (false, true, format!("No existe {}", path.display()));
     };
     if meta.len() == 0 {
-        return (false, format!("{} está vacío (0 bytes)", path.display()));
+        return (
+            false,
+            false,
+            format!("{} está vacío (0 bytes)", path.display()),
+        );
     }
     #[cfg(unix)]
     {
@@ -221,6 +276,7 @@ fn probe_htpasswd(path: &Path) -> (bool, String) {
         let mode = meta.permissions().mode() & 0o777;
         if (mode & 0o007) != 0 {
             return (
+                false,
                 false,
                 format!(
                     "Permisos inseguros {:04o} en {} (esperado 0640)",
@@ -232,6 +288,7 @@ fn probe_htpasswd(path: &Path) -> (bool, String) {
     }
     (
         true,
+        false,
         format!("{} válido ({} bytes)", path.display(), meta.len()),
     )
 }
@@ -251,6 +308,67 @@ fn probe_comfy_install(app_dir: &Path) -> (bool, String) {
     )
 }
 
+fn resolve_torch_probe_path() -> PathBuf {
+    if let Ok(dir) = std::env::var("COMFY_PROBES_DIR") {
+        let p = Path::new(&dir).join("torch_cuda.py");
+        if p.is_file() {
+            return p;
+        }
+    }
+    let etc_p = Path::new("/etc/comfyui/probes/torch_cuda.py");
+    if etc_p.is_file() {
+        return etc_p.to_path_buf();
+    }
+    let local_p = Path::new("config/probes/torch_cuda.py");
+    if local_p.is_file() {
+        return local_p.to_path_buf();
+    }
+    etc_p.to_path_buf()
+}
+
+/// Ejecuta la sonda `torch_cuda.py` con timeout de 20s para validar `S10` (`cuda_torch`, `R-06` y `R-07`).
+pub fn probe_cuda_torch(require_gpu: bool) -> (bool, String) {
+    if !require_gpu {
+        return (true, "Omitido en modo CPU".to_string());
+    }
+    let py_bin = std::env::var("COMFY_PROBE_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let script = resolve_torch_probe_path();
+    let mut cmd = Command::new(py_bin);
+    cmd.arg(&script);
+    match sys::run_command_with_timeout(&mut cmd, Duration::from_secs(20)) {
+        Ok((_, _, _, true)) => (
+            false,
+            "timeout (>20s) ejecutando sonda torch_cuda.py".to_string(),
+        ),
+        Ok((_, stdout, stderr, false)) => {
+            let line = stdout.lines().next().unwrap_or("").trim();
+            if let Some((lvl, msg)) = line.split_once('|') {
+                if lvl.trim() == "OK" {
+                    return (true, msg.trim().to_string());
+                }
+                return (false, msg.trim().to_string());
+            }
+            let err_txt = if line.is_empty() {
+                stderr.trim().to_string()
+            } else {
+                line.to_string()
+            };
+            (
+                false,
+                if err_txt.is_empty() {
+                    "torch_cuda.py falló sin salida".to_string()
+                } else {
+                    err_txt
+                },
+            )
+        }
+        Err(e) => (
+            false,
+            format!("No se pudo ejecutar {}: {e}", script.display()),
+        ),
+    }
+}
+
 fn parse_driver_major(driver: &str) -> u32 {
     driver
         .split('.')
@@ -261,10 +379,10 @@ fn parse_driver_major(driver: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// Evalúa las 9 comprobaciones S1..S9 sobre un `SystemSnapshot`.
+/// Evalúa las 10 comprobaciones S1..S10 sobre un `SystemSnapshot` (§6.2, `R-02`, `R-03`, `R-06`).
 #[allow(clippy::too_many_lines)]
 pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> StrictReport {
-    let mut checks = Vec::with_capacity(9);
+    let mut checks = Vec::with_capacity(10);
 
     let status_for = |passed: bool, is_fatal_when_strict: bool| -> &'static str {
         if passed {
@@ -350,24 +468,41 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
         });
     }
 
-    // S3: VRAM total >= STRICT_MIN_VRAM_MB (16000 MB por defecto)
+    // S3: VRAM total >= STRICT_MIN_VRAM_MB (20000 MB por defecto; WARN si < 22000 MB, §6.2 / R-06)
     if cfg.strict_require_gpu {
-        let s3_ok = snap.gpu_query_ok && snap.vram_total_mb >= cfg.strict_min_vram_mb;
+        let s3_fatal = !snap.gpu_query_ok || snap.vram_total_mb < cfg.strict_min_vram_mb;
+        let s3_warn = !s3_fatal
+            && cfg.strict_min_vram_mb >= 20000
+            && snap.vram_total_mb < cfg.strict_warn_vram_mb;
+        let s3_status = if s3_fatal {
+            status_for(false, true)
+        } else if s3_warn {
+            "warn"
+        } else {
+            "ok"
+        };
         checks.push(StrictCheckItem {
             id: "S3".to_string(),
             name: "vram_min".to_string(),
-            status: status_for(s3_ok, true).to_string(),
-            detail: format!(
-                "{} MB VRAM detectados (mínimo requerido: {} MB)",
-                snap.vram_total_mb, cfg.strict_min_vram_mb
-            ),
-            remediation: if s3_ok {
-                None
+            status: s3_status.to_string(),
+            detail: if s3_warn {
+                format!(
+                    "{} MB VRAM detectados (>= {} MB mínimo, pero < {} MB recomendados)",
+                    snap.vram_total_mb, cfg.strict_min_vram_mb, cfg.strict_warn_vram_mb
+                )
             } else {
+                format!(
+                    "{} MB VRAM detectados (mínimo requerido: {} MB)",
+                    snap.vram_total_mb, cfg.strict_min_vram_mb
+                )
+            },
+            remediation: if s3_fatal {
                 Some(format!(
                     "VRAM insuficiente para los checkpoints SDXL/FLUX configurados. Alquila una GPU con >= {} MB o ajusta STRICT_MIN_VRAM_MB.",
                     cfg.strict_min_vram_mb
                 ))
+            } else {
+                None
             },
         });
     } else {
@@ -380,27 +515,56 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
         });
     }
 
-    // S4: RAM del host >= STRICT_MIN_RAM_MB (16384 MB por defecto)
-    let s4_ok = snap.ram_total_mb >= cfg.strict_min_ram_mb;
-    checks.push(StrictCheckItem {
-        id: "S4".to_string(),
-        name: "ram_min".to_string(),
-        status: status_for(s4_ok, true).to_string(),
-        detail: format!(
-            "{} MB RAM detectados (mínimo requerido: {} MB)",
-            snap.ram_total_mb, cfg.strict_min_ram_mb
-        ),
-        remediation: if s4_ok {
-            None
+    // S4: RAM del host >= STRICT_MIN_RAM_MB (16384 MB por defecto con 5% tolerancia de reserva kernel; WARN en 16-32 GB, R-03 y R-06)
+    if snap.ram_probe_ok {
+        let min_ram_eff = cfg.strict_min_ram_mb.saturating_mul(95) / 100;
+        let warn_ram_eff = cfg.strict_warn_ram_mb.saturating_mul(95) / 100;
+        let s4_fatal = snap.ram_total_mb < min_ram_eff;
+        let s4_warn =
+            !s4_fatal && cfg.strict_min_ram_mb >= 16384 && snap.ram_total_mb < warn_ram_eff;
+        let s4_status = if s4_fatal {
+            status_for(false, true)
+        } else if s4_warn {
+            "warn"
         } else {
-            Some(format!(
-                "RAM del host insuficiente (< {} MB); provocará muertes SIGKILL (rc=137) al cargar modelos. Alquila un host con cpu_ram>=32.",
-                cfg.strict_min_ram_mb
-            ))
-        },
-    });
+            "ok"
+        };
+        checks.push(StrictCheckItem {
+            id: "S4".to_string(),
+            name: "ram_min".to_string(),
+            status: s4_status.to_string(),
+            detail: if s4_warn {
+                format!(
+                    "{} MB RAM detectados (>= {} MB mínimo con margen kernel, pero < {} MB recomendados para perfil all/FLUX)",
+                    snap.ram_total_mb, cfg.strict_min_ram_mb, cfg.strict_warn_ram_mb
+                )
+            } else {
+                format!(
+                    "{} MB RAM detectados (mínimo requerido: {} MB)",
+                    snap.ram_total_mb, cfg.strict_min_ram_mb
+                )
+            },
+            remediation: if s4_fatal {
+                Some(format!(
+                    "RAM del host insuficiente (< {} MB); provocará muertes SIGKILL (rc=137) al cargar modelos. Alquila un host con cpu_ram>=32.",
+                    cfg.strict_min_ram_mb
+                ))
+            } else {
+                None
+            },
+        });
+    } else {
+        checks.push(StrictCheckItem {
+            id: "S4".to_string(),
+            name: "ram_min".to_string(),
+            status: "warn".to_string(),
+            detail: "No se pudo leer /proc/meminfo (entorno no-Linux o procfs no disponible)"
+                .to_string(),
+            remediation: None,
+        });
+    }
 
-    // S5: Espacio libre en disco >= STRICT_MIN_DISK_GB
+    // S5: Espacio libre en disco >= STRICT_MIN_DISK_GB (75 / 45 / 10 GB o 5 GB con SKIP_MODEL_DOWNLOAD=1)
     #[allow(clippy::cast_precision_loss)]
     let s5_ok = snap.disk_free_gb >= (cfg.strict_min_disk_gb as f64);
     checks.push(StrictCheckItem {
@@ -445,20 +609,43 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
         },
     });
 
-    // S7: Configuración de Nginx válida y .htpasswd presente
-    let s7_ok = snap.nginx_config_ok && snap.htpasswd_ok;
+    // S7: Configuración de Nginx válida y .htpasswd presente (R-02: si se invoca fuera de start.sh y aún no existe .htpasswd, degrada a WARN)
+    let (s7_status, s7_detail, s7_rem) = if !snap.nginx_config_ok {
+        (
+            status_for(false, true),
+            format!("{}; {}", snap.nginx_detail, snap.htpasswd_detail),
+            Some("Revisa la sintaxis de /etc/nginx/nginx.conf.".to_string()),
+        )
+    } else if snap.htpasswd_ok {
+        (
+            "ok",
+            format!("{}; {}", snap.nginx_detail, snap.htpasswd_detail),
+            None,
+        )
+    } else if snap.htpasswd_missing && !cfg.require_htpasswd {
+        (
+            "warn",
+            format!(
+                "{}; {} (aún no generado; se crea en start.sh)",
+                snap.nginx_detail, snap.htpasswd_detail
+            ),
+            None,
+        )
+    } else {
+        (
+            status_for(false, true),
+            format!("{}; {}", snap.nginx_detail, snap.htpasswd_detail),
+            Some(
+                "Revisa /etc/nginx/nginx.conf y permisos 0640 de /etc/nginx/.htpasswd.".to_string(),
+            ),
+        )
+    };
     checks.push(StrictCheckItem {
         id: "S7".to_string(),
         name: "nginx_and_htpasswd".to_string(),
-        status: status_for(s7_ok, true).to_string(),
-        detail: format!("{}; {}", snap.nginx_detail, snap.htpasswd_detail),
-        remediation: if s7_ok {
-            None
-        } else {
-            Some(
-                "Revisa /etc/nginx/nginx.conf y permisos 0640 de /etc/nginx/.htpasswd.".to_string(),
-            )
-        },
+        status: s7_status.to_string(),
+        detail: s7_detail,
+        remediation: s7_rem,
     });
 
     // S8: Instalación de ComfyUI (/opt/ComfyUI/main.py y extra_model_paths.yaml)
@@ -501,6 +688,33 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
             )
         },
     });
+
+    // S10: PyTorch CUDA funcional (torch.cuda.is_available() + matmul 1024x1024, §6.2 / R-06)
+    if cfg.strict_require_gpu {
+        let s10_ok = snap.cuda_torch_ok;
+        checks.push(StrictCheckItem {
+            id: "S10".to_string(),
+            name: "cuda_torch".to_string(),
+            status: status_for(s10_ok, true).to_string(),
+            detail: snap.cuda_torch_detail.clone(),
+            remediation: if s10_ok {
+                None
+            } else {
+                Some(
+                    "PyTorch no pudo inicializar el contexto CUDA o ejecutar matmul en la GPU. Destruye esta instancia (comfy destroy <id>) y alquila otro host."
+                        .to_string(),
+                )
+            },
+        });
+    } else {
+        checks.push(StrictCheckItem {
+            id: "S10".to_string(),
+            name: "cuda_torch".to_string(),
+            status: "ok".to_string(),
+            detail: "Omitido en modo CPU".to_string(),
+            remediation: None,
+        });
+    }
 
     let has_fatal = checks.iter().any(|c| c.status == "fatal");
     let has_warn = checks.iter().any(|c| c.status == "warn");

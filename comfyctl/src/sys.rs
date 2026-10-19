@@ -5,10 +5,12 @@
 
 use chrono::{DateTime, Datelike, Timelike};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -166,19 +168,89 @@ pub fn atomic_write(path: &Path, contents: &[u8], mode: u32) -> Result<(), Strin
     })
 }
 
-/// Lee `/run/comfyui-pass` (o ruta equivalente) y lo borra inmediatamente (`unlink`, §9).
-pub fn read_and_unlink_secret(path: &Path) -> Option<String> {
+/// Lee un fichero de secreto (`/run/comfyui-pass`) y opcionalmente lo borra (`unlink`, §9 / R-11).
+pub fn read_secret_file(path: &Path, unlink: bool) -> Option<String> {
     if !path.is_file() {
         return None;
     }
     let raw = fs::read_to_string(path).ok()?;
-    let _ = fs::remove_file(path);
+    if unlink {
+        let _ = fs::remove_file(path);
+    }
     let trimmed = raw.trim().to_string();
     if trimmed.is_empty() {
         None
     } else {
         Some(trimmed)
     }
+}
+
+/// Lee `/run/comfyui-pass` (o ruta equivalente) y lo borra inmediatamente (`unlink`, §9).
+pub fn read_and_unlink_secret(path: &Path) -> Option<String> {
+    read_secret_file(path, true)
+}
+
+/// Ejecuta un subproceso con timeout estricto (`R-07`).
+/// Devuelve `(exit_code, stdout, stderr, timed_out)`. Si vence el timeout, mata al hijo (`kill` + `wait`).
+pub fn run_command_with_timeout(
+    cmd: &mut Command,
+    timeout: Duration,
+) -> Result<(Option<i32>, String, String, bool), String> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+
+    let stdout_handle = child.stdout.take().map(|mut out| {
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = out.read_to_end(&mut buf);
+            String::from_utf8_lossy(&buf).into_owned()
+        })
+    });
+    let stderr_handle = child.stderr.take().map(|mut err| {
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = err.read_to_end(&mut buf);
+            String::from_utf8_lossy(&buf).into_owned()
+        })
+    });
+
+    let start = Instant::now();
+    let mut timed_out = false;
+    let mut code = None;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                code = status.code();
+                break;
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    timed_out = true;
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e.to_string());
+            }
+        }
+    }
+
+    let stdout_str = stdout_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    let stderr_str = stderr_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+
+    Ok((code, stdout_str, stderr_str, timed_out))
 }
 
 /// Devuelve el epoch Unix actual en segundos.

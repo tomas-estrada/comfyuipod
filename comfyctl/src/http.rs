@@ -69,6 +69,8 @@ impl ServerContext {
             drift,
             folder_stats,
             missing_models,
+            refreshed_at_unix: sys::now_unix_secs(),
+            cache_age_s: 0,
         };
         if let Ok(mut guard) = self.heavy_cache.lock() {
             *guard = Some((Instant::now(), data.clone()));
@@ -76,10 +78,16 @@ impl ServerContext {
         data
     }
 
+    /// Devuelve la caché pesada si tiene <= 300s de antigüedad; si expiró (> 300s) o no existe, recalcula (`R-16`).
     pub fn get_heavy_cached(&self) -> HeavyCacheData {
         if let Ok(guard) = self.heavy_cache.lock() {
-            if let Some((_, cached)) = guard.as_ref() {
-                return cached.clone();
+            if let Some((ts, cached)) = guard.as_ref() {
+                let age_s = ts.elapsed().as_secs();
+                if age_s <= 300 {
+                    let mut out = cached.clone();
+                    out.cache_age_s = age_s;
+                    return out;
+                }
             }
         }
         self.compute_heavy_now()
@@ -171,7 +179,8 @@ pub fn handle_request(ctx: &ServerContext, req: Request) {
             );
         }
         "/status/api" => {
-            let api = ctx.get_status_api();
+            let mut api = ctx.get_status_api();
+            api.services.status_server.running = true;
             let raw_json = serde_json::to_string_pretty(&api).unwrap_or_else(|_| "{}".to_string());
             let clean_json = ctx.redactor.redact(&raw_json);
             send_http_response(

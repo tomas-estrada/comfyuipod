@@ -15,6 +15,8 @@ pub struct HeavyCacheData {
     pub drift: DriftSummary,
     pub folder_stats: Vec<String>,
     pub missing_models: Vec<String>,
+    pub refreshed_at_unix: i64,
+    pub cache_age_s: u64,
 }
 
 fn summarize_nginx_access(log_dir: &Path) -> BTreeMap<&'static str, usize> {
@@ -299,6 +301,13 @@ pub fn build_report_markdown(
 
     // 8. Drift del entorno
     let _ = writeln!(out, "## 8. Drift del entorno");
+    if heavy.cache_age_s > 300 {
+        let _ = writeln!(
+            out,
+            "- **[WARN]** Caché de drift/modelos con antigüedad de `{}s` (`> 300s`).",
+            heavy.cache_age_s
+        );
+    }
     let _ = writeln!(
         out,
         "### Diferencias `pip freeze` vs `/etc/comfyui/requirements.lock`"
@@ -322,9 +331,14 @@ pub fn build_report_markdown(
         "### Estado de `custom_nodes/` vs `/etc/comfyui/nodes.lock`"
     );
     if heavy.drift.node_drift.is_empty() {
+        let lock_count = if heavy.drift.nodes_lock_count > 0 {
+            heavy.drift.nodes_lock_count
+        } else {
+            10
+        };
         let _ = writeln!(
             out,
-            "- Los 10 custom nodes coinciden exactamente con los SHAs de `/etc/comfyui/nodes.lock`."
+            "- Los {lock_count} custom nodes coinciden exactamente con los SHAs de `/etc/comfyui/nodes.lock`."
         );
     } else {
         for nd in &heavy.drift.node_drift {
@@ -403,7 +417,11 @@ pub fn build_report_markdown(
 
     let mut report_str = redactor.redact(&out);
     if report_str.len() > 400_000 {
-        report_str = report_str.chars().take(395_000).collect();
+        let mut cut = 395_000;
+        while cut > 0 && !report_str.is_char_boundary(cut) {
+            cut = cut.saturating_sub(1);
+        }
+        report_str.truncate(cut);
         report_str.push_str("\n\n...[Informe truncado al límite de 400 KB]...\n");
     }
     report_str

@@ -4,6 +4,7 @@
 use crate::collect::models::phase2_expected_count;
 use crate::collect::procfs::ComfyUiStatus;
 use crate::strict::StrictReport;
+use chrono::NaiveDateTime;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -53,6 +54,21 @@ pub fn collect_phases_status(
     parse_phases_from_lines(&lines, skip_model_download, model_profile, hf_proc)
 }
 
+fn parse_log_line_timestamp(line: &str) -> Option<i64> {
+    let rest = line.strip_prefix('[')?;
+    let (ts_str, _) = rest.split_once(']')?;
+    NaiveDateTime::parse_from_str(ts_str.trim(), "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|dt| dt.and_utc().timestamp())
+}
+
+fn basename_of(raw: &str) -> &str {
+    Path::new(raw)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(raw)
+}
+
 #[allow(clippy::too_many_lines)]
 pub fn parse_phases_from_lines(
     lines: &[String],
@@ -86,6 +102,8 @@ pub fn parse_phases_from_lines(
     let mut p1_done: u32 = 0;
     let mut p1_total: u32 = 12;
     let mut p1_failed: u32 = 0;
+    let mut p1_start_ts: Option<i64> = None;
+    let mut p1_elapsed_s: u64 = 0;
 
     let mut p2_state = if model_profile == "minimal" {
         "skipped".to_string()
@@ -96,87 +114,169 @@ pub fn parse_phases_from_lines(
     let mut p2_total: u32 = expected_p2_total;
     let mut p2_failed: u32 = 0;
     let mut current_file: Option<String> = None;
+    let mut last_ts: Option<i64> = None;
 
-    let rx_total = Regex::new(r"\((\d+)\s+(?:archivos|modelos)").ok();
-    let rx_done =
-        Regex::new(r"completada\s+en\s+\d+s:\s*(\d+)/(\d+)\s+exitosos,\s*(\d+)\s+fallidos").ok();
+    let rx_plan = Regex::new(r"(?i)PLAN\s+FASE\s+([12]):\s*(\d+)\s+archivos").ok();
+    let rx_total_inline = Regex::new(r"(?i)\((\d+)\s+(?:archivos|modelos)").ok();
+    let rx_done_inline =
+        Regex::new(r"(?i)completada\s+en\s+(\d+)s:\s*(\d+)/(\d+)\s+exitosos,\s*(\d+)\s+fallidos")
+            .ok();
     let rx_inicio = Regex::new(r"\]\s*INICIO:\s*(\S+)").ok();
-    let rx_fin = Regex::new(r"\]\s*(OK|SKIP|ERROR):\s*(\S+)").ok();
+    let rx_ok = Regex::new(r"\]\s*OK:\s*(\S+)").ok();
+    let rx_skip = Regex::new(r"\]\s*SKIP(?:\s*\(ya existe\))?:\s*(.+)$").ok();
+    let rx_err = Regex::new(r"\]\s*ERROR:\s*(?:Falló la descarga de\s+(\S+)|(\S+))").ok();
 
     let mut current_section = "";
     for line in lines {
-        if line.contains("Iniciando FASE 1") {
+        if let Some(ts) = parse_log_line_timestamp(line) {
+            last_ts = Some(ts);
+        }
+        let upper = line.to_uppercase();
+
+        if let Some(cap) = rx_plan.as_ref().and_then(|rx| rx.captures(line)) {
+            let phase_num = cap.get(1).map_or("", |m| m.as_str());
+            if let Some(v) = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok()) {
+                if phase_num == "1" {
+                    p1_total = v;
+                } else if phase_num == "2" {
+                    p2_total = v;
+                    if v == 0 {
+                        p2_state = "skipped".to_string();
+                        current_file = None;
+                    }
+                }
+            }
+            continue;
+        }
+
+        if upper.contains("INICIANDO FASE 1") {
             current_section = "phase1";
             p1_state = "running".to_string();
-            if let Some(cap) = rx_total.as_ref().and_then(|rx| rx.captures(line)) {
+            p1_done = 0;
+            p1_failed = 0;
+            p1_start_ts = last_ts;
+            if let Some(cap) = rx_total_inline.as_ref().and_then(|rx| rx.captures(line)) {
                 if let Some(v) = cap.get(1).and_then(|m| m.as_str().parse::<u32>().ok()) {
                     p1_total = v;
                 }
             }
-        } else if line.contains("Iniciando FASE 2") {
+        } else if upper.contains("INICIANDO FASE 2") {
             current_section = "phase2";
             p2_state = "running".to_string();
-            if let Some(cap) = rx_total.as_ref().and_then(|rx| rx.captures(line)) {
+            p2_done = 0;
+            p2_failed = 0;
+            if let Some(cap) = rx_total_inline.as_ref().and_then(|rx| rx.captures(line)) {
                 if let Some(v) = cap.get(1).and_then(|m| m.as_str().parse::<u32>().ok()) {
                     p2_total = v;
                 }
             }
-        } else if line.contains("Omitiendo Fase 2") {
+        } else if upper.contains("OMITIENDO FASE 2") {
             p2_state = "skipped".to_string();
             p2_total = 0;
-        } else if line.contains("FASE 1 completada") {
+            current_file = None;
+        } else if upper.contains("FASE 1 COMPLETADA") {
             p1_state = "done".to_string();
-            if let Some(cap) = rx_done.as_ref().and_then(|rx| rx.captures(line)) {
-                if let Some(d) = cap.get(1).and_then(|m| m.as_str().parse::<u32>().ok()) {
+            if current_section == "phase1" {
+                current_file = None;
+            }
+            if let (Some(st), Some(et)) = (p1_start_ts, last_ts) {
+                let dur = u64::try_from(et.saturating_sub(st)).unwrap_or(0);
+                p1_elapsed_s = p1_elapsed_s.max(dur);
+            }
+            if let Some(cap) = rx_done_inline.as_ref().and_then(|rx| rx.captures(line)) {
+                if let Some(el) = cap.get(1).and_then(|m| m.as_str().parse::<u64>().ok()) {
+                    p1_elapsed_s = p1_elapsed_s.max(el);
+                }
+                if let Some(d) = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok()) {
                     p1_done = d;
                 }
-                if let Some(t) = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok()) {
+                if let Some(t) = cap.get(3).and_then(|m| m.as_str().parse::<u32>().ok()) {
                     p1_total = t;
                 }
-                if let Some(f) = cap.get(3).and_then(|m| m.as_str().parse::<u32>().ok()) {
+                if let Some(f) = cap.get(4).and_then(|m| m.as_str().parse::<u32>().ok()) {
                     p1_failed = f;
                 }
             }
-        } else if line.contains("FASE 2 completada") {
+        } else if upper.contains("FASE 2 COMPLETADA") {
             p2_state = "done".to_string();
             current_file = None;
-            if let Some(cap) = rx_done.as_ref().and_then(|rx| rx.captures(line)) {
-                if let Some(d) = cap.get(1).and_then(|m| m.as_str().parse::<u32>().ok()) {
+            if let Some(cap) = rx_done_inline.as_ref().and_then(|rx| rx.captures(line)) {
+                if let Some(d) = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok()) {
                     p2_done = d;
                 }
-                if let Some(t) = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok()) {
+                if let Some(t) = cap.get(3).and_then(|m| m.as_str().parse::<u32>().ok()) {
                     p2_total = t;
                 }
-                if let Some(f) = cap.get(3).and_then(|m| m.as_str().parse::<u32>().ok()) {
+                if let Some(f) = cap.get(4).and_then(|m| m.as_str().parse::<u32>().ok()) {
                     p2_failed = f;
                 }
             }
         } else {
             if let Some(cap) = rx_inicio.as_ref().and_then(|rx| rx.captures(line)) {
                 if let Some(fname) = cap.get(1) {
-                    current_file = Some(fname.as_str().to_string());
+                    current_file = Some(basename_of(fname.as_str()).to_string());
                 }
+                continue;
             }
-            if let Some(cap) = rx_fin.as_ref().and_then(|rx| rx.captures(line)) {
-                let kind = cap.get(1).map_or("", |m| m.as_str());
-                let fname = cap.get(2).map_or("", |m| m.as_str());
-                if current_file.as_deref() == Some(fname) {
+
+            if let Some(cap) = rx_ok.as_ref().and_then(|rx| rx.captures(line)) {
+                // Evitar doble conteo de buffalo_l: hf_fetch ya emite "OK: .../buffalo_l.zip"
+                // antes de que ensure_insightface_buffalo_l emita "OK: InsightFace buffalo_l listo en ..."
+                if line.contains("InsightFace buffalo_l listo en") {
+                    continue;
+                }
+                let raw_target = cap.get(1).map_or("", |m| m.as_str());
+                let base = basename_of(raw_target);
+                if current_file.as_deref() == Some(base)
+                    || current_file.as_deref() == Some(raw_target)
+                {
                     current_file = None;
                 }
                 if current_section == "phase1" && p1_state == "running" {
-                    if kind == "OK" || kind == "SKIP" {
-                        p1_done = p1_done.saturating_add(1);
-                    } else {
-                        p1_failed = p1_failed.saturating_add(1);
-                    }
+                    p1_done = p1_done.saturating_add(1);
                 } else if current_section == "phase2" && p2_state == "running" {
-                    if kind == "OK" || kind == "SKIP" {
-                        p2_done = p2_done.saturating_add(1);
-                    } else {
-                        p2_failed = p2_failed.saturating_add(1);
-                    }
+                    p2_done = p2_done.saturating_add(1);
+                }
+                continue;
+            }
+
+            if let Some(cap) = rx_skip.as_ref().and_then(|rx| rx.captures(line)) {
+                let raw_target = cap.get(1).map_or("", |m| m.as_str().trim());
+                let first_tok = raw_target.split_whitespace().next().unwrap_or("");
+                let base = basename_of(first_tok);
+                if current_file.as_deref() == Some(base)
+                    || current_file.as_deref() == Some(raw_target)
+                {
+                    current_file = None;
+                }
+                if current_section == "phase1" && p1_state == "running" {
+                    p1_done = p1_done.saturating_add(1);
+                } else if current_section == "phase2" && p2_state == "running" {
+                    p2_done = p2_done.saturating_add(1);
+                }
+                continue;
+            }
+
+            if let Some(cap) = rx_err.as_ref().and_then(|rx| rx.captures(line)) {
+                let raw_target = cap.get(1).or_else(|| cap.get(2)).map_or("", |m| m.as_str());
+                let base = basename_of(raw_target);
+                if current_file.as_deref() == Some(base)
+                    || current_file.as_deref() == Some(raw_target)
+                {
+                    current_file = None;
+                }
+                if current_section == "phase1" && p1_state == "running" {
+                    p1_failed = p1_failed.saturating_add(1);
+                } else if current_section == "phase2" && p2_state == "running" {
+                    p2_failed = p2_failed.saturating_add(1);
                 }
             }
+        }
+    }
+
+    if p1_state == "running" {
+        if let (Some(st), Some(et)) = (p1_start_ts, last_ts) {
+            p1_elapsed_s = u64::try_from(et.saturating_sub(st)).unwrap_or(0);
         }
     }
 
@@ -191,7 +291,7 @@ pub fn parse_phases_from_lines(
             done: p1_done,
             total: p1_total,
             failed: p1_failed,
-            elapsed_s: 0,
+            elapsed_s: p1_elapsed_s,
         },
         phase2: Phase2Info {
             state: p2_state,

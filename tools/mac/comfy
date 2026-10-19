@@ -234,6 +234,40 @@ cmd_open() {
                 if curl -fsS --max-time 3 "http://${ip}:${port}/healthz" >/dev/null 2>&1; then
                     break
                 fi
+                # R-10: Si /healthz devuelve 502 (Fase 1 en curso o ventana de gracia de strict FATAL),
+                # comprobar si Nginx ya responde en /home (200/401) y consultar /status/api si hay credenciales.
+                local home_code
+                home_code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 "http://${ip}:${port}/home" 2>/dev/null || echo "000")"
+                if [ "${home_code}" = "200" ] || [ "${home_code}" = "401" ]; then
+                    local probe_pass="${COMFY_PASS:-}"
+                    if [ -z "${probe_pass}" ]; then
+                        probe_pass="$(cmd_pass "${resolved_id}" 2>/dev/null || true)"
+                    fi
+                    if [ -n "${probe_pass}" ]; then
+                        local api_json
+                        api_json="$(curl_auth "${COMFY_USER}" "${probe_pass}" -fsSL --max-time 3 "http://${ip}:${port}/status/api" 2>/dev/null || true)"
+                        if [ -n "${api_json}" ]; then
+                            if API_JSON="${api_json}" python3 -c 'import json, os, sys; sys.exit(0 if (json.loads(os.environ["API_JSON"]).get("strict") or {}).get("result") == "fatal" else 1)' 2>/dev/null; then
+                                echo "[FATAL] La instancia ${resolved_id} falló el arranque estricto (strict.result=fatal):" >&2
+                                API_JSON="${api_json}" python3 -c '
+import json, os, sys
+st = json.loads(os.environ["API_JSON"]).get("strict") or {}
+for c in st.get("checks") or []:
+    if c.get("status") == "fatal":
+        print(f"  * {c.get(\"id\")} ({c.get(\"name\")}): {c.get(\"detail\")}", file=sys.stderr)
+        if c.get("remediation"):
+            print(f"    Remediación: {c.get(\"remediation\")}", file=sys.stderr)
+'
+                                echo "Abriendo http://${ip}:${port}/home para inspección y abortando espera..." >&2
+                                open_browser "http://${ip}:${port}/home"
+                                return 20
+                            fi
+                        fi
+                    fi
+                    if [ "${target_view}" != "comfy" ]; then
+                        break
+                    fi
+                fi
             fi
             echo "[INFO] Instancia ${resolved_id} en estado '${status}' (${ip:-sin-ip}:${port:-sin-puerto}); esperando a que Nginx responda..." >&2
         else
@@ -376,7 +410,7 @@ if strict.get("result") == "fatal":
     print("\n[FATAL] ARRANQUE ESTRICTO FALLIDO — HOST INCOMPATIBLE:")
     for chk in strict.get("checks") or []:
         if chk.get("status") == "fatal":
-            print(f"  * {chk.get('id')}: {chk.get('message')} (observado={chk.get('observed')}, esperado={chk.get('expected')})")
+            print(f"  * {chk.get('id')} ({chk.get('name')}): {chk.get('detail')}")
             if chk.get("remediation"):
                 print(f"    Remediación: {chk.get('remediation')}")
 print(f"ComfyUI   : state={c.get('state')} | port_open={c.get('port_open')} | restarts={c.get('restarts')}/{c.get('max_restarts')}")
@@ -493,20 +527,20 @@ PYEOF
 
     local env_flags="-p 8188:8188 -e MODEL_PROFILE=${profile} -e COMFY_USER=${COMFY_USER}"
     if [ -n "${pass}" ]; then
-        env_flags="${env_flags} -e COMFY_PASS=${pass}"
+        env_flags="${env_flags} -e \"COMFY_PASS=${pass}\""
     fi
     if [ -n "${HF_TOKEN:-}" ]; then
-        env_flags="${env_flags} -e HF_TOKEN=${HF_TOKEN}"
+        env_flags="${env_flags} -e \"HF_TOKEN=${HF_TOKEN}\""
     fi
-    # O-01d: Reenviar variables opcionales si están definidas en la Mac
+    # O-01d / R-14: Reenviar variables opcionales entrecomilladas si están definidas en la Mac
     if [ -n "${COMFYUI_EXTRA_ARGS:-}" ]; then
-        env_flags="${env_flags} -e COMFYUI_EXTRA_ARGS=${COMFYUI_EXTRA_ARGS}"
+        env_flags="${env_flags} -e \"COMFYUI_EXTRA_ARGS=${COMFYUI_EXTRA_ARGS}\""
     fi
     if [ -n "${HF_HUB_DISABLE_XET:-}" ]; then
-        env_flags="${env_flags} -e HF_HUB_DISABLE_XET=${HF_HUB_DISABLE_XET}"
+        env_flags="${env_flags} -e \"HF_HUB_DISABLE_XET=${HF_HUB_DISABLE_XET}\""
     fi
     if [ -n "${ENABLE_WEB_TERMINAL:-}" ]; then
-        env_flags="${env_flags} -e ENABLE_WEB_TERMINAL=${ENABLE_WEB_TERMINAL}"
+        env_flags="${env_flags} -e \"ENABLE_WEB_TERMINAL=${ENABLE_WEB_TERMINAL}\""
     fi
 
     if [ "${dry_run}" = "1" ]; then

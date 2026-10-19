@@ -2,27 +2,32 @@
 //! y custom nodes (`git rev-parse HEAD` / `status --porcelain` vs `/etc/comfyui/nodes.lock`).
 
 use crate::redact::SecretRedactor;
+use crate::sys;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Default)]
 pub struct DriftSummary {
     pub pip_added: Vec<String>,
     pub pip_removed: Vec<String>,
     pub node_drift: Vec<String>,
+    pub nodes_lock_count: usize,
 }
 
 fn run_cmd_capture(args: &[&str], redactor: &SecretRedactor) -> Option<String> {
     let first = args.first()?;
     let rest = args.get(1..).unwrap_or(&[]);
-    let out = Command::new(first).args(rest).output().ok()?;
-    if !out.status.success() {
+    let mut cmd = Command::new(first);
+    cmd.args(rest);
+    let (code, stdout, stderr, timed_out) =
+        sys::run_command_with_timeout(&mut cmd, Duration::from_secs(10)).ok()?;
+    if timed_out || code != Some(0) {
         return None;
     }
-    let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut combined = stdout;
     if !stderr.is_empty() {
         combined.push_str(&stderr);
     }
@@ -85,6 +90,11 @@ pub fn collect_drift(
             }
         }
     }
+    let nodes_lock_count = if nodes_lock.is_empty() {
+        10
+    } else {
+        nodes_lock.len()
+    };
 
     let mut node_drift = Vec::new();
     let custom_nodes_dir = comfy_app_dir.join("custom_nodes");
@@ -141,5 +151,6 @@ pub fn collect_drift(
         pip_added,
         pip_removed,
         node_drift,
+        nodes_lock_count,
     }
 }
