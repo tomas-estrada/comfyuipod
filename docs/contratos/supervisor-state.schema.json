@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Comfy-Org/ComfyUI/comfyuipod/supervisor-state.schema.json",
+  "title": "ComfyUIPod /run/comfyui-supervisor.json Contract",
+  "description": "Esquema congelado del fichero de estado del supervisor /run/comfyui-supervisor.json (generado a partir de la implementación de Entrega 1). Solo se permiten cambios aditivos.",
+  "type": "object",
+  "required": [
+    "state",
+    "attempt",
+    "restarts",
+    "healthy_resets",
+    "max",
+    "pid",
+    "started_at",
+    "last_exit"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "state": {
+      "type": "string",
+      "enum": ["starting", "running", "down", "exhausted", "fatal"]
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "restarts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "healthy_resets": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "pid": {
+      "type": ["integer", "null"]
+    },
+    "started_at": {
+      "type": ["integer", "null"]
+    },
+    "last_exit": {
+      "type": ["object", "null"],
+      "required": ["rc", "code", "reason", "at"],
+      "additionalProperties": true,
+      "properties": {
+        "rc": { "type": "integer" },
+        "code": { "type": "integer" },
+        "reason": { "type": "string" },
+        "at": { "type": "integer" }
+      }
+    }
+  }
+}

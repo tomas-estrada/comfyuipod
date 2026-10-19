@@ -83,7 +83,59 @@ jobs:
               f"Model mismatch between download-models.sh ({dl_files}) and EXPECTED_MODELS ({expected_files})"
           )
 
-          print(f"Validated {len(patterns)} triage patterns, {len(expected_files)} expected models, and portal ({portal_bytes} bytes, 0 external CDN refs).")
+          # Validar esquemas congelados docs/contratos/*.schema.json contra implementación Python
+          status_schema = json.loads(pathlib.Path("docs/contratos/status-api.schema.json").read_text(encoding="utf-8"))
+          sup_schema = json.loads(pathlib.Path("docs/contratos/supervisor-state.schema.json").read_text(encoding="utf-8"))
+
+          def validate_schema(instance, schema, path="$"):
+              stypes = schema.get("type")
+              if stypes:
+                  if isinstance(stypes, str):
+                      stypes = [stypes]
+                  type_map = {
+                      "object": lambda v: isinstance(v, dict),
+                      "array": lambda v: isinstance(v, list),
+                      "string": lambda v: isinstance(v, str),
+                      "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+                      "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+                      "boolean": lambda v: isinstance(v, bool),
+                      "null": lambda v: v is None,
+                  }
+                  assert any(type_map[t](instance) for t in stypes), f"{path}: expected {stypes}, got {type(instance).__name__} ({instance!r})"
+              if instance is None:
+                  return
+              if "enum" in schema:
+                  assert instance in schema["enum"], f"{path}: {instance!r} not in enum {schema['enum']}"
+              if isinstance(instance, (int, float)) and not isinstance(instance, bool) and "minimum" in schema:
+                  assert instance >= schema["minimum"], f"{path}: {instance} < minimum {schema['minimum']}"
+              if isinstance(instance, str) and "pattern" in schema:
+                  assert re.search(schema["pattern"], instance), f"{path}: {instance!r} does not match {schema['pattern']}"
+              if isinstance(instance, dict):
+                  for req_k in schema.get("required", []):
+                      assert req_k in instance, f"{path}: missing required key '{req_k}'"
+                  props = schema.get("properties", {})
+                  for k, v in instance.items():
+                      if k in props:
+                          validate_schema(v, props[k], f"{path}.{k}")
+              elif isinstance(instance, list) and "items" in schema:
+                  for idx, elem in enumerate(instance):
+                      validate_schema(elem, schema["items"], f"{path}[{idx}]")
+
+          sample_api = mod.build_status_api()
+          validate_schema(sample_api, status_schema, "$.status_api")
+          sample_sup = {
+              "state": "running",
+              "attempt": 1,
+              "restarts": 0,
+              "healthy_resets": 0,
+              "max": 5,
+              "pid": 1234,
+              "started_at": 1700000000,
+              "last_exit": {"rc": 137, "code": 137, "reason": "SIGKILL", "at": 1700000010},
+          }
+          validate_schema(sample_sup, sup_schema, "$.supervisor_state")
+
+          print(f"Validated {len(patterns)} triage patterns, {len(expected_files)} expected models, frozen schemas, and portal ({portal_bytes} bytes, 0 external CDN refs).")
           EOF
 
       - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01: SHA v3.1.0 verificado)
@@ -280,7 +332,7 @@ jobs:
           done
           echo "[OK] Todas las rutas protegidas devuelven 200 con credenciales"
 
-          # 4. /home contiene "ComfyUI" y no contiene "http://"; /status/api es JSON con comfyui.state == "running"
+          # 4. /home contiene "ComfyUI" y no contiene "http://"; /status/api y /run/comfyui-supervisor.json cumplen los esquemas congelados
           home_html="$(curl -fsS -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/home)"
           grep -q "ComfyUI" <<<"$home_html"
           if grep -qi "http://" <<<"$home_html"; then
@@ -288,8 +340,55 @@ jobs:
             exit 1
           fi
           api_json="$(curl -fsS -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api)"
-          comfy_pid="$(API_JSON="$api_json" python3 -c 'import json, os; d = json.loads(os.environ["API_JSON"]); c = d.get("comfyui") or {}; assert c.get("state") == "running" and c.get("port_open") is True and c.get("pid"), f"Unexpected comfyui status: {c}"; print(c["pid"])')"
-          echo "[OK] /home y /status/api verificados (comfyui.state=running, pid=${comfy_pid})"
+          sup_json="$(docker exec "$cid" cat /run/comfyui-supervisor.json)"
+          comfy_pid="$(API_JSON="$api_json" SUP_JSON="$sup_json" python3 -c '
+          import json, os, pathlib, re
+
+          def validate_schema(instance, schema, path="$"):
+              stypes = schema.get("type")
+              if stypes:
+                  if isinstance(stypes, str):
+                      stypes = [stypes]
+                  type_map = {
+                      "object": lambda v: isinstance(v, dict),
+                      "array": lambda v: isinstance(v, list),
+                      "string": lambda v: isinstance(v, str),
+                      "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+                      "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+                      "boolean": lambda v: isinstance(v, bool),
+                      "null": lambda v: v is None,
+                  }
+                  assert any(type_map[t](instance) for t in stypes), f"{path}: expected {stypes}, got {type(instance).__name__} ({instance!r})"
+              if instance is None:
+                  return
+              if "enum" in schema:
+                  assert instance in schema["enum"], f"{path}: {instance!r} not in enum {schema[\"enum\"]}"
+              if isinstance(instance, (int, float)) and not isinstance(instance, bool) and "minimum" in schema:
+                  assert instance >= schema["minimum"], f"{path}: {instance} < minimum {schema[\"minimum\"]}"
+              if isinstance(instance, str) and "pattern" in schema:
+                  assert re.search(schema["pattern"], instance), f"{path}: {instance!r} does not match {schema[\"pattern\"]}"
+              if isinstance(instance, dict):
+                  for req_k in schema.get("required", []):
+                      assert req_k in instance, f"{path}: missing required key {req_k!r}"
+                  props = schema.get("properties", {})
+                  for k, v in instance.items():
+                      if k in props:
+                          validate_schema(v, props[k], f"{path}.{k}")
+              elif isinstance(instance, list) and "items" in schema:
+                  for idx, elem in enumerate(instance):
+                      validate_schema(elem, schema["items"], f"{path}[{idx}]")
+
+          d = json.loads(os.environ["API_JSON"])
+          s = json.loads(os.environ["SUP_JSON"])
+          status_schema = json.loads(pathlib.Path("docs/contratos/status-api.schema.json").read_text(encoding="utf-8"))
+          sup_schema = json.loads(pathlib.Path("docs/contratos/supervisor-state.schema.json").read_text(encoding="utf-8"))
+          validate_schema(d, status_schema, "$.status_api")
+          validate_schema(s, sup_schema, "$.supervisor_state")
+          c = d.get("comfyui") or {}
+          assert c.get("state") == "running" and c.get("port_open") is True and c.get("pid"), f"Unexpected comfyui status: {c}"
+          print(c["pid"])
+          ')"
+          echo "[OK] /home, /status/api y /run/comfyui-supervisor.json verificados contra esquemas congelados (pid=${comfy_pid})"
 
           # 5. /report.md contiene "## 0. Triage" y "## 8. Drift" y NO contiene secretos
           report_md="$(curl -fsS -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/report.md)"

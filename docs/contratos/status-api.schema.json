@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Comfy-Org/ComfyUI/comfyuipod/status-api.schema.json",
+  "title": "ComfyUIPod /status/api Response Contract",
+  "description": "Esquema congelado del endpoint GET /status/api (generado a partir de la implementación Python de Entrega 1). Solo se permiten cambios aditivos.",
+  "type": "object",
+  "required": [
+    "generated_at",
+    "image",
+    "instance",
+    "gpu",
+    "memory",
+    "disk",
+    "comfyui",
+    "phases",
+    "phase_banner",
+    "services",
+    "errors_recent",
+    "triage",
+    "env_masked"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "generated_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "image": {
+      "type": "object",
+      "required": ["tag", "built_at", "comfyui_sha"],
+      "additionalProperties": true,
+      "properties": {
+        "tag": { "type": "string" },
+        "built_at": { "type": "string" },
+        "comfyui_sha": { "type": "string" }
+      }
+    },
+    "instance": {
+      "type": "object",
+      "required": ["hostname", "uptime_s", "vast_instance_id", "external_port_8188"],
+      "additionalProperties": true,
+      "properties": {
+        "hostname": { "type": "string" },
+        "uptime_s": { "type": "integer", "minimum": 0 },
+        "vast_instance_id": { "type": "string" },
+        "external_port_8188": { "type": "string" }
+      }
+    },
+    "gpu": {
+      "type": "object",
+      "required": [
+        "available",
+        "name",
+        "driver",
+        "vram_total_mb",
+        "vram_used_mb",
+        "util_pct",
+        "temp_c",
+        "processes"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "available": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "name": { "type": "string" },
+        "driver": { "type": "string" },
+        "vram_total_mb": { "type": "integer", "minimum": 0 },
+        "vram_used_mb": { "type": "integer", "minimum": 0 },
+        "util_pct": { "type": "integer", "minimum": 0 },
+        "temp_c": { "type": "integer" },
+        "processes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["pid", "name", "used_mb"],
+            "additionalProperties": true,
+            "properties": {
+              "pid": { "type": "integer" },
+              "name": { "type": "string" },
+              "used_mb": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "required": ["total_mb", "available_mb", "swap_used_mb"],
+      "additionalProperties": true,
+      "properties": {
+        "total_mb": { "type": "integer", "minimum": 0 },
+        "available_mb": { "type": "integer", "minimum": 0 },
+        "swap_used_mb": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "disk": {
+      "type": "object",
+      "required": ["path", "total_gb", "used_gb", "free_gb"],
+      "additionalProperties": true,
+      "properties": {
+        "path": { "type": "string" },
+        "total_gb": { "type": "number", "minimum": 0 },
+        "used_gb": { "type": "number", "minimum": 0 },
+        "free_gb": { "type": "number", "minimum": 0 }
+      }
+    },
+    "comfyui": {
+      "type": "object",
+      "required": [
+        "state",
+        "supervisor_state",
+        "pid",
+        "rss_mb",
+        "uptime_s",
+        "port_open",
+        "restarts",
+        "healthy_resets",
+        "last_exit",
+        "max_restarts"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["starting", "running", "down"]
+        },
+        "supervisor_state": {
+          "type": "string",
+          "enum": ["starting", "running", "down", "exhausted", "fatal"]
+        },
+        "pid": { "type": ["integer", "null"] },
+        "rss_mb": { "type": "integer", "minimum": 0 },
+        "uptime_s": { "type": "integer", "minimum": 0 },
+        "port_open": { "type": "boolean" },
+        "restarts": { "type": "integer", "minimum": 0 },
+        "healthy_resets": { "type": "integer", "minimum": 0 },
+        "max_restarts": { "type": "integer", "minimum": 0 },
+        "last_exit": {
+          "type": ["object", "null"],
+          "required": ["rc", "code", "reason", "at"],
+          "additionalProperties": true,
+          "properties": {
+            "rc": { "type": "integer" },
+            "code": { "type": "integer" },
+            "reason": { "type": "string" },
+            "at": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "phases": {
+      "type": "object",
+      "required": ["phase1", "phase2"],
+      "additionalProperties": true,
+      "properties": {
+        "phase1": {
+          "type": "object",
+          "required": ["state", "done", "total", "failed"],
+          "additionalProperties": true,
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": ["pending", "running", "done", "skipped", "timeout"]
+            },
+            "done": { "type": "integer", "minimum": 0 },
+            "total": { "type": "integer", "minimum": 0 },
+            "failed": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "phase2": {
+          "type": "object",
+          "required": [
+            "state",
+            "done",
+            "total",
+            "failed",
+            "current_file",
+            "hf_pid",
+            "hf_rss_mb"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "state": {
+              "type": "string",
+              "enum": ["pending", "running", "done", "skipped"]
+            },
+            "done": { "type": "integer", "minimum": 0 },
+            "total": { "type": "integer", "minimum": 0 },
+            "failed": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "current_file": { "type": ["string", "null"] },
+            "hf_pid": { "type": ["integer", "null"] },
+            "hf_rss_mb": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "phase_banner": {
+      "type": "string"
+    },
+    "services": {
+      "type": "object",
+      "required": ["nginx", "status_server", "terminal"],
+      "additionalProperties": true,
+      "properties": {
+        "nginx": {
+          "type": "object",
+          "required": ["running", "workers_user"],
+          "additionalProperties": true,
+          "properties": {
+            "running": { "type": "boolean" },
+            "workers_user": { "type": "string" }
+          }
+        },
+        "status_server": {
+          "type": "object",
+          "required": ["running"],
+          "additionalProperties": true,
+          "properties": {
+            "running": { "type": "boolean" }
+          }
+        },
+        "terminal": {
+          "type": "object",
+          "required": ["enabled", "running"],
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "running": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "errors_recent": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ts", "source", "line"],
+        "additionalProperties": true,
+        "properties": {
+          "ts": { "type": "string" },
+          "source": { "type": "string" },
+          "line": { "type": "string" }
+        }
+      }
+    },
+    "triage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "pattern_id", "source", "evidence", "summary", "first_command"],
+        "additionalProperties": true,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["alta", "media", "baja"]
+          },
+          "pattern_id": { "type": "string" },
+          "source": { "type": "string" },
+          "evidence": { "type": "string" },
+          "summary": { "type": "string" },
+          "first_command": { "type": "string" }
+        }
+      }
+    },
+    "env_masked": {
+      "type": "object",
+      "required": [
+        "MODEL_PROFILE",
+        "COMFY_USER",
+        "COMFY_PASS",
+        "HF_TOKEN",
+        "COMFYUI_EXTRA_ARGS",
+        "HF_HUB_DISABLE_XET",
+        "ENABLE_WEB_TERMINAL"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "MODEL_PROFILE": { "type": "string" },
+        "COMFY_USER": { "type": "string" },
+        "COMFY_PASS": { "type": "string" },
+        "HF_TOKEN": { "type": "string" },
+        "COMFYUI_EXTRA_ARGS": { "type": "string" },
+        "HF_HUB_DISABLE_XET": { "type": "string" },
+        "ENABLE_WEB_TERMINAL": { "type": "string" }
+      }
+    }
+  }
+}
