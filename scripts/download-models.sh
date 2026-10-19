@@ -15,6 +15,12 @@
 #   - realistic : Fase 1 (2.79 GiB) + Fase 2 (24.95 GiB) = 27.74 GiB total
 #   - anime     : Fase 1 (2.79 GiB) + Fase 2 (29.43 GiB) = 32.22 GiB total
 #   - minimal   : Solo Fase 1 (2.79 GiB; omite Fase 2)
+#
+# Variables de entorno adicionales de control de descarga (§11):
+#   - HF_FETCH_TIMEOUT   : Timeout en segundos por archivo e intento (default: 3600).
+#   - HF_HUB_DISABLE_XET : Si se define a "1", desactiva el motor Rust hf_xet y usa
+#                          descarga HTTP clásica (útil si el host tiene HostBuffer
+#                          limitado o si hf_xet consume demasiada RAM).
 # ==============================================================================
 
 set -uo pipefail
@@ -24,6 +30,7 @@ MODELS_DIR="${COMFY_DATA_DIR}/models"
 # STAGE_DIR en el mismo filesystem que MODELS_DIR para que mv sea rename() atómico
 STAGE_DIR="${MODELS_DIR}/.hf_stage"
 MODEL_PROFILE="${MODEL_PROFILE:-all}"
+HF_FETCH_TIMEOUT="${HF_FETCH_TIMEOUT:-3600}"
 
 FAILED_MODELS=()
 
@@ -56,6 +63,7 @@ fi
 # - SEC-04: No pasa HF_TOKEN por argumentos de CLI; huggingface_hub lee HF_TOKEN
 #           automáticamente desde la variable de entorno.
 # - REL-04: 3 intentos con backoff (2s, 5s, 10s) y registro en FAILED_MODELS.
+# - §11   : Registra INICIO y aplica timeout por intento (HF_FETCH_TIMEOUT=3600s).
 # ------------------------------------------------------------------------------
 hf_fetch() {
     local repo_id="$1"
@@ -72,6 +80,8 @@ hf_fetch() {
         return 0
     fi
 
+    log "INICIO: ${local_filename} (${repo_id}/${remote_path})"
+
     local attempt=1
     local max_attempts=3
     local backoff=2
@@ -79,15 +89,17 @@ hf_fetch() {
     while [ "${attempt}" -le "${max_attempts}" ]; do
         log "Descargando ${local_filename} desde ${repo_id} (intento ${attempt}/${max_attempts})..."
 
-        if "${HF_CLI}" download "${repo_id}" "${remote_path}" \
+        local dl_rc=0
+        timeout "${HF_FETCH_TIMEOUT}" "${HF_CLI}" download "${repo_id}" "${remote_path}" \
             --repo-type "${repo_type}" \
-            --local-dir "${STAGE_DIR}"; then
+            --local-dir "${STAGE_DIR}" || dl_rc=$?
 
-            if [ -s "${STAGE_DIR}/${remote_path}" ]; then
-                mv -f "${STAGE_DIR}/${remote_path}" "${dest_file}"
-                log "OK: ${dest_file} ($(du -h "${dest_file}" | cut -f1))"
-                return 0
-            fi
+        if [ "${dl_rc}" -eq 0 ] && [ -s "${STAGE_DIR}/${remote_path}" ]; then
+            mv -f "${STAGE_DIR}/${remote_path}" "${dest_file}"
+            log "OK: ${dest_file} ($(du -h "${dest_file}" | cut -f1))"
+            return 0
+        elif [ "${dl_rc}" -eq 124 ]; then
+            log "TIMEOUT: La descarga de ${local_filename} (${repo_id}/${remote_path}) superó ${HF_FETCH_TIMEOUT}s (intento ${attempt}/${max_attempts})."
         fi
 
         rm -f "${STAGE_DIR}/${remote_path}" 2>/dev/null || true
@@ -124,6 +136,7 @@ run_phase1() {
     FAILED_MODELS=()
     log "======================================================================"
     log "INICIANDO FASE 1 (2.79 GiB): ReActor, InsightFace, CodeFormer, VAE, Upscalers"
+    log "PLAN FASE 1: 12 archivos"
     log "======================================================================"
 
     # 1. InsightFace buffalo_l (0.27 GiB — Lección 5: evita fallo de auto-descarga en Docker)
@@ -193,12 +206,24 @@ run_phase1() {
 run_phase2() {
     FAILED_MODELS=()
     if [ "${MODEL_PROFILE}" = "minimal" ]; then
+        log "PLAN FASE 2: 0 archivos (minimal)"
         log "MODEL_PROFILE=minimal activo: omitiendo Fase 2 de checkpoints pesados."
         return 0
     fi
 
+    local phase2_planned=14
+    case "${MODEL_PROFILE}" in
+        general|realistic|anime)
+            phase2_planned=10
+            ;;
+        *)
+            phase2_planned=14
+            ;;
+    esac
+
     log "======================================================================"
     log "INICIANDO FASE 2 (Segundo Plano — Perfil: ${MODEL_PROFILE})"
+    log "PLAN FASE 2: ${phase2_planned} archivos (${MODEL_PROFILE})"
     log "En perfil 'all' son 60.56 GiB. Puedes usar ComfyUI ya mismo;"
     log "pulsa 'R' en el navegador para refrescar la lista de modelos."
     log "======================================================================"

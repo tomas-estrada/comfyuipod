@@ -1,0 +1,458 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# comfy — CLI helper para macOS / Linux para gestionar instancias ComfyUIPod en Vast.ai
+# ==============================================================================
+# Subcomandos (§10.1):
+#   comfy [open] [id] [home|comfy|status|report|terminal]
+#   comfy url [id]
+#   comfy all
+#   comfy logs [id] [N]
+#   comfy pass [id]
+#   comfy report [id]
+#   comfy watch [id]
+#   comfy rent [all|general|realistic|anime|minimal]
+#   comfy destroy <id>
+# ==============================================================================
+
+set -euo pipefail
+
+COMFY_IMAGE="${COMFY_IMAGE:-ghcr.io/essaucr/comfyuipod:latest}"
+COMFY_USER="${COMFY_USER:-admin}"
+
+die() {
+    echo "[ERROR] $*" >&2
+    exit 1
+}
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || die "Comando requerido no encontrado: '$1'. Instálalo antes de continuar."
+}
+
+open_browser() {
+    local target_url="$1"
+    if command -v open >/dev/null 2>&1; then
+        open "${target_url}"
+    elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "${target_url}"
+    else
+        echo "${target_url}"
+    fi
+}
+
+# Obtiene JSON crudo de vastai show instances --raw
+fetch_instances_json() {
+    require_cmd vastai
+    require_cmd python3
+    vastai show instances --raw
+}
+
+# Resuelve ID, IP y HostPort (8188/tcp) de una instancia activa.
+# Salida: "<id>|<ip>|<port>|<status>|<label>"
+resolve_instance() {
+    local requested_id="${1:-}"
+    local raw_json
+    raw_json="$(fetch_instances_json)"
+
+    RAW_JSON="${raw_json}" python3 - "${requested_id}" << 'PYEOF'
+import json, os, sys
+
+req_id = sys.argv[1].strip()
+raw = os.environ.get("RAW_JSON", "")
+try:
+    parsed = json.loads(raw)
+except Exception as e:
+    sys.stderr.write(f"[ERROR] No se pudo parsear 'vastai show instances --raw': {e}\n")
+    sys.exit(1)
+
+if isinstance(parsed, dict):
+    instances = parsed.get("instances") or parsed.get("rows") or []
+elif isinstance(parsed, list):
+    instances = parsed
+else:
+    instances = []
+
+def extract_port(inst):
+    ports = inst.get("ports") or {}
+    tcp_8188 = ports.get("8188/tcp")
+    if isinstance(tcp_8188, list) and tcp_8188:
+        hp = tcp_8188[0].get("HostPort") or tcp_8188[0].get("host_port")
+        if hp:
+            return str(hp)
+    direct_start = inst.get("direct_port_start")
+    if direct_start and int(direct_start) > 0:
+        return str(direct_start)
+    return ""
+
+candidates = []
+for inst in instances:
+    iid = str(inst.get("id", ""))
+    status = str(inst.get("actual_status") or inst.get("status_msg") or "unknown")
+    ip = str(inst.get("public_ipaddr") or "").strip()
+    port = extract_port(inst)
+    label = str(inst.get("label") or "")
+    if req_id:
+        if iid == req_id:
+            candidates.append((0, iid, ip, port, status, label))
+            break
+    else:
+        if status == "running" and ip and port:
+            prio = 0 if label.lower().startswith("comfy") else 1
+            candidates.append((prio, iid, ip, port, status, label))
+
+if not candidates:
+    if req_id:
+        sys.stderr.write(f"[ERROR] No se encontró la instancia con ID {req_id}.\n")
+    else:
+        sys.stderr.write("[ERROR] No se encontró ninguna instancia en estado 'running' con puerto 8188/tcp mapeado.\n")
+    sys.exit(1)
+
+candidates.sort(key=lambda x: x[0])
+_, iid, ip, port, status, label = candidates[0]
+print(f"{iid}|{ip}|{port}|{status}|{label}")
+PYEOF
+}
+
+fetch_logs_text() {
+    local inst_id="$1"
+    local tail_n="${2:-300}"
+    require_cmd vastai
+    local out
+    out="$(vastai logs "${inst_id}" --tail "${tail_n}" 2>&1 || true)"
+    # Compatibilidad con versiones antiguas de vastai CLI que devolvían una URL S3
+    if [[ "${out}" =~ ^https?:// ]]; then
+        curl -fsSL "${out}" 2>/dev/null || printf '%s\n' "${out}"
+    else
+        local s3_url
+        s3_url="$(printf '%s\n' "${out}" | grep -Eo 'https://[^[:space:]"'\'']+' | tail -n 1 || true)"
+        if [ -n "${s3_url}" ] && [ "$(printf '%s\n' "${out}" | wc -l)" -le 3 ]; then
+            curl -fsSL "${s3_url}" 2>/dev/null || printf '%s\n' "${out}"
+        else
+            printf '%s\n' "${out}"
+        fi
+    fi
+}
+
+cmd_all() {
+    local raw_json
+    raw_json="$(fetch_instances_json)"
+    RAW_JSON="${raw_json}" python3 - << 'PYEOF'
+import json, os, sys
+
+raw = os.environ.get("RAW_JSON", "")
+parsed = json.loads(raw)
+instances = parsed.get("instances", []) if isinstance(parsed, dict) else parsed
+
+if not instances:
+    print("No hay instancias activas en tu cuenta de Vast.ai.")
+    sys.exit(0)
+
+header = f"{'ID':<10} {'ESTADO':<10} {'GPU':<18} {'$/h':<7} {'LABEL':<18} {'PORTAL (/home)':<36} {'STATUS (/status)'}"
+print(header)
+print("-" * len(header))
+for inst in instances:
+    iid = str(inst.get("id", ""))
+    status = str(inst.get("actual_status") or "unknown")
+    gpu = str(inst.get("gpu_name") or "?")[:17]
+    dph = float(inst.get("dph_total") or 0.0)
+    label = str(inst.get("label") or "-")[:17]
+    ip = str(inst.get("public_ipaddr") or "").strip()
+    ports = inst.get("ports") or {}
+    tcp = ports.get("8188/tcp") or []
+    port = str(tcp[0].get("HostPort", "")) if tcp else ""
+    base = f"http://{ip}:{port}" if (ip and port) else "(sin puerto público)"
+    home_url = f"{base}/home" if ip and port else base
+    stat_url = f"{base}/status" if ip and port else "-"
+    print(f"{iid:<10} {status:<10} {gpu:<18} {dph:<7.3f} {label:<18} {home_url:<36} {stat_url}")
+PYEOF
+}
+
+cmd_url() {
+    local inst_id="${1:-}"
+    local info ip port
+    info="$(resolve_instance "${inst_id}")"
+    IFS='|' read -r _ ip port _ _ <<<"${info}"
+    [ -n "${ip}" ] && [ -n "${port}" ] || die "La instancia aún no expone IP/puerto público."
+    echo "http://${ip}:${port}"
+}
+
+cmd_open() {
+    local arg1="${1:-}"
+    local arg2="${2:-}"
+    local inst_id=""
+    local target_view="home"
+
+    case "${arg1}" in
+        home|comfy|status|report|terminal|"")
+            target_view="${arg1:-home}"
+            ;;
+        *)
+            inst_id="${arg1}"
+            target_view="${arg2:-home}"
+            ;;
+    esac
+
+    local base_url path_suffix
+    base_url="$(cmd_url "${inst_id}")"
+    case "${target_view}" in
+        home)     path_suffix="/home" ;;
+        comfy)    path_suffix="/" ;;
+        status)   path_suffix="/status" ;;
+        report)   path_suffix="/report.md" ;;
+        terminal) path_suffix="/terminal/" ;;
+        *)        die "Vista no reconocida: '${target_view}'. Usa: home | comfy | status | report | terminal" ;;
+    esac
+
+    local full_url="${base_url}${path_suffix}"
+    echo "Abriendo ${full_url} ..."
+    open_browser "${full_url}"
+}
+
+cmd_logs() {
+    local inst_id="${1:-}"
+    local tail_n="${2:-300}"
+    if [[ "${inst_id}" =~ ^[0-9]+$ ]] && [ -z "${2:-}" ]; then
+        # Si solo se pasó un número, verificar si coincide con una instancia; si no, asumir tail_n
+        local info
+        if info="$(resolve_instance "${inst_id}" 2>/dev/null)"; then
+            IFS='|' read -r inst_id _ _ _ _ <<<"${info}"
+        else
+            tail_n="${inst_id}"
+            info="$(resolve_instance "")"
+            IFS='|' read -r inst_id _ _ _ _ <<<"${info}"
+        fi
+    else
+        local info
+        info="$(resolve_instance "${inst_id}")"
+        IFS='|' read -r inst_id _ _ _ _ <<<"${info}"
+    fi
+    fetch_logs_text "${inst_id}" "${tail_n}"
+}
+
+cmd_pass() {
+    local inst_id="${1:-}"
+    local info
+    info="$(resolve_instance "${inst_id}")"
+    IFS='|' read -r inst_id _ _ _ _ <<<"${info}"
+    local logs_txt
+    logs_txt="$(fetch_logs_text "${inst_id}" 500)"
+    local auto_pass
+    auto_pass="$(printf '%s\n' "${logs_txt}" | sed -n 's/.*Contraseña[[:space:]]*:[[:space:]]*\([a-fA-F0-9]\{16,\}\).*/\1/p' | tail -n 1)"
+    if [ -n "${auto_pass}" ]; then
+        echo "${auto_pass}"
+    elif printf '%s\n' "${logs_txt}" | grep -q "definida por el usuario en COMFY_PASS"; then
+        echo "[INFO] La instancia usa la contraseña definida manualmente por el usuario en COMFY_PASS." >&2
+        return 1
+    else
+        echo "[WARN] Aún no se encontró la línea de credenciales en los logs de la instancia ${inst_id}." >&2
+        return 1
+    fi
+}
+
+resolve_auth_pass() {
+    local inst_id="$1"
+    if [ -n "${COMFY_PASS:-}" ]; then
+        echo "${COMFY_PASS}"
+        return 0
+    fi
+    local detected
+    if detected="$(cmd_pass "${inst_id}" 2>/dev/null)" && [ -n "${detected}" ]; then
+        echo "${detected}"
+        return 0
+    fi
+    read -r -s -p "Introduce COMFY_PASS para ${COMFY_USER}: " input_pass >&2
+    echo "" >&2
+    echo "${input_pass}"
+}
+
+cmd_report() {
+    local arg1="${1:-}"
+    local arg2="${2:-}"
+    local to_stdout="0"
+    local inst_id=""
+    if [ "${arg1}" = "--stdout" ]; then
+        to_stdout="1"
+        inst_id="${arg2}"
+    elif [ "${arg2}" = "--stdout" ]; then
+        to_stdout="1"
+        inst_id="${arg1}"
+    else
+        inst_id="${arg1}"
+    fi
+
+    local info ip port
+    info="$(resolve_instance "${inst_id}")"
+    IFS='|' read -r inst_id ip port _ _ <<<"${info}"
+    local pass
+    pass="$(resolve_auth_pass "${inst_id}")"
+
+    if [ "${to_stdout}" = "1" ]; then
+        curl -fsSL -u "${COMFY_USER}:${pass}" "http://${ip}:${port}/report.md"
+        return 0
+    fi
+
+    local out_file="/tmp/comfy-report-${inst_id}.md"
+    curl -fsSL -u "${COMFY_USER}:${pass}" "http://${ip}:${port}/report.md" -o "${out_file}"
+    echo "Informe guardado en: ${out_file} ($(wc -c <"${out_file}" | tr -d ' ') bytes)"
+    if command -v pbcopy >/dev/null 2>&1; then
+        pbcopy <"${out_file}"
+        echo "Copiado al portapapeles de macOS (pbcopy)."
+    fi
+}
+
+cmd_watch() {
+    local inst_id="${1:-}"
+    local info ip port
+    info="$(resolve_instance "${inst_id}")"
+    IFS='|' read -r inst_id ip port _ _ <<<"${info}"
+    local pass
+    pass="$(resolve_auth_pass "${inst_id}")"
+    local api_url="http://${ip}:${port}/status/api"
+
+    echo "Monitorizando ${api_url} cada 3s (Ctrl+C para salir)..."
+    while true; do
+        local json_payload
+        if json_payload="$(curl -fsSL --max-time 5 -u "${COMFY_USER}:${pass}" "${api_url}" 2>/dev/null)"; then
+            clear
+            API_JSON="${json_payload}" python3 - << 'PYEOF'
+import json, os
+
+d = json.loads(os.environ["API_JSON"])
+inst = d.get("instance") or {}
+gpu = d.get("gpu") or {}
+mem = d.get("memory") or {}
+disk = d.get("disk") or {}
+c = d.get("comfyui") or {}
+dl = d.get("phases") or {}
+p1 = dl.get("phase1") or {}
+p2 = dl.get("phase2") or {}
+triage = d.get("triage") or []
+
+print(f"=== ComfyUIPod Watch | {d.get('generated_at','')} | uptime={inst.get('uptime_s',0)}s ===")
+print(f"Banner    : {d.get('phase_banner','')}")
+print(f"ComfyUI   : state={c.get('state')} | port_open={c.get('port_open')} | restarts={c.get('restarts')}/{c.get('max_restarts')}")
+print(f"GPU       : {gpu.get('name','N/A')} | VRAM {gpu.get('vram_used_mb',0)}/{gpu.get('vram_total_mb',0)} MB | util={gpu.get('util_pct',0)}% | {gpu.get('temp_c',0)}C")
+print(f"RAM / Disk: disponible={mem.get('available_mb',0)}/{mem.get('total_mb',0)} MB | disco libre={disk.get('free_gb',0)}/{disk.get('total_gb',0)} GB")
+print(f"Fase 1    : {p1.get('state')} ({p1.get('done',0)}/{p1.get('total',12)})")
+print(f"Fase 2    : {p2.get('state')} ({p2.get('done',0)}/{p2.get('total',0)}) | actual={p2.get('current_file') or '-'}")
+if triage:
+    print("\nAlertas de triaje activas:")
+    for t in triage[:5]:
+        print(f"  - [{t.get('severity','').upper()}] {t.get('pattern_id')}: {t.get('summary')}")
+PYEOF
+        else
+            echo "[WARN] Sin respuesta desde ${api_url}..."
+        fi
+        sleep 3
+    done
+}
+
+cmd_rent() {
+    require_cmd vastai
+    local profile="${1:-all}"
+    local pass="${COMFY_PASS:-}"
+    local query="gpu_name=RTX_5090 gpu_ram>=24 inet_down>=500 disk_space>=120 direct_port_count>=1 reliability>=0.98 verified=true rentable=true"
+
+    echo "Buscando ofertas RTX 5090 en Vast.ai (perfil=${profile})..."
+    local offers_json
+    offers_json="$(vastai search offers "${query}" -o "dph_total" --raw 2>/dev/null || echo "[]")"
+
+    local offer_id
+    offer_id="$(OFFERS_JSON="${offers_json}" python3 -c '
+import json, os
+data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
+rows = data.get("offers", data) if isinstance(data, dict) else data
+print(rows[0]["id"] if rows else "")
+' 2>/dev/null || true)"
+
+    if [ -z "${offer_id}" ]; then
+        echo "No se encontraron RTX 5090 disponibles; buscando fallback RTX 4090..."
+        query="gpu_name=RTX_4090 gpu_ram>=24 inet_down>=500 disk_space>=120 direct_port_count>=1 reliability>=0.98 verified=true rentable=true"
+        offers_json="$(vastai search offers "${query}" -o "dph_total" --raw 2>/dev/null || echo "[]")"
+        offer_id="$(OFFERS_JSON="${offers_json}" python3 -c '
+import json, os
+data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
+rows = data.get("offers", data) if isinstance(data, dict) else data
+print(rows[0]["id"] if rows else "")
+' 2>/dev/null || true)"
+    fi
+
+    [ -n "${offer_id}" ] || die "No se encontraron ofertas disponibles que cumplan los filtros."
+
+    local env_flags="-p 8188:8188 -e MODEL_PROFILE=${profile} -e COMFY_USER=${COMFY_USER}"
+    if [ -n "${pass}" ]; then
+        env_flags="${env_flags} -e COMFY_PASS=${pass}"
+    fi
+    if [ -n "${HF_TOKEN:-}" ]; then
+        env_flags="${env_flags} -e HF_TOKEN=${HF_TOKEN}"
+    fi
+
+    echo "Alquilando oferta ID ${offer_id} con imagen ${COMFY_IMAGE}..."
+    vastai create instance "${offer_id}" \
+        --image "${COMFY_IMAGE}" \
+        --disk 120 \
+        --label "comfy-${profile}" \
+        --env "${env_flags}" \
+        --onstart-cmd "true"
+}
+
+cmd_destroy() {
+    require_cmd vastai
+    local inst_id="${1:-}"
+    [ -n "${inst_id}" ] || die "Uso: comfy destroy <id>"
+    read -r -p "¿Seguro que deseas destruir la instancia ${inst_id}? (Los datos no sincronizados se perderán) [y/N]: " ans
+    case "${ans}" in
+        y|Y|yes|YES)
+            vastai destroy instance "${inst_id}"
+            ;;
+        *)
+            echo "Cancelado."
+            ;;
+    esac
+}
+
+subcmd="${1:-open}"
+shift || true
+
+case "${subcmd}" in
+    open)
+        cmd_open "${1:-}" "${2:-}"
+        ;;
+    home|comfy|status|terminal)
+        cmd_open "${subcmd}"
+        ;;
+    url)
+        cmd_url "${1:-}"
+        ;;
+    all|ls|list)
+        cmd_all
+        ;;
+    logs)
+        cmd_logs "${1:-}" "${2:-}"
+        ;;
+    pass)
+        cmd_pass "${1:-}"
+        ;;
+    report|report-dl)
+        cmd_report "${1:-}"
+        ;;
+    watch)
+        cmd_watch "${1:-}"
+        ;;
+    rent)
+        cmd_rent "${1:-all}"
+        ;;
+    destroy|rm)
+        cmd_destroy "${1:-}"
+        ;;
+    -h|--help|help)
+        sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+    *)
+        # Si el primer argumento es un ID numérico, asumir `comfy open <id> [vista]`
+        if [[ "${subcmd}" =~ ^[0-9]+$ ]]; then
+            cmd_open "${subcmd}" "${1:-home}"
+        else
+            die "Subcomando desconocido: '${subcmd}'. Usa 'comfy --help'."
+        fi
+        ;;
+esac

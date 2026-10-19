@@ -75,6 +75,26 @@
 | **N-05 (Atestación de procedencia SLSA en `build-push-action` v6)** | Se conserva el comportamiento por defecto (`provenance: mode=min`) para mantener trazabilidad SLSA en GHCR sin impacto funcional en `docker pull` ni en Vast.ai. |
 | **N-06 (Limpieza de redundancias menores)** | Eliminado `g++` redundante en [`Dockerfile`](../Dockerfile) (ya incluido por `build-essential`) y `sudo` redundante antes de `docker` en [`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml). |
 
+### Ronda V5 ([`docs/auditorias/AUDITORIA_AGENTE_V5.md`](auditorias/AUDITORIA_AGENTE_V5.md)) e Implementación de [`docs/propuestas/OBSERVABILIDAD_Y_PORTAL.md`](propuestas/OBSERVABILIDAD_Y_PORTAL.md)
+
+#### Verificación previa obligatoria (§14 de `OBSERVABILIDAD_Y_PORTAL.md`, fecha `2026-10-16`)
+
+| Punto §14 | Verificación ejecutada y fuente | Resultado y decisión técnica |
+|---|---|---|
+| **1. `ttyd` en Ubuntu 24.04 (`noble`)** | API oficial de Launchpad (`https://api.launchpad.net/1.0/ubuntu/+archive/primary?ws.op=getPublishedBinaries&binary_name=ttyd&exact_match=true`) y código fuente upstream [`tsl0922/ttyd@1.7.4` (`src/server.c`, `src/http.c`)](https://github.com/tsl0922/ttyd/tree/1.7.4/src). | `ttyd 1.7.4-1build2` está publicado en el repositorio `universe` de Ubuntu 24.04 `noble` (`amd64`). Soporta `-i/--interface`, `-p/--port`, `-b/--base-path` y `-W/--writable`. Con `--base-path /terminal`, `ttyd` registra internamente `/terminal/`, `/terminal/token` y `/terminal/ws`, por lo que `proxy_pass http://127.0.0.1:7681;` en `location /terminal/` (sin barra final en `proxy_pass`) reenvía el prefijo `/terminal/...` intacto. |
+| **2. Paquete `onnx` para el test de `InferenceSession` en `diag.sh`** | Metadatos de PyPI (`https://pypi.org/pypi/insightface/json`). | `insightface` declara `onnx>=1.13` en `requires_dist`, por lo que `import onnx; from onnx import helper, TensorProto` está siempre presente en la imagen para construir un grafo `Identity` de `1x4 float32` en memoria en `scripts/diag.sh` (con fallback a `det_10g.onnx` si existe en disco). |
+| **3. Rutas de `ComfyUI-Manager` en el SHA fijado (`4d3bed4b56...`)** | Inspección de `prestartup_script.py` en `Comfy-Org/ComfyUI-Manager@4d3bed4b569205124a52444caf25de1719fae0de`. | `ComfyUI-Manager` comprueba `hasattr(folder_paths, 'get_system_user_directory')` y usa `/workspace/comfyui-data/user/__manager` (con fallback a `user/default/ComfyUI-Manager`). Ambos directorios se limpian tras el warm-up en `Dockerfile` y reciben `config.ini`. |
+| **4. Esquema JSON de `vastai show instances --raw` y `vastai logs`** | Inspección del código fuente del paquete `vastai` en PyPI (`vastai/cli/commands/instances.py`, `vastai/api/instances.py`). | En `vastai` 1.x, `vastai show instances --raw` devuelve un diccionario JSON `{"instances": [...], ...}` mientras que en `vastai` 0.x devolvía una lista `[...]`. [`tools/mac/comfy`](../tools/mac/comfy) soporta ambos formatos (`parsed.get("instances", parsed)`), extrae `ports["8188/tcp"][0]["HostPort"]` y en `comfy logs` soporta tanto la salida directa de `vastai logs` como el fallback `curl -fsSL` si alguna versión antigua emite una URL S3. |
+
+#### Componentes implementados de `OBSERVABILIDAD_Y_PORTAL.md`
+
+| Sección | Implementación realizada |
+|---|---|
+| **§3 / §4 — Portal `/home`, Panel `/status`, API `/status/api` e Informe `/report.md`** | Creado [`config/portal/index.html`](../config/portal/index.html) (`23.3 KB <= 40 KB`, cero CDN externo, contraste WCAG AA documentado en CSS, 7 tarjetas con verificación en vivo contra `/status/api` y modal `<textarea>` de respaldo para portapapeles sobre HTTP) y [`scripts/status-server.py`](../scripts/status-server.py) (stdlib Python 3.12 en `127.0.0.1:18189`, caché de 3s para `/status/api` y 30s para `pip3 freeze` / `git rev-parse`, límite de 400 KB en `/report.md`, whitelist de logs en `/logs/<nombre>?n=N`, `405` en métodos distintos de `GET`/`HEAD` y filtro `redact_secrets()` en todas las salidas). |
+| **§5 — Supervisor de ComfyUI y de `status-server.py`** | En [`scripts/start.sh`](../scripts/start.sh), `main.py` corre bajo un bucle supervisor que escribe atómicamente `/run/comfyui-supervisor.json`, clasifica salidas (`137` OOM, `134`/`139` crash nativo, `1` excepción Python, `143` SIGTERM), vuelca memoria/GPU/últimas 40 líneas a `/var/log/supervisor.log`, respeta `COMFY_MAX_RESTARTS` y `COMFY_RESTART_DELAY`, mantiene Nginx y `/status` vivos en estado `exhausted` y captura `SIGTERM`/`SIGINT` para apagado limpio (`ExitCode=0`). `status-server.py` cuenta con su propio bucle supervisor con corte tras 10 fallos en `<60s`. |
+| **§6 / §7 — Motor de triaje (`triage_patterns.json`), `diag.sh` e `image.json`** | Creado [`scripts/triage_patterns.json`](../scripts/triage_patterns.json) con las 17 reglas de triaje (`oom-rc137`, `hostbuffer`, `sm120`, `disk-full`, `cuda-oom`, `import-failed`, `frontend-mismatch`, `manager-500`, `nginx-502`, `hf-503`, `hf-stuck`, `nvenc-missing`, `ort-cpu`, `value-not-in-list`, `nginx-429`, `nginx-413`, `hf-timeout`), [`scripts/diag.sh`](../scripts/diag.sh) con las 10 comprobaciones no bloqueantes (`<=15s` c/u) y generación de `/etc/comfyui/image.json` en [`Dockerfile`](../Dockerfile). |
+| **§8 / §9 / §10 / §11 — Terminal web opcional (`ttyd`), Smoke Test E2E en CI, CLI `comfy` (Mac) y Fase 2 endurecida** | Instalado `ttyd` en `Dockerfile` (desactivado por defecto, activable con `ENABLE_WEB_TERMINAL=1`), añadido timeout por intento (`HF_FETCH_TIMEOUT=3600`) y trazas `PLAN`/`INICIO`/`TIMEOUT` en [`scripts/download-models.sh`](../scripts/download-models.sh), creado [`tools/mac/comfy`](../tools/mac/comfy) + [`tools/mac/README.md`](../tools/mac/README.md) y ampliado [`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml) con el smoke test E2E de 10 pasos (§9.2). |
+
 ---
 
 ## 3. Mantenimiento, Coexistencia de Paquetes (`L-04`) y Procedimiento de Bump (`L-06`)
@@ -94,6 +114,7 @@
    - Reemplazar el SHA de 40 caracteres en [`config/nodes.lock`](../config/nodes.lock).
    - Si se actualiza PyTorch o una cota en [`config/constraints.txt`](../config/constraints.txt), actualizar la misma versión en el paso 3 del [`Dockerfile`](../Dockerfile).
 3. **Criterio obligatorio de aceptación antes de dar por bueno el bump**:
-   - Hacer push en una rama o en `main` y verificar que el workflow de GitHub Actions ([`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml)) pase en verde tanto el job `validate` como el `build-and-push` (incluyendo el warm-up `--quick-test-for-ci` sin ningún `IMPORT FAILED` y la promoción a `latest`).
+   - Hacer push en una rama o en `main` y verificar que el workflow de GitHub Actions ([`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml)) pase en verde tanto el job `validate` como el `build-and-push` (incluyendo el warm-up `--quick-test-for-ci` sin ningún `IMPORT FAILED`, el smoke test E2E de 10 pasos y la promoción a `latest`).
    - Descargar el artefacto `requirements-lock` generado por el workflow para auditar si algún nodo introdujo dependencias nuevas.
+
 

@@ -1,0 +1,138 @@
+[
+  {
+    "id": "oom-rc137",
+    "sources": ["supervisor"],
+    "pattern": "rc=137",
+    "severity": "alta",
+    "cause": "OOM de RAM del sistema (el kernel Linux mató a python3 con SIGKILL)",
+    "first_command": "free -m && ps -eo pid,rss,comm --sort=-rss | head -n 10  # Usar MODEL_PROFILE menor, host con >=64 GB RAM o HF_HUB_DISABLE_XET=1"
+  },
+  {
+    "id": "hostbuffer",
+    "sources": ["comfyui"],
+    "pattern": "HostBuffer|read_file_slice failed|pinned memory|cudaErrorInvalidValue",
+    "severity": "alta",
+    "cause": "Fallo conocido de memoria pinned / HostBuffer en arquitectura Blackwell (RTX 5090, ComfyUI #15255/#14250)",
+    "first_command": "Añadir -e COMFYUI_EXTRA_ARGS=\"--disable-pinned-memory\" en la plantilla de Vast.ai y reiniciar la instancia"
+  },
+  {
+    "id": "sm120",
+    "sources": ["comfyui", "diag"],
+    "pattern": "no kernel image is available|sm_120|CUDA capability sm_120",
+    "severity": "alta",
+    "cause": "PyTorch instalado sin soporte Blackwell (sm_120): un nodo o comando pisó la terna cu128",
+    "first_command": "pip3 install --force-reinstall torch==2.9.1+cu128 torchvision==0.24.1+cu128 torchaudio==2.9.1+cu128 --index-url https://download.pytorch.org/whl/cu128"
+  },
+  {
+    "id": "disk-full",
+    "sources": ["api"],
+    "pattern": "disk\\.free_gb < 10",
+    "severity": "alta",
+    "cause": "Espacio libre en /workspace menor a 10 GB",
+    "first_command": "du -sh /workspace/comfyui-data/* && rm -rf /workspace/comfyui-data/temp/* /workspace/comfyui-data/models/.hf_stage"
+  },
+  {
+    "id": "cuda-oom",
+    "sources": ["comfyui"],
+    "pattern": "CUDA out of memory|torch\\.OutOfMemoryError",
+    "severity": "media",
+    "cause": "VRAM de la GPU insuficiente para la resolución o tamaño de lote del workflow actual",
+    "first_command": "Reducir batch_size/resolución en el workflow o pasar -e COMFYUI_EXTRA_ARGS=\"--reserve-vram 2\""
+  },
+  {
+    "id": "import-failed",
+    "sources": ["comfyui"],
+    "pattern": "IMPORT FAILED",
+    "severity": "media",
+    "cause": "Un custom node falló al importar por una dependencia faltante o incompatible",
+    "first_command": "grep -B 15 -A 5 'IMPORT FAILED' /var/log/comfyui.log && pip3 install -r /opt/ComfyUI/custom_nodes/<nodo>/requirements.txt"
+  },
+  {
+    "id": "frontend-mismatch",
+    "sources": ["comfyui"],
+    "pattern": "comfyui-frontend-package.*(not installed|outdated|required)",
+    "severity": "media",
+    "cause": "ComfyUI core fue actualizado sin actualizar comfyui-frontend-package",
+    "first_command": "pip3 install -r /opt/ComfyUI/requirements.txt && pkill -f 'main.py'"
+  },
+  {
+    "id": "manager-500",
+    "sources": ["nginx-error", "comfyui"],
+    "pattern": "/api/manager.* 500|Server got itself in trouble",
+    "severity": "media",
+    "cause": "Excepción interna en el backend de ComfyUI-Manager",
+    "first_command": "tail -n 80 /var/log/comfyui.log && cat /workspace/comfyui-data/user/__manager/config.ini"
+  },
+  {
+    "id": "nginx-502",
+    "sources": ["nginx-access"],
+    "pattern": "\" (502|503) ",
+    "severity": "media",
+    "cause": "ComfyUI aún estaba arrancando (Fase 1) o se encontraba en proceso de reinicio por el supervisor",
+    "first_command": "cat /run/comfyui-supervisor.json && tail -n 40 /var/log/supervisor.log"
+  },
+  {
+    "id": "hf-503",
+    "sources": ["download"],
+    "pattern": "503|Service Unavailable|RequestException|CAS service error",
+    "severity": "media",
+    "cause": "Inestabilidad temporal del backend Xet / CDN de HuggingFace",
+    "first_command": "HF_HUB_DISABLE_XET=1 /usr/local/bin/download-models.sh --phase2 >> /var/log/download-models.log 2>&1 &"
+  },
+  {
+    "id": "hf-stuck",
+    "sources": ["processes"],
+    "pattern": "hf_stuck_over_30m",
+    "severity": "media",
+    "cause": "Proceso hf lleva más de 30 minutos sin avance en el log de descargas (issue hf_hub #4520)",
+    "first_command": "pkill -f 'hf download' && HF_HUB_DISABLE_XET=1 /usr/local/bin/download-models.sh --phase2 >> /var/log/download-models.log 2>&1 &"
+  },
+  {
+    "id": "nvenc-missing",
+    "sources": ["diag", "container"],
+    "pattern": "NVENC FAIL|h264_nvenc no detectado|\\[DIAG\\]\\[WARN\\] nvenc|\\[DIAG\\]\\[FAIL\\] nvenc",
+    "severity": "media",
+    "cause": "El driver del host no expone libnvidia-encode.so o no hay GPU asignada; VideoHelperSuite usará libx264 (CPU)",
+    "first_command": "nvidia-smi && env | grep NVIDIA_DRIVER_CAPABILITIES"
+  },
+  {
+    "id": "ort-cpu",
+    "sources": ["diag", "container"],
+    "pattern": "ORT providers activos: \\['CPUExecutionProvider'\\]|\\[DIAG\\]\\[(WARN|FAIL)\\] ort:",
+    "severity": "media",
+    "cause": "onnxruntime-gpu no pudo inicializar CUDAExecutionProvider (ejecutando en CPU o falta librería CUDA/cuDNN)",
+    "first_command": "ldconfig -p | grep -E 'libcudnn|libcublas' && pip3 show onnxruntime-gpu"
+  },
+  {
+    "id": "value-not-in-list",
+    "sources": ["comfyui"],
+    "pattern": "Value not in list",
+    "severity": "baja",
+    "cause": "El workflow referencia un nombre de archivo de modelo que aún no se ha descargado o no está en el catálogo",
+    "first_command": "Pulsar 'R' en ComfyUI cuando termine la Fase 2 o seleccionar uno de los modelos instalados en el desplegable del nodo"
+  },
+  {
+    "id": "nginx-429",
+    "sources": ["nginx-access"],
+    "pattern": "\" 429 ",
+    "severity": "baja",
+    "cause": "Límite de peticiones HTTP (limit_req) alcanzado en Nginx",
+    "first_command": "grep ' 429 ' /var/log/nginx/access.log | tail -n 20"
+  },
+  {
+    "id": "nginx-413",
+    "sources": ["nginx-access"],
+    "pattern": "\" 413 ",
+    "severity": "baja",
+    "cause": "Cuerpo de petición rechazado por tamaño (verificar client_max_body_size 0 en nginx.conf)",
+    "first_command": "grep -n client_max_body_size /etc/nginx/nginx.conf"
+  },
+  {
+    "id": "hf-timeout",
+    "sources": ["download"],
+    "pattern": "ERROR: Falló la descarga|TIMEOUT",
+    "severity": "baja",
+    "cause": "Agotados los 3 intentos o el timeout por archivo al descargar un modelo desde HuggingFace",
+    "first_command": "/usr/local/bin/download-models.sh --phase2 >> /var/log/download-models.log 2>&1 &"
+  }
+]

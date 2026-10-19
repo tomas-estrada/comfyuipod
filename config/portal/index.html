@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Portal /home · ComfyUI Everything-Ready (Vast.ai)</title>
+  <style>
+    /* ==========================================================================
+       Contraste verificado WCAG AA (>= 4.5:1 en texto normal, >= 3:1 en UI):
+       - Tema Claro:
+         Texto primario #0f172a sobre #f8fafc -> 16.1:1
+         Texto secundario #334155 sobre #ffffff -> 10.3:1
+         Estado Activo #14532d sobre #dcfce7 -> 9.4:1
+         Estado Arrancando #78350f sobre #fef3c7 -> 8.6:1
+         Estado Caído #7f1d1d sobre #fee2e2 -> 8.1:1
+         Estado No disponible #1e293b sobre #e2e8f0 -> 10.9:1
+       - Tema Oscuro:
+         Texto primario #f1f5f9 sobre #0f172a -> 15.4:1
+         Texto secundario #cbd5e1 sobre #1e293b -> 9.2:1
+         Estado Activo #dcfce7 sobre #064e3b -> 9.4:1
+         Estado Arrancando #fef3c7 sobre #78350f -> 8.6:1
+         Estado Caído #fee2e2 sobre #7f1d1d -> 8.1:1
+         Estado No disponible #e2e8f0 sobre #334155 -> 7.5:1
+       ========================================================================== */
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #cbd5e1;
+      --text: #0f172a;
+      --muted: #334155;
+      --accent: #1d4ed8;
+      --accent-fg: #ffffff;
+      --ok-bg: #dcfce7; --ok-fg: #14532d; --ok-dot: #16a34a;
+      --warn-bg: #fef3c7; --warn-fg: #78350f; --warn-dot: #d97706;
+      --err-bg: #fee2e2; --err-fg: #7f1d1d; --err-dot: #dc2626;
+      --off-bg: #e2e8f0; --off-fg: #1e293b; --off-dot: #64748b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --surface: #1e293b;
+        --border: #334155;
+        --text: #f1f5f9;
+        --muted: #cbd5e1;
+        --accent: #3b82f6;
+        --accent-fg: #ffffff;
+        --ok-bg: #064e3b; --ok-fg: #dcfce7; --ok-dot: #4ade80;
+        --warn-bg: #78350f; --warn-fg: #fef3c7; --warn-dot: #fbbf24;
+        --err-bg: #7f1d1d; --err-fg: #fee2e2; --err-dot: #f87171;
+        --off-bg: #334155; --off-fg: #e2e8f0; --off-dot: #94a3b8;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    header {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .hdr-top {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    h1 {
+      margin: 0 0 6px 0;
+      font-size: 22px;
+      line-height: 1.25;
+    }
+    .meta-row {
+      font-size: 14px;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .phase-box {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: var(--off-bg);
+      color: var(--off-fg);
+      font-weight: 600;
+      font-size: 15px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+    }
+    .notice-box {
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: var(--warn-bg);
+      color: var(--warn-fg);
+      font-size: 14px;
+      display: none;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    @media (min-width: 640px) {
+      .grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (min-width: 1100px) {
+      .grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 210px;
+    }
+    .card[aria-disabled="true"] {
+      opacity: 0.78;
+    }
+    .card-hdr {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .card-hdr svg {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .card-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .card-desc {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .status-row {
+      min-height: 30px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .st-ok { background: var(--ok-bg); color: var(--ok-fg); }
+    .st-ok .dot { background: var(--ok-dot); }
+    .st-warn { background: var(--warn-bg); color: var(--warn-fg); }
+    .st-warn .dot { background: var(--warn-dot); }
+    .st-err { background: var(--err-bg); color: var(--err-fg); }
+    .st-err .dot { background: var(--err-dot); }
+    .st-off { background: var(--off-bg); color: var(--off-fg); }
+    .st-off .dot { background: var(--off-dot); }
+    .reason-text {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0 0 12px 0;
+      min-height: 20px;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: auto;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: var(--accent-fg);
+      border-color: var(--accent);
+    }
+    .btn[aria-disabled="true"], .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .btn:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+    }
+    #clipboard-modal {
+      display: none;
+      margin-top: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    #clipboard-textarea {
+      width: 100%;
+      height: 220px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+    }
+    footer {
+      margin-top: 24px;
+      padding: 14px 4px;
+      border-top: 1px solid var(--border);
+      font-size: 14px;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    footer a {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="hdr-top">
+        <div>
+          <h1>ComfyUI Everything-Ready · Portal Vast.ai</h1>
+          <div class="meta-row">
+            <span id="meta-image">Imagen: cargando...</span>
+            <span id="meta-gpu">GPU: cargando...</span>
+            <span id="meta-uptime">Uptime: --</span>
+          </div>
+        </div>
+        <button class="btn" id="refresh-now-btn" type="button">Actualizar ahora</button>
+      </div>
+      <div class="phase-box" id="phase-banner" role="status" aria-live="polite">
+        Arrancando y verificando servicios...
+      </div>
+      <div class="notice-box" id="autogenerated-pass-notice">
+        Aviso: La contraseña de acceso fue autogenerada al iniciar. Puedes consultarla en los logs del contenedor (<code>vastai logs &lt;id&gt;</code> o botón <strong>Logs</strong> en la consola de Vast.ai).
+      </div>
+    </header>
+
+    <main class="grid" id="cards-grid">
+      <!-- 1. ComfyUI -->
+      <section class="card" id="card-comfyui" aria-disabled="true">
+        <div>
+          <div class="card-hdr">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            <h2 class="card-title">ComfyUI</h2>
+          </div>
+          <p class="card-desc">Interfaz principal de generación por nodos (vídeo, imagen, FLUX, SDXL, ReActor).</p>
+          <div class="status-row" id="st-comfyui">
+            <span class="pill st-warn"><span class="dot"></span>Arrancando</span>
+          </div>
+          <p class="reason-text" id="rs-comfyui">Comprobando disponibilidad de ComfyUI...</p>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" id="act-comfyui" aria-disabled="true">Abrir ComfyUI ↗</a>
+        </div>
+      </section>
+
+      <!-- 2. Estado del sistema -->
+      <section class="card" id="card-status" aria-disabled="true">
+        <div>
+          <div class="card-hdr">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            <h2 class="card-title">Estado del sistema</h2>
+          </div>
+          <p class="card-desc">Panel en vivo de GPU, VRAM, RAM, disco, progreso de Fase 2, supervisor y visor de logs.</p>
+          <div class="status-row" id="st-status">
+            <span class="pill st-warn"><span class="dot"></span>Comprobando</span>
+          </div>
+          <p class="reason-text" id="rs-status">Verificando servidor de estado...</p>
+        </div>
+        <div class="actions">
+          <a class="btn" id="act-status" aria-disabled="true">Ver estado</a>
+        </div>
+      </section>
+
+      <!-- 3. Informe para agente de IA -->
+      <section class="card" id="card-report" aria-disabled="true">
+        <div>
+          <div class="card-hdr">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            <h2 class="card-title">Informe para agente de IA</h2>
+          </div>
+          <p class="card-desc">Informe Markdown con triage automático, tracebacks y drift listo para pegar a tu agente en la Mac.</p>
+          <div class="status-row" id="st-report">
+            <span class="pill st-warn"><span class="dot"></span>Comprobando</span>
+          </div>
+          <p class="reason-text" id="rs-report">Verificando generador de informes...</p>
+        </div>
+        <div class="actions">
+          <a class="btn" id="act-report-open" aria-disabled="true">Abrir</a>
+          <button class="btn btn-primary" id="act-report-copy" type="button" disabled>Copiar al portapapeles</button>
+        </div>
+      </section>
+
+      <!-- 4. Descargas de modelos -->
+      <section class="card" id="card-downloads" aria-disabled="true">
+        <div>
+          <div class="card-hdr">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <h2 class="card-title">Descargas de modelos</h2>
+          </div>
+          <p class="card-desc">Registro en tiempo real de las descargas de HuggingFace (Fase 1 crítica y Fase 2 en segundo plano).</p>
+          <div class="status-row" id="st-downloads">
+            <span class="pill st-warn"><span class="dot"></span>Comprobando</span>
+          </div>
+          <p class="reason-text" id="rs-downloads">Verificando registro de descargas...</p>
+        </div>
+        <div class="actions">
+          <a class="btn" id="act-downloads" aria-disabled="true">Ver registro</a>
+        </div>
+      </section>
+
+      <!-- 5. Diagnóstico de arranque -->
+      <section class="card" id="card-diag" aria-disabled="true">
+        <div>
+          <div class="card-hdr">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <h2 class="card-title">Diagnóstico de arranque</h2>
+          </div>
+          <p class="card-desc">Resultado de las 10 pruebas iniciales (GPU, CUDA matmul, ONNX Runtime, NVENC, libx264, Nginx).</p>
+          <div class="status-row" id="st-diag">
+            <span class="pill st-warn"><span class="dot"></span>Comprobando</span>
+          </div>
+          <p class="reason-text" id="rs-diag">Verificando diagnóstico de arranque...</p>
+        </div>
+        <div class="actions">
+          <a class="btn" id="act-diag" aria-disabled="true">Ver diagnóstico</a>
+        </div>
+      </section>
+
+      <!-- 6. Terminal web -->
+      <section class="card" id="card-terminal" aria-disabled="true">
+        <div>
+          <div class="card-hdr">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <h2 class="card-title">Terminal web</h2>
+          </div>
+          <p class="card-desc">Consola interactiva Bash en el navegador (ttyd) para ejecutar comandos sugeridos sin SSH.</p>
+          <div class="status-row" id="st-terminal">
+            <span class="pill st-off"><span class="dot"></span>No disponible</span>
+          </div>
+          <p class="reason-text" id="rs-terminal">Desactivada. Arranca la instancia con -e ENABLE_WEB_TERMINAL=1 para activarla.</p>
+        </div>
+        <div class="actions">
+          <a class="btn" id="act-terminal" aria-disabled="true">Abrir terminal ↗</a>
+        </div>
+      </section>
+
+      <!-- 7. ComfyUI Manager -->
+      <section class="card" id="card-manager" aria-disabled="true">
+        <div>
+          <div class="card-hdr">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            <h2 class="card-title">ComfyUI Manager</h2>
+          </div>
+          <p class="card-desc">Instalación de custom nodes y modelos adicionales con un clic desde la interfaz gráfica.</p>
+          <div class="status-row" id="st-manager">
+            <span class="pill st-warn"><span class="dot"></span>Arrancando</span>
+          </div>
+          <p class="reason-text" id="rs-manager">Se abre desde el botón Manager dentro de ComfyUI.</p>
+        </div>
+        <div class="actions">
+          <a class="btn" id="act-manager" aria-disabled="true">Ir a ComfyUI ↗</a>
+        </div>
+      </section>
+    </main>
+
+    <section id="clipboard-modal" aria-live="polite">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <strong>Informe listo para copiar (selecciona y copia con Cmd+C / Ctrl+C):</strong>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" id="select-all-btn" type="button">Seleccionar todo</button>
+          <button class="btn" id="close-modal-btn" type="button">Cerrar</button>
+        </div>
+      </div>
+      <textarea id="clipboard-textarea" readonly></textarea>
+    </section>
+
+    <footer>
+      <div>
+        <span>Datos: <code id="ft-data">/workspace/comfyui-data</code></span> ·
+        <span>Perfil activo: <code id="ft-profile">all</code></span>
+      </div>
+      <div>
+        <a href="https://github.com/Comfy-Org/ComfyUI" target="_blank" rel="noopener">Documentación ComfyUI</a> ·
+        <span>Portal v1.0</span>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    function setCardState(cardId, pillClass, pillLabel, reasonText, linkId, href, newTab) {
+      const card = document.getElementById(cardId);
+      const st = document.getElementById("st-" + cardId.replace("card-", ""));
+      const rs = document.getElementById("rs-" + cardId.replace("card-", ""));
+      const act = document.getElementById(linkId);
+
+      st.innerHTML = `<span class="pill ${pillClass}"><span class="dot"></span>${pillLabel}</span>`;
+      rs.textContent = reasonText;
+
+      if (href) {
+        card.setAttribute("aria-disabled", "false");
+        act.setAttribute("href", href);
+        act.setAttribute("aria-disabled", "false");
+        if (newTab) {
+          act.setAttribute("target", "_blank");
+          act.setAttribute("rel", "noopener");
+        }
+      } else {
+        card.setAttribute("aria-disabled", "true");
+        act.removeAttribute("href");
+        act.setAttribute("aria-disabled", "true");
+      }
+    }
+
+    async function headOk(url) {
+      try {
+        const r = await fetch(url, { method: "HEAD", cache: "no-store" });
+        return r.status === 200;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function fmtUptime(s) {
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      return h > 0 ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+    }
+
+    async function updatePortal() {
+      let api = null;
+      try {
+        const res = await fetch("/status/api", { cache: "no-store" });
+        if (res.ok) {
+          api = await res.json();
+        }
+      } catch (_) {}
+
+      const [comfyHead, statusHead, dlHead, diagHead] = await Promise.all([
+        headOk("/system_stats"),
+        headOk("/status"),
+        headOk("/download-status"),
+        headOk("/diag")
+      ]);
+
+      if (api) {
+        document.getElementById("meta-image").textContent = `Imagen: ${api.image.tag} (ComfyUI ${String(api.image.comfyui_sha).slice(0, 8)})`;
+        document.getElementById("meta-gpu").textContent = api.gpu.available
+          ? `GPU: ${api.gpu.name} (${Math.round(api.gpu.vram_total_mb / 1024)} GB · Driver ${api.gpu.driver})`
+          : `GPU: Modo CPU (${api.gpu.reason || "sin GPU"})`;
+        document.getElementById("meta-uptime").textContent = `Uptime: ${fmtUptime(api.instance.uptime_s)}`;
+        document.getElementById("phase-banner").textContent = api.phase_banner || "Activo";
+        document.getElementById("ft-profile").textContent = (api.env_masked && api.env_masked.MODEL_PROFILE) || "all";
+
+        const passState = (api.env_masked && api.env_masked.COMFY_PASS) || "";
+        document.getElementById("autogenerated-pass-notice").style.display =
+          passState.includes("autogenerada") ? "block" : "none";
+      } else {
+        document.getElementById("phase-banner").textContent = "Servidor de estado aún no disponible...";
+      }
+
+      // 1. ComfyUI & 7. ComfyUI Manager
+      if (comfyHead) {
+        setCardState("card-comfyui", "st-ok", "Activo", "Interfaz de ComfyUI lista para recibir workflows.", "act-comfyui", "/", true);
+        setCardState("card-manager", "st-ok", "Activo", "Se abre desde el botón Manager dentro de ComfyUI.", "act-manager", "/", true);
+      } else {
+        const cState = api && api.comfyui ? api.comfyui.state : "starting";
+        if (cState === "down") {
+          const msg = "ComfyUI caído, el supervisor lo está reiniciando.";
+          setCardState("card-comfyui", "st-err", "Caído", msg, "act-comfyui", null, true);
+          setCardState("card-manager", "st-err", "Caído", "Se abre desde el botón Manager dentro de ComfyUI (actualmente caído).", "act-manager", null, true);
+        } else {
+          setCardState("card-comfyui", "st-warn", "Arrancando", "ComfyUI arrancando (completando Fase 1 o carga inicial).", "act-comfyui", null, true);
+          setCardState("card-manager", "st-warn", "Arrancando", "Se abre desde el botón Manager dentro de ComfyUI.", "act-manager", null, true);
+        }
+      }
+
+      // 2. Estado & 3. Informe
+      const copyBtn = document.getElementById("act-report-copy");
+      if (statusHead) {
+        setCardState("card-status", "st-ok", "Activo", "Métricas en vivo, supervisor y logs disponibles.", "act-status", "/status", false);
+        setCardState("card-report", "st-ok", "Activo", "Informe Markdown con triage listo para abrir o copiar.", "act-report-open", "/report.md", false);
+        copyBtn.disabled = false;
+      } else {
+        setCardState("card-status", "st-off", "No disponible", "Servidor de estado no disponible.", "act-status", null, false);
+        setCardState("card-report", "st-off", "No disponible", "Servidor de estado no disponible.", "act-report-open", null, false);
+        copyBtn.disabled = true;
+      }
+
+      // 4. Descargas
+      const p1State = api && api.phases && api.phases.phase1 ? api.phases.phase1.state : "pending";
+      const p2State = api && api.phases && api.phases.phase2 ? api.phases.phase2.state : "pending";
+      if (p1State === "skipped") {
+        setCardState("card-downloads", "st-off", "No disponible", "No disponible: omitidas (SKIP_MODEL_DOWNLOAD=1).", "act-downloads", null, false);
+      } else if (dlHead) {
+        const dlMsg = p2State === "running"
+          ? `Descargando Fase 2 (${api.phases.phase2.done}/${api.phases.phase2.total} modelos)...`
+          : "Registro de descargas disponible.";
+        setCardState("card-downloads", "st-ok", "Activo", dlMsg, "act-downloads", "/download-status", false);
+      } else {
+        setCardState("card-downloads", "st-off", "No disponible", "Aún no hay log de descargas.", "act-downloads", null, false);
+      }
+
+      // 5. Diagnóstico
+      if (diagHead) {
+        setCardState("card-diag", "st-ok", "Activo", "Diagnóstico de arranque completado.", "act-diag", "/diag", false);
+      } else {
+        setCardState("card-diag", "st-off", "No disponible", "Diagnóstico aún no ejecutado.", "act-diag", null, false);
+      }
+
+      // 6. Terminal web
+      const termEnabled = api && api.services && api.services.terminal && api.services.terminal.enabled;
+      if (termEnabled && await headOk("/terminal/")) {
+        setCardState("card-terminal", "st-ok", "Activo", "Terminal interactiva Bash activa en /terminal/.", "act-terminal", "/terminal/", true);
+      } else {
+        setCardState(
+          "card-terminal",
+          "st-off",
+          "No disponible",
+          "Desactivada. Arranca la instancia con -e ENABLE_WEB_TERMINAL=1 para activarla.",
+          "act-terminal",
+          null,
+          true
+        );
+      }
+    }
+
+    document.getElementById("refresh-now-btn").addEventListener("click", updatePortal);
+
+    document.getElementById("act-report-copy").addEventListener("click", async () => {
+      try {
+        const res = await fetch("/report.md", { cache: "no-store" });
+        const text = await res.text();
+        try {
+          await navigator.clipboard.writeText(text);
+          const btn = document.getElementById("act-report-copy");
+          const prev = btn.textContent;
+          btn.textContent = "¡Copiado al portapapeles!";
+          setTimeout(() => { btn.textContent = prev; }, 2500);
+        } catch (_) {
+          const modal = document.getElementById("clipboard-modal");
+          const ta = document.getElementById("clipboard-textarea");
+          modal.style.display = "block";
+          ta.value = text;
+          ta.focus();
+          ta.select();
+        }
+      } catch (_) {}
+    });
+
+    document.getElementById("select-all-btn").addEventListener("click", () => {
+      const ta = document.getElementById("clipboard-textarea");
+      ta.focus();
+      ta.select();
+    });
+
+    document.getElementById("close-modal-btn").addEventListener("click", () => {
+      document.getElementById("clipboard-modal").style.display = "none";
+    });
+
+    updatePortal();
+    setInterval(updatePortal, 15000);
+  </script>
+</body>
+</html>

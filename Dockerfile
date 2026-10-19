@@ -19,7 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COMFY_DATA_DIR=/workspace/comfyui-data \
     OPEN_BUTTON_PORT=8188
 
-# 1. Dependencias del sistema: ffmpeg completo (libx264 + nvenc), Nginx, tini, git, openssl
+# 1. Dependencias del sistema: ffmpeg completo (libx264 + nvenc), Nginx, ttyd, tini, git, openssl
 #    y build-essential + python3-dev conservados (ALTA-03) para que torch.compile (Triton)
 #    y la instalación en 1 clic de nodos con extensiones C/C++ desde ComfyUI-Manager funcionen en runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         nginx \
         apache2-utils \
+        ttyd \
         build-essential \
         cmake \
         pkg-config \
@@ -45,10 +46,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxrender1 \
         libgomp1 \
     && ffmpeg -version \
+    && ttyd --version \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Copiar archivos de bloqueo y restricciones de versión (REP-01 / REP-02 / ALTA-05)
-RUN mkdir -p /etc/comfyui
+RUN mkdir -p /etc/comfyui /etc/comfyui/portal
 COPY config/constraints.txt /etc/comfyui/constraints.txt
 COPY config/nodes.lock /etc/comfyui/nodes.lock
 RUN sed -i 's/\r$//' /etc/comfyui/constraints.txt /etc/comfyui/nodes.lock
@@ -163,20 +165,35 @@ RUN mkdir -p /etc/comfyui/models_configs \
     && ln -sfn /workspace/comfyui-data/user /opt/ComfyUI/user \
     && ln -sfn /opt/ComfyUI /workspace/ComfyUI
 
-# 6. Copiar archivos de configuración y scripts de arranque + warm-up con timeout y limpieza (MED-03 / M-03 / L-07)
+# 6. Copiar archivos de configuración, portal, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
+ARG IMAGE_TAG=dev
+ARG BUILD_DATE=unknown
+
 COPY config/extra_model_paths.yaml /etc/comfyui/extra_model_paths.yaml
 COPY config/manager-config.ini /etc/comfyui/manager-config.ini
 COPY config/_starting.html /etc/comfyui/_starting.html
+COPY config/portal/index.html /etc/comfyui/portal/index.html
 COPY config/nginx.conf /etc/nginx/nginx.conf
+COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
+COPY scripts/status-server.py /usr/local/bin/status-server.py
+COPY scripts/diag.sh /usr/local/bin/diag.sh
 COPY scripts/start.sh /start.sh
 
-RUN sed -i 's/\r$//' /usr/local/bin/download-models.sh /start.sh \
+RUN sed -i 's/\r$//' \
+        /usr/local/bin/download-models.sh \
+        /usr/local/bin/status-server.py \
+        /usr/local/bin/diag.sh \
+        /start.sh \
         /etc/comfyui/extra_model_paths.yaml \
         /etc/comfyui/manager-config.ini \
         /etc/comfyui/_starting.html \
+        /etc/comfyui/portal/index.html \
+        /etc/comfyui/triage_patterns.json \
         /etc/nginx/nginx.conf && \
-    chmod +x /usr/local/bin/download-models.sh /start.sh && \
+    chmod +x /usr/local/bin/download-models.sh /usr/local/bin/status-server.py /usr/local/bin/diag.sh /start.sh && \
+    python3 -m py_compile /usr/local/bin/status-server.py && \
+    IMAGE_TAG="${IMAGE_TAG}" BUILD_DATE="${BUILD_DATE}" python3 -c "import json, os, subprocess, torch; sha = subprocess.check_output(['git', '-C', '/opt/ComfyUI', 'rev-parse', 'HEAD'], text=True).strip(); json.dump({'tag': os.environ.get('IMAGE_TAG', 'dev'), 'built_at': os.environ.get('BUILD_DATE', 'unknown'), 'comfyui_sha': sha, 'pytorch': torch.__version__, 'cuda': str(torch.version.cuda), 'ubuntu': '24.04'}, open('/etc/comfyui/image.json', 'w', encoding='utf-8'), indent=2); pats = json.load(open('/etc/comfyui/triage_patterns.json', encoding='utf-8')); assert len(pats) >= 15" && \
     cp /etc/comfyui/extra_model_paths.yaml /opt/ComfyUI/extra_model_paths.yaml && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/__manager/config.ini && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini && \
