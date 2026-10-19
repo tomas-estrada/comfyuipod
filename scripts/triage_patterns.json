@@ -74,7 +74,7 @@
   {
     "id": "hf-503",
     "sources": ["download"],
-    "pattern": "503|Service Unavailable|RequestException|CAS service error",
+    "pattern": "\\b503\\b|HTTP 503|Service Unavailable|RequestException|CAS service error",
     "severity": "media",
     "cause": "Inestabilidad temporal del backend Xet / CDN de HuggingFace",
     "first_command": "HF_HUB_DISABLE_XET=1 /usr/local/bin/download-models.sh --phase2 >> /var/log/download-models.log 2>&1 &"

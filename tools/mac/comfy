@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-COMFY_IMAGE="${COMFY_IMAGE:-ghcr.io/essaucr/comfyuipod:latest}"
+COMFY_IMAGE="${COMFY_IMAGE:-}"
 COMFY_USER="${COMFY_USER:-admin}"
 
 die() {
@@ -28,10 +28,23 @@ require_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "Comando requerido no encontrado: '$1'. Instálalo antes de continuar."
 }
 
+# O-13: Pasar credenciales por stdin a curl (-K -) para no exponerlas en ps aux
+curl_auth() {
+    local user="$1"
+    local pass="$2"
+    shift 2
+    local escaped_pass="${pass//\\/\\\\}"
+    escaped_pass="${escaped_pass//\"/\\\"}"
+    printf 'user = "%s:%s"\n' "${user}" "${escaped_pass}" | curl -K - "$@"
+}
+
+# O-14: Respetar COMFY_BROWSER y distinguir Darwin (macOS) vs Linux
 open_browser() {
     local target_url="$1"
-    if command -v open >/dev/null 2>&1; then
-        open "${target_url}"
+    if [ -n "${COMFY_BROWSER:-}" ]; then
+        "${COMFY_BROWSER}" "${target_url}"
+    elif [ "$(uname -s)" = "Darwin" ] && command -v open >/dev/null 2>&1; then
+        /usr/bin/open "${target_url}"
     elif command -v xdg-open >/dev/null 2>&1; then
         xdg-open "${target_url}"
     else
@@ -50,13 +63,15 @@ fetch_instances_json() {
 # Salida: "<id>|<ip>|<port>|<status>|<label>"
 resolve_instance() {
     local requested_id="${1:-}"
+    local allow_starting="${2:-0}"
     local raw_json
     raw_json="$(fetch_instances_json)"
 
-    RAW_JSON="${raw_json}" python3 - "${requested_id}" << 'PYEOF'
+    RAW_JSON="${raw_json}" python3 - "${requested_id}" "${allow_starting}" << 'PYEOF'
 import json, os, sys
 
 req_id = sys.argv[1].strip()
+allow_starting = sys.argv[2].strip() == "1"
 raw = os.environ.get("RAW_JSON", "")
 try:
     parsed = json.loads(raw)
@@ -95,15 +110,17 @@ for inst in instances:
             candidates.append((0, iid, ip, port, status, label))
             break
     else:
-        if status == "running" and ip and port:
+        if (status == "running" and ip and port) or (allow_starting and status in ("running", "loading", "creating", "starting")):
             prio = 0 if label.lower().startswith("comfy") else 1
+            if status != "running":
+                prio += 2
             candidates.append((prio, iid, ip, port, status, label))
 
 if not candidates:
     if req_id:
         sys.stderr.write(f"[ERROR] No se encontró la instancia con ID {req_id}.\n")
     else:
-        sys.stderr.write("[ERROR] No se encontró ninguna instancia en estado 'running' con puerto 8188/tcp mapeado.\n")
+        sys.stderr.write("[ERROR] No se encontró ninguna instancia activa con puerto 8188/tcp mapeado.\n")
     sys.exit(1)
 
 candidates.sort(key=lambda x: x[0])
@@ -191,8 +208,7 @@ cmd_open() {
             ;;
     esac
 
-    local base_url path_suffix
-    base_url="$(cmd_url "${inst_id}")"
+    local path_suffix
     case "${target_view}" in
         home)     path_suffix="/home" ;;
         comfy)    path_suffix="/" ;;
@@ -202,7 +218,28 @@ cmd_open() {
         *)        die "Vista no reconocida: '${target_view}'. Usa: home | comfy | status | report | terminal" ;;
     esac
 
-    local full_url="${base_url}${path_suffix}"
+    # O-14: Esperar hasta 10 min (200 * 3s) si la instancia sigue arrancando o Nginx aún no responde
+    local deadline=$((SECONDS + 600))
+    local resolved_id="" ip="" port="" status=""
+    while [ "${SECONDS}" -lt "${deadline}" ]; do
+        local info=""
+        if info="$(resolve_instance "${inst_id}" "1" 2>/dev/null)"; then
+            IFS='|' read -r resolved_id ip port status _ <<<"${info}"
+            if [ "${status}" = "running" ] && [ -n "${ip}" ] && [ -n "${port}" ]; then
+                if curl -fsS --max-time 3 "http://${ip}:${port}/healthz" >/dev/null 2>&1; then
+                    break
+                fi
+            fi
+            echo "[INFO] Instancia ${resolved_id} en estado '${status}' (${ip:-sin-ip}:${port:-sin-puerto}); esperando a que Nginx responda..." >&2
+        else
+            echo "[INFO] Esperando a que la instancia aparezca en Vast.ai..." >&2
+        fi
+        sleep 3
+    done
+
+    [ -n "${ip}" ] && [ -n "${port}" ] || die "Timeout (10 min) esperando IP/puerto público de la instancia."
+
+    local full_url="http://${ip}:${port}${path_suffix}"
     echo "Abriendo ${full_url} ..."
     open_browser "${full_url}"
 }
@@ -286,12 +323,12 @@ cmd_report() {
     pass="$(resolve_auth_pass "${inst_id}")"
 
     if [ "${to_stdout}" = "1" ]; then
-        curl -fsSL -u "${COMFY_USER}:${pass}" "http://${ip}:${port}/report.md"
+        curl_auth "${COMFY_USER}" "${pass}" -fsSL "http://${ip}:${port}/report.md"
         return 0
     fi
 
     local out_file="/tmp/comfy-report-${inst_id}.md"
-    curl -fsSL -u "${COMFY_USER}:${pass}" "http://${ip}:${port}/report.md" -o "${out_file}"
+    curl_auth "${COMFY_USER}" "${pass}" -fsSL "http://${ip}:${port}/report.md" -o "${out_file}"
     echo "Informe guardado en: ${out_file} ($(wc -c <"${out_file}" | tr -d ' ') bytes)"
     if command -v pbcopy >/dev/null 2>&1; then
         pbcopy <"${out_file}"
@@ -311,7 +348,7 @@ cmd_watch() {
     echo "Monitorizando ${api_url} cada 3s (Ctrl+C para salir)..."
     while true; do
         local json_payload
-        if json_payload="$(curl -fsSL --max-time 5 -u "${COMFY_USER}:${pass}" "${api_url}" 2>/dev/null)"; then
+        if json_payload="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL --max-time 5 "${api_url}" 2>/dev/null)"; then
             clear
             API_JSON="${json_payload}" python3 - << 'PYEOF'
 import json, os
@@ -348,9 +385,36 @@ PYEOF
 
 cmd_rent() {
     require_cmd vastai
-    local profile="${1:-all}"
+    require_cmd python3
+
+    local profile="all"
+    local dry_run="0"
+    local assume_yes="0"
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --dry-run)
+                dry_run="1"
+                ;;
+            -y|--yes)
+                assume_yes="1"
+                ;;
+            all|general|realistic|anime|minimal)
+                profile="$1"
+                ;;
+            *)
+                die "Argumento no reconocido en 'comfy rent': '$1'. Uso: comfy rent [all|general|realistic|anime|minimal] [--dry-run] [--yes]"
+                ;;
+        esac
+        shift
+    done
+
+    # O-12: Exigir COMFY_IMAGE explícitamente en lugar de asumir un GHCR ajeno por defecto
+    [ -n "${COMFY_IMAGE}" ] || die "La variable COMFY_IMAGE no está definida. Exporta tu imagen antes de alquilar (ej.: export COMFY_IMAGE=ghcr.io/<tu-usuario>/comfyuipod:latest)."
+
     local pass="${COMFY_PASS:-}"
-    local query="gpu_name=RTX_5090 gpu_ram>=24 inet_down>=500 disk_space>=120 direct_port_count>=1 reliability>=0.98 verified=true rentable=true"
+    # O-01b: Filtros alineados con la guía de despliegue (cpu_ram>=32, cuda_max_good>=12.8)
+    local base_filters="gpu_ram>=24 cpu_ram>=32 cuda_max_good>=12.8 inet_down>=500 disk_space>=120 direct_port_count>=1 reliability>=0.98 verified=true rentable=true"
+    local query="gpu_name=RTX_5090 ${base_filters}"
 
     echo "Buscando ofertas RTX 5090 en Vast.ai (perfil=${profile})..."
     local offers_json
@@ -366,7 +430,7 @@ print(rows[0]["id"] if rows else "")
 
     if [ -z "${offer_id}" ]; then
         echo "No se encontraron RTX 5090 disponibles; buscando fallback RTX 4090..."
-        query="gpu_name=RTX_4090 gpu_ram>=24 inet_down>=500 disk_space>=120 direct_port_count>=1 reliability>=0.98 verified=true rentable=true"
+        query="gpu_name=RTX_4090 ${base_filters}"
         offers_json="$(vastai search offers "${query}" -o "dph_total" --raw 2>/dev/null || echo "[]")"
         offer_id="$(OFFERS_JSON="${offers_json}" python3 -c '
 import json, os
@@ -376,7 +440,37 @@ print(rows[0]["id"] if rows else "")
 ' 2>/dev/null || true)"
     fi
 
-    [ -n "${offer_id}" ] || die "No se encontraron ofertas disponibles que cumplan los filtros."
+    [ -n "${offer_id}" ] || die "No se encontraron ofertas disponibles que cumplan los filtros (${base_filters})."
+
+    # O-01a: Mostrar tabla de las 5 ofertas más baratas con coste total estimado (GPU + 120 GB disco)
+    OFFERS_JSON="${offers_json}" python3 - << 'PYEOF'
+import json, os
+
+data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
+rows = data.get("offers", data) if isinstance(data, dict) else data
+top5 = rows[:5]
+
+print("\nTop 5 ofertas más económicas encontradas (disco solicitado: 120 GB):")
+hdr = f"{'#':<3} {'OFFER_ID':<10} {'GPU':<12} {'VRAM':<7} {'HOST_RAM':<9} {'CUDA':<6} {'DOWN_Mbps':<10} {'$/GB·mes':<9} {'GPU_$/h':<8} {'TOTAL_EST_$/h'}"
+print(hdr)
+print("-" * len(hdr))
+for idx, r in enumerate(top5, 1):
+    oid = str(r.get("id", ""))
+    gpu = str(r.get("gpu_name", "?"))[:11]
+    vram_raw = float(r.get("gpu_ram") or 0)
+    vram_gb = vram_raw / 1024.0 if vram_raw > 256 else vram_raw
+    cram_raw = float(r.get("cpu_ram") or 0)
+    cram_gb = cram_raw / 1024.0 if cram_raw > 512 else cram_raw
+    cuda = str(r.get("cuda_max_good") or "?")
+    down = float(r.get("inet_down") or 0)
+    storage_cost = float(r.get("storage_cost") or 0.15)
+    dph = float(r.get("dph_total") or r.get("dph_base") or 0.0)
+    disk_dph = (120.0 * storage_cost) / 730.0
+    total_dph = dph + disk_dph if not r.get("dph_total") else dph
+    mark = "*" if idx == 1 else " "
+    print(f"{idx}{mark:<2} {oid:<10} {gpu:<12} {vram_gb:>4.0f}GB {cram_gb:>6.0f}GB {cuda:<6} {down:>8.0f} {storage_cost:>8.3f} {dph:>7.3f} ${total_dph:>7.3f}/h")
+print("")
+PYEOF
 
     local env_flags="-p 8188:8188 -e MODEL_PROFILE=${profile} -e COMFY_USER=${COMFY_USER}"
     if [ -n "${pass}" ]; then
@@ -385,14 +479,42 @@ print(rows[0]["id"] if rows else "")
     if [ -n "${HF_TOKEN:-}" ]; then
         env_flags="${env_flags} -e HF_TOKEN=${HF_TOKEN}"
     fi
+    # O-01d: Reenviar variables opcionales si están definidas en la Mac
+    if [ -n "${COMFYUI_EXTRA_ARGS:-}" ]; then
+        env_flags="${env_flags} -e COMFYUI_EXTRA_ARGS=${COMFYUI_EXTRA_ARGS}"
+    fi
+    if [ -n "${HF_HUB_DISABLE_XET:-}" ]; then
+        env_flags="${env_flags} -e HF_HUB_DISABLE_XET=${HF_HUB_DISABLE_XET}"
+    fi
+    if [ -n "${ENABLE_WEB_TERMINAL:-}" ]; then
+        env_flags="${env_flags} -e ENABLE_WEB_TERMINAL=${ENABLE_WEB_TERMINAL}"
+    fi
 
+    if [ "${dry_run}" = "1" ]; then
+        echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, --direct --args)."
+        return 0
+    fi
+
+    if [ "${assume_yes}" != "1" ]; then
+        read -r -p "¿Confirmas alquilar la oferta #1 (ID ${offer_id}) con imagen '${COMFY_IMAGE}'? [y/N]: " confirm_ans
+        case "${confirm_ans}" in
+            y|Y|yes|YES) ;;
+            *)
+                echo "Alquiler cancelado por el usuario."
+                return 0
+                ;;
+        esac
+    fi
+
+    # O-01c: Usar --direct --args (runtype="args", respeta ENTRYPOINT de la imagen sin sobreescribirlo)
     echo "Alquilando oferta ID ${offer_id} con imagen ${COMFY_IMAGE}..."
     vastai create instance "${offer_id}" \
         --image "${COMFY_IMAGE}" \
         --disk 120 \
         --label "comfy-${profile}" \
         --env "${env_flags}" \
-        --onstart-cmd "true"
+        --direct \
+        --args
 }
 
 cmd_destroy() {
@@ -433,13 +555,13 @@ case "${subcmd}" in
         cmd_pass "${1:-}"
         ;;
     report|report-dl)
-        cmd_report "${1:-}"
+        cmd_report "${1:-}" "${2:-}"
         ;;
     watch)
         cmd_watch "${1:-}"
         ;;
     rent)
-        cmd_rent "${1:-all}"
+        cmd_rent "$@"
         ;;
     destroy|rm)
         cmd_destroy "${1:-}"

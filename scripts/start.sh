@@ -19,18 +19,23 @@ COMFY_APP_DIR="${COMFY_APP_DIR:-/opt/ComfyUI}"
 COMFY_DATA_DIR="${COMFY_DATA_DIR:-/workspace/comfyui-data}"
 COMFY_MAX_RESTARTS="${COMFY_MAX_RESTARTS:-5}"
 COMFY_RESTART_DELAY="${COMFY_RESTART_DELAY:-5}"
+COMFY_HEALTHY_UPTIME="${COMFY_HEALTHY_UPTIME:-600}"
+LOG_MAX_MB="${LOG_MAX_MB:-200}"
 export COMFY_APP_DIR
 export COMFY_DATA_DIR
 export COMFY_MAX_RESTARTS
 export COMFY_RESTART_DELAY
+export COMFY_HEALTHY_UPTIME
+export LOG_MAX_MB
 export VHS_FORCE_FFMPEG_PATH="/usr/bin/ffmpeg"
 export VHS_USE_IMAGEIO_FFMPEG="0"
 export NVIDIA_DRIVER_CAPABILITIES="all"
 
 # ------------------------------------------------------------------------------
-# 0. Inicializar archivos de log en /var/log y redirigir salida a start.log (§5.1)
+# 0. Inicializar archivos de log en /var/log y redirigir salida a start.log (§5.1 / O-10)
 # ------------------------------------------------------------------------------
 mkdir -p /var/log /run
+date +%s > /run/comfyui-started-at
 touch \
     /var/log/start.log \
     /var/log/comfyui.log \
@@ -63,7 +68,24 @@ except Exception:
 fi
 echo "======================================================================"
 
-# Helper para escribir /run/comfyui-supervisor.json de forma atómica (§5.2)
+# Helper para truncar logs que superen LOG_MAX_MB conservando los últimos 20 MiB (O-04)
+truncate_logs_if_needed() {
+    local max_bytes=$(( ${LOG_MAX_MB:-200} * 1048576 ))
+    local keep_bytes=$(( 20 * 1048576 ))
+    local log_file size_bytes
+    for log_file in /var/log/comfyui.log /var/log/nginx/access.log; do
+        if [ -f "${log_file}" ]; then
+            size_bytes="$(stat -c%s "${log_file}" 2>/dev/null || echo 0)"
+            if [ "${size_bytes}" -gt "${max_bytes}" ]; then
+                tail -c "${keep_bytes}" "${log_file}" > "${log_file}.trunc" 2>/dev/null && \
+                    cat "${log_file}.trunc" > "${log_file}" 2>/dev/null || true
+                rm -f "${log_file}.trunc"
+            fi
+        fi
+    done
+}
+
+# Helper para escribir /run/comfyui-supervisor.json de forma atómica (§5.2 / O-02)
 write_supervisor_state() {
     local state="$1"
     local attempt="$2"
@@ -74,15 +96,17 @@ write_supervisor_state() {
     local exit_code="$7"
     local exit_reason="$8"
     local exit_at="$9"
+    local healthy_resets="${10:-0}"
 
-    python3 - "$state" "$attempt" "$restarts" "$max_r" "$pid_val" "$started_val" "$exit_code" "$exit_reason" "$exit_at" << 'PYEOF'
+    python3 - "$state" "$attempt" "$restarts" "$max_r" "$pid_val" "$started_val" "$exit_code" "$exit_reason" "$exit_at" "$healthy_resets" << 'PYEOF'
 import json, os, sys
 
-state, attempt, restarts, max_r, pid_s, started_s, code_s, reason, at_s = sys.argv[1:10]
+state, attempt, restarts, max_r, pid_s, started_s, code_s, reason, at_s, hr_s = sys.argv[1:11]
 data = {
     "state": state,
     "attempt": int(attempt),
     "restarts": int(restarts),
+    "healthy_resets": int(hr_s),
     "max": int(max_r),
     "pid": int(pid_s) if pid_s and pid_s != "null" else None,
     "started_at": int(started_s) if started_s and started_s != "null" else None,
@@ -103,7 +127,8 @@ PYEOF
 LAST_EXIT_CODE="null"
 LAST_EXIT_REASON=""
 LAST_EXIT_AT="null"
-write_supervisor_state "starting" 0 0 "${COMFY_MAX_RESTARTS}" "null" "null" "null" "" "null"
+HEALTHY_RESETS=0
+write_supervisor_state "starting" 0 0 "${COMFY_MAX_RESTARTS}" "null" "null" "null" "" "null" "${HEALTHY_RESETS}"
 
 # ------------------------------------------------------------------------------
 # 1. Verificación estricta de ffmpeg sin SIGPIPE (Lección 1 / REL-02)
@@ -270,7 +295,7 @@ if [ "${ENABLE_WEB_TERMINAL:-0}" = "1" ]; then
         echo "[4/7] Iniciando terminal web ttyd en 127.0.0.1:7681 (/terminal/)..."
         touch /var/log/ttyd.log
         chmod 644 /var/log/ttyd.log
-        setsid -f ttyd --interface 127.0.0.1 --port 7681 --base-path /terminal --writable bash -l >> /var/log/ttyd.log 2>&1 < /dev/null
+        setsid -f env -u COMFY_PASS ttyd --interface 127.0.0.1 --port 7681 --base-path /terminal --writable bash -l >> /var/log/ttyd.log 2>&1 < /dev/null
     else
         echo "[WARN] ENABLE_WEB_TERMINAL=1 pero el binario ttyd no está instalado."
     fi
@@ -280,11 +305,13 @@ fi
 
 # ------------------------------------------------------------------------------
 # 5. Ejecutar autodiagnóstico no bloqueante /usr/local/bin/diag.sh (§7.1)
+#    y limpiar COMFY_PASS del entorno antes de Fase 1/2 y ComfyUI (O-05)
 # ------------------------------------------------------------------------------
 echo "[5/7] Ejecutando autodiagnóstico de subsistemas (/usr/local/bin/diag.sh)..."
 if [ -x /usr/local/bin/diag.sh ]; then
     timeout 90 /usr/local/bin/diag.sh 2>&1 | tee /var/log/diag.txt || true
 fi
+unset COMFY_PASS
 
 # ------------------------------------------------------------------------------
 # 6. Ejecutar Fase 1 (con timeout no-fatal, REL-03) y lanzar Fase 2 con setsid -f (INF-02 / L-03)
@@ -301,7 +328,7 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 7. Supervisor de ComfyUI en 127.0.0.1:18188 (§5.1, §5.2, §5.3)
+# 7. Supervisor de ComfyUI en 127.0.0.1:18188 (§5.1, §5.2, §5.3, O-02, O-04)
 # ------------------------------------------------------------------------------
 echo "[7/7] Iniciando supervisor de ComfyUI en 127.0.0.1:18188 (accesible vía Nginx en puerto 8188)..."
 cd "${COMFY_APP_DIR}"
@@ -344,10 +371,11 @@ attempt=0
 restarts=0
 
 while [ "${SHUTTING_DOWN}" -eq 0 ]; do
+    truncate_logs_if_needed
     attempt=$((attempt + 1))
     started_at="$(date +%s)"
 
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] Lanzando ComfyUI (intento #${attempt}, reinicios=${restarts}/${COMFY_MAX_RESTARTS})..." | tee -a /var/log/supervisor.log
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] Lanzando ComfyUI (intento #${attempt}, reinicios=${restarts}/${COMFY_MAX_RESTARTS}, healthy_resets=${HEALTHY_RESETS})..." | tee -a /var/log/supervisor.log
 
     # shellcheck disable=SC2086
     python3 main.py \
@@ -357,7 +385,7 @@ while [ "${SHUTTING_DOWN}" -eq 0 ]; do
         ${COMFYUI_EXTRA_ARGS:-} < /dev/null >> /var/log/comfyui.log 2>&1 &
     COMFY_PID=$!
 
-    write_supervisor_state "running" "${attempt}" "${restarts}" "${COMFY_MAX_RESTARTS}" "${COMFY_PID}" "${started_at}" "${LAST_EXIT_CODE}" "${LAST_EXIT_REASON}" "${LAST_EXIT_AT}"
+    write_supervisor_state "running" "${attempt}" "${restarts}" "${COMFY_MAX_RESTARTS}" "${COMFY_PID}" "${started_at}" "${LAST_EXIT_CODE}" "${LAST_EXIT_REASON}" "${LAST_EXIT_AT}" "${HEALTHY_RESETS}"
 
     rc=0
     wait "${COMFY_PID}" || rc=$?
@@ -368,6 +396,13 @@ while [ "${SHUTTING_DOWN}" -eq 0 ]; do
     fi
 
     exit_at="$(date +%s)"
+    run_duration=$((exit_at - started_at))
+    if [ "${run_duration}" -ge "${COMFY_HEALTHY_UPTIME}" ] && [ "${restarts}" -gt 0 ]; then
+        restarts=0
+        HEALTHY_RESETS=$((HEALTHY_RESETS + 1))
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] Proceso previo vivió ${run_duration}s (>= ${COMFY_HEALTHY_UPTIME}s); contador de reinicios reseteado a 0 (healthy_resets=${HEALTHY_RESETS})." | tee -a /var/log/supervisor.log
+    fi
+
     case "${rc}" in
         137)
             reason="SIGKILL (probable OOM de RAM del host o cgroup)"
@@ -379,7 +414,7 @@ while [ "${SHUTTING_DOWN}" -eq 0 ]; do
             reason="Excepción Python en ComfyUI (revisar traceback en comfyui.log)"
             ;;
         143)
-            reason="SIGTERM recibido"
+            reason="SIGTERM recibido (reinicio manual del operador; no consume presupuesto)"
             ;;
         *)
             reason="Salida inesperada (rc=${rc})"
@@ -392,7 +427,7 @@ while [ "${SHUTTING_DOWN}" -eq 0 ]; do
 
     {
         echo "======================================================================"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] ComfyUI terminó (intento #${attempt}, rc=${rc}): ${reason}"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] ComfyUI terminó (intento #${attempt}, rc=${rc}, duracion=${run_duration}s): ${reason}"
         echo "--- Estado de memoria (free -m) ---"
         free -m 2>/dev/null || true
         if command -v nvidia-smi >/dev/null 2>&1; then
@@ -404,20 +439,22 @@ while [ "${SHUTTING_DOWN}" -eq 0 ]; do
         echo "======================================================================"
     } | tee -a /var/log/supervisor.log
 
-    if [ "${restarts}" -ge "${COMFY_MAX_RESTARTS}" ]; then
-        write_supervisor_state "exhausted" "${attempt}" "${restarts}" "${COMFY_MAX_RESTARTS}" "null" "null" "${LAST_EXIT_CODE}" "${LAST_EXIT_REASON}" "${LAST_EXIT_AT}"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] CRITICAL: Se alcanzó COMFY_MAX_RESTARTS=${COMFY_MAX_RESTARTS}. ComfyUI queda en estado 'exhausted'. Nginx, /status y /home siguen activos para diagnóstico." | tee -a /var/log/supervisor.log
-        while [ "${SHUTTING_DOWN}" -eq 0 ]; do
-            sleep 5 &
-            SLEEP_PID=$!
-            wait "${SLEEP_PID}" 2>/dev/null || true
-            SLEEP_PID=""
-        done
-        break
+    if [ "${rc}" -ne 143 ]; then
+        if [ "${restarts}" -ge "${COMFY_MAX_RESTARTS}" ]; then
+            write_supervisor_state "exhausted" "${attempt}" "${restarts}" "${COMFY_MAX_RESTARTS}" "null" "null" "${LAST_EXIT_CODE}" "${LAST_EXIT_REASON}" "${LAST_EXIT_AT}" "${HEALTHY_RESETS}"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] CRITICAL: Se alcanzó COMFY_MAX_RESTARTS=${COMFY_MAX_RESTARTS}. ComfyUI queda en estado 'exhausted'. Nginx, /status y /home siguen activos para diagnóstico." | tee -a /var/log/supervisor.log
+            while [ "${SHUTTING_DOWN}" -eq 0 ]; do
+                sleep 5 &
+                SLEEP_PID=$!
+                wait "${SLEEP_PID}" 2>/dev/null || true
+                SLEEP_PID=""
+            done
+            break
+        fi
+        restarts=$((restarts + 1))
     fi
 
-    restarts=$((restarts + 1))
-    write_supervisor_state "down" "${attempt}" "${restarts}" "${COMFY_MAX_RESTARTS}" "null" "null" "${LAST_EXIT_CODE}" "${LAST_EXIT_REASON}" "${LAST_EXIT_AT}"
+    write_supervisor_state "down" "${attempt}" "${restarts}" "${COMFY_MAX_RESTARTS}" "null" "null" "${LAST_EXIT_CODE}" "${LAST_EXIT_REASON}" "${LAST_EXIT_AT}" "${HEALTHY_RESETS}"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] Reiniciando ComfyUI en ${COMFY_RESTART_DELAY}s (reinicio ${restarts}/${COMFY_MAX_RESTARTS})..." | tee -a /var/log/supervisor.log
 
     sleep "${COMFY_RESTART_DELAY}" &

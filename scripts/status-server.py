@@ -122,13 +122,31 @@ def run_cmd(args: list[str], timeout_s: int = 5) -> tuple[int, str]:
 
 
 def tail_lines(filepath: str, n: int = 200) -> list[str]:
+    """Lee las últimas n líneas buscando por bloques de 8 KiB desde el final del fichero (O-04)."""
     p = pathlib.Path(filepath)
-    if not p.is_file():
+    if not p.is_file() or n <= 0:
         return []
     try:
-        with p.open("r", encoding="utf-8", errors="replace") as fh:
-            dq = collections.deque(fh, maxlen=n)
-        return [redact_secrets(line.rstrip("\r\n")) for line in dq]
+        with p.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            file_size = fh.tell()
+            if file_size == 0:
+                return []
+            block_size = 8192
+            pos = file_size
+            chunks: list[bytes] = []
+            newlines_found = 0
+            while pos > 0 and newlines_found <= n:
+                read_len = min(block_size, pos)
+                pos -= read_len
+                fh.seek(pos, os.SEEK_SET)
+                chunk = fh.read(read_len)
+                chunks.append(chunk)
+                newlines_found += chunk.count(b"\n")
+            raw_bytes = b"".join(reversed(chunks))
+        text = raw_bytes.decode("utf-8", errors="replace")
+        lines = text.splitlines()
+        return [redact_secrets(line.rstrip("\r\n")) for line in lines[-n:]]
     except Exception:
         return []
 
@@ -141,11 +159,13 @@ def check_tcp_port(host: str, port: int, timeout_s: float = 0.5) -> bool:
         return False
 
 
-def get_proc_rss_and_uptime(pid: int | None) -> tuple[int, int]:
-    if not pid or pid <= 0:
-        return 0, 0
+def get_proc_rss_and_uptime(pid: int | None, started_at: int | None = None) -> tuple[int, int]:
     rss_mb = 0
     uptime_s = 0
+    if started_at is not None and started_at > 0:
+        uptime_s = max(0, int(time.time()) - int(started_at))
+    if not pid or pid <= 0:
+        return rss_mb, uptime_s
     status_path = pathlib.Path(f"/proc/{pid}/status")
     if status_path.is_file():
         try:
@@ -155,14 +175,22 @@ def get_proc_rss_and_uptime(pid: int | None) -> tuple[int, int]:
                     if len(parts) >= 2 and parts[1].isdigit():
                         rss_mb = int(parts[1]) // 1024
                     break
-            stat_mtime = status_path.stat().st_mtime
-            uptime_s = max(0, int(time.time() - stat_mtime))
+            if started_at is None:
+                stat_mtime = status_path.stat().st_mtime
+                uptime_s = max(0, int(time.time() - stat_mtime))
         except Exception:
             pass
     return rss_mb, uptime_s
 
 
 def get_container_uptime_s() -> int:
+    started_file = pathlib.Path("/run/comfyui-started-at")
+    if started_file.is_file():
+        try:
+            ts = int(started_file.read_text(encoding="utf-8").strip())
+            return max(0, int(time.time()) - ts)
+        except Exception:
+            pass
     try:
         p1 = pathlib.Path("/proc/1")
         if p1.exists():
@@ -327,12 +355,19 @@ def get_comfyui_status() -> dict[str, Any]:
     sup_state = str(sup_data.get("state", "starting"))
     pid = sup_data.get("pid")
     pid_int = int(pid) if isinstance(pid, int) or (isinstance(pid, str) and pid.isdigit()) else None
+    started_raw = sup_data.get("started_at")
+    started_int = (
+        int(started_raw)
+        if isinstance(started_raw, int) or (isinstance(started_raw, str) and started_raw.isdigit())
+        else None
+    )
     restarts = int(sup_data.get("restarts", 0))
+    healthy_resets = int(sup_data.get("healthy_resets", 0))
     last_exit = sup_data.get("last_exit")
     max_r = int(sup_data.get("max", max_restarts))
 
     port_open = check_tcp_port("127.0.0.1", 18188, timeout_s=0.3)
-    rss_mb, uptime_s = get_proc_rss_and_uptime(pid_int)
+    rss_mb, uptime_s = get_proc_rss_and_uptime(pid_int, started_int)
 
     if port_open:
         state = "running"
@@ -349,6 +384,7 @@ def get_comfyui_status() -> dict[str, Any]:
         "uptime_s": uptime_s,
         "port_open": port_open,
         "restarts": restarts,
+        "healthy_resets": healthy_resets,
         "last_exit": last_exit,
         "max_restarts": max_r,
     }
@@ -517,6 +553,7 @@ def get_masked_env() -> dict[str, str]:
 def evaluate_triage_and_errors(
     disk: dict[str, Any],
     phases: dict[str, Any],
+    comfyui: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     log_Buffers: dict[str, list[str]] = {
         "comfyui": tail_lines(LOG_WHITELIST["comfyui"], 400),
@@ -548,9 +585,13 @@ def evaluate_triage_and_errors(
     seen_errors: set[str] = set()
 
     sev_rank = {"alta": 0, "media": 1, "baja": 2}
+    comfy_running = bool(comfyui and comfyui.get("state") == "running")
 
     for item in TRIAGE_PATTERNS:
         pat_id = item.get("id", "unknown")
+        # O-08a: Suprimir nginx-502 cuando ComfyUI ya está running (evita falso positivo por los 503 de _starting.html)
+        if pat_id == "nginx-502" and comfy_running:
+            continue
         regex_str = item.get("pattern", "")
         if not regex_str:
             continue
@@ -585,10 +626,9 @@ def evaluate_triage_and_errors(
     triage_hits.sort(key=lambda x: sev_rank.get(x["severity"], 3))
     triage_hits = triage_hits[:10]
 
-    # Collect up to 20 recent error lines across comfyui, nginx-error, download
+    # O-08c: Sensible a mayúsculas con límites de palabra para evitar falsos positivos con "error" en minúsculas
     err_rx = re.compile(
-        r"(ERROR|CRITICAL|FATAL|OutOfMemoryError|Traceback|IMPORT FAILED|Exception:|rc=13[479]|\[DIAG\]\[FAIL\])",
-        re.IGNORECASE,
+        r"(\bERROR\b|\bCRITICAL\b|\bFATAL\b|OutOfMemoryError|Traceback|IMPORT FAILED|Exception:|rc=13[479]|\[DIAG\]\[FAIL\])"
     )
     for src in ("comfyui", "download", "nginx-error", "supervisor"):
         for line in reversed(log_Buffers.get(src, [])):
@@ -653,7 +693,7 @@ def build_status_api() -> dict[str, Any]:
     comfyui = get_comfyui_status()
     phases = get_phases_status()
     services = get_services_status()
-    triage, errors_recent = evaluate_triage_and_errors(disk, phases)
+    triage, errors_recent = evaluate_triage_and_errors(disk, phases, comfyui)
     env_masked = get_masked_env()
 
     payload = {
@@ -683,13 +723,8 @@ def build_status_api() -> dict[str, Any]:
     return payload
 
 
-def _compute_heavy_sections() -> dict[str, Any]:
-    now = time.monotonic()
-    with _CACHE_LOCK:
-        if _HEAVY_CACHE["data"] is not None and (now - _HEAVY_CACHE["ts"]) < 30.0:
-            return _HEAVY_CACHE["data"]
-
-    # 1. pip freeze diff against /etc/comfyui/requirements.lock
+def _compute_heavy_sections_now() -> dict[str, Any]:
+    """Calcula deriva pip/git e inventario de modelos (ejecutado por el hilo de fondo cada 60s, O-03)."""
     lock_path = pathlib.Path("/etc/comfyui/requirements.lock")
     lock_lines = (
         set(lock_path.read_text(encoding="utf-8", errors="replace").splitlines())
@@ -702,7 +737,6 @@ def _compute_heavy_sections() -> dict[str, Any]:
     added = sorted(curr_lines - lock_lines) if lock_lines else []
     removed = sorted(lock_lines - curr_lines) if lock_lines else []
 
-    # 2. custom_nodes vs /etc/comfyui/nodes.lock
     nodes_lock: dict[str, str] = {}
     nlock_path = pathlib.Path("/etc/comfyui/nodes.lock")
     if nlock_path.is_file():
@@ -731,7 +765,6 @@ def _compute_heavy_sections() -> dict[str, Any]:
             elif dirty:
                 node_drift.append(f"- `{child.name}`: `{curr_sha[:12]}`{dirty}")
 
-    # 3. Models inventory
     models_root = pathlib.Path(os.environ.get("COMFY_DATA_DIR", "/workspace/comfyui-data")) / "models"
     folder_stats: list[str] = []
     if models_root.is_dir():
@@ -754,6 +787,7 @@ def _compute_heavy_sections() -> dict[str, Any]:
                     missing_models.append(f"- `{subdir}/{fname}` ({phase_key})")
 
     result = {
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pip_added": added,
         "pip_removed": removed,
         "node_drift": node_drift,
@@ -764,6 +798,23 @@ def _compute_heavy_sections() -> dict[str, Any]:
         _HEAVY_CACHE["ts"] = time.monotonic()
         _HEAVY_CACHE["data"] = result
     return result
+
+
+def _compute_heavy_sections() -> dict[str, Any]:
+    with _CACHE_LOCK:
+        cached = _HEAVY_CACHE["data"]
+    if cached is not None:
+        return cached
+    return _compute_heavy_sections_now()
+
+
+def _heavy_worker_loop() -> None:
+    while True:
+        try:
+            _compute_heavy_sections_now()
+        except Exception:
+            pass
+        time.sleep(60.0)
 
 
 def _extract_tracebacks(lines: list[str]) -> list[str]:
@@ -797,6 +848,14 @@ def _extract_tracebacks(lines: list[str]) -> list[str]:
         if sig not in seen:
             blocks.append(tb_text)
     return blocks[-5:]
+
+
+def _format_iso_utc(epoch_val: Any) -> str:
+    try:
+        ts = int(epoch_val)
+        return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return str(epoch_val)
 
 
 def build_report_markdown() -> str:
@@ -870,7 +929,8 @@ def build_report_markdown() -> str:
     )
     out.append(
         "- **Cómo reiniciar ComfyUI sin reiniciar la instancia**: `pkill -f 'main.py'` "
-        "(el supervisor de `/start.sh` lo relanza automáticamente en 5 s)"
+        "(envía `SIGTERM` / `rc=143`; el supervisor de `/start.sh` lo relanza en 5 s **sin consumir** el presupuesto `COMFY_MAX_RESTARTS`, "
+        "y el contador `restarts` se resetea automáticamente a `0` tras `COMFY_HEALTHY_UPTIME=600s` de ejecución estable)"
     )
     out.append(
         "- **Cómo reinstalar la terna PyTorch CUDA 12.8**: "
@@ -898,12 +958,14 @@ def build_report_markdown() -> str:
     out.append(
         f"- **Estado**: `{comfy['state']}` (supervisor: `{comfy['supervisor_state']}`) · "
         f"**PID**: `{comfy['pid']}` · **RSS**: `{comfy['rss_mb']} MB` · "
-        f"**Uptime proceso**: `{comfy['uptime_s']}s` · **Reinicios**: `{comfy['restarts']}/{comfy['max_restarts']}`"
+        f"**Uptime proceso**: `{comfy['uptime_s']}s` · **Reinicios**: `{comfy['restarts']}/{comfy['max_restarts']}` · "
+        f"**Resets por uptime sano**: `{comfy.get('healthy_resets', 0)}`"
     )
     if comfy.get("last_exit"):
         le = comfy["last_exit"]
+        at_iso = _format_iso_utc(le.get("at"))
         out.append(
-            f"- **Última caída registrada**: `rc={le.get('rc')}` a las `{le.get('at')}` — {le.get('reason')}"
+            f"- **Última caída registrada**: `rc={le.get('rc')}` a las `{at_iso}` — {le.get('reason')}"
         )
     sup_lines = tail_lines(LOG_WHITELIST["supervisor"], 140)
     if sup_lines:
@@ -1397,7 +1459,7 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
             if not diag_path.is_file() or diag_path.stat().st_size == 0:
                 self._send(
                     200,
-                    "[DIAG] resumen: 0 ok, 0 warn, 0 fail (diagnóstico en curso o pendiente)\n".encode("utf-8"),
+                    "[DIAG] pendiente: diagnóstico de arranque en curso\n".encode("utf-8"),
                     "text/plain; charset=utf-8",
                 )
                 return
@@ -1425,6 +1487,7 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    threading.Thread(target=_heavy_worker_loop, daemon=True).start()
     server = http.server.ThreadingHTTPServer((HOST, PORT), StatusHandler)
     print(f"[status-server] Escuchando en http://{HOST}:{PORT}", flush=True)
     server.serve_forever()
@@ -1432,3 +1495,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

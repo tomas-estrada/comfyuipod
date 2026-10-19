@@ -64,7 +64,26 @@ jobs:
               for href in re.findall(r'href\s*=\s*["\'](https://[^"\']+)["\']', txt, re.I):
                   assert href in allowed_links, f"Unapproved external link in {html_path}: {href}"
 
-          print(f"Validated {len(patterns)} triage patterns and portal ({portal_bytes} bytes, 0 external CDN refs).")
+          # O-11: Verificar paridad entre catálogo de download-models.sh y EXPECTED_MODELS de status-server.py
+          dl_txt = re.sub(r"\\\s*\n", " ", pathlib.Path("scripts/download-models.sh").read_text(encoding="utf-8"))
+          dl_files = [
+              ("det_10g.onnx" if m[3] == "buffalo_l.zip" else m[3])
+              for m in re.findall(r'hf_fetch\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"', dl_txt)
+          ]
+          import importlib.util
+          spec = importlib.util.spec_from_file_location("status_server", "scripts/status-server.py")
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          expected_files = [
+              fname
+              for phase_items in mod.EXPECTED_MODELS.values()
+              for (_subdir, fname, _profiles) in phase_items
+          ]
+          assert set(dl_files) == set(expected_files) and len(dl_files) == len(expected_files), (
+              f"Model mismatch between download-models.sh ({dl_files}) and EXPECTED_MODELS ({expected_files})"
+          )
+
+          print(f"Validated {len(patterns)} triage patterns, {len(expected_files)} expected models, and portal ({portal_bytes} bytes, 0 external CDN refs).")
           EOF
 
       - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01: SHA v3.1.0 verificado)
@@ -238,6 +257,15 @@ jobs:
             sleep 2
           done
 
+          # O-07: Verificar 0 custom nodes con IMPORT FAILED en /var/log/comfyui.log
+          import_failed_count="$(docker exec "$cid" sh -c 'grep -c "IMPORT FAILED" /var/log/comfyui.log || true')"
+          if [ "$import_failed_count" != "0" ]; then
+            docker exec "$cid" grep -C 3 "IMPORT FAILED" /var/log/comfyui.log || true
+            echo "::error::Se detectaron ${import_failed_count} custom nodes con IMPORT FAILED en /var/log/comfyui.log"
+            exit 1
+          fi
+          echo "[OK] 0 custom nodes con IMPORT FAILED en /var/log/comfyui.log (O-07)"
+
           # 2. Sin auth -> 401 en cada ruta protegida; /healthz -> 200
           for ep in / /home /status /status/api /report.md /diag /download-status /terminal/; do
             code_unauth="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18188${ep}")"
@@ -279,12 +307,17 @@ jobs:
           fi
           echo "[OK] /report.md y /diag válidos y sin fuga de secretos"
 
-          # 6. docker logs NO contiene secretos definidos por el usuario
+          # 6. docker logs NO contiene secretos definidos por el usuario + /proc/<pid>/environ sin COMFY_PASS (O-05)
           if docker logs "$cid" 2>&1 | grep -qE "ci-secret-9f8e7d|hf_fake_token"; then
             echo "::error::Fuga de secretos en docker logs"
             exit 1
           fi
-          echo "[OK] docker logs libre de secretos"
+          comfy_env_pass="$(docker exec "$cid" sh -c "tr '\0' '\n' < /proc/${comfy_pid}/environ | grep -c '^COMFY_PASS=' || true")"
+          if [ "$comfy_env_pass" != "0" ]; then
+            echo "::error::COMFY_PASS sigue presente en /proc/${comfy_pid}/environ (O-05)"
+            exit 1
+          fi
+          echo "[OK] docker logs y /proc/${comfy_pid}/environ libres de COMFY_PASS (O-05)"
 
           # 7. Workers de Nginx corriendo como www-data + 404/405 en status-server
           docker exec "$cid" ps -o user= -C nginx | grep -q www-data

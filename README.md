@@ -104,6 +104,8 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
 | `COMFYUI_EXTRA_ARGS` | *(Vacío)* | Flags adicionales para `python3 main.py` de ComfyUI. Ejemplo útil en RTX 5090 ante errores `HostBuffer` / OOM inesperados: `--disable-pinned-memory` (ver sección 5.7). |
 | `COMFY_MAX_RESTARTS` | `5` | Número máximo de reinicios automáticos de ComfyUI ante caídas antes de pasar a estado `exhausted` (manteniendo Nginx, `/home` y `/status` activos para diagnóstico). |
 | `COMFY_RESTART_DELAY` | `5` | Segundos de espera entre caídas de ComfyUI antes de que el supervisor relance `main.py`. |
+| `COMFY_HEALTHY_UPTIME` | `600` | Segundos de funcionamiento continuo tras los cuales el supervisor resetea `restarts` a `0` e incrementa `healthy_resets`. |
+| `LOG_MAX_MB` | `200` | Tamaño máximo en MB por fichero de log en `/var/log` antes de truncar conservando los últimos `50 MB`. |
 | `HF_FETCH_TIMEOUT` | `3600` | Timeout máximo en segundos por intento de descarga individual en `download-models.sh`. |
 | `HF_HUB_DISABLE_XET` | *(Vacío)* | Pon `1` para que `hf download` use HTTP clásico en lugar del backend `hf-xet`. Útil si la Fase 2 se queda colgada, devuelve muchos 503 o el host tiene poca RAM (ver sección 5.8). |
 | `ENABLE_WEB_TERMINAL` | `0` | Pon `1` para activar `ttyd` en `127.0.0.1:7681`, accesible tras Basic Auth en `/terminal/`. Desactivado por defecto por seguridad. |
@@ -154,7 +156,7 @@ La guía está dividida en dos partes: **A. Primera vez** (configuración que se
 #### A4. Preparar la Mac y el CLI `comfy` (opcional, recomendado)
 
 11. Instala el CLI de Vast.ai: `pipx install vastai` (o `pip3 install --user vastai`) y configura la clave: `vastai set api-key <tu-clave>`.
-12. Instala el helper [`tools/mac/comfy`](tools/mac/comfy) (ver [`tools/mac/README.md`](tools/mac/README.md)):
+12. Instala el helper [`tools/mac/comfy`](tools/mac/comfy) (ver [`tools/mac/README.md`](tools/mac/README.md)) y exporta `COMFY_IMAGE=ghcr.io/<tu-usuario>/<tu-repo>:latest` en tu `~/.zshrc` para usar `comfy rent`:
     ```bash
     mkdir -p ~/.local/bin && cp tools/mac/comfy ~/.local/bin/comfy && chmod +x ~/.local/bin/comfy
     ```

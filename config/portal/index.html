@@ -491,11 +491,20 @@
         }
       } catch (_) {}
 
-      const [comfyHead, statusHead, dlHead, diagHead] = await Promise.all([
+      const [comfyHead, statusHead, dlHead, diagState] = await Promise.all([
         headOk("/system_stats"),
         headOk("/status"),
         headOk("/download-status"),
-        headOk("/diag")
+        (async () => {
+          try {
+            const r = await fetch("/diag", { cache: "no-store" });
+            if (!r.ok) return "off";
+            const txt = await r.text();
+            return txt.includes("[DIAG] resumen:") ? "ok" : "running";
+          } catch (_) {
+            return "off";
+          }
+        })()
       ]);
 
       if (api) {
@@ -520,7 +529,12 @@
         setCardState("card-manager", "st-ok", "Activo", "Se abre desde el botón Manager dentro de ComfyUI.", "act-manager", "/", true);
       } else {
         const cState = api && api.comfyui ? api.comfyui.state : "starting";
-        if (cState === "down") {
+        const supState = api && api.comfyui ? api.comfyui.supervisor_state : "running";
+        if (supState === "exhausted") {
+          const msg = "ComfyUI se detuvo: límite de reinicios alcanzado; revisa /report.md";
+          setCardState("card-comfyui", "st-err", "Caído", msg, "act-comfyui", null, true);
+          setCardState("card-manager", "st-err", "Caído", msg, "act-manager", null, true);
+        } else if (cState === "down") {
           const msg = "ComfyUI caído, el supervisor lo está reiniciando.";
           setCardState("card-comfyui", "st-err", "Caído", msg, "act-comfyui", null, true);
           setCardState("card-manager", "st-err", "Caído", "Se abre desde el botón Manager dentro de ComfyUI (actualmente caído).", "act-manager", null, true);
@@ -557,16 +571,21 @@
       }
 
       // 5. Diagnóstico
-      if (diagHead) {
+      if (diagState === "ok") {
         setCardState("card-diag", "st-ok", "Activo", "Diagnóstico de arranque completado.", "act-diag", "/diag", false);
+      } else if (diagState === "running") {
+        setCardState("card-diag", "st-warn", "Arrancando", "Diagnóstico de arranque en curso...", "act-diag", "/diag", false);
       } else {
         setCardState("card-diag", "st-off", "No disponible", "Diagnóstico aún no ejecutado.", "act-diag", null, false);
       }
 
       // 6. Terminal web
+      const termRunning = api && api.services && api.services.terminal && api.services.terminal.running;
       const termEnabled = api && api.services && api.services.terminal && api.services.terminal.enabled;
-      if (termEnabled && await headOk("/terminal/")) {
+      if (termRunning) {
         setCardState("card-terminal", "st-ok", "Activo", "Terminal interactiva Bash activa en /terminal/.", "act-terminal", "/terminal/", true);
+      } else if (termEnabled) {
+        setCardState("card-terminal", "st-warn", "Arrancando", "Terminal web habilitada pero aún no responde.", "act-terminal", null, true);
       } else {
         setCardState(
           "card-terminal",
@@ -585,6 +604,9 @@
     document.getElementById("act-report-copy").addEventListener("click", async () => {
       try {
         const res = await fetch("/report.md", { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
         const text = await res.text();
         try {
           await navigator.clipboard.writeText(text);
@@ -600,7 +622,10 @@
           ta.focus();
           ta.select();
         }
-      } catch (_) {}
+      } catch (err) {
+        const banner = document.getElementById("phase-banner");
+        banner.textContent = `Error al obtener /report.md (${err && err.message ? err.message : "fallo de red"}). Intenta abrir /report.md directamente.`;
+      }
     });
 
     document.getElementById("select-all-btn").addEventListener("click", () => {
