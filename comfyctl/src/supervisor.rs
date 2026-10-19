@@ -277,7 +277,14 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig, external_status_server: bool) -> R
     write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
 
     if external_status_server {
-        log_sup("Modo --external-status-server activo (status-server.py gestionado por start.sh).");
+        log_sup("Modo --external-status-server activo (status-server gestionado externamente).");
+    } else {
+        log_sup("Iniciando servidor HTTP de observabilidad integrado en 127.0.0.1:18189...");
+        crate::http::spawn_background_status_server(cfg.clone())?;
+        let cfg_diag = cfg.clone();
+        thread::spawn(move || {
+            let _ = crate::diag::run_diag_cmd(&cfg_diag, None);
+        });
     }
 
     // 1. Ejecutar strict-check (§6)

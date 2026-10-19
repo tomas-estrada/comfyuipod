@@ -209,38 +209,18 @@ echo "  Panel de estado  : http://<IP_VAST>:<PUERTO>/status"
 echo "  Informe Markdown : http://<IP_VAST>:<PUERTO>/report.md"
 echo "======================================================================"
 
+unset COMFY_PASS
+
 # ------------------------------------------------------------------------------
-# 4. Iniciar Nginx, status-server.py y ttyd opcional ANTES de Fase 1 (§5.4 / §8.1)
+# 4. Iniciar Nginx y ttyd opcional ANTES de ceder el control a comfyctl (§5.3)
 # ------------------------------------------------------------------------------
-echo "[4/7] Iniciando Nginx, status-server.py (127.0.0.1:18189) y servicios auxiliares..."
+echo "[4/5] Iniciando Nginx y servicios auxiliares..."
 nginx -t
 nginx
 
-# shellcheck disable=SC2016
-setsid -f bash -c '
-    fail_times=()
-    while true; do
-        /usr/local/bin/status-server.py >> /var/log/status-server.log 2>&1
-        rc=$?
-        now=$(date +%s)
-        echo "[$(date "+%Y-%m-%d %H:%M:%S")] [STATUS-SUPERVISOR] status-server.py terminó (rc=${rc})." >> /var/log/status-server.log
-        kept=()
-        for t in "${fail_times[@]:-}"; do
-            [ -n "$t" ] && [ $((now - t)) -lt 60 ] && kept+=("$t")
-        done
-        kept+=("$now")
-        fail_times=("${kept[@]}")
-        if [ "${#fail_times[@]}" -ge 10 ]; then
-            echo "[$(date "+%Y-%m-%d %H:%M:%S")] [STATUS-SUPERVISOR] CRITICAL: 10 fallos en <60s. Deteniendo reintentos." >> /var/log/status-server.log
-            exit 1
-        fi
-        sleep 2
-    done
-' >/dev/null 2>&1 < /dev/null
-
 if [ "${ENABLE_WEB_TERMINAL:-0}" = "1" ]; then
     if command -v ttyd >/dev/null 2>&1; then
-        echo "[4/7] Iniciando terminal web ttyd en 127.0.0.1:7681 (/terminal/)..."
+        echo "[4/5] Iniciando terminal web ttyd en 127.0.0.1:7681 (/terminal/)..."
         touch /var/log/ttyd.log
         chmod 644 /var/log/ttyd.log
         setsid -f env -u COMFY_PASS ttyd --interface 127.0.0.1 --port 7681 --base-path /terminal --writable bash -l >> /var/log/ttyd.log 2>&1 < /dev/null
@@ -248,22 +228,12 @@ if [ "${ENABLE_WEB_TERMINAL:-0}" = "1" ]; then
         echo "[WARN] ENABLE_WEB_TERMINAL=1 pero el binario ttyd no está instalado."
     fi
 else
-    echo "[4/7] Terminal web desactivada por defecto (ENABLE_WEB_TERMINAL=0)."
+    echo "[4/5] Terminal web desactivada por defecto (ENABLE_WEB_TERMINAL=0)."
 fi
 
 # ------------------------------------------------------------------------------
-# 5. Ejecutar autodiagnóstico no bloqueante /usr/local/bin/diag.sh (§7.1)
-#    y limpiar COMFY_PASS del entorno antes de comfyctl supervise (O-05 / §9)
+# 5. Ceder control a comfyctl supervise (servidor HTTP :18189, diag, strict-check, Fase 1/2 y supervisor)
 # ------------------------------------------------------------------------------
-echo "[5/7] Ejecutando autodiagnóstico de subsistemas (/usr/local/bin/diag.sh)..."
-if [ -x /usr/local/bin/diag.sh ]; then
-    timeout 90 /usr/local/bin/diag.sh 2>&1 | tee /var/log/diag.txt || true
-fi
-unset COMFY_PASS
-
-# ------------------------------------------------------------------------------
-# 6–7. Ceder control a comfyctl supervise (ejecuta strict-check, Fase 1/2 y supervisa ComfyUI)
-# ------------------------------------------------------------------------------
-echo "[6/7] Cediendo supervisión principal a /usr/local/bin/comfyctl supervise..."
-exec /usr/local/bin/comfyctl supervise --external-status-server
+echo "[5/5] Cediendo supervisión principal a /usr/local/bin/comfyctl supervise..."
+exec /usr/local/bin/comfyctl supervise
 

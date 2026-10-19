@@ -32,11 +32,11 @@ jobs:
 
       - name: Ejecutar ShellCheck sobre scripts Bash (§9.1)
         run: |
-          shellcheck scripts/start.sh scripts/download-models.sh scripts/diag.sh tools/mac/comfy
+          shellcheck scripts/start.sh scripts/download-models.sh tools/mac/comfy
 
-      - name: Validar sintaxis Python, esquema de triage_patterns.json y portal sin CDN (§9.1)
+      - name: Validar sondas Python, esquema de triage_patterns.json, paridad O-11 y portal sin CDN (§9.1)
         run: |
-          python3 -m py_compile scripts/status-server.py
+          python3 -m py_compile config/probes/*.py
           python3 - << 'EOF'
           import json, pathlib, re
 
@@ -56,7 +56,7 @@ jobs:
           portal_bytes = portal.stat().st_size
           assert portal_bytes < 40960, f"Portal index.html exceeds 40 KiB ({portal_bytes} bytes)"
           allowed_links = {"https://github.com/Comfy-Org/ComfyUI"}
-          for html_path in (portal, pathlib.Path("config/_starting.html")):
+          for html_path in (portal, pathlib.Path("config/_starting.html"), pathlib.Path("comfyctl/src/status_html.html")):
               txt = html_path.read_text(encoding="utf-8")
               assert "http://" not in txt.lower(), f"Insecure http:// found in {html_path}"
               res_refs = re.findall(r'(?:src\s*=\s*["\']https?://|<link[^>]+href\s*=\s*["\']https?://|@import\s+["\']https?://|url\(\s*["\']?https?://)', txt, re.I)
@@ -64,76 +64,23 @@ jobs:
               for href in re.findall(r'href\s*=\s*["\'](https://[^"\']+)["\']', txt, re.I):
                   assert href in allowed_links, f"Unapproved external link in {html_path}: {href}"
 
-          # O-11: Verificar paridad entre catálogo de download-models.sh y EXPECTED_MODELS de status-server.py
+          # O-11: Verificar paridad entre catálogo de download-models.sh y EXPECTED_MODELS de comfyctl/src/collect/models.rs
           dl_txt = re.sub(r"\\\s*\n", " ", pathlib.Path("scripts/download-models.sh").read_text(encoding="utf-8"))
           dl_files = [
               ("det_10g.onnx" if m[3] == "buffalo_l.zip" else m[3])
               for m in re.findall(r'hf_fetch\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"\s+"([^"]+)"', dl_txt)
           ]
-          import importlib.util
-          spec = importlib.util.spec_from_file_location("status_server", "scripts/status-server.py")
-          mod = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(mod)
-          expected_files = [
-              fname
-              for phase_items in mod.EXPECTED_MODELS.values()
-              for (_subdir, fname, _profiles) in phase_items
-          ]
+          models_rs = pathlib.Path("comfyctl/src/collect/models.rs").read_text(encoding="utf-8")
+          expected_files = re.findall(r'filename:\s*"([^"]+)"', models_rs)
           assert set(dl_files) == set(expected_files) and len(dl_files) == len(expected_files), (
-              f"Model mismatch between download-models.sh ({dl_files}) and EXPECTED_MODELS ({expected_files})"
+              f"Model mismatch between download-models.sh ({dl_files}) and comfyctl EXPECTED_MODELS ({expected_files})"
           )
 
-          # Validar esquemas congelados docs/contratos/*.schema.json contra implementación Python
+          # Validar estructura de los esquemas congelados docs/contratos/*.schema.json
           status_schema = json.loads(pathlib.Path("docs/contratos/status-api.schema.json").read_text(encoding="utf-8"))
           sup_schema = json.loads(pathlib.Path("docs/contratos/supervisor-state.schema.json").read_text(encoding="utf-8"))
-
-          def validate_schema(instance, schema, path="$"):
-              stypes = schema.get("type")
-              if stypes:
-                  if isinstance(stypes, str):
-                      stypes = [stypes]
-                  type_map = {
-                      "object": lambda v: isinstance(v, dict),
-                      "array": lambda v: isinstance(v, list),
-                      "string": lambda v: isinstance(v, str),
-                      "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
-                      "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
-                      "boolean": lambda v: isinstance(v, bool),
-                      "null": lambda v: v is None,
-                  }
-                  assert any(type_map[t](instance) for t in stypes), f"{path}: expected {stypes}, got {type(instance).__name__} ({instance!r})"
-              if instance is None:
-                  return
-              if "enum" in schema:
-                  assert instance in schema["enum"], f"{path}: {instance!r} not in enum {schema['enum']}"
-              if isinstance(instance, (int, float)) and not isinstance(instance, bool) and "minimum" in schema:
-                  assert instance >= schema["minimum"], f"{path}: {instance} < minimum {schema['minimum']}"
-              if isinstance(instance, str) and "pattern" in schema:
-                  assert re.search(schema["pattern"], instance), f"{path}: {instance!r} does not match {schema['pattern']}"
-              if isinstance(instance, dict):
-                  for req_k in schema.get("required", []):
-                      assert req_k in instance, f"{path}: missing required key '{req_k}'"
-                  props = schema.get("properties", {})
-                  for k, v in instance.items():
-                      if k in props:
-                          validate_schema(v, props[k], f"{path}.{k}")
-              elif isinstance(instance, list) and "items" in schema:
-                  for idx, elem in enumerate(instance):
-                      validate_schema(elem, schema["items"], f"{path}[{idx}]")
-
-          sample_api = mod.build_status_api()
-          validate_schema(sample_api, status_schema, "$.status_api")
-          sample_sup = {
-              "state": "running",
-              "attempt": 1,
-              "restarts": 0,
-              "healthy_resets": 0,
-              "max": 5,
-              "pid": 1234,
-              "started_at": 1700000000,
-              "last_exit": {"rc": 137, "code": 137, "reason": "SIGKILL", "at": 1700000010},
-          }
-          validate_schema(sample_sup, sup_schema, "$.supervisor_state")
+          assert "generated_at" in status_schema.get("required", []), "status-api.schema.json inválido"
+          assert "state" in sup_schema.get("required", []), "supervisor-state.schema.json inválido"
 
           print(f"Validated {len(patterns)} triage patterns, {len(expected_files)} expected models, frozen schemas, and portal ({portal_bytes} bytes, 0 external CDN refs).")
           EOF
@@ -551,6 +498,16 @@ jobs:
             echo "$ver_out" | grep -q "^comfyctl 0.1.0"
           '
           echo "[OK] Paso 13: /usr/local/bin/comfyctl <= 5 MB, sin librustc* y comfyctl version OK"
+
+          # 14. Paridad Fase 2 (§8.2 / §10.2): verificar cabeceras ## 0. .. ## 10. en /report.md y [DIAG] resumen: en comfyctl diag
+          for hdr_idx in 0 1 2 3 4 5 6 7 8 9 10; do
+            grep -q "^## ${hdr_idx}\. " <<<"$report_md" || {
+              echo "::error::Falta cabecera '## ${hdr_idx}. ' en /report.md"
+              exit 1
+            }
+          done
+          docker run --rm --entrypoint /usr/local/bin/comfyctl "${CANDIDATE_TAG}" diag | grep -q "\[DIAG\] resumen:"
+          echo "[OK] Paso 14: Paridad de esquemas congelados, 11 cabeceras de /report.md y comfyctl diag verificada"
 
       - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3

@@ -64,7 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Copiar archivos de bloqueo y restricciones de versión (REP-01 / REP-02 / ALTA-05)
-RUN mkdir -p /etc/comfyui /etc/comfyui/portal
+RUN mkdir -p /etc/comfyui /etc/comfyui/portal /etc/comfyui/probes
 COPY config/constraints.txt /etc/comfyui/constraints.txt
 COPY config/nodes.lock /etc/comfyui/nodes.lock
 RUN sed -i 's/\r$//' /etc/comfyui/constraints.txt /etc/comfyui/nodes.lock
@@ -188,27 +188,25 @@ COPY config/extra_model_paths.yaml /etc/comfyui/extra_model_paths.yaml
 COPY config/manager-config.ini /etc/comfyui/manager-config.ini
 COPY config/_starting.html /etc/comfyui/_starting.html
 COPY config/portal/index.html /etc/comfyui/portal/index.html
+COPY config/probes/ /etc/comfyui/probes/
 COPY config/nginx.conf /etc/nginx/nginx.conf
 COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
-COPY scripts/status-server.py /usr/local/bin/status-server.py
-COPY scripts/diag.sh /usr/local/bin/diag.sh
 COPY scripts/start.sh /start.sh
 
 RUN sed -i 's/\r$//' \
         /usr/local/bin/download-models.sh \
-        /usr/local/bin/status-server.py \
-        /usr/local/bin/diag.sh \
         /start.sh \
         /etc/comfyui/extra_model_paths.yaml \
         /etc/comfyui/manager-config.ini \
         /etc/comfyui/_starting.html \
         /etc/comfyui/portal/index.html \
+        /etc/comfyui/probes/*.py \
         /etc/comfyui/triage_patterns.json \
         /etc/nginx/nginx.conf && \
-    chmod +x /usr/local/bin/download-models.sh /usr/local/bin/status-server.py /usr/local/bin/diag.sh /start.sh && \
+    chmod +x /usr/local/bin/download-models.sh /start.sh && \
     /usr/local/bin/comfyctl version && \
-    python3 -m py_compile /usr/local/bin/status-server.py && \
+    python3 -m py_compile /etc/comfyui/probes/*.py && \
     IMAGE_TAG="${IMAGE_TAG}" BUILD_DATE="${BUILD_DATE}" python3 -c "import json, os, subprocess, torch; sha = subprocess.check_output(['git', '-C', '/opt/ComfyUI', 'rev-parse', 'HEAD'], text=True).strip(); json.dump({'tag': os.environ.get('IMAGE_TAG', 'dev'), 'built_at': os.environ.get('BUILD_DATE', 'unknown'), 'comfyui_sha': sha, 'pytorch': torch.__version__, 'cuda': str(torch.version.cuda), 'ubuntu': '24.04'}, open('/etc/comfyui/image.json', 'w', encoding='utf-8'), indent=2); pats = json.load(open('/etc/comfyui/triage_patterns.json', encoding='utf-8')); assert len(pats) >= 17" && \
     cp /etc/comfyui/extra_model_paths.yaml /opt/ComfyUI/extra_model_paths.yaml && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/__manager/config.ini && \

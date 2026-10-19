@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Estado del Sistema · ComfyUI Vast.ai</title>
+  <style>
+    /* Pares de contraste verificados WCAG AA (>= 4.5:1):
+       Oscuro: #f1f5f9 sobre #0f172a (15.4:1), #cbd5e1 sobre #1e293b (9.2:1)
+       Claro : #0f172a sobre #f8fafc (16.1:1), #334155 sobre #ffffff (10.3:1) */
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --border: #cbd5e1;
+      --text: #0f172a;
+      --muted: #334155;
+      --accent: #1d4ed8;
+      --ok-bg: #dcfce7; --ok-fg: #14532d;
+      --warn-bg: #fef3c7; --warn-fg: #78350f;
+      --err-bg: #fee2e2; --err-fg: #7f1d1d;
+      --code-bg: #f1f5f9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --surface: #1e293b;
+        --border: #334155;
+        --text: #f1f5f9;
+        --muted: #cbd5e1;
+        --accent: #60a5fa;
+        --ok-bg: #064e3b; --ok-fg: #dcfce7;
+        --warn-bg: #78350f; --warn-fg: #fef3c7;
+        --err-bg: #7f1d1d; --err-fg: #fee2e2;
+        --code-bg: #090d16;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 20px;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 16px; line-height: 1.5;
+      background: var(--bg); color: var(--text);
+    }
+    .container { max-width: 1240px; margin: 0 auto; }
+    header {
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+      gap: 12px; padding: 16px 20px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 10px; margin-bottom: 20px;
+    }
+    h1 { font-size: 20px; margin: 0; }
+    h2 { font-size: 18px; margin: 0 0 12px 0; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--text); font-size: 14px; font-weight: 600;
+      cursor: pointer; text-decoration: none;
+    }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .grid {
+      display: grid; grid-template-columns: 1fr; gap: 16px; margin-bottom: 20px;
+    }
+    @media (min-width: 760px) { .grid-2 { grid-template-columns: repeat(2, 1fr); } }
+    @media (min-width: 1080px) { .grid-3 { grid-template-columns: repeat(3, 1fr); } }
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 16px;
+    }
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 999px;
+      font-size: 13px; font-weight: 700;
+    }
+    .b-ok { background: var(--ok-bg); color: var(--ok-fg); }
+    .b-warn { background: var(--warn-bg); color: var(--warn-fg); }
+    .b-err { background: var(--err-bg); color: var(--err-fg); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+    pre {
+      background: var(--code-bg); padding: 12px; border-radius: 8px;
+      border: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px; white-space: pre-wrap; word-break: break-word;
+      max-height: 440px; overflow-y: auto; margin: 8px 0 0 0;
+    }
+    .err-line { background: var(--err-bg); color: var(--err-fg); display: block; padding: 1px 4px; border-radius: 3px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .tab-active { border-color: var(--accent); color: var(--accent); }
+    .progress-bar { width: 100%; height: 12px; background: var(--code-bg); border-radius: 6px; overflow: hidden; margin-top: 8px; border: 1px solid var(--border); }
+    .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s ease; }
+    textarea.fallback { width: 100%; height: 160px; margin-top: 10px; font-family: monospace; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Estado del Sistema · ComfyUI Vast.ai</h1>
+        <div id="hdr-sub" style="font-size:14px;color:var(--muted);">Cargando estado en vivo...</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a class="btn" href="/home">← Portal /home</a>
+        <a class="btn" href="/report.md">Informe (/report.md)</a>
+        <button class="btn" id="pause-btn" type="button">Pausar actualización</button>
+      </div>
+    </header>
+
+    <div class="card" id="strict-card" style="display:none;margin-bottom:16px;background:var(--err-bg);color:var(--err-fg);">
+      <h2>Arranque estricto fallido (Host incompatible)</h2>
+      <div id="strict-body"></div>
+    </div>
+
+    <div class="card" id="triage-card" style="margin-bottom:16px;">
+      <h2>Triage automático</h2>
+      <div id="triage-body">Sin alertas detectadas.</div>
+    </div>
+
+    <div class="grid grid-3">
+      <div class="card">
+        <h2>ComfyUI y Supervisor</h2>
+        <div id="comfy-body">Cargando...</div>
+      </div>
+      <div class="card">
+        <h2>GPU</h2>
+        <div id="gpu-body">Cargando...</div>
+      </div>
+      <div class="card">
+        <h2>Memoria y Disco</h2>
+        <div id="mem-body">Cargando...</div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h2>Descargas de Modelos</h2>
+        <div id="dl-body">Cargando...</div>
+        <div class="progress-bar"><div class="progress-fill" id="dl-bar"></div></div>
+      </div>
+      <div class="card">
+        <h2>Servicios y Entorno (Enmascarado)</h2>
+        <div id="svc-body">Cargando...</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h2>Errores Recientes</h2>
+      <div id="err-body">Sin errores recientes.</div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <h2>Visor de Logs (Solo lectura)</h2>
+        <div style="display:flex;gap:8px;">
+          <button class="btn" id="more-lines-btn" type="button">Más líneas (hasta 2000)</button>
+          <button class="btn" id="copy-log-btn" type="button">Copiar log</button>
+        </div>
+      </div>
+      <div class="tabs" id="log-tabs">
+        <button class="btn tab-active" data-log="comfyui" type="button">ComfyUI</button>
+        <button class="btn" data-log="nginx-error" type="button">Nginx Error</button>
+        <button class="btn" data-log="download" type="button">Descargas</button>
+        <button class="btn" data-log="supervisor" type="button">Supervisor</button>
+        <button class="btn" data-log="diag" type="button">Diagnóstico</button>
+        <button class="btn" data-log="container" type="button">Contenedor</button>
+      </div>
+      <pre id="log-view">Cargando log...</pre>
+      <div id="copy-fallback" style="display:none;">
+        <textarea class="fallback" id="copy-textarea" readonly></textarea>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let paused = false;
+    let currentLog = "comfyui";
+    let currentLines = 200;
+    let lastRawLog = "";
+
+    function esc(s) {
+      return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    async function refreshStatus() {
+      if (paused) return;
+      try {
+        const res = await fetch("/status/api", { cache: "no-store" });
+        if (!res.ok) return;
+        const d = await res.json();
+        document.getElementById("hdr-sub").textContent =
+          `${d.phase_banner} · Imagen: ${d.image.tag} · Uptime: ${Math.floor(d.instance.uptime_s / 60)} min`;
+
+        const sc = document.getElementById("strict-card");
+        if (d.strict && d.strict.result === "fatal") {
+          sc.style.display = "block";
+          const fatals = (d.strict.checks || []).filter(c => c.status === "fatal");
+          document.getElementById("strict-body").innerHTML = fatals.map(c =>
+            `<p><strong>${esc(c.id)}</strong> (observado: <code>${esc(c.observed)}</code>, esperado: <code>${esc(c.expected)}</code>): ${esc(c.message)}<br>` +
+            `Remediación: <code>${esc(c.remediation || "comfy destroy <id>")}</code></p>`
+          ).join("");
+        } else {
+          sc.style.display = "none";
+        }
+
+        if (d.triage && d.triage.length > 0) {
+          let rows = d.triage.map(t =>
+            `<tr><td><span class="badge ${t.severity === 'alta' ? 'b-err' : 'b-warn'}">${esc(t.severity)}</span></td>` +
+            `<td><code>${esc(t.pattern_id)}</code></td><td>${esc(t.summary)}</td>` +
+            `<td><code>${esc(t.first_command)}</code></td></tr>`
+          ).join("");
+          document.getElementById("triage-body").innerHTML =
+            `<table><thead><tr><th>Sev.</th><th>Patrón</th><th>Causa probable</th><th>Acción sugerida</th></tr></thead><tbody>${rows}</tbody></table>`;
+        } else {
+          document.getElementById("triage-body").textContent = "Sin alertas de triage detectadas.";
+        }
+
+        const c = d.comfyui;
+        const cBadge = c.state === "running" ? "b-ok" : (c.state === "starting" ? "b-warn" : "b-err");
+        const cLabel = c.state === "running" ? "Activo" : (c.state === "starting" ? "Arrancando" : "Caído");
+        const lastEx = c.last_exit ? `rc=${esc(c.last_exit.rc)} (${esc(c.last_exit.reason)})` : "ninguna";
+        document.getElementById("comfy-body").innerHTML =
+          `<p><span class="badge ${cBadge}">${cLabel}</span> · PID: <code>${esc(c.pid ?? "-")}</code> · RSS: <code>${c.rss_mb} MB</code></p>` +
+          `<p>Reinicios: <code>${c.restarts}/${c.max_restarts}</code> · Última caída: ${lastEx}</p>`;
+
+        const g = d.gpu;
+        document.getElementById("gpu-body").innerHTML = g.available
+          ? `<p><span class="badge b-ok">Activa</span> <strong>${esc(g.name)}</strong> (Driver ${esc(g.driver)})</p>` +
+            `<p>VRAM: <code>${g.vram_used_mb} / ${g.vram_total_mb} MB</code> · Uso: <code>${g.util_pct}%</code> · Temp: <code>${g.temp_c}°C</code></p>`
+          : `<p><span class="badge b-warn">Modo CPU</span> ${esc(g.reason || "Sin GPU")}</p>`;
+
+        document.getElementById("mem-body").innerHTML =
+          `<p>RAM: <code>${d.memory.available_mb} MB libres / ${d.memory.total_mb} MB total</code> (Swap: <code>${d.memory.swap_used_mb} MB</code>)</p>` +
+          `<p>Disco (${esc(d.disk.path)}): <code>${d.disk.free_gb} GB libres / ${d.disk.total_gb} GB total</code></p>`;
+
+        const p1 = d.phases.phase1, p2 = d.phases.phase2;
+        const pct = p2.total > 0 ? Math.min(100, Math.round((p2.done / p2.total) * 100)) : 100;
+        document.getElementById("dl-bar").style.width = `${pct}%`;
+        document.getElementById("dl-body").innerHTML =
+          `<p>Fase 1: <code>${esc(p1.state)}</code> (${p1.done}/${p1.total}) · Fase 2: <code>${esc(p2.state)}</code> (${p2.done}/${p2.total})</p>` +
+          `<p>Archivo en curso: <code>${esc(p2.current_file || "ninguno")}</code> · PID hf: <code>${esc(p2.hf_pid || "-")}</code> (${p2.hf_rss_mb} MB)</p>`;
+
+        const envRows = Object.entries(d.env_masked || {}).map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" · ");
+        document.getElementById("svc-body").innerHTML =
+          `<p>Nginx: <span class="badge b-ok">Activo (${esc(d.services.nginx.workers_user)})</span> · ` +
+          `Terminal Web: <span class="badge ${d.services.terminal.running ? 'b-ok' : 'b-warn'}">${d.services.terminal.running ? 'Activa' : 'Desactivada'}</span></p>` +
+          `<p style="font-size:13px;color:var(--muted);">${envRows}</p>`;
+
+        if (d.errors_recent && d.errors_recent.length > 0) {
+          document.getElementById("err-body").innerHTML = d.errors_recent.map(e =>
+            `<div style="font-family:monospace;font-size:13px;margin-bottom:4px;"><strong>[${esc(e.source)}]</strong> ${esc(e.line)}</div>`
+          ).join("");
+        } else {
+          document.getElementById("err-body").textContent = "Sin errores recientes.";
+        }
+      } catch (_) {}
+    }
+
+    async function loadLog() {
+      if (paused) return;
+      try {
+        const res = await fetch(`/logs/${currentLog}?n=${currentLines}`, { cache: "no-store" });
+        const txt = await res.text();
+        lastRawLog = txt;
+        const errRx = /(ERROR|CRITICAL|FATAL|OutOfMemoryError|Traceback|IMPORT FAILED|\[DIAG\]\[FAIL\])/i;
+        const htmlLines = txt.split("\n").map(line =>
+          errRx.test(line) ? `<span class="err-line">${esc(line)}</span>` : esc(line)
+        ).join("\n");
+        document.getElementById("log-view").innerHTML = htmlLines || "(Log vacío)";
+      } catch (_) {}
+    }
+
+    document.getElementById("pause-btn").addEventListener("click", (ev) => {
+      paused = !paused;
+      ev.target.textContent = paused ? "Reanudar actualización" : "Pausar actualización";
+    });
+
+    document.getElementById("more-lines-btn").addEventListener("click", () => {
+      currentLines = 2000;
+      loadLog();
+    });
+
+    document.getElementById("copy-log-btn").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(lastRawLog);
+        alert("Log copiado al portapapeles.");
+      } catch (_) {
+        const fb = document.getElementById("copy-fallback");
+        const ta = document.getElementById("copy-textarea");
+        fb.style.display = "block";
+        ta.value = lastRawLog;
+        ta.focus();
+        ta.select();
+      }
+    });
+
+    document.querySelectorAll("#log-tabs button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#log-tabs button").forEach(b => b.classList.remove("tab-active"));
+        btn.classList.add("tab-active");
+        currentLog = btn.getAttribute("data-log");
+        currentLines = 200;
+        loadLog();
+      });
+    });
+
+    refreshStatus();
+    loadLog();
+    setInterval(refreshStatus, 10000);
+    setInterval(loadLog, 10000);
+  </script>
+</body>
+</html>
