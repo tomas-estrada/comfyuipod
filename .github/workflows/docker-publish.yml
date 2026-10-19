@@ -191,9 +191,51 @@ jobs:
           sys.exit(1 if failures else 0)
           EOF
 
+  rust:
+    name: Rust Lint, Unit Tests & Dependency Audit (comfyctl, §8.1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: comfyctl
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Instalar toolchain Rust 1.86.0 (fijado por SHA)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: "1.86.0"
+          components: rustfmt, clippy
+
+      - name: Caché de Cargo (fijada por SHA)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            comfyctl/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('comfyctl/Cargo.lock') }}
+
+      - name: Verificar formato con rustfmt
+        run: cargo fmt --check
+
+      - name: Ejecutar Clippy estricto (-D warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Ejecutar tests unitarios e integración (--locked)
+        run: cargo test --locked
+
+      - name: Auditar licencias y CVEs con cargo-deny (fijado por SHA)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: comfyctl/Cargo.toml
+
   build-and-push:
     name: Build Candidate, Smoke-Test & Promote to Latest (ALTA-01 / ALTA-02 / H-01 / M-02 / §9.2)
-    needs: validate
+    needs: [validate, rust]
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -466,6 +508,49 @@ jobs:
           exit_code="$(docker inspect "$cid" --format '{{.State.ExitCode}}')"
           [ "$exit_code" = "0" ] || { docker logs "$cid"; echo "::error::docker stop devolvió ExitCode=${exit_code} (esperado 0)"; exit 1; }
           echo "[OK] Contenedor apagado limpiamente con ExitCode=0"
+
+          # 11. comfyctl strict-check en modo --cpu devuelve 0 y genera /run/comfyui-strict.json con result in (ok, warn) (§8.2)
+          docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
+            set -eu
+            STRICT_START=1 COMFYUI_EXTRA_ARGS="--cpu" /usr/local/bin/comfyctl strict-check
+            python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] in (\"ok\", \"warn\"), d"
+          '
+          echo "[OK] Paso 11: comfyctl strict-check en modo --cpu -> 0"
+
+          # 12. comfyctl strict-check con nvidia-smi simulado (driver 550.54.14) devuelve 20 con STRICT_START=1 y 0 con STRICT_START=0 (§8.2)
+          docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
+            set -eu
+            cat > /usr/local/bin/fake-nvidia-smi << "EOF"
+          #!/bin/sh
+          echo "NVIDIA GeForce RTX 5090, 550.54.14, 32768, 256, 0, 35"
+          EOF
+            chmod +x /usr/local/bin/fake-nvidia-smi
+            rc_strict=0
+            COMFY_NVIDIA_SMI_BIN=/usr/local/bin/fake-nvidia-smi STRICT_START=1 COMFYUI_EXTRA_ARGS="" /usr/local/bin/comfyctl strict-check || rc_strict=$?
+            [ "$rc_strict" = "20" ] || { echo "Expected exit 20 with STRICT_START=1, got $rc_strict"; exit 1; }
+            python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] == \"fatal\", d"
+            COMFY_NVIDIA_SMI_BIN=/usr/local/bin/fake-nvidia-smi STRICT_START=0 COMFYUI_EXTRA_ARGS="" /usr/local/bin/comfyctl strict-check
+            python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] == \"warn\", d"
+          '
+          echo "[OK] Paso 12: comfyctl strict-check con driver 550.54.14 -> 20 (STRICT_START=1) y 0 (STRICT_START=0)"
+
+          # 13. Verificar tamaño (<= 5 MB), dependencias dinámicas (sin librustc*) y versión de /usr/local/bin/comfyctl (§8.2)
+          docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
+            set -eu
+            sz="$(stat -c%s /usr/local/bin/comfyctl)"
+            echo "Tamaño comfyctl: ${sz} bytes"
+            [ "$sz" -le 5242880 ] || { echo "comfyctl supera 5 MiB (${sz} bytes)"; exit 1; }
+            ldd_out="$(ldd /usr/local/bin/comfyctl)"
+            echo "$ldd_out"
+            if echo "$ldd_out" | grep -q "librustc"; then
+              echo "comfyctl enlaza librustc* inesperadamente"
+              exit 1
+            fi
+            ver_out="$(/usr/local/bin/comfyctl version)"
+            echo "Versión comfyctl: ${ver_out}"
+            echo "$ver_out" | grep -q "^comfyctl 0.1.0"
+          '
+          echo "[OK] Paso 13: /usr/local/bin/comfyctl <= 5 MB, sin librustc* y comfyctl version OK"
 
       - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3

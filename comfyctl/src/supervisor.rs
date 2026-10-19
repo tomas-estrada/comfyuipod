@@ -1,0 +1,484 @@
+//! `supervisor` — Supervisor de procesos en Rust (`comfyctl supervise`, §5 y §6.3.4).
+//! Gestiona el ciclo de vida de `ComfyUI` (`main.py`), respeta `O-02` (`rc=143` y `COMFY_HEALTHY_UPTIME`),
+//! `O-04` (`LOG_MAX_MB`), `O-05` (`env_remove("COMFY_PASS")`), escribe `/run/comfyui-supervisor.json`
+//! de forma atómica y propaga `SIGTERM`/`SIGINT` limpiamente (`ExitCode=0`).
+
+use crate::config::RuntimeConfig;
+use crate::strict::{evaluate_strict_checks, write_and_print_strict_report, SystemSnapshot};
+use crate::sys;
+use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastExitInfo {
+    pub rc: i32,
+    pub code: i32,
+    pub reason: String,
+    pub at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupervisorState {
+    pub state: String,
+    pub attempt: u32,
+    pub restarts: u32,
+    pub healthy_resets: u32,
+    pub max: u32,
+    pub pid: Option<u32>,
+    pub started_at: Option<i64>,
+    pub last_exit: Option<LastExitInfo>,
+}
+
+impl SupervisorState {
+    pub fn new(max_restarts: u32) -> Self {
+        Self {
+            state: "starting".to_string(),
+            attempt: 0,
+            restarts: 0,
+            healthy_resets: 0,
+            max: max_restarts,
+            pid: None,
+            started_at: None,
+            last_exit: None,
+        }
+    }
+
+    /// Registra el inicio de un nuevo intento de `ComfyUI`.
+    pub fn on_child_spawned(&mut self, pid: u32, started_at: i64) {
+        self.attempt = self.attempt.saturating_add(1);
+        self.state = "running".to_string();
+        self.pid = Some(pid);
+        self.started_at = Some(started_at);
+    }
+
+    /// Aplica la política de salida (`O-02`) cuando el proceso hijo termina con código `rc`.
+    /// Devuelve `true` si debe relanzarse, o `false` si se alcanzó el estado `exhausted`.
+    pub fn on_child_exit(
+        &mut self,
+        rc: i32,
+        run_duration_s: u64,
+        healthy_uptime_s: u64,
+        exit_at: i64,
+    ) -> bool {
+        self.pid = None;
+        self.started_at = None;
+
+        if run_duration_s >= healthy_uptime_s && self.restarts > 0 {
+            self.restarts = 0;
+            self.healthy_resets = self.healthy_resets.saturating_add(1);
+        }
+
+        let reason = classify_exit_code(rc);
+        self.last_exit = Some(LastExitInfo {
+            rc,
+            code: rc,
+            reason,
+            at: exit_at,
+        });
+
+        // O-02: rc=143 (SIGTERM manual) no consume presupuesto de reinicios
+        if rc != 143 {
+            if self.restarts >= self.max {
+                self.state = "exhausted".to_string();
+                return false;
+            }
+            self.restarts = self.restarts.saturating_add(1);
+        }
+
+        self.state = "down".to_string();
+        true
+    }
+}
+
+pub fn classify_exit_code(rc: i32) -> String {
+    match rc {
+        137 => "SIGKILL (probable OOM de RAM del host o cgroup)".to_string(),
+        134 | 139 => "Crash nativo (SIGABRT/SIGSEGV en librería C++/CUDA)".to_string(),
+        1 => "Excepción Python en ComfyUI (revisar traceback en comfyui.log)".to_string(),
+        143 => {
+            "SIGTERM recibido (reinicio manual del operador; no consume presupuesto)".to_string()
+        }
+        _ => format!("Salida inesperada (rc={rc})"),
+    }
+}
+
+pub fn write_supervisor_json(path: &Path, state: &SupervisorState) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(state)
+        .map_err(|e| format!("Error serializando SupervisorState: {e}"))?;
+    sys::atomic_write(path, &bytes, 0o644)
+}
+
+fn log_sup(msg: &str) {
+    let ts = sys::format_utc_log_ts(sys::now_unix_secs());
+    let line = format!("[{ts}] [SUPERVISOR] {msg}\n");
+    print!("{line}");
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/var/log/supervisor.log")
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// Trunca `/var/log/comfyui.log` y `/var/log/nginx/access.log` si superan `log_max_mb` (`O-04`).
+pub fn truncate_logs_if_needed(log_max_mb: u64) {
+    let max_bytes = log_max_mb.saturating_mul(1_048_576);
+    let keep_bytes: u64 = 20 * 1_048_576;
+    for log_path in ["/var/log/comfyui.log", "/var/log/nginx/access.log"] {
+        let p = Path::new(log_path);
+        let Ok(meta) = fs::metadata(p) else {
+            continue;
+        };
+        if meta.len() <= max_bytes {
+            continue;
+        }
+        let Ok(mut f) = OpenOptions::new().read(true).open(p) else {
+            continue;
+        };
+        let seek_pos = meta.len().saturating_sub(keep_bytes);
+        if f.seek(SeekFrom::Start(seek_pos)).is_err() {
+            continue;
+        }
+        let mut tail_buf = Vec::new();
+        if f.read_to_end(&mut tail_buf).is_ok() {
+            if let Ok(mut out) = OpenOptions::new().write(true).truncate(true).open(p) {
+                let _ = out.write_all(&tail_buf);
+            }
+        }
+    }
+}
+
+fn dump_crash_diagnostics(attempt: u32, rc: i32, run_duration_s: u64, reason: &str) {
+    let ts = sys::format_utc_log_ts(sys::now_unix_secs());
+    let mut dump = String::new();
+    dump.push_str("======================================================================\n");
+    let _ = writeln!(
+        dump,
+        "[{ts}] [SUPERVISOR] ComfyUI terminó (intento #{attempt}, rc={rc}, duracion={run_duration_s}s): {reason}"
+    );
+    dump.push_str("--- Estado de memoria (free -m) ---\n");
+    if let Ok(out) = Command::new("free").arg("-m").output() {
+        dump.push_str(&String::from_utf8_lossy(&out.stdout));
+    }
+    dump.push_str("--- Estado de GPU (nvidia-smi) ---\n");
+    if let Ok(out) = Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+            "--format=csv,noheader",
+        ])
+        .output()
+    {
+        if out.status.success() {
+            dump.push_str(&String::from_utf8_lossy(&out.stdout));
+        }
+    }
+    dump.push_str("--- Últimas 40 líneas de /var/log/comfyui.log ---\n");
+    if let Ok(out) = Command::new("tail")
+        .args(["-n", "40", "/var/log/comfyui.log"])
+        .output()
+    {
+        dump.push_str(&String::from_utf8_lossy(&out.stdout));
+    }
+    dump.push_str("======================================================================\n");
+
+    print!("{dump}");
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/var/log/supervisor.log")
+    {
+        let _ = f.write_all(dump.as_bytes());
+    }
+}
+
+fn run_model_downloads_if_enabled(cfg: &RuntimeConfig) {
+    if cfg.skip_model_download {
+        let msg = "[6/7] [SKIP] SKIP_MODEL_DOWNLOAD=1 activo; omitiendo descarga automática.\n";
+        print!("{msg}");
+        if let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/var/log/download-models.log")
+        {
+            let _ = f.write_all(msg.as_bytes());
+        }
+        return;
+    }
+
+    println!("[6/7] Ejecutando Fase 1 de descarga de modelos críticos (2.79 GiB)...");
+    let status = Command::new("bash")
+        .args([
+            "-c",
+            "timeout 600 /usr/local/bin/download-models.sh --phase1 2>&1 | tee -a /var/log/download-models.log",
+        ])
+        .status();
+    if !matches!(status, Ok(s) if s.success()) {
+        let warn = "[WARN] Fase 1 terminó con advertencias o timeout; continuando con el arranque de ComfyUI...\n";
+        print!("{warn}");
+        if let Ok(mut f) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/var/log/download-models.log")
+        {
+            let _ = f.write_all(warn.as_bytes());
+        }
+    }
+
+    if sys::is_shutdown_requested() {
+        return;
+    }
+
+    println!(
+        "[6/7] Lanzando Fase 2 de descarga de checkpoints en segundo plano (Perfil: {})...",
+        cfg.model_profile.as_str()
+    );
+    let _ = Command::new("setsid")
+        .args([
+            "-f",
+            "bash",
+            "-c",
+            "exec /usr/local/bin/download-models.sh --phase2 >> /var/log/download-models.log 2>&1 < /dev/null",
+        ])
+        .status();
+}
+
+fn sleep_interruptible(seconds: u64) -> bool {
+    let ticks = seconds.saturating_mul(5);
+    for _ in 0..ticks {
+        if sys::is_shutdown_requested() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    sys::is_shutdown_requested()
+}
+
+fn graceful_shutdown_nginx() {
+    let _ = Command::new("nginx")
+        .args(["-s", "quit"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Bucle principal de `comfyctl supervise`.
+#[allow(clippy::too_many_lines)]
+pub fn run_supervise_cmd(cfg: &RuntimeConfig, external_status_server: bool) -> Result<i32, String> {
+    sys::install_signal_handlers();
+
+    let mut sup_state = SupervisorState::new(cfg.comfy_max_restarts);
+    write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
+
+    if external_status_server {
+        log_sup("Modo --external-status-server activo (status-server.py gestionado por start.sh).");
+    }
+
+    // 1. Ejecutar strict-check (§6)
+    let snap = SystemSnapshot::collect_live(cfg);
+    let strict_report = evaluate_strict_checks(cfg, &snap);
+    write_and_print_strict_report(cfg, &strict_report)?;
+
+    if strict_report.result == "fatal" {
+        let now = sys::now_unix_secs();
+        sup_state.state = "fatal".to_string();
+        sup_state.last_exit = Some(LastExitInfo {
+            rc: 20,
+            code: 20,
+            reason: "Fallo fatal en comfyctl strict-check (ver /run/comfyui-strict.json)"
+                .to_string(),
+            at: now,
+        });
+        write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
+        log_sup(&format!(
+            "CRITICAL: strict-check devolvió FATAL. Manteniendo Nginx y /status activos durante {}s antes de salir con código 20.",
+            cfg.strict_fatal_grace_s
+        ));
+        if sleep_interruptible(cfg.strict_fatal_grace_s) {
+            log_sup("Señal de apagado recibida durante la ventana de gracia fatal. Cerrando limpiamente (ExitCode=0).");
+            graceful_shutdown_nginx();
+            return Ok(0);
+        }
+        graceful_shutdown_nginx();
+        return Ok(20);
+    }
+
+    // 2. Ejecutar Fase 1 y lanzar Fase 2 en segundo plano
+    run_model_downloads_if_enabled(cfg);
+    if sys::is_shutdown_requested() {
+        graceful_shutdown_nginx();
+        return Ok(0);
+    }
+
+    // 3. Lanzar lector en background de /var/log/comfyui.log hacia stdout del contenedor
+    let mut tail_child = Command::new("tail")
+        .args(["-n", "0", "-F", "/var/log/comfyui.log"])
+        .stdin(Stdio::null())
+        .spawn()
+        .ok();
+
+    log_sup("Iniciando bucle supervisor de ComfyUI en 127.0.0.1:18188...");
+
+    while !sys::is_shutdown_requested() {
+        truncate_logs_if_needed(cfg.log_max_mb);
+
+        let started_at = sys::now_unix_secs();
+        let next_attempt = sup_state.attempt.saturating_add(1);
+        log_sup(&format!(
+            "Lanzando ComfyUI (intento #{}, reinicios={}/{}, healthy_resets={})...",
+            next_attempt, sup_state.restarts, sup_state.max, sup_state.healthy_resets
+        ));
+
+        let log_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/var/log/comfyui.log")
+            .map_err(|e| format!("No se pudo abrir /var/log/comfyui.log: {e}"))?;
+        let log_file_err = log_file
+            .try_clone()
+            .map_err(|e| format!("No se pudo clonar descriptor de /var/log/comfyui.log: {e}"))?;
+
+        let yaml_path = cfg.comfy_app_dir.join("extra_model_paths.yaml");
+        let mut cmd = Command::new("python3");
+        cmd.current_dir(&cfg.comfy_app_dir)
+            .args([
+                "main.py",
+                "--listen",
+                "127.0.0.1",
+                "--port",
+                "18188",
+                "--extra-model-paths-config",
+            ])
+            .arg(&yaml_path);
+
+        for extra_tok in cfg.comfy_extra_args.split_whitespace() {
+            cmd.arg(extra_tok);
+        }
+
+        // O-05: Garantizar que COMFY_PASS nunca exista en el entorno de main.py
+        cmd.env_remove("COMFY_PASS")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_file_err));
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Error al lanzar python3 main.py: {e}"))?;
+        let child_pid = child.id();
+
+        sup_state.on_child_spawned(child_pid, started_at);
+        write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
+
+        let exit_code: i32;
+        loop {
+            if sys::is_shutdown_requested() {
+                log_sup(
+                    "Señal de apagado recibida (SIGTERM/SIGINT). Deteniendo ComfyUI limpiamente...",
+                );
+                let _ = sys::send_signal(child_pid, 15);
+                for _ in 0..20 {
+                    if let Ok(Some(_)) = child.try_wait() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(500));
+                }
+                if let Ok(None) = child.try_wait() {
+                    let _ = sys::send_signal(child_pid, 9);
+                }
+                let _ = child.wait();
+                if let Some(mut tc) = tail_child.take() {
+                    let _ = tc.kill();
+                    let _ = tc.wait();
+                }
+                graceful_shutdown_nginx();
+                return Ok(0);
+            }
+
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    exit_code = extract_exit_code(status);
+                    break;
+                }
+                Ok(None) => {
+                    thread::sleep(Duration::from_millis(200));
+                }
+                Err(e) => {
+                    log_sup(&format!("Error en try_wait sobre PID {child_pid}: {e}"));
+                    exit_code = 1;
+                    break;
+                }
+            }
+        }
+
+        let exit_at = sys::now_unix_secs();
+        let run_duration_s = u64::try_from(exit_at.saturating_sub(started_at)).unwrap_or(0);
+        let prev_restarts = sup_state.restarts;
+        let should_restart = sup_state.on_child_exit(
+            exit_code,
+            run_duration_s,
+            cfg.comfy_healthy_uptime_s,
+            exit_at,
+        );
+
+        if run_duration_s >= cfg.comfy_healthy_uptime_s && prev_restarts > 0 {
+            log_sup(&format!(
+                "Proceso previo vivió {}s (>= {}s); contador de reinicios reseteado a 0 (healthy_resets={}).",
+                run_duration_s, cfg.comfy_healthy_uptime_s, sup_state.healthy_resets
+            ));
+        }
+
+        let reason = sup_state
+            .last_exit
+            .as_ref()
+            .map_or_else(String::new, |le| le.reason.clone());
+        dump_crash_diagnostics(sup_state.attempt, exit_code, run_duration_s, &reason);
+
+        write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
+
+        if !should_restart {
+            log_sup(&format!(
+                "CRITICAL: Se alcanzó COMFY_MAX_RESTARTS={}. ComfyUI queda en estado 'exhausted'. Nginx, /status y /home siguen activos para diagnóstico.",
+                sup_state.max
+            ));
+            while !sys::is_shutdown_requested() {
+                thread::sleep(Duration::from_millis(500));
+            }
+            break;
+        }
+
+        log_sup(&format!(
+            "Reiniciando ComfyUI en {}s (reinicio {}/{})...",
+            cfg.comfy_restart_delay_s, sup_state.restarts, sup_state.max
+        ));
+        if sleep_interruptible(cfg.comfy_restart_delay_s) {
+            break;
+        }
+    }
+
+    if let Some(mut tc) = tail_child.take() {
+        let _ = tc.kill();
+        let _ = tc.wait();
+    }
+    graceful_shutdown_nginx();
+    Ok(0)
+}
+
+fn extract_exit_code(status: std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            return 128 + sig;
+        }
+    }
+    1
+}

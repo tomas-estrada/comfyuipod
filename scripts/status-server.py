@@ -653,7 +653,25 @@ def evaluate_triage_and_errors(
     return triage_hits, errors_recent
 
 
-def format_phase_banner(comfy: dict[str, Any], phases: dict[str, Any]) -> str:
+def load_strict_report() -> dict[str, Any] | None:
+    p = pathlib.Path(os.environ.get("COMFY_STRICT_JSON", "/run/comfyui-strict.json"))
+    if p.is_file():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return None
+
+
+def format_phase_banner(
+    comfy: dict[str, Any], phases: dict[str, Any], strict: dict[str, Any] | None = None
+) -> str:
+    if strict and strict.get("result") == "fatal":
+        failed = [c.get("id", "?") for c in strict.get("checks", []) if c.get("status") == "fatal"]
+        return f"FATAL: Host incompatible ({', '.join(failed) or 'strict-check'}) — destruir instancia"
+
     p1 = phases["phase1"]
     p2 = phases["phase2"]
     c_state = comfy["state"]
@@ -693,6 +711,7 @@ def build_status_api() -> dict[str, Any]:
     comfyui = get_comfyui_status()
     phases = get_phases_status()
     services = get_services_status()
+    strict_report = load_strict_report()
     triage, errors_recent = evaluate_triage_and_errors(disk, phases, comfyui)
     env_masked = get_masked_env()
 
@@ -710,12 +729,14 @@ def build_status_api() -> dict[str, Any]:
         "disk": disk,
         "comfyui": comfyui,
         "phases": phases,
-        "phase_banner": format_phase_banner(comfyui, phases),
+        "phase_banner": format_phase_banner(comfyui, phases, strict_report),
         "services": services,
         "errors_recent": errors_recent,
         "triage": triage,
         "env_masked": env_masked,
     }
+    if strict_report is not None:
+        payload["strict"] = strict_report
 
     with _CACHE_LOCK:
         _API_CACHE["ts"] = time.monotonic()
@@ -1094,6 +1115,24 @@ def build_report_markdown() -> str:
         out.append("- Todos los modelos del perfil están presentes en disco.")
     else:
         out.extend(heavy["missing_models"])
+    out.append("")
+
+    # 10. Arranque estricto (§6.3.4)
+    out.append("## 10. Arranque estricto")
+    strict_rep = api.get("strict")
+    if strict_rep:
+        out.append(
+            f"- **Resultado**: `{strict_rep.get('result')}` · **Modo estricto**: `{strict_rep.get('strict_enabled')}` · "
+            f"**Evaluado**: `{strict_rep.get('checked_at')}`"
+        )
+        for chk in strict_rep.get("checks", []):
+            rem = f" — Remediación: `{chk['remediation']}`" if chk.get("remediation") else ""
+            out.append(
+                f"- `[{str(chk.get('status', '?')).upper()}]` **{chk.get('id')}** "
+                f"(observado: `{chk.get('observed')}`, esperado: `{chk.get('expected')}`): {chk.get('message')}{rem}"
+            )
+    else:
+        out.append("- Sin informe `/run/comfyui-strict.json` disponible.")
 
     report_str = redact_secrets("\n".join(out) + "\n")
     if len(report_str.encode("utf-8")) > 400_000:

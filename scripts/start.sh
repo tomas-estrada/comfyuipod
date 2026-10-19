@@ -68,67 +68,8 @@ except Exception:
 fi
 echo "======================================================================"
 
-# Helper para truncar logs que superen LOG_MAX_MB conservando los últimos 20 MiB (O-04)
-truncate_logs_if_needed() {
-    local max_bytes=$(( ${LOG_MAX_MB:-200} * 1048576 ))
-    local keep_bytes=$(( 20 * 1048576 ))
-    local log_file size_bytes
-    for log_file in /var/log/comfyui.log /var/log/nginx/access.log; do
-        if [ -f "${log_file}" ]; then
-            size_bytes="$(stat -c%s "${log_file}" 2>/dev/null || echo 0)"
-            if [ "${size_bytes}" -gt "${max_bytes}" ]; then
-                tail -c "${keep_bytes}" "${log_file}" > "${log_file}.trunc" 2>/dev/null && \
-                    cat "${log_file}.trunc" > "${log_file}" 2>/dev/null || true
-                rm -f "${log_file}.trunc"
-            fi
-        fi
-    done
-}
-
-# Helper para escribir /run/comfyui-supervisor.json de forma atómica (§5.2 / O-02)
-write_supervisor_state() {
-    local state="$1"
-    local attempt="$2"
-    local restarts="$3"
-    local max_r="$4"
-    local pid_val="$5"
-    local started_val="$6"
-    local exit_code="$7"
-    local exit_reason="$8"
-    local exit_at="$9"
-    local healthy_resets="${10:-0}"
-
-    python3 - "$state" "$attempt" "$restarts" "$max_r" "$pid_val" "$started_val" "$exit_code" "$exit_reason" "$exit_at" "$healthy_resets" << 'PYEOF'
-import json, os, sys
-
-state, attempt, restarts, max_r, pid_s, started_s, code_s, reason, at_s, hr_s = sys.argv[1:11]
-data = {
-    "state": state,
-    "attempt": int(attempt),
-    "restarts": int(restarts),
-    "healthy_resets": int(hr_s),
-    "max": int(max_r),
-    "pid": int(pid_s) if pid_s and pid_s != "null" else None,
-    "started_at": int(started_s) if started_s and started_s != "null" else None,
-    "last_exit": (
-        {"rc": int(code_s), "code": int(code_s), "reason": reason, "at": int(at_s)}
-        if code_s and code_s != "null"
-        else None
-    ),
-}
-tmp_path = "/run/comfyui-supervisor.json.tmp"
-final_path = "/run/comfyui-supervisor.json"
-with open(tmp_path, "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False)
-os.replace(tmp_path, final_path)
-PYEOF
-}
-
-LAST_EXIT_CODE="null"
-LAST_EXIT_REASON=""
-LAST_EXIT_AT="null"
-HEALTHY_RESETS=0
-write_supervisor_state "starting" 0 0 "${COMFY_MAX_RESTARTS}" "null" "null" "null" "" "null" "${HEALTHY_RESETS}"
+# Inicializar /run/comfyui-supervisor.json antes de arrancar status-server.py
+printf '{"state":"starting","attempt":0,"restarts":0,"healthy_resets":0,"max":%s,"pid":null,"started_at":null,"last_exit":null}\n' "${COMFY_MAX_RESTARTS}" > /run/comfyui-supervisor.json
 
 # ------------------------------------------------------------------------------
 # 1. Verificación estricta de ffmpeg sin SIGPIPE (Lección 1 / REL-02)
@@ -242,6 +183,13 @@ printf '%s\n' "${COMFY_PASS}" | htpasswd -ci /etc/nginx/.htpasswd "${COMFY_USER}
 chmod 640 /etc/nginx/.htpasswd
 chown root:www-data /etc/nginx/.htpasswd
 
+# §9: Persistir COMFY_PASS en /run/comfyui-pass (0600) para que comfyctl lo lea y borre (unlink) al instante
+(
+    umask 077
+    printf '%s\n' "${COMFY_PASS}" > /run/comfyui-pass
+)
+chmod 600 /run/comfyui-pass
+
 echo "======================================================================"
 echo "  CREDENCIALES DE ACCESO WEB (HTTP Basic Auth en puerto 8188):"
 echo "  Usuario    : ${COMFY_USER}"
@@ -305,7 +253,7 @@ fi
 
 # ------------------------------------------------------------------------------
 # 5. Ejecutar autodiagnóstico no bloqueante /usr/local/bin/diag.sh (§7.1)
-#    y limpiar COMFY_PASS del entorno antes de Fase 1/2 y ComfyUI (O-05)
+#    y limpiar COMFY_PASS del entorno antes de comfyctl supervise (O-05 / §9)
 # ------------------------------------------------------------------------------
 echo "[5/7] Ejecutando autodiagnóstico de subsistemas (/usr/local/bin/diag.sh)..."
 if [ -x /usr/local/bin/diag.sh ]; then
@@ -314,151 +262,8 @@ fi
 unset COMFY_PASS
 
 # ------------------------------------------------------------------------------
-# 6. Ejecutar Fase 1 (con timeout no-fatal, REL-03) y lanzar Fase 2 con setsid -f (INF-02 / L-03)
+# 6–7. Ceder control a comfyctl supervise (ejecuta strict-check, Fase 1/2 y supervisa ComfyUI)
 # ------------------------------------------------------------------------------
-if [ "${SKIP_MODEL_DOWNLOAD:-0}" != "1" ]; then
-    echo "[6/7] Ejecutando Fase 1 de descarga de modelos críticos (2.79 GiB)..."
-    timeout 600 /usr/local/bin/download-models.sh --phase1 2>&1 | tee -a /var/log/download-models.log || \
-        echo "[WARN] Fase 1 terminó con advertencias o timeout; continuando con el arranque de ComfyUI..." | tee -a /var/log/download-models.log
+echo "[6/7] Cediendo supervisión principal a /usr/local/bin/comfyctl supervise..."
+exec /usr/local/bin/comfyctl supervise --external-status-server
 
-    echo "[6/7] Lanzando Fase 2 de descarga de checkpoints en segundo plano (Perfil: ${MODEL_PROFILE:-all})..."
-    setsid -f /usr/local/bin/download-models.sh --phase2 >> /var/log/download-models.log 2>&1 < /dev/null
-else
-    echo "[6/7] [SKIP] SKIP_MODEL_DOWNLOAD=1 activo; omitiendo descarga automática." | tee -a /var/log/download-models.log
-fi
-
-# ------------------------------------------------------------------------------
-# 7. Supervisor de ComfyUI en 127.0.0.1:18188 (§5.1, §5.2, §5.3, O-02, O-04)
-# ------------------------------------------------------------------------------
-echo "[7/7] Iniciando supervisor de ComfyUI en 127.0.0.1:18188 (accesible vía Nginx en puerto 8188)..."
-cd "${COMFY_APP_DIR}"
-
-SHUTTING_DOWN=0
-COMFY_PID=""
-SLEEP_PID=""
-
-# Único lector en background para enviar comfyui.log al stdout del contenedor sin duplicar procesos tee
-tail -n 0 -F /var/log/comfyui.log &
-TAIL_PID=$!
-
-shutdown() {
-    SHUTTING_DOWN=1
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] Señal de apagado recibida (SIGTERM/SIGINT). Deteniendo servicios limpiamente..." | tee -a /var/log/supervisor.log
-    if [ -n "${SLEEP_PID}" ] && kill -0 "${SLEEP_PID}" 2>/dev/null; then
-        kill -TERM "${SLEEP_PID}" 2>/dev/null || true
-    fi
-    if [ -n "${COMFY_PID}" ] && kill -0 "${COMFY_PID}" 2>/dev/null; then
-        kill -TERM "${COMFY_PID}" 2>/dev/null || true
-        for _ in $(seq 1 20); do
-            kill -0 "${COMFY_PID}" 2>/dev/null || break
-            sleep 0.5
-        done
-        if kill -0 "${COMFY_PID}" 2>/dev/null; then
-            kill -KILL "${COMFY_PID}" 2>/dev/null || true
-        fi
-        wait "${COMFY_PID}" 2>/dev/null || true
-    fi
-    nginx -s quit 2>/dev/null || true
-    if [ -n "${TAIL_PID:-}" ] && kill -0 "${TAIL_PID}" 2>/dev/null; then
-        kill -TERM "${TAIL_PID}" 2>/dev/null || true
-    fi
-    exit 0
-}
-
-trap shutdown TERM INT
-
-attempt=0
-restarts=0
-
-while [ "${SHUTTING_DOWN}" -eq 0 ]; do
-    truncate_logs_if_needed
-    attempt=$((attempt + 1))
-    started_at="$(date +%s)"
-
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] Lanzando ComfyUI (intento #${attempt}, reinicios=${restarts}/${COMFY_MAX_RESTARTS}, healthy_resets=${HEALTHY_RESETS})..." | tee -a /var/log/supervisor.log
-
-    # shellcheck disable=SC2086
-    python3 main.py \
-        --listen 127.0.0.1 \
-        --port 18188 \
-        --extra-model-paths-config "${COMFY_APP_DIR}/extra_model_paths.yaml" \
-        ${COMFYUI_EXTRA_ARGS:-} < /dev/null >> /var/log/comfyui.log 2>&1 &
-    COMFY_PID=$!
-
-    write_supervisor_state "running" "${attempt}" "${restarts}" "${COMFY_MAX_RESTARTS}" "${COMFY_PID}" "${started_at}" "${LAST_EXIT_CODE}" "${LAST_EXIT_REASON}" "${LAST_EXIT_AT}" "${HEALTHY_RESETS}"
-
-    rc=0
-    wait "${COMFY_PID}" || rc=$?
-    COMFY_PID=""
-
-    if [ "${SHUTTING_DOWN}" -eq 1 ]; then
-        break
-    fi
-
-    exit_at="$(date +%s)"
-    run_duration=$((exit_at - started_at))
-    if [ "${run_duration}" -ge "${COMFY_HEALTHY_UPTIME}" ] && [ "${restarts}" -gt 0 ]; then
-        restarts=0
-        HEALTHY_RESETS=$((HEALTHY_RESETS + 1))
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] Proceso previo vivió ${run_duration}s (>= ${COMFY_HEALTHY_UPTIME}s); contador de reinicios reseteado a 0 (healthy_resets=${HEALTHY_RESETS})." | tee -a /var/log/supervisor.log
-    fi
-
-    case "${rc}" in
-        137)
-            reason="SIGKILL (probable OOM de RAM del host o cgroup)"
-            ;;
-        134|139)
-            reason="Crash nativo (SIGABRT/SIGSEGV en librería C++/CUDA)"
-            ;;
-        1)
-            reason="Excepción Python en ComfyUI (revisar traceback en comfyui.log)"
-            ;;
-        143)
-            reason="SIGTERM recibido (reinicio manual del operador; no consume presupuesto)"
-            ;;
-        *)
-            reason="Salida inesperada (rc=${rc})"
-            ;;
-    esac
-
-    LAST_EXIT_CODE="${rc}"
-    LAST_EXIT_REASON="${reason}"
-    LAST_EXIT_AT="${exit_at}"
-
-    {
-        echo "======================================================================"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] ComfyUI terminó (intento #${attempt}, rc=${rc}, duracion=${run_duration}s): ${reason}"
-        echo "--- Estado de memoria (free -m) ---"
-        free -m 2>/dev/null || true
-        if command -v nvidia-smi >/dev/null 2>&1; then
-            echo "--- Estado de GPU (nvidia-smi) ---"
-            nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader 2>/dev/null || true
-        fi
-        echo "--- Últimas 40 líneas de /var/log/comfyui.log ---"
-        tail -n 40 /var/log/comfyui.log 2>/dev/null || true
-        echo "======================================================================"
-    } | tee -a /var/log/supervisor.log
-
-    if [ "${rc}" -ne 143 ]; then
-        if [ "${restarts}" -ge "${COMFY_MAX_RESTARTS}" ]; then
-            write_supervisor_state "exhausted" "${attempt}" "${restarts}" "${COMFY_MAX_RESTARTS}" "null" "null" "${LAST_EXIT_CODE}" "${LAST_EXIT_REASON}" "${LAST_EXIT_AT}" "${HEALTHY_RESETS}"
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] CRITICAL: Se alcanzó COMFY_MAX_RESTARTS=${COMFY_MAX_RESTARTS}. ComfyUI queda en estado 'exhausted'. Nginx, /status y /home siguen activos para diagnóstico." | tee -a /var/log/supervisor.log
-            while [ "${SHUTTING_DOWN}" -eq 0 ]; do
-                sleep 5 &
-                SLEEP_PID=$!
-                wait "${SLEEP_PID}" 2>/dev/null || true
-                SLEEP_PID=""
-            done
-            break
-        fi
-        restarts=$((restarts + 1))
-    fi
-
-    write_supervisor_state "down" "${attempt}" "${restarts}" "${COMFY_MAX_RESTARTS}" "null" "null" "${LAST_EXIT_CODE}" "${LAST_EXIT_REASON}" "${LAST_EXIT_AT}" "${HEALTHY_RESETS}"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUPERVISOR] Reiniciando ComfyUI en ${COMFY_RESTART_DELAY}s (reinicio ${restarts}/${COMFY_MAX_RESTARTS})..." | tee -a /var/log/supervisor.log
-
-    sleep "${COMFY_RESTART_DELAY}" &
-    SLEEP_PID=$!
-    wait "${SLEEP_PID}" 2>/dev/null || true
-    SLEEP_PID=""
-done

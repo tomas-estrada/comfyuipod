@@ -1,6 +1,19 @@
 # ==============================================================================
 # Dockerfile — ComfyUI "Everything-Ready" para Vast.ai (RTX 5090 / RTX 4090)
 # ==============================================================================
+# --- Stage 1: Compilar comfyctl (Rust 1.86.0 fijado por digest, §4.3 / §4.4) ---
+FROM rust:1.86.0-slim-bookworm@sha256:57d415bbd61ce11e2d5f73de068103c7bd9f3188dc132c97cef4a8f62989e944 AS builder
+WORKDIR /build/comfyctl
+
+COPY comfyctl/Cargo.toml comfyctl/Cargo.lock comfyctl/rust-toolchain.toml ./
+RUN mkdir -p src && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
+    && cargo build --release --locked \
+    && rm -rf src
+
+COPY comfyctl/src ./src
+RUN touch src/main.rs src/lib.rs && cargo build --release --locked --bin comfyctl
+
+# --- Stage 2: Imagen final de ejecución ---
 FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
 
 LABEL org.opencontainers.image.title="ComfyUI Everything-Ready (Vast.ai RTX 5090 / 4090)"
@@ -170,6 +183,7 @@ RUN mkdir -p /etc/comfyui/models_configs \
 ARG IMAGE_TAG=dev
 ARG BUILD_DATE=unknown
 
+COPY --from=builder --chmod=0755 /build/comfyctl/target/release/comfyctl /usr/local/bin/comfyctl
 COPY config/extra_model_paths.yaml /etc/comfyui/extra_model_paths.yaml
 COPY config/manager-config.ini /etc/comfyui/manager-config.ini
 COPY config/_starting.html /etc/comfyui/_starting.html
@@ -193,6 +207,7 @@ RUN sed -i 's/\r$//' \
         /etc/comfyui/triage_patterns.json \
         /etc/nginx/nginx.conf && \
     chmod +x /usr/local/bin/download-models.sh /usr/local/bin/status-server.py /usr/local/bin/diag.sh /start.sh && \
+    /usr/local/bin/comfyctl version && \
     python3 -m py_compile /usr/local/bin/status-server.py && \
     IMAGE_TAG="${IMAGE_TAG}" BUILD_DATE="${BUILD_DATE}" python3 -c "import json, os, subprocess, torch; sha = subprocess.check_output(['git', '-C', '/opt/ComfyUI', 'rev-parse', 'HEAD'], text=True).strip(); json.dump({'tag': os.environ.get('IMAGE_TAG', 'dev'), 'built_at': os.environ.get('BUILD_DATE', 'unknown'), 'comfyui_sha': sha, 'pytorch': torch.__version__, 'cuda': str(torch.version.cuda), 'ubuntu': '24.04'}, open('/etc/comfyui/image.json', 'w', encoding='utf-8'), indent=2); pats = json.load(open('/etc/comfyui/triage_patterns.json', encoding='utf-8')); assert len(pats) >= 17" && \
     cp /etc/comfyui/extra_model_paths.yaml /opt/ComfyUI/extra_model_paths.yaml && \

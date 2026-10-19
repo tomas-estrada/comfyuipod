@@ -225,6 +225,11 @@ cmd_open() {
         local info=""
         if info="$(resolve_instance "${inst_id}" "1" 2>/dev/null)"; then
             IFS='|' read -r resolved_id ip port status _ <<<"${info}"
+            if [ "${status}" = "exited" ] || [ "${status}" = "stopped" ]; then
+                echo "[FATAL] La instancia ${resolved_id} pasó a estado '${status}' (probable fallo de arranque estricto STRICT_START=1 / código 20)." >&2
+                echo "        Ejecuta 'comfy logs ${resolved_id}' para ver el motivo y 'comfy destroy ${resolved_id}' para detener el cobro de disco." >&2
+                return 1
+            fi
             if [ "${status}" = "running" ] && [ -n "${ip}" ] && [ -n "${port}" ]; then
                 if curl -fsS --max-time 3 "http://${ip}:${port}/healthz" >/dev/null 2>&1; then
                     break
@@ -366,6 +371,14 @@ triage = d.get("triage") or []
 
 print(f"=== ComfyUIPod Watch | {d.get('generated_at','')} | uptime={inst.get('uptime_s',0)}s ===")
 print(f"Banner    : {d.get('phase_banner','')}")
+strict = d.get("strict") or {}
+if strict.get("result") == "fatal":
+    print("\n[FATAL] ARRANQUE ESTRICTO FALLIDO — HOST INCOMPATIBLE:")
+    for chk in strict.get("checks") or []:
+        if chk.get("status") == "fatal":
+            print(f"  * {chk.get('id')}: {chk.get('message')} (observado={chk.get('observed')}, esperado={chk.get('expected')})")
+            if chk.get("remediation"):
+                print(f"    Remediación: {chk.get('remediation')}")
 print(f"ComfyUI   : state={c.get('state')} | port_open={c.get('port_open')} | restarts={c.get('restarts')}/{c.get('max_restarts')}")
 print(f"GPU       : {gpu.get('name','N/A')} | VRAM {gpu.get('vram_used_mb',0)}/{gpu.get('vram_total_mb',0)} MB | util={gpu.get('util_pct',0)}% | {gpu.get('temp_c',0)}C")
 print(f"RAM / Disk: disponible={mem.get('available_mb',0)}/{mem.get('total_mb',0)} MB | disco libre={disk.get('free_gb',0)}/{disk.get('total_gb',0)} GB")
@@ -376,8 +389,14 @@ if triage:
     for t in triage[:5]:
         print(f"  - [{t.get('severity','').upper()}] {t.get('pattern_id')}: {t.get('summary')}")
 PYEOF
+            if API_JSON="${json_payload}" python3 -c 'import json, os, sys; sys.exit(0 if (json.loads(os.environ["API_JSON"]).get("strict") or {}).get("result") == "fatal" else 1)' 2>/dev/null; then
+                echo ""
+                echo "[FATAL] La instancia ${inst_id} falló el arranque estricto y se cerrará tras la ventana de gracia." >&2
+                echo "        Ejecuta ahora: comfy destroy ${inst_id}" >&2
+                return 20
+            fi
         else
-            echo "[WARN] Sin respuesta desde ${api_url}..."
+            echo "[WARN] Sin respuesta desde ${api_url} (verifica estado con 'comfy status' o 'comfy logs ${inst_id}')..."
         fi
         sleep 3
     done
