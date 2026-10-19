@@ -78,16 +78,15 @@ impl ServerContext {
         data
     }
 
-    /// Devuelve la caché pesada si tiene <= 300s de antigüedad; si expiró (> 300s) o no existe, recalcula (`R-16`).
+    /// Devuelve la caché pesada indicando su antigüedad real en `cache_age_s`; solo recalcula
+    /// si aún no existe (`S-05`). El hilo de refresco la renueva cada 60 s; si ese hilo muere,
+    /// se sirven datos viejos y `report.rs` lo advierte en `## 8` cuando `cache_age_s > 300`.
     pub fn get_heavy_cached(&self) -> HeavyCacheData {
         if let Ok(guard) = self.heavy_cache.lock() {
             if let Some((ts, cached)) = guard.as_ref() {
-                let age_s = ts.elapsed().as_secs();
-                if age_s <= 300 {
-                    let mut out = cached.clone();
-                    out.cache_age_s = age_s;
-                    return out;
-                }
+                let mut out = cached.clone();
+                out.cache_age_s = ts.elapsed().as_secs();
+                return out;
             }
         }
         self.compute_heavy_now()

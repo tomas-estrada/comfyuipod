@@ -93,7 +93,7 @@ jobs:
           print(f"Validated {len(patterns)} triage patterns, {len(expected_files)} expected models, frozen schemas (incl. strict), and portal ({portal_bytes} bytes, 0 external CDN refs).")
           EOF
 
-      - name: Ejecutar download-models.sh en seco con HF_CLI simulado y contrastar formato con parser (R-01 / R-08)
+      - name: Ejecutar download-models.sh en seco con HF_CLI simulado y contrastar formato con parser (R-01 / R-08 / S-01 / S-02)
         run: |
           set -euo pipefail
           tmp_root="$(mktemp -d)"
@@ -102,9 +102,18 @@ jobs:
           cat > "$tmp_root/bin/fake-hf" << 'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
-          # Extraer repo_path (arg 3) y --local-dir (arg 5)
-          repo_path="$3"
-          stage_dir="$5"
+          # hf_fetch invoca: hf download <repo_id> <remote_path> --repo-type <tipo> --local-dir <stage>
+          repo_path="${3:?}"
+          stage_dir=""
+          while [ "$#" -gt 0 ]; do
+            if [ "$1" = "--local-dir" ]; then
+              stage_dir="$2"
+              shift 2
+              continue
+            fi
+            shift
+          done
+          [ -n "${stage_dir}" ] || { echo "fake-hf: falta --local-dir" >&2; exit 1; }
           mkdir -p "$(dirname "${stage_dir}/${repo_path}")"
           if [[ "$repo_path" == *.zip ]]; then
             python3 - "${stage_dir}/${repo_path}" << 'PY'
@@ -117,21 +126,30 @@ jobs:
           fi
           EOF
           chmod +x "$tmp_root/bin/fake-hf"
+          # stdout (trazas [MODELS]) a dl.log; stderr aparte (ruido de /root sin permisos, etc.)
           COMFY_DATA_DIR="$tmp_root/data" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=general \
-            bash scripts/download-models.sh --phase1 > "$tmp_root/dl.log" 2>&1
+            bash scripts/download-models.sh --phase1 > "$tmp_root/dl.log" 2>"$tmp_root/dl.err" || { cat "$tmp_root/dl.log"; cat "$tmp_root/dl.err"; exit 1; }
           COMFY_DATA_DIR="$tmp_root/data" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=general \
-            bash scripts/download-models.sh --phase2 >> "$tmp_root/dl.log" 2>&1
+            bash scripts/download-models.sh --phase2 >> "$tmp_root/dl.log" 2>>"$tmp_root/dl.err" || { cat "$tmp_root/dl.log"; cat "$tmp_root/dl.err"; exit 1; }
+          # Cadenas literales verificadas contra scripts/download-models.sh (log() anteponer [ts] [MODELS]).
+          # Si alguna cambia, hay que regenerar comfyctl/tests/fixtures/download_models.log con este mismo dry-run.
           grep -q "INICIANDO FASE 1 (2.79 GiB):" "$tmp_root/dl.log"
           grep -q "PLAN FASE 1: 12 archivos" "$tmp_root/dl.log"
           grep -q "OK: InsightFace buffalo_l listo en" "$tmp_root/dl.log"
-          grep -q "FASE 1 COMPLETADA." "$tmp_root/dl.log"
-          grep -q "INICIANDO FASE 2 (Segundo plano" "$tmp_root/dl.log"
-          grep -q "PLAN FASE 2: 8 archivos (MODEL_PROFILE=general)" "$tmp_root/dl.log"
-          grep -q "SKIP (ya existe): det_10g.onnx" "$tmp_root/dl.log"
-          grep -q "FASE 2 COMPLETADA." "$tmp_root/dl.log"
-          echo "[OK] download-models.sh en seco produjo todas las trazas reales esperadas por phases.rs (R-01)"
+          grep -q "FASE 1 COMPLETADA\." "$tmp_root/dl.log"
+          grep -q "RESUMEN FASE 1: Todos los modelos se descargaron correctamente" "$tmp_root/dl.log"
+          grep -q "INICIANDO FASE 2 (Segundo Plano" "$tmp_root/dl.log"
+          grep -q "PLAN FASE 2: 10 archivos (general)" "$tmp_root/dl.log"
+          grep -q "SKIP (ya existe): InsightFace buffalo_l" "$tmp_root/dl.log"
+          grep -q "FASE 2 COMPLETADA (Perfil: general)\." "$tmp_root/dl.log"
+          # El fixture commiteado del parser (S-02) se genera con este mismo dry-run; exigir que no haya divergido.
+          # Normalización: sin timestamps, rutas absolutas (.../models/ -> ~/models/) ni tamaños du -h finales.
+          norm() { sed -E 's/^\[[0-9-]+ [0-9:]+\] //; s|\S*/models/|~/models/|g; s/ \([0-9.]+[A-Z]\)$//' "$1"; }
+          diff <(norm "$tmp_root/dl.log") <(norm comfyctl/tests/fixtures/download_models.log) \
+            || { echo "::error::El fixture download_models.log ha divergido del formato real; regenéralo con este dry-run"; exit 1; }
+          echo "[OK] download-models.sh en seco: formato idéntico al fixture del parser (S-01/S-02)"
 
-      - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01: SHA v3.1.0 verificado)
+      - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01 - SHA v3.1.0 verificado)
         uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
           dockerfile: Dockerfile

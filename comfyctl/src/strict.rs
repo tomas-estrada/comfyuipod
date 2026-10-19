@@ -471,8 +471,10 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
     // S3: VRAM total >= STRICT_MIN_VRAM_MB (20000 MB por defecto; WARN si < 22000 MB, §6.2 / R-06)
     if cfg.strict_require_gpu {
         let s3_fatal = !snap.gpu_query_ok || snap.vram_total_mb < cfg.strict_min_vram_mb;
+        // S-08: la banda WARN se aplica siempre que el umbral WARN supere al mínimo,
+        // sin gate sobre el valor absoluto del mínimo.
         let s3_warn = !s3_fatal
-            && cfg.strict_min_vram_mb >= 20000
+            && cfg.strict_warn_vram_mb > cfg.strict_min_vram_mb
             && snap.vram_total_mb < cfg.strict_warn_vram_mb;
         let s3_status = if s3_fatal {
             status_for(false, true)
@@ -520,8 +522,10 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
         let min_ram_eff = cfg.strict_min_ram_mb.saturating_mul(95) / 100;
         let warn_ram_eff = cfg.strict_warn_ram_mb.saturating_mul(95) / 100;
         let s4_fatal = snap.ram_total_mb < min_ram_eff;
-        let s4_warn =
-            !s4_fatal && cfg.strict_min_ram_mb >= 16384 && snap.ram_total_mb < warn_ram_eff;
+        // S-08: banda WARN siempre que STRICT_WARN_RAM_MB > STRICT_MIN_RAM_MB.
+        let s4_warn = !s4_fatal
+            && cfg.strict_warn_ram_mb > cfg.strict_min_ram_mb
+            && snap.ram_total_mb < warn_ram_eff;
         let s4_status = if s4_fatal {
             status_for(false, true)
         } else if s4_warn {

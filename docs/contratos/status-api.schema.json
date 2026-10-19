@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:comfyuipod:schema:status-api:v1",
   "title": "ComfyUIPod /status/api Response Contract",
-  "description": "Esquema congelado del endpoint GET /status/api (con extensión aditiva strict y compatibilidad de phases.*.failed). Solo se permiten cambios aditivos.",
+  "description": "Esquema congelado del endpoint GET /status/api (con extensión aditiva strict; phases.*.failed es array de nombres de fichero, como en status-server.py). Solo se permiten cambios aditivos.",
   "type": "object",
   "required": [
     "generated_at",
@@ -165,8 +165,7 @@
             "done": { "type": "integer", "minimum": 0 },
             "total": { "type": "integer", "minimum": 0 },
             "failed": {
-              "type": ["integer", "array"],
-              "minimum": 0,
+              "type": "array",
               "items": { "type": "string" }
             },
             "elapsed_s": { "type": "integer", "minimum": 0 }
@@ -192,8 +191,7 @@
             "done": { "type": "integer", "minimum": 0 },
             "total": { "type": "integer", "minimum": 0 },
             "failed": {
-              "type": ["integer", "array"],
-              "minimum": 0,
+              "type": "array",
               "items": { "type": "string" }
             },
             "current_file": { "type": ["string", "null"] },

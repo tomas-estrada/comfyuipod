@@ -1,48 +1,107 @@
-[2026-10-19 10:00:01] [MODELS] ======================================================================
-[2026-10-19 10:00:01] [MODELS] INICIANDO FASE 1 (Síncrona — Modelos base indispensables)
-[2026-10-19 10:00:01] [MODELS] ======================================================================
-[2026-10-19 10:00:01] [MODELS] PLAN FASE 1: 12 archivos (11 vía hf_fetch + 1 paquete InsightFace buffalo_l)
-[2026-10-19 10:00:02] [MODELS] SKIP (ya existe): sdxl_vae.safetensors
-[2026-10-19 10:00:03] [MODELS] INICIO: 4x-UltraSharp.pth (Kim2091/UltraSharp/4x-UltraSharp.pth)
-[2026-10-19 10:00:05] [MODELS] OK: /workspace/comfyui-data/models/upscale_models/4x-UltraSharp.pth (64M)
-[2026-10-19 10:00:05] [MODELS] SKIP (ya existe): 4x-AnimeSharp.pth
-[2026-10-19 10:00:05] [MODELS] SKIP (ya existe): RealESRGAN_x4plus_anime_6B.pth
-[2026-10-19 10:00:06] [MODELS] SKIP (ya existe): CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors
-[2026-10-19 10:00:06] [MODELS] SKIP (ya existe): CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors
-[2026-10-19 10:00:07] [MODELS] SKIP (ya existe): ip-adapter-plus_sdxl_vit-h.safetensors
-[2026-10-19 10:00:07] [MODELS] SKIP (ya existe): ip-adapter-plus-face_sdxl_vit-h.safetensors
-[2026-10-19 10:00:08] [MODELS] SKIP (ya existe): controlnet-union-sdxl-1.0-promax.safetensors
-[2026-10-19 10:00:09] [MODELS] SKIP (ya existe): face_yolov8m.pt
-[2026-10-19 10:00:09] [MODELS] SKIP (ya existe): hand_yolov8n.pt
-[2026-10-19 10:00:10] [MODELS] INICIO: buffalo_l.zip (iahispano/applio/Resources/antelopev2/buffalo_l.zip)
-[2026-10-19 10:00:30] [MODELS] OK: /workspace/comfyui-data/models/insightface/.hf_stage/buffalo_l.zip (275M)
-[2026-10-19 10:00:32] [MODELS] OK: InsightFace buffalo_l listo en /workspace/comfyui-data/models/insightface/models/buffalo_l
-[2026-10-19 10:00:33] [MODELS] RESUMEN FASE 1: 0 fallo(s) de 12 archivos.
-[2026-10-19 10:00:33] [MODELS] FASE 1 COMPLETADA.
-[2026-10-19 10:00:34] [MODELS] ======================================================================
-[2026-10-19 10:00:34] [MODELS] INICIANDO FASE 1 (Síncrona — Modelos base indispensables)
-[2026-10-19 10:00:34] [MODELS] ======================================================================
-[2026-10-19 10:00:34] [MODELS] PLAN FASE 1: 12 archivos (11 vía hf_fetch + 1 paquete InsightFace buffalo_l)
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): sdxl_vae.safetensors
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): 4x-UltraSharp.pth
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): 4x-AnimeSharp.pth
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): RealESRGAN_x4plus_anime_6B.pth
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): ip-adapter-plus_sdxl_vit-h.safetensors
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): ip-adapter-plus-face_sdxl_vit-h.safetensors
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): controlnet-union-sdxl-1.0-promax.safetensors
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): face_yolov8m.pt
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): hand_yolov8n.pt
-[2026-10-19 10:00:34] [MODELS] SKIP (ya existe): InsightFace buffalo_l
-[2026-10-19 10:00:34] [MODELS] RESUMEN FASE 1: 0 fallo(s) de 12 archivos.
-[2026-10-19 10:00:34] [MODELS] FASE 1 COMPLETADA.
-[2026-10-19 10:00:35] [MODELS] ======================================================================
-[2026-10-19 10:00:35] [MODELS] INICIANDO FASE 2 (Asíncrona en segundo plano — Perfil: anime)
-[2026-10-19 10:00:35] [MODELS] ======================================================================
-[2026-10-19 10:00:35] [MODELS] PLAN FASE 2: 3 archivos para MODEL_PROFILE=anime
-[2026-10-19 10:00:36] [MODELS] INICIO: animagine-xl-4.0-opt.safetensors (cagliostrolab/animagine-xl-4.0/animagine-xl-4.0-opt.safetensors)
-[2026-10-19 10:00:55] [MODELS] OK: /workspace/comfyui-data/models/checkpoints/animagine-xl-4.0-opt.safetensors (6.5G)
-[2026-10-19 10:00:56] [MODELS] INICIO: noobaiXLNAIXL_vPred10Version.safetensors (Laxhar/noobai-XL-Vpred-1.0/noobai-XL-Vpred-1.0.safetensors)
-[2026-10-19 10:01:15] [MODELS] OK: /workspace/comfyui-data/models/checkpoints/noobaiXLNAIXL_vPred10Version.safetensors (6.5G)
-[2026-10-19 10:01:16] [MODELS] INICIO: waiNSFWIllustrious_v120.safetensors (LaunchpadORT/WAI-NSFW-illustrious-SDXL/waiNSFWIllustrious_v120.safetensors)
+[2026-10-19 17:59:55] [MODELS] ======================================================================
+[2026-10-19 17:59:55] [MODELS] INICIANDO FASE 1 (2.79 GiB): ReActor, InsightFace, CodeFormer, VAE, Upscalers
+[2026-10-19 17:59:55] [MODELS] PLAN FASE 1: 12 archivos
+[2026-10-19 17:59:55] [MODELS] ======================================================================
+[2026-10-19 17:59:55] [MODELS] INICIO: buffalo_l.zip (Gourieff/ReActor/models/buffalo_l.zip)
+[2026-10-19 17:59:55] [MODELS] Descargando buffalo_l.zip desde Gourieff/ReActor (intento 1/3)...
+[2026-10-19 17:59:56] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/.hf_stage/buffalo_l.zip (1.0K)
+[2026-10-19 17:59:56] [MODELS] Descomprimiendo buffalo_l.zip en /tmp/tmp.X9rx47LvtQ/data/models/insightface/models/buffalo_l...
+[2026-10-19 17:59:56] [MODELS] OK: InsightFace buffalo_l listo en /tmp/tmp.X9rx47LvtQ/data/models/insightface/models/buffalo_l
+[2026-10-19 17:59:56] [MODELS] INICIO: inswapper_128.onnx (Gourieff/ReActor/models/inswapper_128.onnx)
+[2026-10-19 17:59:56] [MODELS] Descargando inswapper_128.onnx desde Gourieff/ReActor (intento 1/3)...
+[2026-10-19 17:59:57] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/insightface/inswapper_128.onnx (1.0K)
+[2026-10-19 17:59:57] [MODELS] INICIO: codeformer-v0.1.0.pth (Gourieff/ReActor/models/facerestore_models/codeformer-v0.1.0.pth)
+[2026-10-19 17:59:57] [MODELS] Descargando codeformer-v0.1.0.pth desde Gourieff/ReActor (intento 1/3)...
+[2026-10-19 17:59:57] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/facerestore_models/codeformer-v0.1.0.pth (1.0K)
+[2026-10-19 17:59:57] [MODELS] INICIO: GFPGANv1.4.pth (Gourieff/ReActor/models/facerestore_models/GFPGANv1.4.pth)
+[2026-10-19 17:59:57] [MODELS] Descargando GFPGANv1.4.pth desde Gourieff/ReActor (intento 1/3)...
+[2026-10-19 17:59:58] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/facerestore_models/GFPGANv1.4.pth (1.0K)
+[2026-10-19 17:59:58] [MODELS] INICIO: detection_Resnet50_Final.pth (kg-09/face_detection_models/detection_Resnet50_Final.pth)
+[2026-10-19 17:59:58] [MODELS] Descargando detection_Resnet50_Final.pth desde kg-09/face_detection_models (intento 1/3)...
+[2026-10-19 17:59:58] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/facedetection/detection_Resnet50_Final.pth (1.0K)
+[2026-10-19 17:59:58] [MODELS] INICIO: parsing_parsenet.pth (kg-09/face_detection_models/parsing_parsenet.pth)
+[2026-10-19 17:59:58] [MODELS] Descargando parsing_parsenet.pth desde kg-09/face_detection_models (intento 1/3)...
+[2026-10-19 17:59:59] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/facedetection/parsing_parsenet.pth (1.0K)
+[2026-10-19 17:59:59] [MODELS] INICIO: face_yolov8m.pt (Gourieff/ReActor/models/detection/bbox/face_yolov8m.pt)
+[2026-10-19 17:59:59] [MODELS] Descargando face_yolov8m.pt desde Gourieff/ReActor (intento 1/3)...
+[2026-10-19 17:59:59] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/ultralytics/bbox/face_yolov8m.pt (1.0K)
+[2026-10-19 17:59:59] [MODELS] INICIO: sam_vit_b_01ec64.pth (Gourieff/ReActor/models/sams/sam_vit_b_01ec64.pth)
+[2026-10-19 17:59:59] [MODELS] Descargando sam_vit_b_01ec64.pth desde Gourieff/ReActor (intento 1/3)...
+[2026-10-19 18:00:00] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/sams/sam_vit_b_01ec64.pth (1.0K)
+[2026-10-19 18:00:00] [MODELS] INICIO: sdxl.vae.safetensors (madebyollin/sdxl-vae-fp16-fix/sdxl.vae.safetensors)
+[2026-10-19 18:00:00] [MODELS] Descargando sdxl.vae.safetensors desde madebyollin/sdxl-vae-fp16-fix (intento 1/3)...
+[2026-10-19 18:00:00] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/vae/sdxl.vae.safetensors (1.0K)
+[2026-10-19 18:00:00] [MODELS] INICIO: vae-ft-mse-840000-ema-pruned.safetensors (stabilityai/sd-vae-ft-mse-original/vae-ft-mse-840000-ema-pruned.safetensors)
+[2026-10-19 18:00:00] [MODELS] Descargando vae-ft-mse-840000-ema-pruned.safetensors desde stabilityai/sd-vae-ft-mse-original (intento 1/3)...
+[2026-10-19 18:00:01] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/vae/vae-ft-mse-840000-ema-pruned.safetensors (1.0K)
+[2026-10-19 18:00:01] [MODELS] INICIO: 4x-UltraSharp.pth (Kim2091/UltraSharp/4x-UltraSharp.pth)
+[2026-10-19 18:00:01] [MODELS] Descargando 4x-UltraSharp.pth desde Kim2091/UltraSharp (intento 1/3)...
+[2026-10-19 18:00:01] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/upscale_models/4x-UltraSharp.pth (1.0K)
+[2026-10-19 18:00:01] [MODELS] INICIO: 4x-AnimeSharp.pth (Kim2091/AnimeSharp/4x-AnimeSharp.pth)
+[2026-10-19 18:00:01] [MODELS] Descargando 4x-AnimeSharp.pth desde Kim2091/AnimeSharp (intento 1/3)...
+[2026-10-19 18:00:02] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/upscale_models/4x-AnimeSharp.pth (1.0K)
+[2026-10-19 18:00:02] [MODELS] RESUMEN FASE 1: Todos los modelos se descargaron correctamente (0 fallos).
+[2026-10-19 18:00:02] [MODELS] ======================================================================
+[2026-10-19 18:00:02] [MODELS] FASE 1 COMPLETADA.
+[2026-10-19 18:00:02] [MODELS] ======================================================================
+[2026-10-19 18:00:02] [MODELS] ======================================================================
+[2026-10-19 18:00:02] [MODELS] INICIANDO FASE 1 (2.79 GiB): ReActor, InsightFace, CodeFormer, VAE, Upscalers
+[2026-10-19 18:00:02] [MODELS] PLAN FASE 1: 12 archivos
+[2026-10-19 18:00:02] [MODELS] ======================================================================
+[2026-10-19 18:00:02] [MODELS] SKIP (ya existe): InsightFace buffalo_l
+[2026-10-19 18:00:02] [MODELS] SKIP (ya existe): inswapper_128.onnx
+[2026-10-19 18:00:02] [MODELS] SKIP (ya existe): codeformer-v0.1.0.pth
+[2026-10-19 18:00:02] [MODELS] SKIP (ya existe): GFPGANv1.4.pth
+[2026-10-19 18:00:03] [MODELS] SKIP (ya existe): detection_Resnet50_Final.pth
+[2026-10-19 18:00:03] [MODELS] SKIP (ya existe): parsing_parsenet.pth
+[2026-10-19 18:00:03] [MODELS] SKIP (ya existe): face_yolov8m.pt
+[2026-10-19 18:00:03] [MODELS] SKIP (ya existe): sam_vit_b_01ec64.pth
+[2026-10-19 18:00:03] [MODELS] SKIP (ya existe): sdxl.vae.safetensors
+[2026-10-19 18:00:03] [MODELS] SKIP (ya existe): vae-ft-mse-840000-ema-pruned.safetensors
+[2026-10-19 18:00:03] [MODELS] SKIP (ya existe): 4x-UltraSharp.pth
+[2026-10-19 18:00:03] [MODELS] SKIP (ya existe): 4x-AnimeSharp.pth
+[2026-10-19 18:00:03] [MODELS] RESUMEN FASE 1: Todos los modelos se descargaron correctamente (0 fallos).
+[2026-10-19 18:00:03] [MODELS] ======================================================================
+[2026-10-19 18:00:03] [MODELS] FASE 1 COMPLETADA.
+[2026-10-19 18:00:03] [MODELS] ======================================================================
+[2026-10-19 18:00:03] [MODELS] ======================================================================
+[2026-10-19 18:00:03] [MODELS] INICIANDO FASE 2 (Segundo Plano — Perfil: general)
+[2026-10-19 18:00:03] [MODELS] PLAN FASE 2: 10 archivos (general)
+[2026-10-19 18:00:03] [MODELS] En perfil 'all' son 60.56 GiB. Puedes usar ComfyUI ya mismo;
+[2026-10-19 18:00:03] [MODELS] pulsa 'R' en el navegador para refrescar la lista de modelos.
+[2026-10-19 18:00:04] [MODELS] ======================================================================
+[2026-10-19 18:00:04] [MODELS] INICIO: Juggernaut-XI-byRunDiffusion.safetensors (RunDiffusion/Juggernaut-XI-v11/Juggernaut-XI-byRunDiffusion.safetensors)
+[2026-10-19 18:00:04] [MODELS] Descargando Juggernaut-XI-byRunDiffusion.safetensors desde RunDiffusion/Juggernaut-XI-v11 (intento 1/3)...
+[2026-10-19 18:00:04] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/checkpoints/Juggernaut-XI-byRunDiffusion.safetensors (1.0K)
+[2026-10-19 18:00:04] [MODELS] INICIO: Realistic_Vision_V6.0_NV_B1_fp16.safetensors (SG161222/Realistic_Vision_V6.0_B1_noVAE/Realistic_Vision_V6.0_NV_B1_fp16.safetensors)
+[2026-10-19 18:00:04] [MODELS] Descargando Realistic_Vision_V6.0_NV_B1_fp16.safetensors desde SG161222/Realistic_Vision_V6.0_B1_noVAE (intento 1/3)...
+[2026-10-19 18:00:05] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/checkpoints/Realistic_Vision_V6.0_NV_B1_fp16.safetensors (1.0K)
+[2026-10-19 18:00:05] [MODELS] INICIO: waiIllustriousSDXL_v160.safetensors (Ine007/waiIllustriousSDXL_v160/waiIllustriousSDXL_v160.safetensors)
+[2026-10-19 18:00:05] [MODELS] Descargando waiIllustriousSDXL_v160.safetensors desde Ine007/waiIllustriousSDXL_v160 (intento 1/3)...
+[2026-10-19 18:00:05] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/checkpoints/waiIllustriousSDXL_v160.safetensors (1.0K)
+[2026-10-19 18:00:05] [MODELS] INICIO: controlnet-union-sdxl-promax.safetensors (xinsir/controlnet-union-sdxl-1.0/diffusion_pytorch_model_promax.safetensors)
+[2026-10-19 18:00:05] [MODELS] Descargando controlnet-union-sdxl-promax.safetensors desde xinsir/controlnet-union-sdxl-1.0 (intento 1/3)...
+[2026-10-19 18:00:05] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/controlnet/controlnet-union-sdxl-promax.safetensors (1.0K)
+[2026-10-19 18:00:06] [MODELS] INICIO: ip-adapter-plus_sdxl_vit-h.safetensors (h94/IP-Adapter/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors)
+[2026-10-19 18:00:06] [MODELS] Descargando ip-adapter-plus_sdxl_vit-h.safetensors desde h94/IP-Adapter (intento 1/3)...
+[2026-10-19 18:00:06] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/ipadapter/ip-adapter-plus_sdxl_vit-h.safetensors (1.0K)
+[2026-10-19 18:00:06] [MODELS] INICIO: ip-adapter-plus-face_sdxl_vit-h.safetensors (h94/IP-Adapter/sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors)
+[2026-10-19 18:00:06] [MODELS] Descargando ip-adapter-plus-face_sdxl_vit-h.safetensors desde h94/IP-Adapter (intento 1/3)...
+[2026-10-19 18:00:07] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/ipadapter/ip-adapter-plus-face_sdxl_vit-h.safetensors (1.0K)
+[2026-10-19 18:00:07] [MODELS] INICIO: ip-adapter-plus_sd15.safetensors (h94/IP-Adapter/models/ip-adapter-plus_sd15.safetensors)
+[2026-10-19 18:00:07] [MODELS] Descargando ip-adapter-plus_sd15.safetensors desde h94/IP-Adapter (intento 1/3)...
+[2026-10-19 18:00:07] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/ipadapter/ip-adapter-plus_sd15.safetensors (1.0K)
+[2026-10-19 18:00:07] [MODELS] INICIO: ip-adapter-plus-face_sd15.safetensors (h94/IP-Adapter/models/ip-adapter-plus-face_sd15.safetensors)
+[2026-10-19 18:00:07] [MODELS] Descargando ip-adapter-plus-face_sd15.safetensors desde h94/IP-Adapter (intento 1/3)...
+[2026-10-19 18:00:08] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/ipadapter/ip-adapter-plus-face_sd15.safetensors (1.0K)
+[2026-10-19 18:00:08] [MODELS] INICIO: CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors (h94/IP-Adapter/models/image_encoder/model.safetensors)
+[2026-10-19 18:00:08] [MODELS] Descargando CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors desde h94/IP-Adapter (intento 1/3)...
+[2026-10-19 18:00:08] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/clip_vision/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors (1.0K)
+[2026-10-19 18:00:08] [MODELS] INICIO: CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors (h94/IP-Adapter/sdxl_models/image_encoder/model.safetensors)
+[2026-10-19 18:00:08] [MODELS] Descargando CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors desde h94/IP-Adapter (intento 1/3)...
+[2026-10-19 18:00:08] [MODELS] OK: /tmp/tmp.X9rx47LvtQ/data/models/clip_vision/CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors (1.0K)
+[2026-10-19 18:00:09] [MODELS] RESUMEN FASE 2: Todos los modelos se descargaron correctamente (0 fallos).
+[2026-10-19 18:00:09] [MODELS] ======================================================================
+[2026-10-19 18:00:09] [MODELS] FASE 2 COMPLETADA (Perfil: general).
+[2026-10-19 18:00:09] [MODELS] Pulsa 'R' en la UI de ComfyUI para actualizar los desplegables.
+[2026-10-19 18:00:09] [MODELS] ======================================================================

@@ -15,7 +15,8 @@ pub struct Phase1Info {
     pub state: String,
     pub done: u32,
     pub total: u32,
-    pub failed: u32,
+    /// Nombres de fichero con `ERROR: Falló la descarga de <nombre>` (S-03: array, como en status-server.py).
+    pub failed: Vec<String>,
     pub elapsed_s: u64,
 }
 
@@ -24,7 +25,8 @@ pub struct Phase2Info {
     pub state: String,
     pub done: u32,
     pub total: u32,
-    pub failed: u32,
+    /// Nombres de fichero con `ERROR: Falló la descarga de <nombre>` (S-03: array, como en status-server.py).
+    pub failed: Vec<String>,
     pub current_file: Option<String>,
     pub hf_pid: Option<u32>,
     pub hf_rss_mb: u64,
@@ -83,14 +85,14 @@ pub fn parse_phases_from_lines(
                 state: "skipped".to_string(),
                 done: 0,
                 total: 12,
-                failed: 0,
+                failed: Vec::new(),
                 elapsed_s: 0,
             },
             phase2: Phase2Info {
                 state: "skipped".to_string(),
                 done: 0,
                 total: expected_p2_total,
-                failed: 0,
+                failed: Vec::new(),
                 current_file: None,
                 hf_pid: None,
                 hf_rss_mb: 0,
@@ -101,7 +103,7 @@ pub fn parse_phases_from_lines(
     let mut p1_state = "pending".to_string();
     let mut p1_done: u32 = 0;
     let mut p1_total: u32 = 12;
-    let mut p1_failed: u32 = 0;
+    let mut p1_failed: Vec<String> = Vec::new();
     let mut p1_start_ts: Option<i64> = None;
     let mut p1_elapsed_s: u64 = 0;
 
@@ -112,15 +114,16 @@ pub fn parse_phases_from_lines(
     };
     let mut p2_done: u32 = 0;
     let mut p2_total: u32 = expected_p2_total;
-    let mut p2_failed: u32 = 0;
+    let mut p2_failed: Vec<String> = Vec::new();
     let mut current_file: Option<String> = None;
     let mut last_ts: Option<i64> = None;
 
+    // Formato real de scripts/download-models.sh (verificado con dry-run en CI, S-01/S-02):
+    //   PLAN FASE 1: 12 archivos / PLAN FASE 2: N archivos (<perfil>)
+    //   INICIANDO FASE n (...) · FASE n COMPLETADA. · omitiendo Fase 2
+    //   INICIO: <nombre> (<repo>/<path>) · OK: <ruta_abs> (<tam>) · SKIP (ya existe): <nombre>
+    //   ERROR: Falló la descarga de <nombre> (<repo>/<path>) tras 3 intentos.
     let rx_plan = Regex::new(r"(?i)PLAN\s+FASE\s+([12]):\s*(\d+)\s+archivos").ok();
-    let rx_total_inline = Regex::new(r"(?i)\((\d+)\s+(?:archivos|modelos)").ok();
-    let rx_done_inline =
-        Regex::new(r"(?i)completada\s+en\s+(\d+)s:\s*(\d+)/(\d+)\s+exitosos,\s*(\d+)\s+fallidos")
-            .ok();
     let rx_inicio = Regex::new(r"\]\s*INICIO:\s*(\S+)").ok();
     let rx_ok = Regex::new(r"\]\s*OK:\s*(\S+)").ok();
     let rx_skip = Regex::new(r"\]\s*SKIP(?:\s*\(ya existe\))?:\s*(.+)$").ok();
@@ -153,23 +156,13 @@ pub fn parse_phases_from_lines(
             current_section = "phase1";
             p1_state = "running".to_string();
             p1_done = 0;
-            p1_failed = 0;
+            p1_failed = Vec::new();
             p1_start_ts = last_ts;
-            if let Some(cap) = rx_total_inline.as_ref().and_then(|rx| rx.captures(line)) {
-                if let Some(v) = cap.get(1).and_then(|m| m.as_str().parse::<u32>().ok()) {
-                    p1_total = v;
-                }
-            }
         } else if upper.contains("INICIANDO FASE 2") {
             current_section = "phase2";
             p2_state = "running".to_string();
             p2_done = 0;
-            p2_failed = 0;
-            if let Some(cap) = rx_total_inline.as_ref().and_then(|rx| rx.captures(line)) {
-                if let Some(v) = cap.get(1).and_then(|m| m.as_str().parse::<u32>().ok()) {
-                    p2_total = v;
-                }
-            }
+            p2_failed = Vec::new();
         } else if upper.contains("OMITIENDO FASE 2") {
             p2_state = "skipped".to_string();
             p2_total = 0;
@@ -183,34 +176,9 @@ pub fn parse_phases_from_lines(
                 let dur = u64::try_from(et.saturating_sub(st)).unwrap_or(0);
                 p1_elapsed_s = p1_elapsed_s.max(dur);
             }
-            if let Some(cap) = rx_done_inline.as_ref().and_then(|rx| rx.captures(line)) {
-                if let Some(el) = cap.get(1).and_then(|m| m.as_str().parse::<u64>().ok()) {
-                    p1_elapsed_s = p1_elapsed_s.max(el);
-                }
-                if let Some(d) = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok()) {
-                    p1_done = d;
-                }
-                if let Some(t) = cap.get(3).and_then(|m| m.as_str().parse::<u32>().ok()) {
-                    p1_total = t;
-                }
-                if let Some(f) = cap.get(4).and_then(|m| m.as_str().parse::<u32>().ok()) {
-                    p1_failed = f;
-                }
-            }
         } else if upper.contains("FASE 2 COMPLETADA") {
             p2_state = "done".to_string();
             current_file = None;
-            if let Some(cap) = rx_done_inline.as_ref().and_then(|rx| rx.captures(line)) {
-                if let Some(d) = cap.get(2).and_then(|m| m.as_str().parse::<u32>().ok()) {
-                    p2_done = d;
-                }
-                if let Some(t) = cap.get(3).and_then(|m| m.as_str().parse::<u32>().ok()) {
-                    p2_total = t;
-                }
-                if let Some(f) = cap.get(4).and_then(|m| m.as_str().parse::<u32>().ok()) {
-                    p2_failed = f;
-                }
-            }
         } else {
             if let Some(cap) = rx_inicio.as_ref().and_then(|rx| rx.captures(line)) {
                 if let Some(fname) = cap.get(1) {
@@ -259,16 +227,21 @@ pub fn parse_phases_from_lines(
 
             if let Some(cap) = rx_err.as_ref().and_then(|rx| rx.captures(line)) {
                 let raw_target = cap.get(1).or_else(|| cap.get(2)).map_or("", |m| m.as_str());
-                let base = basename_of(raw_target);
-                if current_file.as_deref() == Some(base)
+                let base = basename_of(raw_target).to_string();
+                if current_file.as_deref() == Some(base.as_str())
                     || current_file.as_deref() == Some(raw_target)
                 {
                     current_file = None;
                 }
                 if current_section == "phase1" && p1_state == "running" {
-                    p1_failed = p1_failed.saturating_add(1);
-                } else if current_section == "phase2" && p2_state == "running" {
-                    p2_failed = p2_failed.saturating_add(1);
+                    if !p1_failed.contains(&base) {
+                        p1_failed.push(base);
+                    }
+                } else if current_section == "phase2"
+                    && p2_state == "running"
+                    && !p2_failed.contains(&base)
+                {
+                    p2_failed.push(base);
                 }
             }
         }

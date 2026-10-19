@@ -39,4 +39,6 @@ export PATH="$HOME/.local/bin:$PATH"
 | `comfy rent [all\|general\|realistic\|anime\|minimal] [--dry-run] [--yes]` | Muestra el Top 5 de ofertas RTX 5090 (o RTX 4090) con coste total estimado por hora (GPU + 120 GB de disco) y pide confirmación antes de desplegar con `--direct --args`. Requiere exportar `COMFY_IMAGE` (ej. `export COMFY_IMAGE=ghcr.io/<owner>/comfyuipod:latest`) y reenvía entrecomilladas `COMFYUI_EXTRA_ARGS`, `HF_HUB_DISABLE_XET` y `ENABLE_WEB_TERMINAL` si están definidas en la Mac. |
 | `comfy destroy <id>` | Destruye la instancia indicada tras pedir confirmación interactiva. |
 
+> **Nota (`S-07`, pendiente de V27)**: el entrecomillado `-e "CLAVE=VALOR"` de `comfy rent` (para valores con espacios como `COMFYUI_EXTRA_ARGS="--fast --cpu"`) depende de cómo la CLI de Vast.ai divida la cadena `--env`. Hasta verificarlo en un alquiler real (comprobar `env_masked` en `/status/api`), evita espacios en esas variables o créalas a mano con `vastai create instance`.
+
 

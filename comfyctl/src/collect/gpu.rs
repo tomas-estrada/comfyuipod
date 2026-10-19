@@ -21,6 +21,33 @@ pub struct GpuStatus {
     pub reason: Option<String>,
 }
 
+/// Procesos con contexto CUDA activo, conforme a `gpu.processes` del esquema (S-03).
+/// Si la consulta falla o no hay procesos, devuelve una lista vacía.
+pub fn collect_gpu_processes(nvidia_smi_bin: &Path) -> Vec<serde_json::Value> {
+    let mut cmd = Command::new(nvidia_smi_bin);
+    cmd.args([
+        "--query-compute-apps=pid,process_name,used_memory",
+        "--format=csv,noheader,nounits",
+    ]);
+    let Ok((Some(0), txt, _, false)) =
+        sys::run_command_with_timeout(&mut cmd, Duration::from_secs(5))
+    else {
+        return Vec::new();
+    };
+    txt.lines()
+        .filter_map(|ln| {
+            let parts: Vec<&str> = ln.split(',').map(str::trim).collect();
+            let pid = parts.first().and_then(|s| s.parse::<u64>().ok())?;
+            let name = parts.get(1).copied().unwrap_or("unknown").to_string();
+            let used_mb = parts
+                .get(2)
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            Some(serde_json::json!({"pid": pid, "name": name, "used_mb": used_mb}))
+        })
+        .collect()
+}
+
 pub fn collect_gpu_status(nvidia_smi_bin: &Path) -> GpuStatus {
     let mut cmd = Command::new(nvidia_smi_bin);
     cmd.args([
@@ -61,7 +88,7 @@ pub fn collect_gpu_status(nvidia_smi_bin: &Path) -> GpuStatus {
                     vram_used_mb,
                     util_pct,
                     temp_c,
-                    processes: Vec::new(),
+                    processes: collect_gpu_processes(nvidia_smi_bin),
                     reason: None,
                 };
             }

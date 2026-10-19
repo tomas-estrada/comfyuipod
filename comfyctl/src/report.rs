@@ -231,13 +231,34 @@ pub fn build_report_markdown(
     let _ = writeln!(
         out,
         "- **Fase 1**: `{}` (`{}/{}` completados, `{}` fallidos)",
-        p1.state, p1.done, p1.total, p1.failed
+        p1.state,
+        p1.done,
+        p1.total,
+        p1.failed.len()
     );
+    if !p1.failed.is_empty() {
+        let _ = writeln!(
+            out,
+            "  - Ficheros Fase 1 con error: `{}`",
+            p1.failed.join("`, `")
+        );
+    }
     let _ = writeln!(
         out,
         "- **Fase 2**: `{}` (`{}/{}` completados, `{}` fallidos) · Archivo actual: `{cur_file}` · Proceso `hf`: PID `{hf_pid_disp}` (`{}` MB RSS)",
-        p2.state, p2.done, p2.total, p2.failed, p2.hf_rss_mb
+        p2.state,
+        p2.done,
+        p2.total,
+        p2.failed.len(),
+        p2.hf_rss_mb
     );
+    if !p2.failed.is_empty() {
+        let _ = writeln!(
+            out,
+            "  - Ficheros Fase 2 con error: `{}`",
+            p2.failed.join("`, `")
+        );
+    }
     let dl_lines = resolve_log_path("download", log_dir)
         .map(|p| tail_lines(&p, 80))
         .unwrap_or_default();

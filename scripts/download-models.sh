@@ -48,13 +48,20 @@ case "${MODEL_PROFILE}" in
         ;;
 esac
 
-# Detectar comando CLI de HuggingFace (hf en huggingface_hub >= 1.0, o huggingface-cli legacy)
-if command -v hf >/dev/null 2>&1; then
-    HF_CLI="hf"
-elif command -v huggingface-cli >/dev/null 2>&1; then
-    HF_CLI="huggingface-cli"
-else
-    echo "[WARN] No se encontró 'hf' ni 'huggingface-cli' en el PATH. Omitiendo descargas."
+# Detectar comando CLI de HuggingFace (hf en huggingface_hub >= 1.0, o huggingface-cli legacy).
+# Si HF_CLI viene definido en el entorno (p. ej. el fake-hf del dry-run de CI, S-01), se respeta.
+HF_CLI="${HF_CLI:-}"
+if [ -z "${HF_CLI}" ]; then
+    if command -v hf >/dev/null 2>&1; then
+        HF_CLI="hf"
+    elif command -v huggingface-cli >/dev/null 2>&1; then
+        HF_CLI="huggingface-cli"
+    else
+        echo "[WARN] No se encontró 'hf' ni 'huggingface-cli' en el PATH. Omitiendo descargas."
+        exit 0
+    fi
+elif ! command -v "${HF_CLI}" >/dev/null 2>&1; then
+    echo "[WARN] HF_CLI='${HF_CLI}' no es ejecutable. Omitiendo descargas."
     exit 0
 fi
 

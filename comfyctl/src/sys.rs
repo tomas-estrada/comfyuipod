@@ -192,6 +192,12 @@ pub fn read_and_unlink_secret(path: &Path) -> Option<String> {
 
 /// Ejecuta un subproceso con timeout estricto (`R-07`).
 /// Devuelve `(exit_code, stdout, stderr, timed_out)`. Si vence el timeout, mata al hijo (`kill` + `wait`).
+///
+/// Limitación conocida (`S-06`): los hilos lectores hacen `join()` tras matar al hijo; si un
+/// proceso nieto heredó los pipes, `read_to_end` no termina y el timeout no protege del todo.
+/// Las sondas actuales (python3 directo, ffmpeg, nginx -t, ps, ldconfig, git, pip3) no crean
+/// nietos; si se añade una sonda vía shell o que lance subprocesos en segundo plano, lanzarla
+/// con `setsid` y matar el grupo de procesos.
 pub fn run_command_with_timeout(
     cmd: &mut Command,
     timeout: Duration,
