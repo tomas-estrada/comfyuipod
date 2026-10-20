@@ -468,11 +468,14 @@ jobs:
               if instance is None:
                   return
               if "enum" in schema:
-                  assert instance in schema["enum"], f"{path}: {instance!r} not in enum {schema[\"enum\"]}"
+                  en = schema["enum"]
+                  assert instance in en, f"{path}: {instance!r} not in enum {en}"
               if isinstance(instance, (int, float)) and not isinstance(instance, bool) and "minimum" in schema:
-                  assert instance >= schema["minimum"], f"{path}: {instance} < minimum {schema[\"minimum\"]}"
+                  mn = schema["minimum"]
+                  assert instance >= mn, f"{path}: {instance} < minimum {mn}"
               if isinstance(instance, str) and "pattern" in schema:
-                  assert re.search(schema["pattern"], instance), f"{path}: {instance!r} does not match {schema[\"pattern\"]}"
+                  pat = schema["pattern"]
+                  assert re.search(pat, instance), f"{path}: {instance!r} does not match {pat}"
               if isinstance(instance, dict):
                   for req_k in schema.get("required", []):
                       assert req_k in instance, f"{path}: missing required key {req_k!r}"
