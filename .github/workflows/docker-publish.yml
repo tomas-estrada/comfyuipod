@@ -243,6 +243,17 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           manifest-path: comfyctl/Cargo.toml
+        # La imagen del action (rust:1.85.0-alpine, Dockerfile del pin) solo trae esa toolchain;
+        # rust-toolchain.toml de comfyctl fija 1.86.0, así que rustup descargaba ~100 MB desde
+        # static.rust-lang.org en cada run (vector de flakiness de red ajeno a la auditoría).
+        # El input rust-version no lo evita: el entrypoint hace "rustup default", otra descarga.
+        # RUSTUP_TOOLCHAIN tiene precedencia sobre rust-toolchain.toml y apunta a la toolchain ya
+        # presente en la imagen: cero descargas en runtime. cargo-deny no compila código (solo lee
+        # Cargo.lock/metadata), así que la versión de rustc no altera el resultado de la auditoría;
+        # el toolchain efectivo del repo sigue siendo 1.86.0 (dtolnay/rust-toolchain) para fmt,
+        # clippy, tests y build. Si la imagen del action se actualiza a 1.86+, este pin sobra.
+        env:
+          RUSTUP_TOOLCHAIN: "1.85.0"
 
   build-and-push:
     name: Build Candidate, Smoke-Test & Promote to Latest (ALTA-01 / ALTA-02 / H-01 / M-02 / §9.2)
