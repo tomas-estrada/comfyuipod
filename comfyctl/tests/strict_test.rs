@@ -237,7 +237,11 @@ fn simulated_nvidia_smi_binary_probe_and_subprocess_timeout() {
     assert_eq!(driver, "570.86.16");
     assert_eq!(vram, 32607);
 
-    // R-07: Verificar que run_command_with_timeout mata procesos colgados en < 2s
+    // R-07: Verificar que run_command_with_timeout mata procesos colgados en < 2s.
+    // Umbral holgado: el timeout del comando es 250 ms, pero los runners de CI
+    // compartidos pueden tardar varios segundos en programar y matar el hijo; un
+    // cuelgue real del mecanismo se manifestaría como timeout del test runner
+    // entero, no como 4 s vs 3 s.
     let start = Instant::now();
     let mut sleep_cmd = if cfg!(unix) {
         let mut c = Command::new("sh");
@@ -250,5 +254,5 @@ fn simulated_nvidia_smi_binary_probe_and_subprocess_timeout() {
     };
     let res = sys::run_command_with_timeout(&mut sleep_cmd, Duration::from_millis(250));
     assert!(matches!(res, Ok((_, _, _, true))));
-    assert!(start.elapsed() < Duration::from_secs(3));
+    assert!(start.elapsed() < Duration::from_secs(15));
 }

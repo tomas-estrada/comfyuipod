@@ -188,7 +188,9 @@ cmd_url() {
     local info ip port
     info="$(resolve_instance "${inst_id}")"
     IFS='|' read -r _ ip port _ _ <<<"${info}"
-    [ -n "${ip}" ] && [ -n "${port}" ] || die "La instancia aún no expone IP/puerto público."
+    if [ -z "${ip}" ] || [ -z "${port}" ]; then
+        die "La instancia aún no expone IP/puerto público."
+    fi
     echo "http://${ip}:${port}"
 }
 
@@ -276,7 +278,9 @@ for c in st.get("checks") or []:
         sleep 3
     done
 
-    [ -n "${ip}" ] && [ -n "${port}" ] || die "Timeout (10 min) esperando IP/puerto público de la instancia."
+    if [ -z "${ip}" ] || [ -z "${port}" ]; then
+        die "Timeout (10 min) esperando IP/puerto público de la instancia."
+    fi
 
     local full_url="http://${ip}:${port}${path_suffix}"
     echo "Abriendo ${full_url} ..."
