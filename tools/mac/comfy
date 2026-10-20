@@ -233,7 +233,9 @@ cmd_open() {
                 return 1
             fi
             if [ "${status}" = "running" ] && [ -n "${ip}" ] && [ -n "${port}" ]; then
-                if curl -fsS --max-time 3 "http://${ip}:${port}/healthz" >/dev/null 2>&1; then
+                # -I (HEAD): /healthz responde sin cuerpo (proxy_method HEAD); un GET colgaria
+                # hasta --max-time pese al 200 real y nunca romperia el bucle de espera.
+                if curl -fsSI --max-time 3 "http://${ip}:${port}/healthz" >/dev/null 2>&1; then
                     break
                 fi
                 # R-10: Si /healthz devuelve 502 (Fase 1 en curso o ventana de gracia de strict FATAL),

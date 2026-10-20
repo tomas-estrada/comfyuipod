@@ -236,8 +236,12 @@ RUN sed -i 's/\r$//' \
 
 EXPOSE 8188
 
-# BAJA-02: start-period=900s superior al timeout de 600s de la Fase 1
+# BAJA-02: start-period=900s superior al timeout de 600s de la Fase 1.
+# HEAD (-I) es obligatorio: /healthz hace proxy_method HEAD a /system_stats, asi que la
+# respuesta 200 trae Content-Length pero SIN cuerpo; un GET colgaria hasta --timeout y el
+# contenedor marcaria "unhealthy" (~900s tras arrancar) estando perfectamente sano.
+# timeout=10s > proxy_connect/read 5s de nginx; el probe HEAD sano completa en <1s.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=900s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8188/healthz >/dev/null || exit 1
+    CMD curl -fsSI http://127.0.0.1:8188/healthz >/dev/null || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/start.sh"]
