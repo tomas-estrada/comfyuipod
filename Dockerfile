@@ -74,7 +74,10 @@ RUN sed -i 's/\r$//' /etc/comfyui/constraints.txt /etc/comfyui/nodes.lock
 
 # 3. Instalar terna fijada de PyTorch CUDA 12.8 (ALTA-05: soporta Blackwell sm_120 y Ada sm_89),
 #    clonar ComfyUI y sam2 por SHA fijado, y compilar paquetes base.
-RUN pip3 install --upgrade pip setuptools wheel \
+# --ignore-installed: el pip 24.0 de apt en Ubuntu 24.04 no tiene fichero RECORD y el pip
+# nuevo se niega a desinstalarlo ("Cannot uninstall pip 24.0, RECORD file not found"),
+# así que el upgrade inicial ignora la copia de Debian (falló el primer build V21).
+RUN pip3 install --upgrade --ignore-installed pip setuptools wheel \
     && pip3 install \
         torch==2.9.1+cu128 \
         torchvision==0.24.1+cu128 \
