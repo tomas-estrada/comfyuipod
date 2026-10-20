@@ -380,21 +380,23 @@ jobs:
           trap cleanup EXIT
 
           # 1. Esperar /healthz -> 200 (tope por tiempo transcurrido: 1800s, no por nº de intentos).
-          #    Run 39410667459: /healthz hace proxy_pass HEAD a ComfyUI /system_stats, que en el runner
-          #    2-vCPU sin GPU tarda 5-10s por respuesta: curl abortaba a los 5s (--max-time 5, exit 28)
-          #    ANTES de recibir el 200 que nginx registraba igualmente en el log del contenedor
-          #    ("200 0" cada ~7s = 5s de timeout + 2s de sleep). El propio HEALTHCHECK de Docker
-          #    (timeout 10s) fallaba por lo mismo (contenedor "unhealthy"). Subimos --max-time a 30s
-          #    y ponemos tope por tiempo con heartbeat cada ~60s: los intentos lentos ya no inflan
-          #    el bucle más allá del tope del paso. curl sigue acotado (una conexión TCP aceptada
-          #    que nunca responde no cuelga el bucle indefinidamente).
+          #    Runs 39374579225 / 39410667459 / 39416778494: /healthz hace proxy_pass con
+          #    proxy_method HEAD a ComfyUI /system_stats (config/nginx.conf:56-62), así que la
+          #    respuesta llega con Content-Length pero SIN cuerpo (semántica HEAD). Un curl GET
+          #    recibe las cabeceras 200 casi al instante y luego espera para siempre un cuerpo que
+          #    nunca llega: sin --max-time el bucle colgó 2h46m (run 39374579225); con --max-time
+          #    aborta justo en el límite (exit 28) AUNQUE nginx ya registró el 200 en el access
+          #    log — la lentitud nunca fue del servidor (cero 504s pese a proxy_read_timeout 5s
+          #    en el run 39416778494). Fix: pedir HEAD (-I), igual que el upstream, para que curl
+          #    complete nada más recibir las cabeceras. El bucle sigue acotado por tiempo con
+          #    heartbeat cada ~60s por si ComfyUI tarda en abrir 18188.
           healthz_start=$SECONDS
           healthz_deadline=1800
           healthz_attempt=0
           healthz_last_hb=$SECONDS
           while :; do
             healthz_attempt=$((healthz_attempt + 1))
-            if curl -fsS --max-time 30 http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
+            if curl -fsSI --max-time 30 http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
               echo "[OK] /healthz respondió 200 en $((SECONDS - healthz_start))s (intento ${healthz_attempt})"
               break
             fi
@@ -550,7 +552,9 @@ jobs:
           timeout 60 docker exec "$cid" kill -9 "$comfy_pid"
           for i in $(seq 1 30); do
             sleep 2
-            if curl -fsS --max-time 30 http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
+            # -I (HEAD): la respuesta de /healthz no trae cuerpo (proxy_method HEAD); un GET
+            # colgaría hasta --max-time pese al 200 real (run 39416778494).
+            if curl -fsSI --max-time 30 http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
               api_json="$(curl -fsS --max-time 30 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api || true)"
               sup_ok="$(API_JSON="$api_json" python3 -c 'import json, os; d = json.loads(os.environ["API_JSON"]); c = d.get("comfyui") or {}; le = c.get("last_exit") or {}; print("OK" if c.get("state") == "running" and int(c.get("restarts", 0)) == 1 and (le.get("code") == 137 or le.get("rc") == 137) else "")' 2>/dev/null || true)"
               if [ "$sup_ok" = "OK" ]; then
