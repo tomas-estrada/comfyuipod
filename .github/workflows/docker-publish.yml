@@ -318,22 +318,39 @@ jobs:
           df -h
 
       - name: Smoke Test unitario + Full-Stack E2E (Nginx + status-server + Portal + Supervisor + SIGTERM, §9.2)
+        # Techo propio del paso: un wedge de docker/red falla aquí con error claro e identificable,
+        # en vez de consumir en silencio el tope de 180 min del job (el job conserva margen para builds frías).
+        timeout-minutes: 120
         run: |
           set -euo pipefail
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           echo "Ejecutando smoke test sobre: ${CANDIDATE_TAG}"
-          docker pull "${CANDIDATE_TAG}"
+          # Pull explícito, visible y acotado: el paso M-02 purga la caché local y la imagen pesa ~15-16 GB.
+          # Un pull colgado sería invisible dentro de $(...); aquí acotamos a 1800s por intento con 1 reintento.
+          echo "Haciendo docker pull explícito del candidato (acotado a 1800s por intento)..."
+          pull_start=$SECONDS
+          if ! timeout 1800 docker pull "${CANDIDATE_TAG}"; then
+            echo "::warning::docker pull falló tras $((SECONDS - pull_start))s; reintentando una vez (las capas ya descargadas se reutilizan)..."
+            timeout 1800 docker pull "${CANDIDATE_TAG}" || {
+              echo "::error::docker pull de ${CANDIDATE_TAG} falló tras 2 intentos (¿red/GHCR?)"
+              exit 1
+            }
+          fi
+          echo "Pull del candidato completado en $((SECONDS - pull_start))s"
           docker images "${CANDIDATE_TAG}"
-          docker run --rm --entrypoint find "${CANDIDATE_TAG}" /workspace/comfyui-data/user -type f
-          docker run --rm --entrypoint nginx "${CANDIDATE_TAG}" -t
-          docker run --rm --entrypoint hf "${CANDIDATE_TAG}" version
-          docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/image.json
-          docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
+          timeout 300 docker run --rm --entrypoint find "${CANDIDATE_TAG}" /workspace/comfyui-data/user -type f
+          timeout 300 docker run --rm --entrypoint nginx "${CANDIDATE_TAG}" -t
+          timeout 300 docker run --rm --entrypoint hf "${CANDIDATE_TAG}" version
+          timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/image.json
+          timeout 300 docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
             "import torch, onnxruntime as ort, insightface, cv2, huggingface_hub, hf_xet; print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'CV2:', cv2.__version__, 'HF:', huggingface_hub.__version__, 'ORT:', ort.get_available_providers())"
-          docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
+          timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
 
           echo "=== Iniciando Smoke Test Full-Stack del contenedor (§9.2) ==="
-          cid="$(docker run -d --name smoke -p 18188:8188 \
+          # docker run -d acotado a 300s y con diagnóstico visible si wedgea
+          # (run 39374579225: este comando colgó 2h46m sin output hasta el tope de 180 min del job).
+          cid=""
+          if ! cid="$(timeout 300 docker run -d --name smoke -p 18188:8188 \
             -e SKIP_MODEL_DOWNLOAD=1 \
             -e STRICT_MIN_RAM_MB=4096 \
             -e STRICT_MIN_DISK_GB=1 \
@@ -344,30 +361,49 @@ jobs:
             -e ENABLE_WEB_TERMINAL=1 \
             -e COMFY_MAX_RESTARTS=3 \
             -e COMFY_RESTART_DELAY=2 \
-            "${CANDIDATE_TAG}")"
+            "${CANDIDATE_TAG}")"; then
+            echo "::error::docker run -d del contenedor smoke falló o excedió 300s (posible wedge de dockerd)"
+            timeout 30 docker system info || true
+            timeout 30 docker ps -a || true
+            exit 1
+          fi
+          if [ -z "$cid" ]; then
+            echo "::error::docker run -d no devolvió el ID del contenedor"
+            timeout 30 docker ps -a || true
+            exit 1
+          fi
+          echo "Contenedor smoke arrancado (cid=${cid})"
           cleanup() {
-            docker rm -f "$cid" >/dev/null 2>&1 || true
+            if [ -n "$cid" ]; then timeout 60 docker rm -f "$cid" >/dev/null 2>&1 || true; fi
+            timeout 60 docker rm -f smoke >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
 
-          # 1. Esperar /healthz -> 200 (máx 600s), mostrando docker logs si falla
+          # 1. Esperar /healthz -> 200 (máx 600s). curl acotado con --max-time 5 (una conexión TCP aceptada
+          #    que nunca responde colgaría el bucle indefinidamente) y heartbeat cada ~60s para diagnóstico.
+          healthz_start=$SECONDS
           for i in $(seq 1 300); do
-            if curl -fsS http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
-              echo "[OK] /healthz respondió 200 en $((i*2))s"
+            if curl -fsS --max-time 5 http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
+              echo "[OK] /healthz respondió 200 en $((SECONDS - healthz_start))s"
               break
             fi
             if [ "$i" -eq 300 ]; then
-              docker logs "$cid"
+              timeout 30 docker logs "$cid" || true
               echo "::error::Timeout (600s) esperando /healthz"
               exit 1
+            fi
+            if [ $((i % 30)) -eq 0 ]; then
+              echo "[heartbeat] $((SECONDS - healthz_start))s esperando /healthz (intento ${i}/300)..."
+              timeout 30 docker ps --filter name=smoke --format '[heartbeat] estado del contenedor: {{.Status}}' || true
+              timeout 30 docker logs --tail 10 "$cid" 2>&1 | tail -5 || true
             fi
             sleep 2
           done
 
           # O-07: Verificar 0 custom nodes con IMPORT FAILED en /var/log/comfyui.log
-          import_failed_count="$(docker exec "$cid" sh -c 'grep -c "IMPORT FAILED" /var/log/comfyui.log || true')"
+          import_failed_count="$(timeout 60 docker exec "$cid" sh -c 'grep -c "IMPORT FAILED" /var/log/comfyui.log || true')"
           if [ "$import_failed_count" != "0" ]; then
-            docker exec "$cid" grep -C 3 "IMPORT FAILED" /var/log/comfyui.log || true
+            timeout 60 docker exec "$cid" grep -C 3 "IMPORT FAILED" /var/log/comfyui.log || true
             echo "::error::Se detectaron ${import_failed_count} custom nodes con IMPORT FAILED en /var/log/comfyui.log"
             exit 1
           fi
@@ -375,27 +411,27 @@ jobs:
 
           # 2. Sin auth -> 401 en cada ruta protegida; /healthz -> 200
           for ep in / /home /status /status/api /report.md /diag /download-status /terminal/; do
-            code_unauth="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18188${ep}")"
+            code_unauth="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" "http://127.0.0.1:18188${ep}")"
             [ "$code_unauth" = "401" ] || { echo "::error::Se esperaba 401 sin auth en ${ep}, se obtuvo ${code_unauth}"; exit 1; }
           done
           echo "[OK] Rutas protegidas devuelven 401 sin credenciales"
 
           # 3. Con auth -> 200 en /, /home, /status, /status/api, /report.md, /diag, /download-status, /terminal/
           for ep in / /home /status /status/api /report.md /diag /download-status /terminal/; do
-            code_auth="$(curl -s -o /dev/null -w "%{http_code}" -u admin:ci-secret-9f8e7d "http://127.0.0.1:18188${ep}")"
+            code_auth="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:ci-secret-9f8e7d "http://127.0.0.1:18188${ep}")"
             [ "$code_auth" = "200" ] || { echo "::error::Se esperaba 200 con auth en ${ep}, se obtuvo ${code_auth}"; exit 1; }
           done
           echo "[OK] Todas las rutas protegidas devuelven 200 con credenciales"
 
           # 4. /home contiene "ComfyUI" y no contiene "http://"; /status/api y /run/comfyui-supervisor.json cumplen los esquemas congelados
-          home_html="$(curl -fsS -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/home)"
+          home_html="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/home)"
           grep -q "ComfyUI" <<<"$home_html"
           if grep -qi "http://" <<<"$home_html"; then
             echo "::error::/home contiene enlaces http:// inseguros"
             exit 1
           fi
-          api_json="$(curl -fsS -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api)"
-          sup_json="$(docker exec "$cid" cat /run/comfyui-supervisor.json)"
+          api_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api)"
+          sup_json="$(timeout 60 docker exec "$cid" cat /run/comfyui-supervisor.json)"
           comfy_pid="$(API_JSON="$api_json" SUP_JSON="$sup_json" python3 -c '
           import json, os, pathlib, re
 
@@ -446,14 +482,14 @@ jobs:
           echo "[OK] /home, /status/api y /run/comfyui-supervisor.json verificados contra esquemas congelados (pid=${comfy_pid})"
 
           # 5. /report.md contiene "## 0. Triage" y "## 8. Drift" y NO contiene secretos
-          report_md="$(curl -fsS -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/report.md)"
+          report_md="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/report.md)"
           grep -q "## 0. Triage" <<<"$report_md"
           grep -q "## 8. Drift" <<<"$report_md"
           if grep -qE "ci-secret-9f8e7d|hf_fake_token" <<<"$report_md"; then
             echo "::error::Fuga de secretos en /report.md"
             exit 1
           fi
-          diag_txt="$(curl -fsS -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/diag)"
+          diag_txt="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/diag)"
           grep -q "\[DIAG\] resumen:" <<<"$diag_txt"
           if grep -qE "ci-secret-9f8e7d|hf_fake_token" <<<"$diag_txt"; then
             echo "::error::Fuga de secretos en /diag"
@@ -462,11 +498,12 @@ jobs:
           echo "[OK] /report.md y /diag válidos y sin fuga de secretos"
 
           # 6. docker logs NO contiene secretos definidos por el usuario + /proc/<pid>/environ sin COMFY_PASS (O-05)
-          if docker logs "$cid" 2>&1 | grep -qE "ci-secret-9f8e7d|hf_fake_token"; then
+          smoke_logs="$(timeout 30 docker logs "$cid" 2>&1)"
+          if grep -qE "ci-secret-9f8e7d|hf_fake_token" <<<"$smoke_logs"; then
             echo "::error::Fuga de secretos en docker logs"
             exit 1
           fi
-          comfy_env_pass="$(docker exec "$cid" sh -c "tr '\0' '\n' < /proc/${comfy_pid}/environ | grep -c '^COMFY_PASS=' || true")"
+          comfy_env_pass="$(timeout 60 docker exec "$cid" sh -c "tr '\0' '\n' < /proc/${comfy_pid}/environ | grep -c '^COMFY_PASS=' || true")"
           if [ "$comfy_env_pass" != "0" ]; then
             echo "::error::COMFY_PASS sigue presente en /proc/${comfy_pid}/environ (O-05)"
             exit 1
@@ -474,15 +511,15 @@ jobs:
           echo "[OK] docker logs y /proc/${comfy_pid}/environ libres de COMFY_PASS (O-05)"
 
           # 7. Workers de Nginx corriendo como www-data + 404/405 en status-server
-          docker exec "$cid" ps -o user= -C nginx | grep -q www-data
-          code_404="$(curl -s -o /dev/null -w "%{http_code}" -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/logs/etc-passwd)"
+          timeout 60 docker exec "$cid" ps -o user= -C nginx | grep -q www-data
+          code_404="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/logs/etc-passwd)"
           [ "$code_404" = "404" ] || { echo "::error::Se esperaba 404 en /logs/etc-passwd, se obtuvo ${code_404}"; exit 1; }
-          code_405="$(curl -s -o /dev/null -w "%{http_code}" -X POST -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api)"
+          code_405="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -X POST -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api)"
           [ "$code_405" = "405" ] || { echo "::error::Se esperaba 405 en POST /status/api, se obtuvo ${code_405}"; exit 1; }
           echo "[OK] Nginx corre bajo www-data y /logs/etc-passwd -> 404, POST -> 405"
 
           # 8. Puertos internos 18188, 18189 y 7681 escuchan SOLO en 127.0.0.1 (0100007F en /proc/net/tcp)
-          docker exec "$cid" python3 -c '
+          timeout 60 docker exec "$cid" python3 -c '
           lines = open("/proc/net/tcp").read().splitlines()[1:]
           listeners = {}
           for ln in lines:
@@ -497,11 +534,11 @@ jobs:
 
           # 9. Probar supervisor: matar main.py con kill -9 y verificar relanzamiento (rc=137, restarts==1)
           echo "Matando PID ${comfy_pid} con SIGKILL para probar supervisor..."
-          docker exec "$cid" kill -9 "$comfy_pid"
+          timeout 60 docker exec "$cid" kill -9 "$comfy_pid"
           for i in $(seq 1 30); do
             sleep 2
-            if curl -fsS http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
-              api_json="$(curl -fsS -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api || true)"
+            if curl -fsS --max-time 5 http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
+              api_json="$(curl -fsS --max-time 5 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api || true)"
               sup_ok="$(API_JSON="$api_json" python3 -c 'import json, os; d = json.loads(os.environ["API_JSON"]); c = d.get("comfyui") or {}; le = c.get("last_exit") or {}; print("OK" if c.get("state") == "running" and int(c.get("restarts", 0)) == 1 and (le.get("code") == 137 or le.get("rc") == 137) else "")' 2>/dev/null || true)"
               if [ "$sup_ok" = "OK" ]; then
                 echo "[OK] Supervisor relanzó ComfyUI tras SIGKILL (restarts=1, last_exit=137)"
@@ -509,7 +546,7 @@ jobs:
               fi
             fi
             if [ "$i" -eq 30 ]; then
-              docker logs "$cid"
+              timeout 30 docker logs "$cid" || true
               echo "::error::El supervisor no relanzó ComfyUI en <=60s tras kill -9"
               exit 1
             fi
@@ -517,13 +554,13 @@ jobs:
 
           # 10. Probar apagado limpio por SIGTERM (docker stop -t 30) -> exit code 0
           echo "Probando docker stop -t 30..."
-          docker stop -t 30 "$cid"
-          exit_code="$(docker inspect "$cid" --format '{{.State.ExitCode}}')"
-          [ "$exit_code" = "0" ] || { docker logs "$cid"; echo "::error::docker stop devolvió ExitCode=${exit_code} (esperado 0)"; exit 1; }
+          timeout 90 docker stop -t 30 "$cid"
+          exit_code="$(timeout 30 docker inspect "$cid" --format '{{.State.ExitCode}}')"
+          [ "$exit_code" = "0" ] || { timeout 30 docker logs "$cid" || true; echo "::error::docker stop devolvió ExitCode=${exit_code} (esperado 0)"; exit 1; }
           echo "[OK] Contenedor apagado limpiamente con ExitCode=0"
 
           # 11. comfyctl strict-check en modo --cpu devuelve 0 y genera /run/comfyui-strict.json con result in (ok, warn) (§8.2 / R-02 / R-03)
-          docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
+          timeout 600 docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
             set -eu
             SKIP_MODEL_DOWNLOAD=1 STRICT_MIN_RAM_MB=4096 STRICT_MIN_DISK_GB=1 STRICT_START=1 COMFYUI_EXTRA_ARGS="--cpu" /usr/local/bin/comfyctl strict-check
             python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] == \"warn\", d; s7 = [c for c in d[\"checks\"] if c[\"id\"] == \"S7\"][0]; assert s7[\"status\"] == \"warn\", s7"
@@ -535,7 +572,7 @@ jobs:
           echo "[OK] Paso 11: comfyctl strict-check en modo --cpu -> 0 (S7 warn sin .htpasswd y ok con .htpasswd)"
 
           # 12. comfyctl strict-check con nvidia-smi simulado (driver 550.54.14) devuelve 20 con STRICT_START=1 y 0 con STRICT_START=0 y cumple el esquema strict (§8.2 / R-02 / R-04 / R-13)
-          strict_json_fatal="$(docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
+          strict_json_fatal="$(timeout 600 docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
             set -eu
             printf "admin:{PLAIN}test\n" > /etc/nginx/.htpasswd
             chmod 640 /etc/nginx/.htpasswd
@@ -565,7 +602,7 @@ jobs:
           echo "[OK] Paso 12: comfyctl strict-check con driver 550.54.14 -> 20 (STRICT_START=1), 0 (STRICT_START=0) y validado contra status-api.schema.json"
 
           # 13. Verificar tamaño (<= 5 MB), dependencias dinámicas glibc base (sin librustc* ni not found, R-09) y versión de /usr/local/bin/comfyctl (§8.2)
-          docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
+          timeout 300 docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
             set -eu
             sz="$(stat -c%s /usr/local/bin/comfyctl)"
             echo "Tamaño comfyctl: ${sz} bytes"
@@ -598,7 +635,7 @@ jobs:
               exit 1
             }
           done
-          docker run --rm --entrypoint /usr/local/bin/comfyctl "${CANDIDATE_TAG}" diag | grep -q "\[DIAG\] resumen:"
+          timeout 300 docker run --rm --entrypoint /usr/local/bin/comfyctl "${CANDIDATE_TAG}" diag | grep -q "\[DIAG\] resumen:"
           echo "[OK] Paso 14: Paridad de esquemas congelados, 11 cabeceras de /report.md y comfyctl diag verificada"
 
       - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)
@@ -613,6 +650,6 @@ jobs:
           while IFS= read -r target_tag; do
             if [ -n "${target_tag}" ]; then
               echo "Promoviendo ${CANDIDATE_TAG} -> ${target_tag}"
-              docker buildx imagetools create -t "${target_tag}" "${CANDIDATE_TAG}"
+              timeout 300 docker buildx imagetools create -t "${target_tag}" "${CANDIDATE_TAG}"
             fi
           done <<< "${{ steps.meta_final.outputs.tags }}"
