@@ -28,11 +28,23 @@ require_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "Comando requerido no encontrado: '$1'. Instálalo antes de continuar."
 }
 
+# V27: Rechazar saltos de línea en la contraseña: un \n o \r inyectaría líneas
+# de configuración extra en el config de stdin de curl (-K -) y rompería --env.
+check_pass_safe() {
+    case "$1" in
+        *$'\n'*|*$'\r'*)
+            die "La contraseña contiene saltos de línea (\\n o \\r); no es válida. Eliminalos de COMFY_PASS."
+            ;;
+    esac
+}
+
 # O-13: Pasar credenciales por stdin a curl (-K -) para no exponerlas en ps aux
 curl_auth() {
+    require_cmd curl
     local user="$1"
     local pass="$2"
     shift 2
+    check_pass_safe "${pass}"
     local escaped_pass="${pass//\\/\\\\}"
     escaped_pass="${escaped_pass//\"/\\\"}"
     printf 'user = "%s:%s"\n' "${user}" "${escaped_pass}" | curl -K - "$@"
@@ -93,6 +105,8 @@ def extract_port(inst):
         hp = tcp_8188[0].get("HostPort") or tcp_8188[0].get("host_port")
         if hp:
             return str(hp)
+    # Solo para instancias legadas creadas con --direct (runtype jupyter/ssh);
+    # las instancias nuevas (runtype args) siempre usan el mapeo proxy de ports.
     direct_start = inst.get("direct_port_start")
     if direct_start and int(direct_start) > 0:
         return str(direct_start)
@@ -133,6 +147,7 @@ fetch_logs_text() {
     local inst_id="$1"
     local tail_n="${2:-300}"
     require_cmd vastai
+    require_cmd curl
     local out
     out="$(vastai logs "${inst_id}" --tail "${tail_n}" 2>&1 || true)"
     # Compatibilidad con versiones antiguas de vastai CLI que devolvían una URL S3
@@ -221,13 +236,18 @@ cmd_open() {
     esac
 
     # O-14: Esperar hasta 10 min (200 * 3s) si la instancia sigue arrancando o Nginx aún no responde
+    require_cmd curl
     local deadline=$((SECONDS + 600))
     local resolved_id="" ip="" port="" status=""
+    local healthz_ok="0"
+    local portal_ok="0"
+    local resolve_err_file="/tmp/comfy-resolve-err.$$"
     while [ "${SECONDS}" -lt "${deadline}" ]; do
         local info=""
-        if info="$(resolve_instance "${inst_id}" "1" 2>/dev/null)"; then
+        if info="$(resolve_instance "${inst_id}" "1" 2>"${resolve_err_file}")"; then
             IFS='|' read -r resolved_id ip port status _ <<<"${info}"
             if [ "${status}" = "exited" ] || [ "${status}" = "stopped" ]; then
+                rm -f "${resolve_err_file}"
                 echo "[FATAL] La instancia ${resolved_id} pasó a estado '${status}' (probable fallo de arranque estricto STRICT_START=1 / código 20)." >&2
                 echo "        Ejecuta 'comfy logs ${resolved_id}' para ver el motivo y 'comfy destroy ${resolved_id}' para detener el cobro de disco." >&2
                 return 1
@@ -236,6 +256,7 @@ cmd_open() {
                 # -I (HEAD): /healthz responde sin cuerpo (proxy_method HEAD); un GET colgaria
                 # hasta --max-time pese al 200 real y nunca romperia el bucle de espera.
                 if curl -fsSI --max-time 3 "http://${ip}:${port}/healthz" >/dev/null 2>&1; then
+                    healthz_ok="1"
                     break
                 fi
                 # R-10: Si /healthz devuelve 502 (Fase 1 en curso o ventana de gracia de strict FATAL),
@@ -252,6 +273,7 @@ cmd_open() {
                         api_json="$(curl_auth "${COMFY_USER}" "${probe_pass}" -fsSL --max-time 3 "http://${ip}:${port}/status/api" 2>/dev/null || true)"
                         if [ -n "${api_json}" ]; then
                             if API_JSON="${api_json}" python3 -c 'import json, os, sys; sys.exit(0 if (json.loads(os.environ["API_JSON"]).get("strict") or {}).get("result") == "fatal" else 1)' 2>/dev/null; then
+                                rm -f "${resolve_err_file}"
                                 echo "[FATAL] La instancia ${resolved_id} falló el arranque estricto (strict.result=fatal):" >&2
                                 API_JSON="${api_json}" python3 -c '
 import json, os, sys
@@ -269,19 +291,40 @@ for c in st.get("checks") or []:
                         fi
                     fi
                     if [ "${target_view}" != "comfy" ]; then
+                        portal_ok="1"
                         break
                     fi
                 fi
             fi
             echo "[INFO] Instancia ${resolved_id} en estado '${status}' (${ip:-sin-ip}:${port:-sin-puerto}); esperando a que Nginx responda..." >&2
         else
-            echo "[INFO] Esperando a que la instancia aparezca en Vast.ai..." >&2
+            # V27: solo ocultar el stderr esperado de "aún no aparece"; otros errores
+            # (API key caducada, fallo de red, JSON inválido) se muestran en vez de
+            # hacer esperar 10 min en silencio.
+            local resolve_err=""
+            resolve_err="$(cat "${resolve_err_file}" 2>/dev/null || true)"
+            case "${resolve_err}" in
+                ""|*"No se encontró"*)
+                    echo "[INFO] Esperando a que la instancia aparezca en Vast.ai..." >&2
+                    ;;
+                *)
+                    rm -f "${resolve_err_file}"
+                    die "Error al resolver la instancia en Vast.ai: ${resolve_err}"
+                    ;;
+            esac
         fi
         sleep 3
     done
+    rm -f "${resolve_err_file}"
 
     if [ -z "${ip}" ] || [ -z "${port}" ]; then
         die "Timeout (10 min) esperando IP/puerto público de la instancia."
+    fi
+
+    if [ "${healthz_ok}" != "1" ] && [ "${portal_ok}" != "1" ]; then
+        # No die: el portal puede seguir levantándose; Nginx mostrará su página
+        # de auto-refresco /_starting.html o aún no responderá.
+        echo "[WARN] /healthz no respondió OK en 10 min; el portal puede no estar listo aún (página _starting.html o en blanco). Revisa 'comfy logs ${resolved_id}'." >&2
     fi
 
     local full_url="http://${ip}:${port}${path_suffix}"
@@ -333,6 +376,7 @@ cmd_pass() {
 resolve_auth_pass() {
     local inst_id="$1"
     if [ -n "${COMFY_PASS:-}" ]; then
+        check_pass_safe "${COMFY_PASS}"
         echo "${COMFY_PASS}"
         return 0
     fi
@@ -341,8 +385,9 @@ resolve_auth_pass() {
         echo "${detected}"
         return 0
     fi
-    read -r -s -p "Introduce COMFY_PASS para ${COMFY_USER}: " input_pass >&2
+    read -r -s -p "Introduce COMFY_PASS para ${COMFY_USER}: " input_pass >&2 || die "Entrada cerrada (EOF)."
     echo "" >&2
+    check_pass_safe "${input_pass}"
     echo "${input_pass}"
 }
 
@@ -442,6 +487,30 @@ PYEOF
     done
 }
 
+# V27: Buscar ofertas sin enmascarar errores de vastai como "sin ofertas".
+# Solo se degrada a "[]" cuando vastai terminó bien y no escribió nada en stderr;
+# un fallo real (API key caducada, red, etc.) se muestra y aborta el script.
+search_offers() {
+    local q="$1"
+    local err_file="/tmp/comfy-search-err.$$"
+    local out="" rc=0
+    out="$(vastai search offers "${q}" -o "dph_total" --raw 2>"${err_file}")" || rc=$?
+    local err_txt=""
+    err_txt="$(cat "${err_file}" 2>/dev/null || true)"
+    rm -f "${err_file}"
+    if [ "${rc}" -ne 0 ]; then
+        die "vastai search offers falló (rc=${rc}): ${err_txt:-sin mensaje de error}"
+    fi
+    if [ -z "${out}" ] && [ -n "${err_txt}" ]; then
+        die "vastai search offers no devolvió stdout pero sí errores: ${err_txt}"
+    fi
+    if [ -z "${out}" ]; then
+        printf '[]'
+        return 0
+    fi
+    printf '%s' "${out}"
+}
+
 cmd_rent() {
     require_cmd vastai
     require_cmd python3
@@ -471,13 +540,17 @@ cmd_rent() {
     [ -n "${COMFY_IMAGE}" ] || die "La variable COMFY_IMAGE no está definida. Exporta tu imagen antes de alquilar (ej.: export COMFY_IMAGE=ghcr.io/<tu-usuario>/comfyuipod:latest)."
 
     local pass="${COMFY_PASS:-}"
-    # O-01b: Filtros alineados con la guía de despliegue (cpu_ram>=32, cuda_max_good>=12.8)
-    local base_filters="gpu_ram>=24 cpu_ram>=32 cuda_max_good>=12.8 inet_down>=500 disk_space>=120 direct_port_count>=1 reliability>=0.98 verified=true rentable=true"
+    check_pass_safe "${pass}"
+    # O-01b: Filtros alineados con la guía de despliegue (cpu_ram>=32, cuda_vers>=12.8).
+    # V27: cuda_vers es el campo documentado en vastai search offers ("machine max
+    # supported cuda version"); cuda_max_good no existe en el esquema documentado.
+    # Sin --direct no se exige direct_port_count: los puertos van proxy-mapeados.
+    local base_filters="gpu_ram>=24 cpu_ram>=32 cuda_vers>=12.8 inet_down>=500 disk_space>=120 reliability>=0.98 verified=true rentable=true"
     local query="gpu_name=RTX_5090 ${base_filters}"
 
     echo "Buscando ofertas RTX 5090 en Vast.ai (perfil=${profile})..."
     local offers_json
-    offers_json="$(vastai search offers "${query}" -o "dph_total" --raw 2>/dev/null || echo "[]")"
+    offers_json="$(search_offers "${query}")"
 
     local offer_id
     offer_id="$(OFFERS_JSON="${offers_json}" python3 -c '
@@ -490,7 +563,7 @@ print(rows[0]["id"] if rows else "")
     if [ -z "${offer_id}" ]; then
         echo "No se encontraron RTX 5090 disponibles; buscando fallback RTX 4090..."
         query="gpu_name=RTX_4090 ${base_filters}"
-        offers_json="$(vastai search offers "${query}" -o "dph_total" --raw 2>/dev/null || echo "[]")"
+        offers_json="$(search_offers "${query}")"
         offer_id="$(OFFERS_JSON="${offers_json}" python3 -c '
 import json, os
 data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
@@ -520,7 +593,7 @@ for idx, r in enumerate(top5, 1):
     vram_gb = vram_raw / 1024.0 if vram_raw > 256 else vram_raw
     cram_raw = float(r.get("cpu_ram") or 0)
     cram_gb = cram_raw / 1024.0 if cram_raw > 512 else cram_raw
-    cuda = str(r.get("cuda_max_good") or "?")
+    cuda = str(r.get("cuda_vers") or "?")
     down = float(r.get("inet_down") or 0)
     storage_cost = float(r.get("storage_cost") or 0.15)
     dph = float(r.get("dph_total") or r.get("dph_base") or 0.0)
@@ -531,31 +604,41 @@ for idx, r in enumerate(top5, 1):
 print("")
 PYEOF
 
-    local env_flags="-p 8188:8188 -e MODEL_PROFILE=${profile} -e COMFY_USER=${COMFY_USER}"
+    # S-07 / V27 (contrato de entrecomillado verificado contra vast.py de vast-cli):
+    # vast-cli solo limpia comillas del valor, nunca de la clave; se comilla SOLO el
+    # valor. `-e "COMFY_PASS=abc def"` crearia una variable llamada «COMFY_PASS (con
+    # comilla en la clave), por lo que se construye `-e COMFY_PASS="abc def"`.
+    # -p 8188:8188 se mantiene sin comillas.
+    local env_flags="-p 8188:8188 -e MODEL_PROFILE=\"${profile}\" -e COMFY_USER=\"${COMFY_USER}\""
     if [ -n "${pass}" ]; then
-        env_flags="${env_flags} -e \"COMFY_PASS=${pass}\""
+        env_flags="${env_flags} -e COMFY_PASS=\"${pass}\""
     fi
     if [ -n "${HF_TOKEN:-}" ]; then
-        env_flags="${env_flags} -e \"HF_TOKEN=${HF_TOKEN}\""
+        env_flags="${env_flags} -e HF_TOKEN=\"${HF_TOKEN}\""
     fi
-    # O-01d / R-14: Reenviar variables opcionales entrecomilladas si están definidas en la Mac
+    # O-01d / R-14: Reenviar variables opcionales (valor entrecomillado) si están definidas en la Mac
     if [ -n "${COMFYUI_EXTRA_ARGS:-}" ]; then
-        env_flags="${env_flags} -e \"COMFYUI_EXTRA_ARGS=${COMFYUI_EXTRA_ARGS}\""
+        env_flags="${env_flags} -e COMFYUI_EXTRA_ARGS=\"${COMFYUI_EXTRA_ARGS}\""
     fi
     if [ -n "${HF_HUB_DISABLE_XET:-}" ]; then
-        env_flags="${env_flags} -e \"HF_HUB_DISABLE_XET=${HF_HUB_DISABLE_XET}\""
+        env_flags="${env_flags} -e HF_HUB_DISABLE_XET=\"${HF_HUB_DISABLE_XET}\""
     fi
     if [ -n "${ENABLE_WEB_TERMINAL:-}" ]; then
-        env_flags="${env_flags} -e \"ENABLE_WEB_TERMINAL=${ENABLE_WEB_TERMINAL}\""
+        env_flags="${env_flags} -e ENABLE_WEB_TERMINAL=\"${ENABLE_WEB_TERMINAL}\""
     fi
 
     if [ "${dry_run}" = "1" ]; then
-        echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, --direct --args)."
+        local pass_state="autogenerada"
+        [ -z "${pass}" ] || pass_state="definida (COMFY_PASS)"
+        local hf_state="no definida"
+        [ -z "${HF_TOKEN:-}" ] || hf_state="definida"
+        echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, --args)."
+        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
         return 0
     fi
 
     if [ "${assume_yes}" != "1" ]; then
-        read -r -p "¿Confirmas alquilar la oferta #1 (ID ${offer_id}) con imagen '${COMFY_IMAGE}'? [y/N]: " confirm_ans
+        read -r -p "¿Confirmas alquilar la oferta #1 (ID ${offer_id}) con imagen '${COMFY_IMAGE}'? [y/N]: " confirm_ans || die "Entrada cerrada (EOF)."
         case "${confirm_ans}" in
             y|Y|yes|YES) ;;
             *)
@@ -565,14 +648,16 @@ PYEOF
         esac
     fi
 
-    # O-01c: Usar --direct --args (runtype="args", respeta ENTRYPOINT de la imagen sin sobreescribirlo)
+    # O-01c: runtype="args" (--args) respeta el ENTRYPOINT de la imagen sin
+    # sobreescribirlo. Los puertos van proxy-mapeados por vast.ai (el helper lee
+    # ports["8188/tcp"][0].HostPort); el flag --direct de vast-cli solo aplica a
+    # runtype jupyter/ssh y es inerte en este modo, así que no se pasa.
     echo "Alquilando oferta ID ${offer_id} con imagen ${COMFY_IMAGE}..."
     vastai create instance "${offer_id}" \
         --image "${COMFY_IMAGE}" \
         --disk 120 \
         --label "comfy-${profile}" \
         --env "${env_flags}" \
-        --direct \
         --args
 }
 
@@ -580,7 +665,7 @@ cmd_destroy() {
     require_cmd vastai
     local inst_id="${1:-}"
     [ -n "${inst_id}" ] || die "Uso: comfy destroy <id>"
-    read -r -p "¿Seguro que deseas destruir la instancia ${inst_id}? (Los datos no sincronizados se perderán) [y/N]: " ans
+    read -r -p "¿Seguro que deseas destruir la instancia ${inst_id}? (Los datos no sincronizados se perderán) [y/N]: " ans || die "Entrada cerrada (EOF)."
     case "${ans}" in
         y|Y|yes|YES)
             vastai destroy instance "${inst_id}"
