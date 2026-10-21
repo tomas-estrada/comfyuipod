@@ -14,8 +14,12 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
+  # Solo lectura a nivel de workflow; packages: write se concede únicamente al job build-and-push.
   contents: read
-  packages: write
+
+defaults:
+  run:
+    shell: bash
 
 env:
   REGISTRY: ghcr.io
@@ -24,11 +28,16 @@ env:
 jobs:
   validate:
     name: Validate Scripts, Action SHAs, Dockerfile & HF Catalog (CI-01 / CI-03)
-    runs-on: ubuntu-latest
+    # ubuntu-latest migra 24.04->26.04 entre 2026-10-19 y 2026-11-19 (no determinismo a mitad
+    # del rollout); fijamos 24.04 para determinismo run a run. Todos los jobs verificados
+    # compatibles con 26.04, así que tras 2026-11-19 se puede volver a ubuntu-latest.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout del repositorio
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Ejecutar ShellCheck sobre scripts Bash (§9.1)
         run: |
@@ -149,8 +158,8 @@ jobs:
             || { echo "::error::El fixture download_models.log ha divergido del formato real; regenéralo con este dry-run"; exit 1; }
           echo "[OK] download-models.sh en seco: formato idéntico al fixture del parser (S-01/S-02)"
 
-      - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01 - SHA v3.1.0 verificado)
-        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+      - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01 - SHA v3.5.0 verificado)
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: Dockerfile
           failure-threshold: error
@@ -204,17 +213,20 @@ jobs:
 
   rust:
     name: Rust Lint, Unit Tests & Dependency Audit (comfyctl, §8.1)
-    runs-on: ubuntu-latest
+    # Fijado a ubuntu-24.04 por el rollout de ubuntu-latest (ver comentario en el job validate).
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
         working-directory: comfyctl
     steps:
       - name: Checkout del repositorio
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Instalar toolchain Rust 1.86.0 (fijado por SHA)
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16 head (añade 1.99.1)
         with:
           toolchain: "1.86.0"
           components: rustfmt, clippy
@@ -229,6 +241,9 @@ jobs:
             ~/.cargo/git/db/
             comfyctl/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('comfyctl/Cargo.lock') }}
+          # Fallback si un bump de Cargo.lock cambia el hash: reutiliza la caché previa del SO.
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Verificar formato con rustfmt
         run: cargo fmt --check
@@ -258,7 +273,12 @@ jobs:
   build-and-push:
     name: Build Candidate, Smoke-Test & Promote to Latest (ALTA-01 / ALTA-02 / H-01 / M-02 / §9.2)
     needs: [validate, rust]
-    runs-on: ubuntu-latest
+    # Fijado a ubuntu-24.04 por el rollout de ubuntu-latest (ver comentario en el job validate).
+    runs-on: ubuntu-24.04
+    permissions:
+      # Único job que publica en GHCR: necesita packages: write (el resto, solo lectura).
+      contents: read
+      packages: write
     timeout-minutes: 180
     steps:
       - name: Liberar espacio en disco del runner de GitHub Actions (~30 GB extra)
@@ -271,13 +291,15 @@ jobs:
           df -h
 
       - name: Checkout del repositorio
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Configurar Docker Buildx
-        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Iniciar sesión en GitHub Container Registry (GHCR)
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -285,7 +307,7 @@ jobs:
 
       - name: Extraer tag candidato SHA en minúsculas (ALTA-01 / ALTA-02)
         id: meta_candidate
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -293,7 +315,7 @@ jobs:
 
       - name: Extraer referencia fija en minúsculas para caché de BuildKit (H-01)
         id: meta_cache
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -301,7 +323,7 @@ jobs:
 
       - name: Extraer tags finales de promoción (latest / semver)
         id: meta_final
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -309,7 +331,7 @@ jobs:
             type=semver,pattern={{version}}
 
       - name: Construir y publicar SOLO el tag candidato sha-* (ALTA-01 / H-01 / §7.2)
-        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           push: true
@@ -670,10 +692,11 @@ jobs:
           echo "[OK] Paso 14: Paridad de esquemas congelados, 11 cabeceras de /report.md y comfyctl diag verificada"
 
       - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: requirements-lock
           path: requirements.lock
+          retention-days: 14
 
       - name: Promover imagen verificada a latest / semver (ALTA-01)
         run: |
