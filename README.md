@@ -14,7 +14,7 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
 2. **Separación segura `/opt/ComfyUI` (código) y `/workspace/comfyui-data` (datos)**:
    - ComfyUI y los 10 custom nodes están instalados en `/opt/ComfyUI`, mientras que `models/` (incluyendo `models/configs/*.yaml`), `input/`, `output/` y `user/` residen en `/workspace/comfyui-data`. Si montas un volumen persistente en `/workspace` en Vast.ai, **no se oculta la instalación** y los modelos descargados se reutilizan entre sesiones.
 3. **Acceso directo por navegador con HTTP Basic Auth, Portal `/home` y Observabilidad (`/status`, `/report.md`)**:
-   - ComfyUI escucha únicamente en loopback (`127.0.0.1:18188`) y **Nginx** (`user www-data;`) protege el puerto público `8188` con usuario/contraseña (`COMFY_USER` y `COMFY_PASS`), pantalla de espera auto-recargable (`_starting.html`) durante la Fase 1, soporte WebSockets (`/ws` sin rate-limit), subida de vídeos sin límite (`client_max_body_size 0;`), `/healthz` (`HEAD /system_stats` sin exponer metadatos) y un stack completo de observabilidad en el mismo puerto:
+   - ComfyUI escucha únicamente en loopback (`127.0.0.1:18188`) y **Nginx** (`user www-data;`) protege el puerto público `8188` con usuario/contraseña (`COMFY_USER` y `COMFY_PASS`), pantalla de espera auto-recargable (`_starting.html`) durante la Fase 1, soporte WebSockets (`/ws` sin rate-limit), subida de vídeos sin límite (`client_max_body_size 0;`), `/healthz` (`HEAD /system_stats` sin exponer metadatos), cabeceras de seguridad en el servidor y en todas las locations (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`), compresión `gzip` (CSS/JS/JSON/SVG, mínimo 1024 bytes, `Vary: Accept-Encoding`) y un stack completo de observabilidad en el mismo puerto:
       - **`/home`**: Portal de inicio rápido (`<= 40 KB`, cero CDN externo, contraste WCAG AA) con acceso en 1 clic a ComfyUI, panel `/status`, informe `/report.md`, autodiagnóstico `/diag`, logs y terminal web opcional.
       - **`/status` y `/status/api`**: Panel de estado en vivo y API JSON servidos por **`comfyctl`** (binario nativo en Rust en `127.0.0.1:18189`) con métricas de GPU/VRAM, RAM/Swap, disco, progreso de descargas Fase 1/2, motor de triaje automático (17 patrones con causa y remediación) y visor de logs por pestañas.
       - **`/report.md`**: Informe Markdown autocontenido (hasta 400 KB, con secretos redactados automáticamente por `comfyctl`) diseñado para copiar y pegar directamente al agente IA para depuración sin acceso SSH.
@@ -26,7 +26,7 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
 6. **`ffmpeg` completo de sistema (`libx264` + `h264_nvenc`) y autodiagnóstico `comfyctl diag` con timeouts**:
    - Fija `VHS_FORCE_FFMPEG_PATH=/usr/bin/ffmpeg`, `VHS_USE_IMAGEIO_FFMPEG=0` y `NVIDIA_DRIVER_CAPABILITIES=all`, y ejecuta `comfyctl diag` de forma síncrona antes de la Fase 1 (con timeouts duros por sonda vía `sys::run_command_with_timeout`) para probar GPU, kernel CUDA `matmul` en PyTorch, sesión real `InferenceSession` en `onnxruntime-gpu`, `h264_nvenc` y `libx264`.
 7. **Descarga automática resiliente en 2 fases (63.35 GiB reales medidos en HuggingFace con `hf` + `hf-xet`)**:
-   - **Fase 1 (Síncrona antes de abrir ComfyUI, 2.79 GiB)**: Descarga InsightFace `buffalo_l`, `inswapper_128.onnx`, `CodeFormer`, `GFPGANv1.4`, `facexlib` detectors, `YOLO face`, `SAM`, `SDXL VAE fp16-fix`, `SD1.5 VAE`, `4x-UltraSharp` y `4x-AnimeSharp`. Empieza tras el autodiagnóstico `comfyctl diag` (≤ 90 s en el peor caso, suma de timeouts de sonda; normalmente < 15 s) y, mientras dura (~25–60s según red), Nginx muestra una pantalla de espera con enlaces a `/home` y `/status`.
+   - **Fase 1 (Síncrona antes de abrir ComfyUI, 2.79 GiB)**: Descarga InsightFace `buffalo_l`, `inswapper_128.onnx`, `CodeFormer`, `GFPGANv1.4`, `facexlib` detectors, `YOLO face`, `SAM`, `SDXL VAE fp16-fix`, `SD1.5 VAE`, `4x-UltraSharp` y `4x-AnimeSharp`. Empieza tras el autodiagnóstico `comfyctl diag` (≤ 90 s en el peor caso, suma de timeouts de sonda; normalmente < 15 s) y, mientras dura (1-3 min según red, tope 10 min), Nginx muestra una pantalla de espera con enlaces a `/home` y `/status`.
    - **Fase 2 (Segundo plano, 60.56 GiB en perfil `all`)**: Descarga todos los checkpoints populares, ControlNet Union ProMax e IP-Adapter con timeout por intento (`HF_FETCH_TIMEOUT=3600`), 3 reintentos automáticos y `rename()` atómico en el mismo filesystem mientras ya usas ComfyUI. Pulsa **`R`** en el navegador para refrescar los desplegables.
 
 ---
@@ -114,11 +114,11 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
 | `COMFY_MAX_RESTARTS` | `5` | Número máximo de reinicios automáticos de ComfyUI ante caídas antes de pasar a estado `exhausted` (manteniendo Nginx, `/home` y `/status` activos para diagnóstico). |
 | `COMFY_RESTART_DELAY` | `5` | Segundos de espera entre caídas de ComfyUI antes de que el supervisor relance `main.py`. |
 | `COMFY_HEALTHY_UPTIME` | `600` | Segundos de funcionamiento continuo tras los cuales el supervisor resetea `restarts` a `0` e incrementa `healthy_resets`. |
-| `LOG_MAX_MB` | `200` | Tamaño máximo en MB por fichero de log en `/var/log` antes de truncar conservando los últimos `50 MB`. |
+| `LOG_MAX_MB` | `200` | Tamaño máximo en MB por fichero de log en `/var/log` antes de truncar conservando los últimos `50 MB`. Cubre `comfyui.log`, los logs `access`/`error` de nginx, `download-models.log`, `start.log`, `supervisor.log`, `ttyd.log` y `diag.txt`. Los logs sensibles (`start.log` —contiene el banner con la contraseña de arranque—, `supervisor.log`, `ttyd.log`, `diag.txt`) se crean con permisos `600` (solo root); `comfyui.log` y `download-models.log` son `644` porque los sirve nginx. |
 | `HF_FETCH_TIMEOUT` | `3600` | Timeout máximo en segundos por intento de descarga individual en `download-models.sh`. |
 | `HF_HUB_DISABLE_XET` | *(Vacío)* | Pon `1` para que `hf download` use HTTP clásico en lugar del backend `hf-xet`. Útil si la Fase 2 se queda colgada, devuelve muchos 503 o el host tiene poca RAM (ver sección 5.8). |
 | `ENABLE_WEB_TERMINAL` | `0` | Pon `1` para activar `ttyd` en `127.0.0.1:7681`, accesible tras Basic Auth en `/terminal/`. Desactivado por defecto por seguridad. |
-| `STATUS_SERVER_PORT` | `18189` | Puerto loopback (`127.0.0.1`) donde `comfyctl serve` expone `/status`, `/status/api`, `/report.md`, `/diag` y `/logs/<nombre>`. |
+| `STATUS_SERVER_PORT` | `18189` | Puerto loopback (`127.0.0.1`) donde `comfyctl serve` expone `/status`, `/status/api`, `/report.md`, `/diag` y `/logs/<nombre>`. Controla de verdad el bind por defecto del servidor (`127.0.0.1:{port}`). |
 | **Rutas internas (avanzado)** | — | `COMFY_APP_DIR` (`/opt/ComfyUI`), `COMFY_SUPERVISOR_JSON` (`/run/comfyui-supervisor.json`), `COMFY_STRICT_JSON` (`/run/comfyui-strict.json`), `COMFY_STARTED_AT_FILE` (`/run/comfyui-started-at`), `COMFY_IMAGE_JSON` (`/etc/comfyui/image.json`), `COMFY_HTPASSWD_PATH` (`/etc/nginx/.htpasswd`) y `COMFY_NVIDIA_SMI_BIN` (`nvidia-smi`). Todas tienen defaults correctos y raramente se tocan (útiles sobre todo para tests). |
 | **Variables de plataforma Vast.ai (solo lectura)** | `local` / `8188` | `VAST_CONTAINERLABEL` y `VAST_TCP_PORT_8188` las inyecta Vast.ai al alquilar la instancia; `comfyctl` las lee (`config.rs` `L228-L229`) para exponer `instance.vast_instance_id` y `instance.external_port_8188` en `/status/api` y `/report.md` (`collect/mod.rs` `L123-L124`). Fuera de Vast.ai usan los valores por defecto. Del mismo grupo, `COMFY_PASS_AUTOGENERATED` (`0`/`1`) es un marcador interno que escribe `start.sh` (`L163-L175`) cuando autogenera la contraseña, para que `comfyctl` muestre `<autogenerada — ver logs del contenedor>` en lugar de la clave. |
 
@@ -126,7 +126,7 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
 
 ## 4. Guía de Uso (Desde tu MacBook, 100% Web)
 
-La guía está dividida en dos partes: **A. Primera vez** (configuración que se hace una sola vez) y **B. Cada sesión** (lo que repites cada vez que alquilas una GPU). Los tiempos marcados como *pendiente de medir* se completarán tras el primer build y la primera sesión real.
+La guía está dividida en dos partes: **A. Primera vez** (configuración que se hace una sola vez) y **B. Cada sesión** (lo que repites cada vez que alquilas una GPU). Los tiempos citados provienen de ejecuciones reales del workflow de CI (runner `ubuntu-24.04` con `buildcache`).
 
 ### A. Primera vez
 
@@ -137,7 +137,7 @@ La guía está dividida en dos partes: **A. Primera vez** (configuración que se
    ```text
    ghcr.io/<tu-usuario-github>/<tu-repo>:latest
    ```
-   El primer build tarda entre 60 y 120 minutos (*pendiente de medir*). Los siguientes reutilizan la caché `buildcache` y tardan minutos.
+   Medido en CI: el job de build tarda **≈ 10.5 min** reutilizando la caché `buildcache`; la primera ejecución sin caché tarda bastante más (compila la imagen completa y descarga las capas base, ~198 s solo las capas base en el runner).
 3. Cuando el workflow esté en verde: perfil de GitHub → **Packages** → el paquete → **Package settings** → **Change visibility → Public**. Sin este paso Vast.ai no puede descargar la imagen. (En GHCR verás también un tag `buildcache` y una entrada de plataforma `unknown/unknown`: ambos son normales.)
 4. Anota la ruta exacta de la imagen. GitHub la publica **en minúsculas** aunque tu usuario o repo tengan mayúsculas.
 
@@ -156,7 +156,7 @@ La guía está dividida en dos partes: **A. Primera vez** (configuración que se
    | **Image Path:Tag** | `ghcr.io/<tu-usuario>/<tu-repo>:latest` |
    | **Docker Options** | `-p 8188:8188 -e OPEN_BUTTON_PORT=8188 -e COMFY_USER=admin -e MODEL_PROFILE=all` y, si quieres contraseña fija, `-e COMFY_PASS=TuClaveLargaUnica123` |
    | **Launch Mode** | **Docker ENTRYPOINT** |
-   | **Disk Space** | `150` GB para `MODEL_PROFILE=all` (100 GB bastan para `general`/`realistic`/`anime`; 40 GB para `minimal`) |
+   | **Disk Space** | `120` GB para `MODEL_PROFILE=all` (suficiente: 63 GiB de modelos + ~16 GB de imagen; `strict-check` S5 pasa). Si acumulas mucho output local (vídeos/upscales), alquila a mano con `--disk 150+`. Para `general`/`realistic`/`anime` bastan 80 GB; 40 GB para `minimal`. |
 
 9. Por qué **ENTRYPOINT**: en los modos *SSH* y *Jupyter*, Vast.ai sobrescribe el `ENTRYPOINT` de la imagen para instalar su propio servidor SSH/Jupyter. En esos modos tendrías que escribir `bash /start.sh` en el campo **On-start Script** para que el contenedor arranque. En modo ENTRYPOINT `tini → /start.sh` corre tal cual y el `HEALTHCHECK` funciona.
 10. Guarda la plantilla como **privada**. Si la guardas como pública con `COMFY_PASS` en Docker Options, cualquiera podría leer tu contraseña.
@@ -189,33 +189,37 @@ La guía está dividida en dos partes: **A. Primera vez** (configuración que se
    | Filtro | Valor | Por qué |
    |---|---|---|
    | GPU | **RTX 5090** (32 GB) o **RTX 4090** (24 GB), 1 GPU | Misma imagen `cu128` para ambas |
-   | **Max CUDA** (`cuda_max_good`) | **≥ 12.8** | Es el driver del host; con menos, `torch` cu128 no inicializa la GPU |
-   | **Disk Space** | ≥ 150 GB (`all`) / ≥ 100 GB (otros perfiles) | El disco se fija al alquilar; no se amplía después |
+   | **CUDA** (`cuda_vers`) | **≥ 12.8** | Versión máxima de CUDA soportada por el host (campo documentado de la API); con menos, `torch` cu128 no inicializa la GPU |
+   | **GPU RAM** | ≥ 24 GB | La imagen exige ≥ 20000 MiB (`strict-check` `S3`); el helper filtra `gpu_ram>=24` |
+   | **CPU RAM** | ≥ 32 GB | Las descargas `hf-xet` y la carga de FLUX fp8 consumen RAM; el helper filtra `cpu_ram>=32` |
+   | **Disk Space** | ≥ 120 GB | El disco se fija al alquilar; no se amplía después. 120 GB cubren `all` (63 GiB modelos + ~16 GB imagen) |
    | **Internet Download** (`inet_down`) | ≥ 500 Mbps (ideal ≥ 1 Gbps) | 63 GB de modelos: ~19 min a 500 Mbps, ~1 h a 150 Mbps |
-   | **Direct Ports** | ≥ 1 | Necesario para que el botón **Open** apunte directo a Nginx |
-   | **Reliability** | > 0.97, *verified* | Menos cortes a mitad de sesión |
+   | **Reliability** | ≥ 0.98, *verified* | Menos cortes a mitad de sesión |
+
+   > Los puertos van **proxy-mapeados** por Vast.ai (no se requieren *direct ports*): Vast asigna un puerto del host y lo redirige al 8188 del contenedor. Es lo que hace `comfy rent` con `--args` (runtype args, que respeta el ENTRYPOINT de la imagen).
 
 2. **Lee la tarjeta de la oferta antes de pulsar Rent**, no solo el $/h:
    - **RAM del host**: evita hosts con menos de 32 GB si usas `MODEL_PROFILE=all` (las descargas con `hf-xet` y la carga de FLUX fp8 de 16 GB consumen RAM; un host justo puede matar ComfyUI por falta de memoria).
    - **$/GB/mes de almacenamiento** y **$/TB de tráfico**: con 63 GB descargados por sesión, en hosts caros el tráfico puede costar más que la primera hora de GPU.
    - **On-demand** para sesiones de trabajo; *interruptible* es más barato pero otro usuario puede quitarte la máquina.
-3. Pulsa **Rent** (o ejecuta `comfy rent all` desde tu Mac). Precios orientativos (2026-10): RTX 5090 ~$0.45–$0.95/h on-demand; RTX 4090 ~$0.30–$0.55/h.
+3. Pulsa **Rent** (o ejecuta `comfy rent all` desde tu Mac). Precios orientativos (2026-10): RTX 5090 ~$0.45–$0.95/h on-demand; RTX 4090 ~$0.30–$0.55/h. El precio exacto se ve en `comfy rent` antes de confirmar.
 
-*(Referencia CLI equivalente)*:
+*(Referencia CLI equivalente — los mismos filtros que usa el helper [`tools/mac/comfy`](tools/mac/comfy))*:
 ```bash
-vastai search offers "gpu_name=RTX_5090 num_gpus=1 gpu_ram>=32 cuda_max_good>=12.8 inet_down>=500 disk_space>=150 direct_port_count>=1 reliability>0.97 verified=true rentable=true" -o "dph_total+"
+vastai search offers "gpu_name=RTX_5090 num_gpus=1 gpu_ram>=24 cpu_ram>=32 cuda_vers>=12.8 inet_down>=500 disk_space>=120 reliability>=0.98 verified=true rentable=true" -o "dph_total+"
 
 vastai create instance <OFFER_ID> \
   --image ghcr.io/<tu-usuario>/<tu-repo>:latest \
-  --disk 150 \
+  --disk 120 \
   --label comfy \
-  --env "-p 8188:8188 -e OPEN_BUTTON_PORT=8188 -e COMFY_USER=admin -e COMFY_PASS=TuClaveLargaUnica123 -e MODEL_PROFILE=all" \
-  --direct
+  --env '-p 8188:8188 -e MODEL_PROFILE=all -e COMFY_USER=admin -e COMFY_PASS=TuClaveLargaUnica123' \
+  --args
 ```
+> `--args` fija el runtype `args` (respeta el ENTRYPOINT de la imagen) y los puertos van proxy-mapeados; no se usa `--direct`. En `--env`, el entrecomillado es **solo del valor** (`-e CLAVE="valor"`): el parser de vast-cli limpia comillas del valor, nunca de la clave.
 
 #### B2. Esperar el arranque (de 5 a 15 minutos la primera vez en un host)
 
-4. En **Instances**, la tarjeta pasa por *Loading / Creating* mientras el host descarga la imagen (*tiempo pendiente de medir*; depende del tamaño de la imagen y de la red del host). Si el host ya tenía la imagen en caché de una sesión anterior, es casi inmediato.
+4. En **Instances**, la tarjeta pasa por *Loading / Creating* mientras el host descarga la imagen (~7-8 min medidos en el runner de CI para la imagen de 15.6 GB: ~218 s el pull de la candidata + ~198 s las capas base; en el host de Vast depende de su red). Si el host ya tenía la imagen en caché de una sesión anterior, es casi inmediato.
 5. Cuando pase a **Running**, aparece el botón **Open** y la dirección `IP:PUERTO` (o ejecuta `comfy` en tu Mac para abrir directamente `/home`). **El puerto externo no es 8188**: Vast.ai asigna un puerto aleatorio del host y lo redirige al 8188 del contenedor. Usa siempre la dirección que muestra la tarjeta.
 6. Cómo saber en qué punto está el arranque:
    - Botón **Logs** de la tarjeta (o `comfy logs` / `comfy pass`): si está vacío, la imagen aún se está descargando; si ves `[1/7] Verificando instalación de ffmpeg…`, `start.sh` ya corre. Ahí aparece también la contraseña si dejaste que se autogenere.
@@ -238,8 +242,11 @@ vastai create instance <OFFER_ID> \
 #### B5. Cerrar la sesión
 
 14. **Descarga tus resultados** desde la UI: clic derecho sobre la salida de `Video Combine` / `Save Image` (o en **Queue → History**) → **Save**. Todo lo que quede en `/workspace/comfyui-data/output` se pierde con la instancia.
-15. Pulsa **Destroy** (icono de papelera), **no Stop**. Con *Stop* sigues pagando el almacenamiento (150 GB) y, si el host alquila esa GPU a otro usuario mientras tanto, no podrás reanudar la instancia. Este proyecto está diseñado para descargar los modelos en cada arranque, así que *Destroy* es el cierre normal.
+15. Pulsa **Destroy** (icono de papelera), **no Stop**. Con *Stop* sigues pagando el almacenamiento (120 GB) y, si el host alquila esa GPU a otro usuario mientras tanto, no podrás reanudar la instancia. Este proyecto está diseñado para descargar los modelos en cada arranque, así que *Destroy* es el cierre normal.
 16. Si en el futuro quieres conservar los modelos entre sesiones, Vast.ai ofrece **Volumes** persistentes que podrían montarse en `/workspace/comfyui-data`; la imagen ya está preparada para ello (los datos viven fuera de `/opt/ComfyUI`). Es una decisión pendiente (OPS-04), no una función activa.
+
+> **Advertencia de seguridad: Basic Auth sobre HTTP plano (sin TLS)**
+> En la IP pública de Vast.ai el portal va por HTTP sin TLS (sin dominio propio no hay certificado), así que el usuario y la contraseña de Basic Auth viajan **en claro** por la red. Para uso sensible, accede por **túnel SSH**: `vastai ssh <id>` con un forward local del 8188 (p. ej. `ssh -L 8188:127.0.0.1:8188`) y abre `http://127.0.0.1:8188` en tu Mac. Para sesiones cortas con contraseña autogenerada de un solo uso, el riesgo es aceptable y está documentado. **`ENABLE_WEB_TERMINAL=1` (shell root) actívalo únicamente a través de un túnel SSH**, nunca directo sobre la IP pública.
 
 ---
 
@@ -270,6 +277,7 @@ vastai create instance <OFFER_ID> \
 ### 7. OOM o `HostBuffer.read_file_slice failed` en RTX 5090 con modelos grandes
 - **Síntoma**: Con Wan, FLUX.2 u otros modelos pesados, ComfyUI falla en todas las generaciones con un error de CUDA que menciona `HostBuffer`, o se queda sin memoria aunque la VRAM no esté llena. Son fallos conocidos de la gestión dinámica de VRAM y de la memoria *pinned* en Blackwell (ComfyUI issues #15255 y #14250, 2026), reportados a NVIDIA.
 - **Primer intento**: añade `-e COMFYUI_EXTRA_ARGS=--disable-pinned-memory` a las Docker Options de la plantilla y reinicia la instancia. Si tienes varias GPU en el host, `--cuda-device 0` también está documentado como alternativa.
+- **Sesiones largas en RTX 5090 con cargas mixtas** (imagen + vídeo + upscaling seguidos): la VRAM se fragmenta con el tiempo. Puedes añadir `-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` a las Docker Options para mitigar la fragmentación del allocator de CUDA (opcional; no afecta a cargas cortas).
 - **Si el contenedor se reinicia o se apaga solo**: es un OOM de **RAM del sistema** (el kernel mata a `python3` con código 137). Elige un host con más RAM (≥ 32 GB con `MODEL_PROFILE=all`), o usa un perfil menor para que la Fase 2 no coincida con la carga de FLUX.
 
 ### 8. La Fase 2 se queda colgada o devuelve muchos errores 503

@@ -6,7 +6,7 @@ El script `tools/mac/comfy` permite abrir el portal `/home`, el panel `/status`,
 
 1. **CLI de Vast.ai** instalada y autenticada con tu API key:
    ```bash
-   pip install --upgrade vastai
+   pipx install vastai          # (fallback: pip3 install --user vastai)
    vastai set api-key <TU_VASTAI_API_KEY>
    ```
 2. **Python 3** (incluido en macOS / Xcode Command Line Tools).
