@@ -16,3 +16,27 @@ fn redactor_removes_all_secret_patterns() {
     assert!(!cleaned.contains("myUrlPass123"));
     assert!(cleaned.contains("[REDACTED]"));
 }
+
+#[test]
+fn redactor_redacts_short_literals_and_url_passwords_with_special_chars() {
+    // Un COMFY_PASS de 2-3 caracteres también debe redactarse (umbral >= 2).
+    let redactor = SecretRedactor::new(Some("ab"), None);
+    let cleaned = redactor.redact("login failed for pass=ab on host");
+    assert!(!cleaned.contains("pass=ab"));
+    assert!(cleaned.contains("[REDACTED]"));
+
+    // Un secreto de 1 solo carácter NO se redacta (demasiados falsos positivos).
+    let single = SecretRedactor::new(Some("a"), None);
+    let out = single.redact("banana");
+    assert_eq!(out, "banana");
+
+    // URL con contraseña que contiene '/' y '@': se redacta hasta el ÚLTIMO '@' de la línea;
+    // el host posterior al último '@' sobrevive.
+    let url_redactor = SecretRedactor::new(None, None);
+    let cleaned_url = url_redactor.redact("fetch https://user:p@ss/werd@example.com/repo.git ok");
+    assert!(!cleaned_url.contains("p@ss/werd"), "{cleaned_url}");
+    assert!(
+        cleaned_url.contains("[REDACTED]@example.com/repo.git"),
+        "{cleaned_url}"
+    );
+}

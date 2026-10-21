@@ -16,7 +16,7 @@ impl SecretRedactor {
         let mut literals = Vec::new();
         for candidate in [comfy_pass, hf_token].into_iter().flatten() {
             let trimmed = candidate.trim();
-            if trimmed.len() >= 4 && !literals.iter().any(|s| s == trimmed) {
+            if trimmed.len() >= 2 && !literals.iter().any(|s| s == trimmed) {
                 literals.push(trimmed.to_string());
             }
         }
@@ -24,7 +24,10 @@ impl SecretRedactor {
             literals,
             rx_hf: Regex::new(r"hf_[A-Za-z0-9]{12,}").ok(),
             rx_bearer: Regex::new(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{8,}").ok(),
-            rx_url_auth: Regex::new(r"(https?://[^/\s:@]+:)[^/\s@]+(@)").ok(),
+            // `.*` voraz: redacta las credenciales hasta el ÚLTIMO `@` de la línea,
+            // de modo que una contraseña que contenga `/` o `@` también queda cubierta
+            // y la parte de host posterior al último `@` sobrevive.
+            rx_url_auth: Regex::new(r"(https?://[^/\s:@]+:)(.*)(@)").ok(),
         }
     }
 
@@ -49,7 +52,7 @@ impl SecretRedactor {
             out = rx.replace_all(&out, "${1}[REDACTED]").into_owned();
         }
         if let Some(rx) = &self.rx_url_auth {
-            out = rx.replace_all(&out, "${1}[REDACTED]${2}").into_owned();
+            out = rx.replace_all(&out, "${1}[REDACTED]${3}").into_owned();
         }
         out
     }

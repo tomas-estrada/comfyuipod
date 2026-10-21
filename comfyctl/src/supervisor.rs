@@ -127,11 +127,22 @@ fn log_sup(msg: &str) {
     }
 }
 
-/// Trunca `/var/log/comfyui.log` y `/var/log/nginx/access.log` si superan `log_max_mb` (`O-04`).
+/// Trunca los logs de mayor crecimiento si superan `log_max_mb` (`O-04`),
+/// conservando los últimos 20 MiB de cada uno.
 pub fn truncate_logs_if_needed(log_max_mb: u64) {
     let max_bytes = log_max_mb.saturating_mul(1_048_576);
     let keep_bytes: u64 = 20 * 1_048_576;
-    for log_path in ["/var/log/comfyui.log", "/var/log/nginx/access.log"] {
+    let log_paths = [
+        "/var/log/comfyui.log",
+        "/var/log/nginx/access.log",
+        "/var/log/nginx/error.log",
+        "/var/log/download-models.log",
+        "/var/log/start.log",
+        "/var/log/supervisor.log",
+        "/var/log/ttyd.log",
+        "/var/log/diag.txt",
+    ];
+    for log_path in log_paths {
         let p = Path::new(log_path);
         let Ok(meta) = fs::metadata(p) else {
             continue;
@@ -163,28 +174,34 @@ fn dump_crash_diagnostics(attempt: u32, rc: i32, run_duration_s: u64, reason: &s
         dump,
         "[{ts}] [SUPERVISOR] ComfyUI terminó (intento #{attempt}, rc={rc}, duracion={run_duration_s}s): {reason}"
     );
+    // Todas las sondas del volcado van acotadas por timeout (`R-07`): un wedge de GPU
+    // que cuelga nvidia-smi no debe bloquear el bucle del supervisor.
     dump.push_str("--- Estado de memoria (free -m) ---\n");
-    if let Ok(out) = Command::new("free").arg("-m").output() {
-        dump.push_str(&String::from_utf8_lossy(&out.stdout));
+    let mut free_cmd = Command::new("free");
+    free_cmd.arg("-m");
+    if let Ok((Some(0), out, _, false)) =
+        sys::run_command_with_timeout(&mut free_cmd, Duration::from_secs(5))
+    {
+        dump.push_str(&out);
     }
     dump.push_str("--- Estado de GPU (nvidia-smi) ---\n");
-    if let Ok(out) = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
-            "--format=csv,noheader",
-        ])
-        .output()
+    let mut smi_cmd = Command::new("nvidia-smi");
+    smi_cmd.args([
+        "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+        "--format=csv,noheader",
+    ]);
+    if let Ok((Some(0), out, _, false)) =
+        sys::run_command_with_timeout(&mut smi_cmd, Duration::from_secs(10))
     {
-        if out.status.success() {
-            dump.push_str(&String::from_utf8_lossy(&out.stdout));
-        }
+        dump.push_str(&out);
     }
     dump.push_str("--- Últimas 40 líneas de /var/log/comfyui.log ---\n");
-    if let Ok(out) = Command::new("tail")
-        .args(["-n", "40", "/var/log/comfyui.log"])
-        .output()
+    let mut tail_cmd = Command::new("tail");
+    tail_cmd.args(["-n", "40", "/var/log/comfyui.log"]);
+    if let Ok((Some(0), out, _, false)) =
+        sys::run_command_with_timeout(&mut tail_cmd, Duration::from_secs(5))
     {
-        dump.push_str(&String::from_utf8_lossy(&out.stdout));
+        dump.push_str(&out);
     }
     dump.push_str("======================================================================\n");
 
@@ -213,10 +230,12 @@ fn run_model_downloads_if_enabled(cfg: &RuntimeConfig) {
     }
 
     println!("[6/7] Ejecutando Fase 1 de descarga de modelos críticos (2.79 GiB)...");
+    // `set -o pipefail`: sin él, bash devuelve el estado de `tee` (casi siempre 0)
+    // y la detección de fallo/timeout de Fase 1 sería código muerto.
     let status = Command::new("bash")
         .args([
             "-c",
-            "timeout 600 /usr/local/bin/download-models.sh --phase1 2>&1 | tee -a /var/log/download-models.log",
+            "set -o pipefail; timeout 600 /usr/local/bin/download-models.sh --phase1 2>&1 | tee -a /var/log/download-models.log",
         ])
         .status();
     if !matches!(status, Ok(s) if s.success()) {
@@ -276,7 +295,10 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
     let mut sup_state = SupervisorState::new(cfg.comfy_max_restarts);
     write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
 
-    log_sup("Iniciando servidor HTTP de observabilidad integrado en 127.0.0.1:18189...");
+    log_sup(&format!(
+        "Iniciando servidor HTTP de observabilidad integrado en 127.0.0.1:{}...",
+        cfg.status_server_port
+    ));
     crate::http::spawn_background_status_server(cfg.clone())?;
 
     // 1. Ejecutar strict-check (§6)

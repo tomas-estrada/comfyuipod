@@ -57,15 +57,31 @@ impl TriageEngine {
             Some(Path::new("../scripts/triage_patterns.json").to_path_buf()),
         ];
 
+        // Degradación observable: si existe un fichero de patrones pero es ilegible o
+        // no parsea, se emite un aviso claro por stderr en lugar de fallar en silencio.
+        let mut saw_invalid_file = false;
         for cand in candidates.into_iter().flatten() {
             if cand.is_file() {
-                if let Ok(txt) = fs::read_to_string(&cand) {
-                    if let Ok(parsed) = serde_json::from_str::<Vec<TriagePatternRaw>>(&txt) {
+                match fs::read_to_string(&cand)
+                    .map_err(|e| e.to_string())
+                    .and_then(|txt| {
+                        serde_json::from_str::<Vec<TriagePatternRaw>>(&txt)
+                            .map_err(|e| e.to_string())
+                    }) {
+                    Ok(parsed) => {
                         raw_list = parsed;
                         break;
                     }
+                    Err(_) => {
+                        saw_invalid_file = true;
+                    }
                 }
             }
+        }
+        if raw_list.is_empty() && saw_invalid_file {
+            eprintln!(
+                "[comfyctl] WARN: triage_patterns.json inválido o patrón ilegible; triage degradado"
+            );
         }
 
         Self::from_raw_patterns(raw_list)
@@ -75,8 +91,11 @@ impl TriageEngine {
         let mut patterns = Vec::with_capacity(raw_list.len());
         for raw in raw_list {
             let ci_pat = format!("(?i){}", raw.pattern);
-            if let Ok(rx) = Regex::new(&ci_pat) {
-                patterns.push(CompiledTriagePattern { raw, rx });
+            match Regex::new(&ci_pat) {
+                Ok(rx) => patterns.push(CompiledTriagePattern { raw, rx }),
+                Err(_) => eprintln!(
+                    "[comfyctl] WARN: triage_patterns.json inválido o patrón ilegible; triage degradado"
+                ),
             }
         }
         let err_rx = Regex::new(

@@ -230,6 +230,53 @@ pub fn read_proc_rss_mb(pid: u32) -> u64 {
     0
 }
 
+/// Busca el proceso de descarga de Fase 2 (`hf download ...`).
+/// Empareja por `argv[0]` (no por substrings sueltos en toda la cmdline) para evitar
+/// falsos positivos como `vim hf-download.txt`. El lanzador de Fase 2 ejecuta
+/// `timeout N "$HF_CLI" download …` (scripts/download-models.sh), así que `argv[0]`
+/// es el valor de `HF_CLI`: normalmente `hf` o `huggingface-cli`, pero puede ser una
+/// ruta arbitraria (p. ej. el `fake-hf` del dry-run de CI); por eso se acepta también
+/// cualquier basename que termine en `-hf` como fallback, exigiendo además que
+/// `download` sea un token independiente del comando.
+pub fn find_hf_download_process() -> Option<(u32, u64)> {
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return None;
+    };
+    for entry in entries.flatten() {
+        let Some(pid_str) = entry.file_name().to_str().map(ToString::to_string) else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue;
+        };
+        let Ok(bytes) = fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        if bytes.is_empty() {
+            continue;
+        }
+        let argv: Vec<String> = bytes
+            .split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect();
+        let Some(argv0) = argv.first() else {
+            continue;
+        };
+        let basename = argv0.rsplit('/').next().unwrap_or(argv0);
+        let cli_match =
+            basename == "hf" || basename == "huggingface-cli" || basename.ends_with("-hf");
+        let has_download = argv
+            .get(1..)
+            .is_some_and(|rest| rest.iter().any(|tok| tok == "download"));
+        if cli_match && has_download {
+            let rss_mb = read_proc_rss_mb(pid);
+            return Some((pid, rss_mb));
+        }
+    }
+    None
+}
+
 pub fn find_process_by_cmdline(needle1: &str, needle2: &str) -> Option<(u32, u64)> {
     let Ok(entries) = fs::read_dir("/proc") else {
         return None;

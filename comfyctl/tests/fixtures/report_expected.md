@@ -7,7 +7,7 @@ Imagen: `tag=sha-512e485` · `built_at=2026-10-19T11:00:00Z` · `comfyui_sha=4c6
 
 ## 1. Contexto operativo para el agente
 - **Rutas**: código e instalación en `/opt/ComfyUI` · datos persistentes en `/workspace/comfyui-data` (`models/`, `input/`, `output/`, `user/` son symlinks desde `/opt/ComfyUI`)
-- **Árbol de procesos**: `tini (PID 1)` → `comfyctl supervise` → `{nginx (root master + www-data workers), comfyctl HTTP server :18189, ttyd opcional :7681, download-models.sh --phase2 (setsid), python3 main.py (supervisado, máx 5 reinicios)}`
+- **Árbol de procesos**: `tini (PID 1)` → `comfyctl supervise` → `{nginx (root master + www-data workers), comfyctl HTTP server :18189, ttyd opcional :7681, tee -a /var/log/start.log (huérfano de start.sh), download-models.sh --phase2 (setsid), python3 main.py (supervisado, máx 5 reinicios)}`
 - **Puertos**: `8188` público (Nginx Basic Auth) → `18188` ComfyUI · `18189` comfyctl status-server · `7681` ttyd (todos en `127.0.0.1` salvo `8188`)
 - **Cómo ejecutar comandos**: terminal web en `/terminal/` (si `ENABLE_WEB_TERMINAL=1`) · SSH si la instancia se creó con SSH · `vastai execute <id> 'ls|du|rm …'`
 - **Cómo reiniciar ComfyUI sin reiniciar la instancia**: `pkill -f 'main.py'` (envía `SIGTERM` / `rc=143`; el supervisor `comfyctl supervise` lo relanza en 5 s **sin consumir** el presupuesto `COMFY_MAX_RESTARTS`, y el contador `restarts` se resetea automáticamente a `0` tras `COMFY_HEALTHY_UPTIME=600s` de ejecución estable)

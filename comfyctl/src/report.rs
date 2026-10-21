@@ -119,7 +119,7 @@ pub fn build_report_markdown(
     );
     let _ = writeln!(
         out,
-        "- **Árbol de procesos**: `tini (PID 1)` → `comfyctl supervise` → `{{nginx (root master + www-data workers), comfyctl HTTP server :18189, ttyd opcional :7681, download-models.sh --phase2 (setsid), python3 main.py (supervisado, máx {} reinicios)}}`",
+        "- **Árbol de procesos**: `tini (PID 1)` → `comfyctl supervise` → `{{nginx (root master + www-data workers), comfyctl HTTP server :18189, ttyd opcional :7681, tee -a /var/log/start.log (huérfano de start.sh), download-models.sh --phase2 (setsid), python3 main.py (supervisado, máx {} reinicios)}}`",
         comfy.max_restarts
     );
     let _ = writeln!(

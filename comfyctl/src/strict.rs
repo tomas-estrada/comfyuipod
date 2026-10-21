@@ -279,12 +279,32 @@ pub fn probe_htpasswd(path: &Path) -> (bool, bool, String) {
                 false,
                 false,
                 format!(
-                    "Permisos inseguros {:04o} en {} (esperado 0640)",
+                    "Permisos inseguros {:04o} en {} (bits de acceso 'other' activos; se exige sin permisos world-accessible)",
                     mode,
                     path.display()
                 ),
             );
         }
+    }
+    // Validación mínima de formato: al menos una línea con forma `usuario:hash`
+    // (acepta `admin:{PLAIN}test` del fixture de arranque y los hashes bcrypt/SHA estándar).
+    let Ok(content) = fs::read_to_string(path) else {
+        return (false, false, format!("No se pudo leer {}", path.display()));
+    };
+    let has_valid_line = content.lines().any(|ln| {
+        ln.trim().split_once(':').is_some_and(|(user, hash)| {
+            !user.is_empty() && !hash.is_empty() && !user.contains(char::is_whitespace)
+        })
+    });
+    if !has_valid_line {
+        return (
+            false,
+            false,
+            format!(
+                "{} no contiene ninguna línea 'usuario:hash' válida",
+                path.display()
+            ),
+        );
     }
     (
         true,

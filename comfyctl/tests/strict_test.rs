@@ -1,6 +1,7 @@
 use comfyctl::config::RuntimeConfig;
 use comfyctl::strict::{
-    evaluate_strict_checks, probe_nvidia_smi, write_and_print_strict_report, SystemSnapshot,
+    evaluate_strict_checks, probe_htpasswd, probe_nvidia_smi, write_and_print_strict_report,
+    SystemSnapshot,
 };
 use comfyctl::sys;
 use std::collections::BTreeMap;
@@ -255,4 +256,48 @@ fn simulated_nvidia_smi_binary_probe_and_subprocess_timeout() {
     let res = sys::run_command_with_timeout(&mut sleep_cmd, Duration::from_millis(250));
     assert!(matches!(res, Ok((_, _, _, true))));
     assert!(start.elapsed() < Duration::from_secs(15));
+}
+
+#[test]
+fn probe_htpasswd_validates_format_and_rejects_garbage() {
+    let tmp_dir = std::env::temp_dir().join("comfyctl_htpasswd_probe");
+    let _ = fs::remove_dir_all(&tmp_dir);
+    let _ = fs::create_dir_all(&tmp_dir);
+
+    // Formato del fixture de arranque/CI: `admin:{PLAIN}test` debe pasar.
+    let ok_path = tmp_dir.join("ok.htpasswd");
+    let _ = fs::write(&ok_path, "admin:{PLAIN}test\n");
+    let (ok, missing, detail) = probe_htpasswd(&ok_path);
+    assert!(
+        ok,
+        "el fixture admin:{{PLAIN}}test debe ser válido: {detail}"
+    );
+    assert!(!missing);
+
+    // Fichero con basura sin ninguna línea `usuario:hash` → inválido.
+    let garbage_path = tmp_dir.join("garbage.htpasswd");
+    let _ = fs::write(&garbage_path, "x\n");
+    let (ok_g, missing_g, _) = probe_htpasswd(&garbage_path);
+    assert!(!ok_g);
+    assert!(!missing_g);
+
+    // Línea con usuario con espacios → inválido; usuario:hash correcto en otra línea → válido.
+    let mixed_path = tmp_dir.join("mixed.htpasswd");
+    let _ = fs::write(&mixed_path, "bad user:hash\nroot:$apr1$abc$def\n");
+    let (ok_m, _, _) = probe_htpasswd(&mixed_path);
+    assert!(ok_m);
+
+    // Fichero vacío → inválido, no 'missing'.
+    let empty_path = tmp_dir.join("empty.htpasswd");
+    let _ = fs::write(&empty_path, "");
+    let (ok_e, missing_e, _) = probe_htpasswd(&empty_path);
+    assert!(!ok_e);
+    assert!(!missing_e);
+
+    // Fichero inexistente → missing.
+    let (ok_n, missing_n, _) = probe_htpasswd(&tmp_dir.join("nope.htpasswd"));
+    assert!(!ok_n);
+    assert!(missing_n);
+
+    let _ = fs::remove_dir_all(&tmp_dir);
 }

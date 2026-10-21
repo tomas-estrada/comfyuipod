@@ -179,7 +179,7 @@ pub fn handle_request(ctx: &ServerContext, req: Request) {
         }
         "/status/api" => {
             let mut api = ctx.get_status_api();
-            api.services.status_server.running = true;
+            apply_status_server_override(&mut api);
             let raw_json = serde_json::to_string_pretty(&api).unwrap_or_else(|_| "{}".to_string());
             let clean_json = ctx.redactor.redact(&raw_json);
             send_http_response(
@@ -192,7 +192,8 @@ pub fn handle_request(ctx: &ServerContext, req: Request) {
             );
         }
         "/report.md" => {
-            let api = ctx.get_status_api();
+            let mut api = ctx.get_status_api();
+            apply_status_server_override(&mut api);
             let heavy = ctx.get_heavy_cached();
             let md = build_report_markdown(&api, &heavy, &ctx.redactor, &ctx.log_dir);
             send_http_response(
@@ -267,9 +268,17 @@ pub fn handle_request(ctx: &ServerContext, req: Request) {
     }
 }
 
+/// Marca `services.status_server.running = true`: si el payload se está generando
+/// para servir una respuesta HTTP o para `comfyctl report` del propio status-server,
+/// el servicio es observable por definición (evita carreras del self-check TCP).
+pub fn apply_status_server_override(api: &mut StatusApiPayload) {
+    api.services.status_server.running = true;
+}
+
 pub fn spawn_background_status_server(cfg: RuntimeConfig) -> Result<(), String> {
-    let bind_addr =
-        std::env::var("COMFY_STATUS_BIND").unwrap_or_else(|_| "127.0.0.1:18189".to_string());
+    // COMFY_STATUS_BIND explícito gana; por defecto, 127.0.0.1:{STATUS_SERVER_PORT} (§5.2).
+    let bind_addr = std::env::var("COMFY_STATUS_BIND")
+        .unwrap_or_else(|_| format!("127.0.0.1:{}", cfg.status_server_port));
     let log_dir =
         std::env::var("COMFY_LOG_DIR").map_or_else(|_| PathBuf::from("/var/log"), PathBuf::from);
     let server = Server::http(&bind_addr)

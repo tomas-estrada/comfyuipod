@@ -10,7 +10,7 @@ use crate::collect::gpu::{collect_gpu_status, GpuStatus};
 use crate::collect::phases::{collect_phases_status, format_phase_banner, PhasesStatus};
 use crate::collect::procfs::{
     build_masked_env, collect_comfyui_status, collect_memory_and_disk, collect_services_status,
-    find_process_by_cmdline, get_container_uptime_s, get_hostname, load_image_meta,
+    find_hf_download_process, get_container_uptime_s, get_hostname, load_image_meta,
     load_strict_report, ComfyUiStatus, DiskStatus, ImageMeta, InstanceInfo, MemoryStatus,
     ServicesStatus,
 };
@@ -54,7 +54,7 @@ pub fn build_status_api_payload(
     let (memory, disk) = collect_memory_and_disk(&cfg.comfy_data_dir);
     let comfyui = collect_comfyui_status(cfg);
 
-    let hf_proc = find_process_by_cmdline("hf", "download");
+    let hf_proc = find_hf_download_process();
     let dl_log_path = resolve_log_path("download", log_dir)
         .unwrap_or_else(|| log_dir.join("download-models.log"));
     let phases = collect_phases_status(
