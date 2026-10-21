@@ -40,12 +40,18 @@ touch \
     /var/log/supervisor.log \
     /var/log/download-models.log \
     /var/log/diag.txt
-chmod 644 \
+# Permisos: 600 para logs que contienen secretos o solo los lee comfyctl (root) —
+# start.log guarda el banner con la contraseña autogenerada; supervisor.log, diag.txt y
+# ttyd.log solo los sirve comfyctl vía /logs/<name> con redacción de secretos.
+# 644 para comfyui.log (lo inspecciona CI vía docker exec) y download-models.log
+# (nginx lo lee directamente como www-data en /download-status).
+chmod 600 \
     /var/log/start.log \
-    /var/log/comfyui.log \
     /var/log/supervisor.log \
-    /var/log/download-models.log \
     /var/log/diag.txt
+chmod 644 \
+    /var/log/comfyui.log \
+    /var/log/download-models.log
 
 exec > >(tee -a /var/log/start.log) 2>&1
 
@@ -210,26 +216,26 @@ unset COMFY_PASS
 # ------------------------------------------------------------------------------
 # 4. Iniciar Nginx y ttyd opcional ANTES de ceder el control a comfyctl (§5.3)
 # ------------------------------------------------------------------------------
-echo "[4/5] Iniciando Nginx y servicios auxiliares..."
+echo "[4/7] Iniciando Nginx y servicios auxiliares..."
 nginx -t
 nginx
 
 if [ "${ENABLE_WEB_TERMINAL:-0}" = "1" ]; then
     if command -v ttyd >/dev/null 2>&1; then
-        echo "[4/5] Iniciando terminal web ttyd en 127.0.0.1:7681 (/terminal/)..."
+        echo "[4/7] Iniciando terminal web ttyd en 127.0.0.1:7681 (/terminal/)..."
         touch /var/log/ttyd.log
-        chmod 644 /var/log/ttyd.log
+        chmod 600 /var/log/ttyd.log
         setsid -f env -u COMFY_PASS ttyd --interface 127.0.0.1 --port 7681 --base-path /terminal --writable bash -l >> /var/log/ttyd.log 2>&1 < /dev/null
     else
         echo "[WARN] ENABLE_WEB_TERMINAL=1 pero el binario ttyd no está instalado."
     fi
 else
-    echo "[4/5] Terminal web desactivada por defecto (ENABLE_WEB_TERMINAL=0)."
+    echo "[4/7] Terminal web desactivada por defecto (ENABLE_WEB_TERMINAL=0)."
 fi
 
 # ------------------------------------------------------------------------------
 # 5. Ceder control a comfyctl supervise (servidor HTTP :18189, diag, strict-check, Fase 1/2 y supervisor)
 # ------------------------------------------------------------------------------
-echo "[5/5] Cediendo supervisión principal a /usr/local/bin/comfyctl supervise..."
+echo "[5/7] Cediendo supervisión principal a /usr/local/bin/comfyctl supervise..."
 exec /usr/local/bin/comfyctl supervise
 

@@ -17,7 +17,9 @@ COPY comfyctl/src ./src
 RUN touch src/main.rs src/lib.rs && cargo build --release --locked --bin comfyctl
 
 # --- Stage 2: Imagen final de ejecución ---
-FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
+# Base CUDA fijada por digest (igual que el stage builder, §4.3 / REP-01): la etiqueta
+# se conserva por legibilidad, pero el digest garantiza pulls reproducibles.
+FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04@sha256:44e43f0e0bcca1fc6fdc775e6002c67834bf78d39eb1fd76825240fc79ba4a49
 
 LABEL org.opencontainers.image.title="ComfyUI Everything-Ready (Vast.ai RTX 5090 / 4090)"
 LABEL org.opencontainers.image.description="ComfyUI (/opt/ComfyUI) + ComfyUI-Manager + ffmpeg (libx264/nvenc) + Nginx Basic Auth + Top Custom Nodes & Auto-Models"
@@ -237,6 +239,9 @@ RUN sed -i 's/\r$//' \
 EXPOSE 8188
 
 # BAJA-02: start-period=900s superior al timeout de 600s de la Fase 1.
+# El 900s solo es válido mientras la Fase 1 siga acotada con `timeout 600` en el supervisor
+# (+ strict/diag ~1-2 min + arranque): si el tope de la Fase 1 cambia, start-period debe
+# reajustarse en consecuencia.
 # HEAD (-I) es obligatorio: /healthz hace proxy_method HEAD a /system_stats, asi que la
 # respuesta 200 trae Content-Length pero SIN cuerpo; un GET colgaria hasta --timeout y el
 # contenedor marcaria "unhealthy" (~900s tras arrancar) estando perfectamente sano.
