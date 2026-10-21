@@ -258,6 +258,16 @@ fn simulated_nvidia_smi_binary_probe_and_subprocess_timeout() {
     assert!(start.elapsed() < Duration::from_secs(15));
 }
 
+/// Fija permisos 0640 (sin bits 'other') a un fixture esperado como válido,
+/// imitando el `chmod 640` que aplica el CI sobre /etc/nginx/.htpasswd:
+/// en unix, escribir en /tmp con umask 022 deja 0644 y el chequeo de
+/// permisos de R-02 (world-accessible) lo rechazaría.
+#[cfg(unix)]
+fn restrict_fixture_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o640));
+}
+
 #[test]
 fn probe_htpasswd_validates_format_and_rejects_garbage() {
     let tmp_dir = std::env::temp_dir().join("comfyctl_htpasswd_probe");
@@ -267,6 +277,8 @@ fn probe_htpasswd_validates_format_and_rejects_garbage() {
     // Formato del fixture de arranque/CI: `admin:{PLAIN}test` debe pasar.
     let ok_path = tmp_dir.join("ok.htpasswd");
     let _ = fs::write(&ok_path, "admin:{PLAIN}test\n");
+    #[cfg(unix)]
+    restrict_fixture_permissions(&ok_path);
     let (ok, missing, detail) = probe_htpasswd(&ok_path);
     assert!(
         ok,
@@ -284,6 +296,8 @@ fn probe_htpasswd_validates_format_and_rejects_garbage() {
     // Línea con usuario con espacios → inválido; usuario:hash correcto en otra línea → válido.
     let mixed_path = tmp_dir.join("mixed.htpasswd");
     let _ = fs::write(&mixed_path, "bad user:hash\nroot:$apr1$abc$def\n");
+    #[cfg(unix)]
+    restrict_fixture_permissions(&mixed_path);
     let (ok_m, _, _) = probe_htpasswd(&mixed_path);
     assert!(ok_m);
 
@@ -298,6 +312,23 @@ fn probe_htpasswd_validates_format_and_rejects_garbage() {
     let (ok_n, missing_n, _) = probe_htpasswd(&tmp_dir.join("nope.htpasswd"));
     assert!(!ok_n);
     assert!(missing_n);
+
+    // En unix, un fichero con contenido válido pero permisos world-accessible
+    // (0644) debe ser rechazado por el chequeo de permisos de R-02.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let world_path = tmp_dir.join("world.htpasswd");
+        let _ = fs::write(&world_path, "admin:{PLAIN}test\n");
+        let _ = fs::set_permissions(&world_path, fs::Permissions::from_mode(0o644));
+        let (ok_w, missing_w, detail_w) = probe_htpasswd(&world_path);
+        assert!(!ok_w, "0644 world-accessible debe fallar: {detail_w}");
+        assert!(!missing_w);
+        assert!(
+            detail_w.contains("Permisos inseguros"),
+            "detalle inesperado: {detail_w}"
+        );
+    }
 
     let _ = fs::remove_dir_all(&tmp_dir);
 }
