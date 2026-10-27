@@ -336,9 +336,18 @@
                                 <input type="number" id="template-steps-input" name="steps" min="1" max="100" value="4">
                             </div>
                             <div class="form-group flex-1">
-                                <label for="template-asset-select">Medio de entrada (opcional)</label>
+                                <label for="template-asset-select">Medio de entrada / Primer fotograma (opcional)</label>
                                 <select id="template-asset-select" name="asset_id">
                                     <option value="">— Sin asset de entrada (por defecto) —</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-row" id="template-last-frame-group">
+                            <div class="form-group flex-1">
+                                <label for="template-last-frame-select">Último fotograma (wan_flf2v, opcional)</label>
+                                <select id="template-last-frame-select" name="last_frame_asset_id">
+                                    <option value="">— Sin último fotograma (por defecto) —</option>
                                 </select>
                             </div>
                         </div>

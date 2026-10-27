@@ -191,3 +191,181 @@ def test_stub_llm_propose_edl_in_chat_populates_project_edl(
     assert edl_data["edl"] is not None
     assert edl_data["edl"]["version"] >= 1
     assert len(edl_data["edl"]["edl"]["cuts"]) >= 1
+
+
+def test_panel_chat_sse_consumes_delta_tokens_before_done(
+    client: TestClient,
+) -> None:
+    """M2-SCR-012: el servidor emite token.delta y panel/app.js acumula delta antes de done."""
+    proj = client.post(
+        "/studio/api/projects",
+        json={"name": "Proyecto Delta Live", "aspect_ratio": "16:9"},
+    ).json()
+    project_id = proj["id"]
+
+    stream_resp = client.post(
+        f"/studio/api/projects/{project_id}/chat",
+        json={
+            "message": "Hola agente, responde en streaming",
+            "stream": True,
+        },
+    )
+    assert stream_resp.status_code == 200
+    sse_events = _parse_sse_events(stream_resp.text)
+
+    # Verificar que los eventos token llegan antes de done y usan la clave 'delta'
+    done_index = next(i for i, (evt, _) in enumerate(sse_events) if evt == "done")
+    token_events_before_done = [
+        payload for evt, payload in sse_events[:done_index] if evt == "token"
+    ]
+    assert len(token_events_before_done) >= 2
+    for tok in token_events_before_done:
+        assert "delta" in tok and isinstance(tok["delta"], str) and len(tok["delta"]) > 0
+        assert "text" not in tok
+
+    # Verificar que panel/app.js lee payload.delta al procesar el evento token
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+    token_branch_start = app_js.index('if (evtName === "token")')
+    token_branch_end = app_js.index('else if (evtName === "tool_call")', token_branch_start)
+    token_branch = app_js[token_branch_start:token_branch_end]
+    assert "payload.delta" in token_branch, (
+        "panel/app.js debe leer payload.delta en el bloque evtName === 'token'"
+    )
+
+    # Simular la acumulación previa al evento done con el payload real del servidor
+    accumulated_before_done = "".join(
+        tok.get("delta") if isinstance(tok.get("delta"), str) else (tok.get("text") or "")
+        for tok in token_events_before_done
+    )
+    done_payload = sse_events[done_index][1]
+    assert accumulated_before_done == done_payload["reply"]
+    assert len(accumulated_before_done) > 0
+
+
+def test_panel_clears_selected_keyframes_across_projects(
+    client: TestClient,
+) -> None:
+    """M2-SCR-013: cambiar de proyecto limpia selectedKeyframeIds y no filtra IDs."""
+    proj_a = client.post(
+        "/studio/api/projects",
+        json={"name": "Proyecto A Con Keyframe", "aspect_ratio": "16:9"},
+    ).json()
+    proj_b = client.post(
+        "/studio/api/projects",
+        json={"name": "Proyecto B Sin Keyframes", "aspect_ratio": "16:9"},
+    ).json()
+
+    # Subir imagen keyframe en Proyecto A
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0"
+        b"\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    up_a = client.post(
+        f"/studio/api/projects/{proj_a['id']}/assets",
+        files={"file": ("keyframe_a.png", png_bytes, "image/png")},
+        data={"category": "keyframes"},
+    )
+    assert up_a.status_code == 201
+    asset_a_id = up_a.json()["id"]
+
+    # En Proyecto A el chat con asset_a_id funciona
+    chat_a = client.post(
+        f"/studio/api/projects/{proj_a['id']}/chat",
+        json={
+            "message": "Analiza este keyframe en A",
+            "asset_ids": [asset_a_id],
+            "stream": False,
+        },
+    )
+    assert chat_a.status_code == 200
+
+    # Si se filtrara asset_a_id a Proyecto B, el servidor rechazaría el turno (400 ValueError)
+    leaked_chat_b = client.post(
+        f"/studio/api/projects/{proj_b['id']}/chat",
+        json={"message": "Hola en B", "asset_ids": [asset_a_id], "stream": False},
+    )
+    assert leaked_chat_b.status_code == 400
+
+    # Verificar que selectProject en panel/app.js limpia y acota selectedKeyframeIds
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+    select_fn_start = app_js.index("async function selectProject(")
+    select_fn_end = app_js.index("function renderActiveProjectDetail(", select_fn_start)
+    select_fn_body = app_js[select_fn_start:select_fn_end]
+    has_clear = "selectedKeyframeIds.clear()" in select_fn_body
+    has_delete = "selectedKeyframeIds.delete(" in select_fn_body
+    assert has_clear and has_delete, (
+        "selectProject debe limpiar/acotar state.selectedKeyframeIds al cambiar de proyecto"
+    )
+
+
+def test_panel_wan_flf2v_launcher_uses_registered_first_and_last_frame_params(
+    client: TestClient,
+) -> None:
+    """M2-SCR-014: Jobs usa first_frame_asset_id/last_frame_asset_id y expone selector final."""
+    html = (PANEL_DIR / "index.html").read_text(encoding="utf-8")
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+
+    # 1. El DOM de Jobs incluye tanto el selector principal como el de último fotograma
+    assert 'id="template-asset-select"' in html
+    assert 'id="template-last-frame-select"' in html
+
+    # 2. app.js nunca emite start_image_asset_id y usa first_frame_asset_id + last_frame_asset_id
+    assert "start_image_asset_id" not in app_js
+    submit_fn_start = app_js.index("async function submitTemplateJob(")
+    submit_fn_end = app_js.index("async function refreshGallery(", submit_fn_start)
+    submit_fn_body = app_js[submit_fn_start:submit_fn_end]
+    assert "first_frame_asset_id" in submit_fn_body
+    assert "last_frame_asset_id" in submit_fn_body
+    assert "template-last-frame-select" in app_js
+
+    # 3. Verificar que wan_flf2v con ambos fotogramas crea el job (200, sin 422)
+    proj = client.post(
+        "/studio/api/projects",
+        json={"name": "Proyecto FLF2V Panel", "aspect_ratio": "16:9"},
+    ).json()
+    project_id = proj["id"]
+
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0"
+        b"\x00\x00\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    first_up = client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("inicio.png", png_bytes, "image/png")},
+        data={"category": "uploads"},
+    )
+    last_up = client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("final.png", png_bytes, "image/png")},
+        data={"category": "uploads"},
+    )
+    assert first_up.status_code == 201
+    assert last_up.status_code == 201
+    first_asset = first_up.json()
+    last_asset = last_up.json()
+
+    submit_resp = client.post(
+        "/studio/api/templates/wan_flf2v/submit",
+        json={
+            "project_id": project_id,
+            "params": {
+                "prompt": "Transición suave del plano inicial al plano final",
+                "steps": 4,
+                "first_frame_asset_id": first_asset["id"],
+                "last_frame_asset_id": last_asset["id"],
+            },
+        },
+    )
+    assert submit_resp.status_code == 200, submit_resp.text
+    result = submit_resp.json()
+    assert result["status"] == "done"
+    assert result["template_id"] == "wan_flf2v"
+    # Ambos nodos LoadImage (8 y 9) deben resolver a los assets subidos del proyecto
+    wf = result["workflow"]
+    assert wf["8"]["inputs"]["image"] != "first_frame.png"
+    assert wf["9"]["inputs"]["image"] != "last_frame.png"
+    assert first_asset["filename"] in wf["8"]["inputs"]["image"]
+    assert last_asset["filename"] in wf["9"]["inputs"]["image"]
+

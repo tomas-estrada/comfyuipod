@@ -214,6 +214,7 @@
                 state.activeProjectId &&
                 !state.projects.some((p) => p.id === state.activeProjectId)
             ) {
+                state.selectedKeyframeIds.clear();
                 state.activeProjectId = state.projects.length > 0 ? state.projects[0].id : null;
             }
 
@@ -221,7 +222,14 @@
             if (state.activeProjectId) {
                 await selectProject(state.activeProjectId, false);
             } else {
+                state.activeProjectDetail = null;
+                state.assets = [];
+                state.jobs = [];
+                state.selectedKeyframeIds.clear();
                 renderActiveProjectDetail();
+                renderProjectAssets();
+                renderKeyframesSelector();
+                renderTemplateAssetOptions();
             }
         } catch (_err) {
             setToast("No se pudo cargar la lista de proyectos.", "error");
@@ -309,7 +317,14 @@
         return null;
     }
 
-    async function selectProject(projectId, announce) {
+    async function selectProject(projectId, announce, options) {
+        const opts = options || {};
+        const previousLoadedId = state.activeProjectDetail
+            ? state.activeProjectDetail.id
+            : state.activeProjectId;
+        if (previousLoadedId !== projectId) {
+            state.selectedKeyframeIds.clear();
+        }
         state.activeProjectId = projectId;
         renderProjectsList();
 
@@ -328,11 +343,22 @@
                 };
             }
 
+            const validImageAssetIds = new Set(
+                state.assets.filter((a) => a.kind === "image").map((a) => a.id)
+            );
+            for (const kfId of Array.from(state.selectedKeyframeIds)) {
+                if (!validImageAssetIds.has(kfId)) {
+                    state.selectedKeyframeIds.delete(kfId);
+                }
+            }
+
             renderActiveProjectDetail();
             renderProjectAssets();
             renderKeyframesSelector();
             renderTemplateAssetOptions();
-            await refreshChatHistory();
+            if (!opts.preserveChatDom) {
+                await refreshChatHistory();
+            }
             await refreshGallery();
 
             if (announce) {
@@ -464,19 +490,33 @@
 
     function renderTemplateAssetOptions() {
         const selectEl = document.getElementById("template-asset-select");
-        if (!selectEl) return;
+        const lastFrameSelectEl = document.getElementById("template-last-frame-select");
 
-        const currentVal = selectEl.value;
-        const options = ['<option value="">— Sin asset de entrada (por defecto) —</option>'];
-        state.assets.forEach((asset) => {
-            const label = `${asset.original_filename || asset.filename} (${asset.kind} · ${asset.id})`;
-            options.push(
-                `<option value="${escapeHtml(asset.id)}">${escapeHtml(label)}</option>`
-            );
-        });
-        selectEl.innerHTML = options.join("");
-        if (currentVal && state.assets.some((a) => a.id === currentVal)) {
-            selectEl.value = currentVal;
+        const assetOptionsHtml = state.assets
+            .map((asset) => {
+                const label = `${asset.original_filename || asset.filename} (${asset.kind} · ${asset.id})`;
+                return `<option value="${escapeHtml(asset.id)}">${escapeHtml(label)}</option>`;
+            })
+            .join("");
+
+        if (selectEl) {
+            const currentVal = selectEl.value;
+            selectEl.innerHTML =
+                '<option value="">— Sin asset de entrada (por defecto) —</option>' +
+                assetOptionsHtml;
+            if (currentVal && state.assets.some((a) => a.id === currentVal)) {
+                selectEl.value = currentVal;
+            }
+        }
+
+        if (lastFrameSelectEl) {
+            const currentLastVal = lastFrameSelectEl.value;
+            lastFrameSelectEl.innerHTML =
+                '<option value="">— Sin último fotograma (por defecto) —</option>' +
+                assetOptionsHtml;
+            if (currentLastVal && state.assets.some((a) => a.id === currentLastVal)) {
+                lastFrameSelectEl.value = currentLastVal;
+            }
         }
     }
 
@@ -626,6 +666,10 @@
         const useStream = streamCheckbox ? streamCheckbox.checked : true;
 
         if (listEl) {
+            const sysPlaceholder = listEl.querySelector(".chat-msg-system");
+            if (sysPlaceholder) {
+                sysPlaceholder.remove();
+            }
             const userBubble = document.createElement("div");
             userBubble.className = "chat-msg chat-msg-user";
             userBubble.innerHTML = `
@@ -655,7 +699,12 @@
             sendBtn.disabled = true;
         }
 
-        const assetIds = Array.from(state.selectedKeyframeIds);
+        const validProjectImageIds = new Set(
+            state.assets.filter((a) => a.kind === "image").map((a) => a.id)
+        );
+        const assetIds = Array.from(state.selectedKeyframeIds).filter((id) =>
+            validProjectImageIds.has(id)
+        );
 
         try {
             const resp = await apiFetch(
@@ -696,6 +745,7 @@
                 let accumulatedTokens = "";
                 let tokenCount = 0;
                 let toolCallCount = 0;
+                let currentStreamIteration = null;
 
                 const reader = resp.body.getReader();
                 const decoder = new TextDecoder("utf-8");
@@ -716,11 +766,28 @@
                         const payload = parsed.data;
 
                         if (evtName === "token") {
-                            const piece = payload.text || "";
+                            if (
+                                payload.iteration &&
+                                currentStreamIteration !== null &&
+                                payload.iteration !== currentStreamIteration
+                            ) {
+                                currentStreamIteration = payload.iteration;
+                                accumulatedTokens = "";
+                            } else if (payload.iteration && currentStreamIteration === null) {
+                                currentStreamIteration = payload.iteration;
+                            }
+                            const piece =
+                                typeof payload.delta === "string"
+                                    ? payload.delta
+                                    : payload.text || "";
                             accumulatedTokens += piece;
                             tokenCount += 1;
                             if (tokenContainer) {
                                 tokenContainer.textContent = accumulatedTokens;
+                                tokenContainer.setAttribute(
+                                    "data-stream-tokens",
+                                    String(tokenCount)
+                                );
                             }
                             if (statusEl) {
                                 statusEl.textContent = `Streaming SSE en vivo: ${tokenCount} fragmentos de tokens recibidos…`;
@@ -737,7 +804,15 @@
                                 statusEl.textContent = `Resultado recibido de herramienta: ${payload.name}.`;
                             }
                         } else if (evtName === "done") {
-                            if (payload.reply && tokenContainer) {
+                            if (tokenContainer) {
+                                tokenContainer.setAttribute(
+                                    "data-text-before-done",
+                                    tokenContainer.textContent || ""
+                                );
+                            }
+                            if (!accumulatedTokens && payload.reply && tokenContainer) {
+                                tokenContainer.textContent = payload.reply;
+                            } else if (payload.reply && tokenContainer) {
                                 tokenContainer.textContent = payload.reply;
                             }
                             if (statusEl) {
@@ -745,7 +820,7 @@
                             }
                         } else if (evtName === "error") {
                             if (tokenContainer) {
-                                tokenContainer.textContent = `Error del agente: ${payload.error || "desconocido"}`;
+                                tokenContainer.textContent = `Error del agente: ${payload.detail || payload.error || "desconocido"}`;
                             }
                         }
                     }
@@ -756,7 +831,7 @@
             }
 
             setToast("Respuesta del agente completada.", "success");
-            await selectProject(projectId, false);
+            await selectProject(projectId, false, { preserveChatDom: true });
         } catch (err) {
             if (tokenContainer) {
                 tokenContainer.textContent = `Error de red en chat: ${err.message}`;
@@ -909,12 +984,14 @@
         const promptInput = document.getElementById("template-prompt-input");
         const stepsInput = document.getElementById("template-steps-input");
         const assetSelect = document.getElementById("template-asset-select");
+        const lastFrameSelect = document.getElementById("template-last-frame-select");
         const submitBtn = document.getElementById("submit-template-btn");
 
         const templateId = tplSelect ? tplSelect.value : "wan_t2v";
         const promptText = promptInput ? promptInput.value.trim() : "Plano de estudio";
         const stepsVal = stepsInput ? Number(stepsInput.value || 4) : 4;
         const selectedAssetId = assetSelect ? assetSelect.value : "";
+        const selectedLastFrameId = lastFrameSelect ? lastFrameSelect.value : "";
 
         const params = {
             prompt: promptText,
@@ -926,8 +1003,11 @@
             } else if (templateId === "wan_i2v") {
                 params.image_asset_id = selectedAssetId;
             } else if (templateId === "wan_flf2v") {
-                params.start_image_asset_id = selectedAssetId;
+                params.first_frame_asset_id = selectedAssetId;
             }
+        }
+        if (templateId === "wan_flf2v" && selectedLastFrameId) {
+            params.last_frame_asset_id = selectedLastFrameId;
         }
 
         if (submitBtn) submitBtn.disabled = true;
