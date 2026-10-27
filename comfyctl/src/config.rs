@@ -73,6 +73,7 @@ pub struct RuntimeConfig {
     pub studio_server_port: u16,
     pub studio_python_bin: Option<PathBuf>,
     pub studio_server_script: Option<PathBuf>,
+    pub studio_pythonpath: Option<PathBuf>,
     pub studio_include_animate: bool,
     pub comfy_app_dir: PathBuf,
     pub comfy_data_dir: PathBuf,
@@ -205,6 +206,10 @@ impl RuntimeConfig {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(PathBuf::from);
+        let studio_pythonpath = get("STUDIO_PYTHONPATH")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
         let studio_include_animate = get("STUDIO_INCLUDE_ANIMATE").unwrap_or("0") == "1";
 
         let status_server_port = get("STATUS_SERVER_PORT")
@@ -256,6 +261,7 @@ impl RuntimeConfig {
             studio_server_port,
             studio_python_bin,
             studio_server_script,
+            studio_pythonpath,
             studio_include_animate,
             comfy_app_dir: PathBuf::from(get("COMFY_APP_DIR").unwrap_or("/opt/ComfyUI")),
             comfy_data_dir,

@@ -280,6 +280,22 @@ fn sleep_interruptible(seconds: u64) -> bool {
     sys::is_shutdown_requested()
 }
 
+fn sleep_interruptible_with_studio(
+    cfg: &RuntimeConfig,
+    studio_child: &mut Option<Child>,
+    seconds: u64,
+) -> bool {
+    let ticks = seconds.saturating_mul(5);
+    for _ in 0..ticks {
+        if sys::is_shutdown_requested() {
+            return true;
+        }
+        supervise_studio_server_tick(cfg, studio_child);
+        thread::sleep(Duration::from_millis(200));
+    }
+    sys::is_shutdown_requested()
+}
+
 fn graceful_shutdown_nginx() {
     let _ = Command::new("nginx")
         .args(["-s", "quit"])
@@ -296,6 +312,10 @@ pub const fn should_start_studio_server(cfg: &RuntimeConfig) -> bool {
 
 /// Construye el `Command` para ejecutar `studio-server` en `127.0.0.1:{studio_server_port}`,
 /// propagando las variables `STUDIO_*` y eliminando `COMFY_PASS` (`O-05`).
+/// En producción es fail-closed: invoca `-m comfy_studio.server` directamente sin ningún
+/// servidor HTTP sustituto; solo se ejecuta un script alternativo cuando se indica
+/// explícitamente vía `STUDIO_SERVER_SCRIPT` (p. ej. fixtures de test) o existe
+/// `/opt/ComfyUI/studio_server/main.py`.
 pub fn build_studio_server_command(cfg: &RuntimeConfig) -> Command {
     let py_bin = if let Some(ref custom_bin) = cfg.studio_python_bin {
         custom_bin.clone()
@@ -311,29 +331,7 @@ pub fn build_studio_server_command(cfg: &RuntimeConfig) -> Command {
     } else if Path::new("/opt/ComfyUI/studio_server/main.py").is_file() {
         cmd.arg("/opt/ComfyUI/studio_server/main.py");
     } else {
-        const STUDIO_BOOTSTRAP_PY: &str = r#"import http.server, json, os, runpy, sys
-try:
-    sys.argv = ["comfy_studio.server"] + sys.argv[1:]
-    runpy.run_module("comfy_studio.server", run_name="__main__")
-except ImportError:
-    port = int(os.environ.get("STUDIO_SERVER_PORT", "18190"))
-    class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path.startswith("/studio/api/health") or self.path.startswith("/health"):
-                body = json.dumps({"status": "ok", "service": "studio-server", "profile": "studio"}).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            else:
-                self.send_response(404)
-                self.end_headers()
-        def log_message(self, fmt, *args):
-            pass
-    http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
-"#;
-        cmd.args(["-c", STUDIO_BOOTSTRAP_PY]);
+        cmd.args(["-m", "comfy_studio.server"]);
     }
     cmd.args([
         "--host",
@@ -355,6 +353,10 @@ except ImportError:
     .env_remove("COMFY_PASS")
     .stdin(Stdio::null());
 
+    if let Some(ref py_path) = cfg.studio_pythonpath {
+        cmd.env("PYTHONPATH", py_path);
+    }
+
     if let Some(ref key) = cfg.studio_llm_key {
         cmd.env("STUDIO_LLM_KEY", key);
     } else {
@@ -365,6 +367,8 @@ except ImportError:
 
 /// Inicia `studio-server` (`127.0.0.1:18190`) solo si `cfg.model_profile == ModelProfile::Studio`.
 /// Si el perfil no es `studio`, devuelve `None` sin efectos secundarios.
+/// Es fail-closed: si el proceso termina prematuramente durante el arranque (p. ej. `ImportError`
+/// o módulo ausente), registra el fallo y devuelve `None`.
 pub fn spawn_studio_server_if_enabled(cfg: &RuntimeConfig) -> Option<Child> {
     if !should_start_studio_server(cfg) {
         return None;
@@ -403,14 +407,26 @@ pub fn spawn_studio_server_if_enabled(cfg: &RuntimeConfig) -> Option<Child> {
         Ok(mut child) => {
             // Esperar brevemente hasta que el puerto de studio-server acepte conexiones
             // para que strict-check (S11) lo observe levantado en el arranque.
+            // Si el hijo sale con error antes de abrir el puerto, fail-closed devolviendo None.
             for _ in 0..25 {
+                if let Ok(Some(status)) = child.try_wait() {
+                    let rc = extract_exit_code(status);
+                    log_sup(&format!(
+                        "WARN: studio-server terminó prematuramente durante el arranque (rc={rc})."
+                    ));
+                    return None;
+                }
                 if crate::collect::procfs::check_tcp_port(cfg.studio_server_port, 100) {
                     break;
                 }
-                if matches!(child.try_wait(), Ok(Some(_))) {
-                    break;
-                }
                 thread::sleep(Duration::from_millis(100));
+            }
+            if let Ok(Some(status)) = child.try_wait() {
+                let rc = extract_exit_code(status);
+                log_sup(&format!(
+                    "WARN: studio-server terminó prematuramente durante el arranque (rc={rc})."
+                ));
+                return None;
             }
             Some(child)
         }
@@ -419,6 +435,44 @@ pub fn spawn_studio_server_if_enabled(cfg: &RuntimeConfig) -> Option<Child> {
             None
         }
     }
+}
+
+/// Supervisa de forma continua `studio-server` cuando `MODEL_PROFILE=studio`:
+/// si el proceso hijo ha terminado o aún no estaba activo, lo relanza inmediatamente.
+/// Devuelve `true` si se realizó un respawn exitoso en este tick.
+pub fn supervise_studio_server_tick(
+    cfg: &RuntimeConfig,
+    studio_child_opt: &mut Option<Child>,
+) -> bool {
+    if !should_start_studio_server(cfg) || sys::is_shutdown_requested() {
+        return false;
+    }
+    let needs_respawn = match studio_child_opt {
+        Some(ref mut sc) => match sc.try_wait() {
+            Ok(Some(status)) => {
+                let old_pid = sc.id();
+                let rc = extract_exit_code(status);
+                log_sup(&format!(
+                    "WARN: studio-server (PID {old_pid}) terminó inesperadamente (rc={rc}). Reiniciando studio-server en 127.0.0.1:{}...",
+                    cfg.studio_server_port
+                ));
+                true
+            }
+            Ok(None) => false,
+            Err(e) => {
+                log_sup(&format!(
+                    "WARN: Error en try_wait sobre studio-server: {e}. Reiniciando..."
+                ));
+                true
+            }
+        },
+        None => true,
+    };
+    if needs_respawn {
+        *studio_child_opt = spawn_studio_server_if_enabled(cfg);
+        return studio_child_opt.is_some();
+    }
+    false
 }
 
 /// Detiene limpiamente el proceso `studio-server` si estaba activo.
@@ -435,6 +489,160 @@ pub fn stop_studio_server(studio_child: &mut Option<Child>) {
         let _ = sc.kill();
         let _ = sc.wait();
     }
+}
+
+/// Bucle de supervisión continua de `ComfyUI` (`main.py`) y `studio-server` (`127.0.0.1:18190`).
+/// Garantiza que `studio-server` se supervise y relance de forma continua e independiente del
+/// ciclo de vida de `ComfyUI` (mientras `ComfyUI` corre sano, durante el delay entre reinicios
+/// y cuando `ComfyUI` alcanza `COMFY_MAX_RESTARTS` y permanece en estado `exhausted`).
+#[allow(clippy::too_many_lines)]
+pub fn run_supervision_loop(
+    cfg: &RuntimeConfig,
+    sup_state: &mut SupervisorState,
+    studio_child: &mut Option<Child>,
+) -> Result<(), String> {
+    while !sys::is_shutdown_requested() {
+        truncate_logs_if_needed(cfg.log_max_mb);
+        supervise_studio_server_tick(cfg, studio_child);
+
+        let started_at = sys::now_unix_secs();
+        let next_attempt = sup_state.attempt.saturating_add(1);
+        log_sup(&format!(
+            "Lanzando ComfyUI (intento #{}, reinicios={}/{}, healthy_resets={})...",
+            next_attempt, sup_state.restarts, sup_state.max, sup_state.healthy_resets
+        ));
+
+        let log_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/var/log/comfyui.log")
+            .or_else(|_| {
+                let _ = fs::create_dir_all(&cfg.comfy_data_dir);
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(cfg.comfy_data_dir.join("comfyui.log"))
+            })
+            .map_err(|e| format!("No se pudo abrir /var/log/comfyui.log: {e}"))?;
+        let log_file_err = log_file
+            .try_clone()
+            .map_err(|e| format!("No se pudo clonar descriptor de /var/log/comfyui.log: {e}"))?;
+
+        let yaml_path = cfg.comfy_app_dir.join("extra_model_paths.yaml");
+        let mut cmd = Command::new("python3");
+        cmd.current_dir(&cfg.comfy_app_dir)
+            .args([
+                "main.py",
+                "--listen",
+                "127.0.0.1",
+                "--port",
+                "18188",
+                "--extra-model-paths-config",
+            ])
+            .arg(&yaml_path);
+
+        for extra_tok in cfg.comfy_extra_args.split_whitespace() {
+            cmd.arg(extra_tok);
+        }
+
+        // O-05: Garantizar que COMFY_PASS nunca exista en el entorno de main.py
+        cmd.env_remove("COMFY_PASS")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_file_err));
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Error al lanzar python3 main.py: {e}"))?;
+        let child_pid = child.id();
+
+        sup_state.on_child_spawned(child_pid, started_at);
+        write_supervisor_json(&cfg.supervisor_json_path, sup_state)?;
+
+        let exit_code: i32;
+        loop {
+            if sys::is_shutdown_requested() {
+                log_sup(
+                    "Señal de apagado recibida (SIGTERM/SIGINT). Deteniendo ComfyUI limpiamente...",
+                );
+                let _ = sys::send_signal(child_pid, 15);
+                for _ in 0..20 {
+                    if let Ok(Some(_)) = child.try_wait() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(500));
+                }
+                if let Ok(None) = child.try_wait() {
+                    let _ = sys::send_signal(child_pid, 9);
+                }
+                let _ = child.wait();
+                return Ok(());
+            }
+
+            supervise_studio_server_tick(cfg, studio_child);
+
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    exit_code = extract_exit_code(status);
+                    break;
+                }
+                Ok(None) => {
+                    thread::sleep(Duration::from_millis(200));
+                }
+                Err(e) => {
+                    log_sup(&format!("Error en try_wait sobre PID {child_pid}: {e}"));
+                    exit_code = 1;
+                    break;
+                }
+            }
+        }
+
+        let exit_at = sys::now_unix_secs();
+        let run_duration_s = u64::try_from(exit_at.saturating_sub(started_at)).unwrap_or(0);
+        let prev_restarts = sup_state.restarts;
+        let should_restart = sup_state.on_child_exit(
+            exit_code,
+            run_duration_s,
+            cfg.comfy_healthy_uptime_s,
+            exit_at,
+        );
+
+        if run_duration_s >= cfg.comfy_healthy_uptime_s && prev_restarts > 0 {
+            log_sup(&format!(
+                "Proceso previo vivió {}s (>= {}s); contador de reinicios reseteado a 0 (healthy_resets={}).",
+                run_duration_s, cfg.comfy_healthy_uptime_s, sup_state.healthy_resets
+            ));
+        }
+
+        let reason = sup_state
+            .last_exit
+            .as_ref()
+            .map_or_else(String::new, |le| le.reason.clone());
+        dump_crash_diagnostics(sup_state.attempt, exit_code, run_duration_s, &reason);
+
+        write_supervisor_json(&cfg.supervisor_json_path, sup_state)?;
+
+        if !should_restart {
+            log_sup(&format!(
+                "CRITICAL: Se alcanzó COMFY_MAX_RESTARTS={}. ComfyUI queda en estado 'exhausted'. Nginx, /status y /home siguen activos para diagnóstico.",
+                sup_state.max
+            ));
+            while !sys::is_shutdown_requested() {
+                supervise_studio_server_tick(cfg, studio_child);
+                thread::sleep(Duration::from_millis(200));
+            }
+            break;
+        }
+
+        log_sup(&format!(
+            "Reiniciando ComfyUI en {}s (reinicio {}/{})...",
+            cfg.comfy_restart_delay_s, sup_state.restarts, sup_state.max
+        ));
+        if sleep_interruptible_with_studio(cfg, studio_child, cfg.comfy_restart_delay_s) {
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// Bucle principal de `comfyctl supervise`.
@@ -504,152 +712,7 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
 
     log_sup("Iniciando bucle supervisor de ComfyUI en 127.0.0.1:18188...");
 
-    while !sys::is_shutdown_requested() {
-        truncate_logs_if_needed(cfg.log_max_mb);
-
-        if should_start_studio_server(cfg) {
-            let needs_respawn = match studio_child {
-                Some(ref mut sc) => matches!(sc.try_wait(), Ok(Some(_))),
-                None => true,
-            };
-            if needs_respawn {
-                studio_child = spawn_studio_server_if_enabled(cfg);
-            }
-        }
-
-        let started_at = sys::now_unix_secs();
-        let next_attempt = sup_state.attempt.saturating_add(1);
-        log_sup(&format!(
-            "Lanzando ComfyUI (intento #{}, reinicios={}/{}, healthy_resets={})...",
-            next_attempt, sup_state.restarts, sup_state.max, sup_state.healthy_resets
-        ));
-
-        let log_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/var/log/comfyui.log")
-            .map_err(|e| format!("No se pudo abrir /var/log/comfyui.log: {e}"))?;
-        let log_file_err = log_file
-            .try_clone()
-            .map_err(|e| format!("No se pudo clonar descriptor de /var/log/comfyui.log: {e}"))?;
-
-        let yaml_path = cfg.comfy_app_dir.join("extra_model_paths.yaml");
-        let mut cmd = Command::new("python3");
-        cmd.current_dir(&cfg.comfy_app_dir)
-            .args([
-                "main.py",
-                "--listen",
-                "127.0.0.1",
-                "--port",
-                "18188",
-                "--extra-model-paths-config",
-            ])
-            .arg(&yaml_path);
-
-        for extra_tok in cfg.comfy_extra_args.split_whitespace() {
-            cmd.arg(extra_tok);
-        }
-
-        // O-05: Garantizar que COMFY_PASS nunca exista en el entorno de main.py
-        cmd.env_remove("COMFY_PASS")
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(log_file))
-            .stderr(Stdio::from(log_file_err));
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Error al lanzar python3 main.py: {e}"))?;
-        let child_pid = child.id();
-
-        sup_state.on_child_spawned(child_pid, started_at);
-        write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
-
-        let exit_code: i32;
-        loop {
-            if sys::is_shutdown_requested() {
-                log_sup(
-                    "Señal de apagado recibida (SIGTERM/SIGINT). Deteniendo ComfyUI limpiamente...",
-                );
-                let _ = sys::send_signal(child_pid, 15);
-                for _ in 0..20 {
-                    if let Ok(Some(_)) = child.try_wait() {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(500));
-                }
-                if let Ok(None) = child.try_wait() {
-                    let _ = sys::send_signal(child_pid, 9);
-                }
-                let _ = child.wait();
-                if let Some(mut tc) = tail_child.take() {
-                    let _ = tc.kill();
-                    let _ = tc.wait();
-                }
-                stop_studio_server(&mut studio_child);
-                graceful_shutdown_nginx();
-                return Ok(0);
-            }
-
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    exit_code = extract_exit_code(status);
-                    break;
-                }
-                Ok(None) => {
-                    thread::sleep(Duration::from_millis(200));
-                }
-                Err(e) => {
-                    log_sup(&format!("Error en try_wait sobre PID {child_pid}: {e}"));
-                    exit_code = 1;
-                    break;
-                }
-            }
-        }
-
-        let exit_at = sys::now_unix_secs();
-        let run_duration_s = u64::try_from(exit_at.saturating_sub(started_at)).unwrap_or(0);
-        let prev_restarts = sup_state.restarts;
-        let should_restart = sup_state.on_child_exit(
-            exit_code,
-            run_duration_s,
-            cfg.comfy_healthy_uptime_s,
-            exit_at,
-        );
-
-        if run_duration_s >= cfg.comfy_healthy_uptime_s && prev_restarts > 0 {
-            log_sup(&format!(
-                "Proceso previo vivió {}s (>= {}s); contador de reinicios reseteado a 0 (healthy_resets={}).",
-                run_duration_s, cfg.comfy_healthy_uptime_s, sup_state.healthy_resets
-            ));
-        }
-
-        let reason = sup_state
-            .last_exit
-            .as_ref()
-            .map_or_else(String::new, |le| le.reason.clone());
-        dump_crash_diagnostics(sup_state.attempt, exit_code, run_duration_s, &reason);
-
-        write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
-
-        if !should_restart {
-            log_sup(&format!(
-                "CRITICAL: Se alcanzó COMFY_MAX_RESTARTS={}. ComfyUI queda en estado 'exhausted'. Nginx, /status y /home siguen activos para diagnóstico.",
-                sup_state.max
-            ));
-            while !sys::is_shutdown_requested() {
-                thread::sleep(Duration::from_millis(500));
-            }
-            break;
-        }
-
-        log_sup(&format!(
-            "Reiniciando ComfyUI en {}s (reinicio {}/{})...",
-            cfg.comfy_restart_delay_s, sup_state.restarts, sup_state.max
-        ));
-        if sleep_interruptible(cfg.comfy_restart_delay_s) {
-            break;
-        }
-    }
+    let loop_res = run_supervision_loop(cfg, &mut sup_state, &mut studio_child);
 
     if let Some(mut tc) = tail_child.take() {
         let _ = tc.kill();
@@ -657,6 +720,7 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
     }
     stop_studio_server(&mut studio_child);
     graceful_shutdown_nginx();
+    loop_res?;
     Ok(0)
 }
 
