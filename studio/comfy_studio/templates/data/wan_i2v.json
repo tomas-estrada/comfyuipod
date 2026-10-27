@@ -277,7 +277,6 @@
         "start_at_step": 0,
         "end_at_step": 2,
         "return_with_leftover_noise": "enable",
-        "offload": "{{offload}}",
         "model": ["3", 0],
         "positive": ["12", 0],
         "negative": ["12", 1],
@@ -299,7 +298,6 @@
         "start_at_step": 2,
         "end_at_step": "{{steps}}",
         "return_with_leftover_noise": "disable",
-        "offload": "{{offload}}",
         "model": ["4", 0],
         "positive": ["12", 0],
         "negative": ["12", 1],
@@ -327,6 +325,7 @@
         "loop_count": 0,
         "filename_prefix": "{{output_prefix}}",
         "format": "video/h264-mp4",
+        "pingpong": false,
         "save_output": true
       },
       "_meta": {

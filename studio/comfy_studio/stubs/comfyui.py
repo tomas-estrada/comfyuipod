@@ -83,6 +83,7 @@ _STUB_OBJECT_INFO: dict[str, Any] = {
                 "loop_count": ["INT", {"default": 0}],
                 "filename_prefix": ["STRING", {"default": "AnimateDiff"}],
                 "format": [["video/h264-mp4", "image/gif", "image/webp"]],
+                "pingpong": ["BOOLEAN", {"default": False}],
                 "save_output": ["BOOLEAN", {"default": True}],
             }
         },

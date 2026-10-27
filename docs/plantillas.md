@@ -9,10 +9,10 @@ Este documento describe las **6 plantillas curadas del hito M2** incluidas en [`
 El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`prompt` graph JSON) listos para producción sin exponer el grafo de nodos a la interfaz de usuario ni al agente conversacional:
 
 1. **Wan 2.2 Fun VACE 14B (`fp8_scaled`) en `480p` + `offload: true`**:
-   - Los módulos `wan2.2_vace_high_noise_14B_fp8_scaled.safetensors` y `wan2.2_vace_low_noise_14B_fp8_scaled.safetensors` ocupan `32.2 GiB` en disco frente a los `64.6 GiB` de la variante `bf16` (que desbordaría los 32 GB de VRAM de la RTX 5090).
+   - Los módulos `wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors` y `wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors` ocupan `32.2 GiB` en disco frente a los `64.6 GiB` de la variante `bf16` (que desbordaría los 32 GB de VRAM de la RTX 5090).
    - Se fija resolución base **`832x480` (`480p` 16:9)**, **`81` fotogramas** (~5 s a 16 fps) y **`offload: true`** para mantener margen térmico y de memoria al encadenar ambos expertos MoE (`high_noise` + `low_noise`).
 2. **Wan 2.2 14B MoE + LoRA LightX2V 4-step (`steps=4`, `cfg=1.0`)**:
-   - Todas las plantillas de generación y edición de vídeo (`vace_inpaint`, `vace_restyle`, `wan_flf2v`, `wan_i2v`, `wan_t2v`) emplean los modelos **Wan 2.2 14B `fp8_scaled`** combinados con los LoRAs de destilación **LightX2V 4-step** (`high_noise` pasos `0→2`, `low_noise` pasos `2→4`, `cfg=1.0`, `euler` + `simple`).
+   - Las plantillas de generación de vídeo (`wan_flf2v`, `wan_i2v`, `wan_t2v`) emplean los modelos **Wan 2.2 14B `fp8_scaled`** combinados con los LoRAs de destilación **LightX2V 4-step** (`high_noise` pasos `0→2`, `low_noise` pasos `2→4`, `cfg=1.0`, `euler` + `simple`), mientras que las plantillas de edición `vace_inpaint` y `vace_restyle` ejecutan los expertos dedicados **Wan 2.2 Fun VACE 14B `fp8_scaled`** en `2+2` pasos (`uni_pc` + `simple`).
    - Se descarta `Wan 2.2 TI2V 5B Turbo` como motor principal porque carece de arquitectura MoE de doble experto y presenta artefactos de movimiento en planos de 5 segundos.
 3. **Generación de imagen base con `Juggernaut-XI-byRunDiffusion.safetensors` (`sdxl_image`)**:
    - Para keyframes, storyboards y referencias visuales (que después alimentan `wan_i2v`, `wan_flf2v` o `vace_restyle`), se emplea SDXL Juggernaut XI a **`1024x1024`**, **`25` pasos**, **`cfg=6.0`** con sampler `dpmpp_2m_sde` + `karras`.
@@ -26,13 +26,13 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 - **Archivo**: [`studio/comfy_studio/templates/data/vace_inpaint.json`](../studio/comfy_studio/templates/data/vace_inpaint.json)
 - **Uso**: Reemplazar o insertar objetos, vestuario o elementos escénicos dentro de un clip de vídeo existente usando una máscara espacial/temporal (`mask_input` / `mask_asset_id`), preservando el movimiento original y la iluminación fuera de la máscara.
 - **Modelos requeridos**:
-  - `wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_vace_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4step_lora_v1_high_noise.safetensors`
-  - `wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_vace_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4step_lora_v1_low_noise.safetensors`
+  - `wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors`
+  - `wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors`
   - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `wan_2.1_vae.safetensors`
 - **Entradas principales (`inputs`)**:
   - `prompt` (*string*, obligatorio): descripción visual del objeto o cambio a introducir en la zona enmascarada.
   - `video_asset_id` / `video_input` (*string*): asset de vídeo base del proyecto (`VHS_LoadVideo`).
-  - `mask_asset_id` / `mask_input` (*string*): asset de máscara en blanco y negro (`LoadImage` + `ImageToMask`).
+  - `mask_asset_id` / `mask_input` (*string*): asset de máscara en blanco y negro (`LoadImage` + `ImageToMask` leyendo el canal RGB `"red"` hacia `control_masks` de `WanVaceToVideo`).
   - `strength` (*number*, `0.0–1.0`): intensidad del condicionamiento VACE (`WanVaceToVideo`).
 - **Defaults de rendimiento**: `832x480` (`480p`), `81` frames (`16` fps), `steps=4` (`2+2`), `cfg=1.0`, `strength=0.85`, `offload=true`, `fp8_scaled`.
 
@@ -41,17 +41,17 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 ### 2.2 `vace_restyle` — VACE 14B Restyle y Transferencia de Estilo
 
 - **Archivo**: [`studio/comfy_studio/templates/data/vace_restyle.json`](../studio/comfy_studio/templates/data/vace_restyle.json)
-- **Uso**: Transformar la estética, iluminación o acabado visual de un clip de vídeo completo conservando la coreografía, geometría y movimiento de cámara originales, guiado por prompt y opcionalmente una imagen de referencia (`CLIPVisionEncode`).
+- **Uso**: Transformar la estética, iluminación o acabado visual de un clip de vídeo completo conservando la coreografía, geometría y movimiento de cámara originales, guiado por prompt y una imagen de referencia conectada a `reference_image` en `WanVaceToVideo`.
 - **Modelos requeridos**:
-  - `wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_vace_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4step_lora_v1_high_noise.safetensors`
-  - `wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_vace_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4step_lora_v1_low_noise.safetensors`
-  - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `clip_vision_h.safetensors`, `wan_2.1_vae.safetensors`
+  - `wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors`
+  - `wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors`
+  - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `wan_2.1_vae.safetensors`
 - **Entradas principales (`inputs`)**:
   - `prompt` (*string*, obligatorio): descripción del nuevo estilo visual, atmósfera o iluminación.
-  - `video_asset_id` / `video_input` (*string*): vídeo fuente cuyo movimiento se preserva.
-  - `image_asset_id` / `image_input` (*string*): imagen de referencia estilística codificada vía `CLIPVisionEncode`.
-  - `strength` (*number*, `0.0–1.0`): peso de adherencia a la estructura del vídeo base (`0.75` por defecto).
-- **Defaults de rendimiento**: `832x480` (`480p`), `81` frames (`16` fps), `steps=4`, `cfg=1.0`, `strength=0.75`, `offload=true`, `fp8_scaled`.
+  - `video_asset_id` / `video_input` (*string*): vídeo fuente cuyo movimiento se preserva (`control_video`).
+  - `image_asset_id` / `image_input` (*string*): imagen de referencia estilística conectada a `reference_image` en `WanVaceToVideo`.
+  - `strength` (*number*, `0.0–1.0`): peso de adherencia a la estructura del vídeo base (`0.85` por defecto).
+- **Defaults de rendimiento**: `832x480` (`480p`), `81` frames (`16` fps), `steps=4`, `cfg=1.0`, `strength=0.85`, `offload=true`, `fp8_scaled`.
 
 ---
 
@@ -60,8 +60,8 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_flf2v.json`](../studio/comfy_studio/templates/data/wan_flf2v.json)
 - **Uso**: Generar una transición de vídeo continua y coherente entre un fotograma inicial (`first_frame`) y un fotograma final (`last_frame`) mediante el nodo nativo `WanFirstLastFrameToVideo`. Ideal para unir cortes del montaje o interpolar entre dos keyframes generados con `sdxl_image`.
 - **Modelos requeridos**:
-  - `wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4step_lora_v1_high_noise.safetensors`
-  - `wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4step_lora_v1_low_noise.safetensors`
+  - `wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`
+  - `wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`
   - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `clip_vision_h.safetensors`, `wan_2.1_vae.safetensors`
 - **Entradas principales (`inputs`)**:
   - `prompt` (*string*, obligatorio): descripción del movimiento y transición entre ambos extremos.
@@ -76,8 +76,8 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_i2v.json`](../studio/comfy_studio/templates/data/wan_i2v.json)
 - **Uso**: Animar un fotograma clave o retrato estático (`image_asset_id` / `image_input`) convirtiéndolo en un plano de vídeo de 5 segundos con preservación de identidad y composición mediante `WanImageToVideo` y `CLIPVisionEncode`.
 - **Modelos requeridos**:
-  - `wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4step_lora_v1_high_noise.safetensors`
-  - `wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4step_lora_v1_low_noise.safetensors`
+  - `wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`
+  - `wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`
   - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `clip_vision_h.safetensors`, `wan_2.1_vae.safetensors`
 - **Entradas principales (`inputs`)**:
   - `prompt` (*string*, obligatorio): acción de los sujetos y movimiento de cámara a partir de la imagen inicial.
@@ -91,8 +91,8 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v.json`](../studio/comfy_studio/templates/data/wan_t2v.json)
 - **Uso**: Generar planos de vídeo B-roll, secuencias de establecimiento o escenas completas directamente desde texto (`EmptyHunyuanLatentVideo` + doble `KSamplerAdvanced` MoE).
 - **Modelos requeridos**:
-  - `wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_t2v_lightx2v_4step_lora_v1.1_high_noise.safetensors`
-  - `wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_t2v_lightx2v_4step_lora_v1.1_low_noise.safetensors`
+  - `wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors` + `wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors`
+  - `wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors` + `wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors`
   - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `wan_2.1_vae.safetensors`
 - **Entradas principales (`inputs`)**:
   - `prompt` (*string*, obligatorio): descripción cinematográfica de la escena, sujeto, iluminación y cámara.
@@ -131,8 +131,9 @@ python -m comfy_studio.templates
 2. **Defaults de rendimiento obligatorios**:
    - `vace_*` y `wan_*`: `height == 480`, `width == 832`, `steps == 4`, `offload == True`, `weight_dtype == "fp8_scaled"`.
    - `sdxl_image`: `width == 1024`, `height == 1024`, `steps == 25`.
-3. **Integridad del grafo ComfyUI API-format**:
-   - Todos los `class_type` pertenecen al catálogo `KNOWN_NODE_SPECS` y declaran todas sus entradas obligatorias sin valores `null` desconectados.
+3. **Integridad del grafo ComfyUI API-format y contratos pinneados**:
+   - Todos los `class_type` pertenecen al catálogo `KNOWN_NODE_SPECS`, declaran todas sus entradas obligatorias (`required_inputs`, incluyendo `pingpong` en `VHS_VideoCombine`) sin valores `null` desconectados y rechazan cualquier entrada no declarada en `required_inputs ∪ optional_inputs` del nodo pinneado (p. ej. `clip_vision_output` o `control_mask` singular en `WanVaceToVideo`, u `offload` en `KSamplerAdvanced`).
+   - En `WanVaceToVideo`, `control_masks` no puede alimentarse directamente del slot 1 (canal alfa) de `LoadImage`; debe convertirse el canal RGB mediante `ImageToMask` o `LoadImageMask`.
    - Todo enlace `["node_id", slot_idx]` apunta a un nodo existente en el mismo workflow con índice de salida entero `>= 0`.
    - Ausencia de ciclos dirigidos (DAG válido).
    - Existencia de al menos un nodo terminal de salida (`VHS_VideoCombine` o `SaveImage`) cuyo `filename_prefix` contiene `{{output_prefix}}` o `{{project_id}}`.

@@ -20,58 +20,85 @@ VALID_PARAM_TYPES: frozenset[str] = frozenset(
     {"string", "integer", "number", "boolean"}
 )
 
-# Catálogo de nodos ComfyUI permitidos en plantillas con sus entradas requeridas y nº de salidas
+# Catálogo de nodos ComfyUI permitidos en plantillas según contratos pinneados
+# (ComfyUI bdc63e72f5ab29fde448c161db3057827148c0ef / VHS 4d907bee61e92c2e65af3bd6383a4e4d356126d1)
 KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
     "UNETLoader": {
         "required_inputs": ("unet_name", "weight_dtype"),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "CLIPLoader": {
         "required_inputs": ("clip_name", "type"),
+        "optional_inputs": ("device",),
         "outputs": 1,
     },
     "CLIPVisionLoader": {
         "required_inputs": ("clip_name",),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "VAELoader": {
         "required_inputs": ("vae_name",),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "CheckpointLoaderSimple": {
         "required_inputs": ("ckpt_name",),
+        "optional_inputs": (),
         "outputs": 3,  # MODEL, CLIP, VAE
     },
     "LoraLoaderModelOnly": {
         "required_inputs": ("model", "lora_name", "strength_model"),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "LoadImage": {
         "required_inputs": ("image",),
-        "outputs": 2,  # IMAGE, MASK
+        "optional_inputs": (),
+        "outputs": 2,  # IMAGE (slot 0), MASK alpha-derived (slot 1)
     },
     "LoadImageMask": {
         "required_inputs": ("image", "channel"),
-        "outputs": 1,
+        "optional_inputs": (),
+        "outputs": 1,  # MASK
+    },
+    "ImageToMask": {
+        "required_inputs": ("image", "channel"),
+        "optional_inputs": (),
+        "outputs": 1,  # MASK
     },
     "VHS_LoadVideo": {
-        "required_inputs": ("video",),
+        "required_inputs": (
+            "video",
+            "force_rate",
+            "custom_width",
+            "custom_height",
+            "frame_load_cap",
+            "skip_first_frames",
+            "select_every_nth",
+        ),
+        "optional_inputs": ("meta_batch", "vae", "format"),
         "outputs": 4,  # IMAGE, INT, AUDIO, VHS_VIDEOINFO
     },
     "CLIPTextEncode": {
         "required_inputs": ("text", "clip"),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "CLIPVisionEncode": {
-        "required_inputs": ("clip_vision", "image"),
+        "required_inputs": ("clip_vision", "image", "crop"),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "EmptyLatentImage": {
         "required_inputs": ("width", "height", "batch_size"),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "EmptyHunyuanLatentVideo": {
         "required_inputs": ("width", "height", "length", "batch_size"),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "WanVaceToVideo": {
@@ -82,20 +109,23 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
             "width",
             "height",
             "length",
+            "batch_size",
             "strength",
         ),
-        "outputs": 3,  # positive, negative, latent
+        "optional_inputs": ("control_video", "control_masks", "reference_image"),
+        "outputs": 4,  # positive, negative, latent, trim_latent
     },
     "WanImageToVideo": {
         "required_inputs": (
             "positive",
             "negative",
             "vae",
-            "start_image",
             "width",
             "height",
             "length",
+            "batch_size",
         ),
+        "optional_inputs": ("clip_vision_output", "start_image", "ref_pad_image"),
         "outputs": 3,  # positive, negative, latent
     },
     "WanFirstLastFrameToVideo": {
@@ -103,11 +133,16 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
             "positive",
             "negative",
             "vae",
-            "start_image",
-            "end_image",
             "width",
             "height",
             "length",
+            "batch_size",
+        ),
+        "optional_inputs": (
+            "clip_vision_start_image",
+            "clip_vision_end_image",
+            "start_image",
+            "end_image",
         ),
         "outputs": 3,  # positive, negative, latent
     },
@@ -124,6 +159,7 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
             "negative",
             "latent_image",
         ),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "KSamplerAdvanced": {
@@ -142,18 +178,30 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
             "negative",
             "latent_image",
         ),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "VAEDecode": {
         "required_inputs": ("samples", "vae"),
+        "optional_inputs": (),
         "outputs": 1,
     },
     "SaveImage": {
         "required_inputs": ("images", "filename_prefix"),
+        "optional_inputs": (),
         "outputs": 0,
     },
     "VHS_VideoCombine": {
-        "required_inputs": ("images", "frame_rate", "filename_prefix", "format"),
+        "required_inputs": (
+            "images",
+            "frame_rate",
+            "loop_count",
+            "filename_prefix",
+            "format",
+            "pingpong",
+            "save_output",
+        ),
+        "optional_inputs": ("audio", "meta_batch", "vae"),
         "outputs": 1,
     },
 }
@@ -463,6 +511,36 @@ def validate_template_definition(raw_def: dict[str, Any]) -> dict[str, Any]:
         raise TemplateValidationError(
             f"Plantilla {template_id!r}: se detectó un ciclo circular en el grafo: {cycle_str}."
         )
+
+    # Verificar que ningún nodo declare entradas inexistentes en el contrato pinneado
+    for node_id, node_data in workflow.items():
+        class_type = node_data["class_type"]
+        node_spec = KNOWN_NODE_SPECS[class_type]
+        allowed_inputs = set(node_spec["required_inputs"]) | set(
+            node_spec.get("optional_inputs", ())
+        )
+        inputs = node_data["inputs"]
+        for input_name in inputs:
+            if input_name not in allowed_inputs:
+                raise TemplateValidationError(
+                    f"Plantilla {template_id!r}: el nodo {node_id!r} ({class_type}) "
+                    f"declara una entrada inexistente o no soportada {input_name!r} "
+                    f"según el contrato pinneado (permitidas: {sorted(allowed_inputs)})."
+                )
+        if class_type == "WanVaceToVideo" and "control_masks" in inputs:
+            mask_ref = inputs["control_masks"]
+            if (
+                isinstance(mask_ref, list)
+                and len(mask_ref) == 2
+                and workflow.get(mask_ref[0], {}).get("class_type") == "LoadImage"
+                and mask_ref[1] == 1
+            ):
+                raise TemplateValidationError(
+                    f"Plantilla {template_id!r}: el nodo {node_id!r} (WanVaceToVideo) "
+                    "conecta 'control_masks' al slot 1 (canal alfa) de LoadImage; "
+                    "para máscaras RGB blanco/negro debe convertir el canal mediante "
+                    "ImageToMask o LoadImageMask."
+                )
 
     # Verificar que ningún nodo no-terminal esté desconectado del resto del grafo
     for node_id, node_data in workflow.items():

@@ -189,6 +189,153 @@ def test_structural_validator_rejects_corrupted_templates(tmp_path: Path) -> Non
     with pytest.raises(TemplateValidationError):
         validate_templates_dir(tmp_path)
 
+    # 9. (M2-SCR-008) VHS_VideoCombine sin el input requerido 'pingpong' falla
+    corrupt_no_pingpong = copy.deepcopy(base_def)
+    for node in corrupt_no_pingpong["workflow"].values():
+        if node["class_type"] == "VHS_VideoCombine":
+            node["inputs"].pop("pingpong", None)
+    with pytest.raises(TemplateValidationError, match="pingpong"):
+        validate_template_definition(corrupt_no_pingpong)
+
+    # 10. (M2-SCR-009 / M2-SCR-010) Input inexistente / no soportado en el nodo falla
+    corrupt_unknown_input = copy.deepcopy(base_def)
+    for node in corrupt_unknown_input["workflow"].values():
+        if node["class_type"] == "VHS_VideoCombine":
+            node["inputs"]["input_inventado_no_pinneado"] = True
+    with pytest.raises(
+        TemplateValidationError,
+        match="input_inventado_no_pinneado|inexistente|no soportad",
+    ):
+        validate_template_definition(corrupt_unknown_input)
+
+    # 11. (M2-SCR-009) WanVaceToVideo con 'control_mask' (singular) o máscara alfa falla
+    vace_inpaint_def = copy.deepcopy(registry.get_raw_definition("vace_inpaint"))
+    corrupt_vace_singular = copy.deepcopy(vace_inpaint_def)
+    for node in corrupt_vace_singular["workflow"].values():
+        if node["class_type"] == "WanVaceToVideo":
+            mask_ref = node["inputs"].pop("control_masks", ["6", 0])
+            node["inputs"]["control_mask"] = mask_ref
+    with pytest.raises(
+        TemplateValidationError,
+        match="control_mask|inexistente|no soportad",
+    ):
+        validate_template_definition(corrupt_vace_singular)
+
+    corrupt_vace_alpha = copy.deepcopy(vace_inpaint_def)
+    load_img_id = next(
+        nid
+        for nid, n in corrupt_vace_alpha["workflow"].items()
+        if n["class_type"] == "LoadImage"
+    )
+    # Eliminar nodos ImageToMask para no dejarlos huérfanos y conectar slot 1 de LoadImage directo
+    corrupt_vace_alpha["workflow"] = {
+        nid: n
+        for nid, n in corrupt_vace_alpha["workflow"].items()
+        if n["class_type"] != "ImageToMask"
+    }
+    corrupt_vace_alpha["required_nodes"] = [
+        rc for rc in corrupt_vace_alpha.get("required_nodes", []) if rc != "ImageToMask"
+    ]
+    for node in corrupt_vace_alpha["workflow"].values():
+        if node["class_type"] == "WanVaceToVideo":
+            node["inputs"]["control_masks"] = [load_img_id, 1]
+    with pytest.raises(
+        TemplateValidationError,
+        match="alpha|alfa|ImageToMask|LoadImageMask|control_masks",
+    ):
+        validate_template_definition(corrupt_vace_alpha)
+
+    # 12. (M2-SCR-010) WanVaceToVideo con 'clip_vision_output' falla por contrato pinneado
+    vace_restyle_def = copy.deepcopy(registry.get_raw_definition("vace_restyle"))
+    corrupt_vace_clip = copy.deepcopy(vace_restyle_def)
+    for node in corrupt_vace_clip["workflow"].values():
+        if node["class_type"] == "WanVaceToVideo":
+            node["inputs"]["clip_vision_output"] = ["7", 0]
+    with pytest.raises(
+        TemplateValidationError,
+        match="clip_vision_output|inexistente|no soportad",
+    ):
+        validate_template_definition(corrupt_vace_clip)
+
+
+def test_video_templates_adhere_to_pinned_node_contracts() -> None:
+    """Regresión M2-SCR-008, M2-SCR-009 y M2-SCR-010: contratos pinneados de VHS y VACE."""
+    registry = get_default_registry()
+    video_template_ids = (
+        "wan_t2v",
+        "wan_i2v",
+        "wan_flf2v",
+        "vace_inpaint",
+        "vace_restyle",
+    )
+
+    # M2-SCR-008: Las 5 plantillas de vídeo deben declarar pingpong (bool) en VHS_VideoCombine
+    # y KSamplerAdvanced no debe pasar 'offload' como input del nodo.
+    for tpl_id in video_template_ids:
+        raw_def = registry.get_raw_definition(tpl_id)
+        workflow = raw_def["workflow"]
+        vhs_combine_nodes = [
+            n for n in workflow.values() if n["class_type"] == "VHS_VideoCombine"
+        ]
+        assert len(vhs_combine_nodes) == 1, f"{tpl_id} debe tener un nodo VHS_VideoCombine"
+        vhs_inputs = vhs_combine_nodes[0]["inputs"]
+        for req_key in (
+            "images",
+            "frame_rate",
+            "loop_count",
+            "filename_prefix",
+            "format",
+            "pingpong",
+            "save_output",
+        ):
+            assert req_key in vhs_inputs, (
+                f"{tpl_id}: VHS_VideoCombine omite input requerido {req_key!r}"
+            )
+        assert isinstance(vhs_inputs["pingpong"], bool)
+
+        for node in workflow.values():
+            if node["class_type"] == "KSamplerAdvanced":
+                assert "offload" not in node["inputs"], (
+                    f"{tpl_id}: KSamplerAdvanced no acepta 'offload' en ComfyUI pinneado"
+                )
+
+    # M2-SCR-009: vace_inpaint conecta control_masks (plural) leyendo canal RGB vía ImageToMask
+    inpaint_wf = registry.get_raw_definition("vace_inpaint")["workflow"]
+    vace_inpaint_nodes = [
+        n for n in inpaint_wf.values() if n["class_type"] == "WanVaceToVideo"
+    ]
+    assert len(vace_inpaint_nodes) == 1
+    inpaint_inputs = vace_inpaint_nodes[0]["inputs"]
+    assert "control_mask" not in inpaint_inputs
+    assert "control_masks" in inpaint_inputs
+    mask_link = inpaint_inputs["control_masks"]
+    assert isinstance(mask_link, list) and len(mask_link) == 2
+    mask_src_node = inpaint_wf[mask_link[0]]
+    assert mask_src_node["class_type"] == "ImageToMask"
+    assert mask_link[1] == 0
+    assert mask_src_node["inputs"]["channel"] in ("red", "green", "blue")
+    img_link = mask_src_node["inputs"]["image"]
+    assert isinstance(img_link, list) and img_link[1] == 0
+    assert inpaint_wf[img_link[0]]["class_type"] == "LoadImage"
+
+    # M2-SCR-010: vace_restyle usa reference_image y NO pasa clip_vision_output a WanVaceToVideo
+    restyle_def = registry.get_raw_definition("vace_restyle")
+    restyle_wf = restyle_def["workflow"]
+    vace_restyle_nodes = [
+        n for n in restyle_wf.values() if n["class_type"] == "WanVaceToVideo"
+    ]
+    assert len(vace_restyle_nodes) == 1
+    restyle_inputs = vace_restyle_nodes[0]["inputs"]
+    assert "clip_vision_output" not in restyle_inputs
+    assert "reference_image" in restyle_inputs
+    ref_link = restyle_inputs["reference_image"]
+    assert isinstance(ref_link, list) and ref_link[1] == 0
+    assert restyle_wf[ref_link[0]]["class_type"] == "LoadImage"
+    restyle_classes = {n["class_type"] for n in restyle_wf.values()}
+    assert "CLIPVisionEncode" not in restyle_classes
+    assert "CLIPVisionLoader" not in restyle_classes
+    assert "clip_vision_h.safetensors" not in restyle_def.get("models", [])
+
 
 def test_submit_template_valid_params_enqueues_job_and_registers_gallery_outputs(
     client: TestClient,
