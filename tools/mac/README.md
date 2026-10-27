@@ -64,13 +64,14 @@ Cuando se invoca `comfy rent studio`, el helper aplica filtros específicos para
   - Por defecto solicita **200 GB** (`disk_space>=200`, `--disk 200`), suficiente para los modelos de Fase 1 + Fase 2 + los 77 modelos de Fase 3 (`~163.24 GB` / `~152.03 GiB` en total) y espacio de trabajo.
   - **Opt-in `STUDIO_INCLUDE_ANIMATE=1`**: si exportas `STUDIO_INCLUDE_ANIMATE=1` para incluir el modelo adicional `wan2.2_animate_14B_int8_convrot.safetensors` (`+18.41 GB` / `+17.15 GiB`), el helper exige y solicita automáticamente **250 GB** de disco (`disk_space>=250`, `--disk 250`). También puedes sobreescribir el tamaño manualmente con `COMFY_DISK_GB`.
 
-### 4.2 Lectura oculta de `STUDIO_LLM_KEY` (`VAL-SERVER-005` / `VAL-CROSS-004`)
-Para proteger tu API key del proveedor LLM (DashScope / Qwen, OpenAI o DeepSeek):
+### 4.2 Lectura oculta de `STUDIO_LLM_KEY` y credencial aislada `STUDIO_LLM_FALLBACK_KEY` (`VAL-SERVER-005` / `VAL-CROSS-004` / `M2-SCR-004`)
+Para proteger tus API keys de los proveedores LLM (primario DashScope / Qwen y fallback secundario DeepSeek):
 
-1. El script desactiva el historial de Bash en el proceso (`HISTFILE=/dev/null`, `unset HISTFILE`, `set +o history`) y retira `STUDIO_LLM_KEY`, `COMFY_PASS` y `HF_TOKEN` del entorno exportado para que ningún subproceso auxiliar (`vastai search offers`, `python3`) los herede.
+1. El script desactiva el historial de Bash en el proceso (`HISTFILE=/dev/null`, `unset HISTFILE`, `set +o history`) y retira `STUDIO_LLM_KEY`, `STUDIO_LLM_FALLBACK_KEY`, `COMFY_PASS` y `HF_TOKEN` del entorno exportado para que ningún subproceso auxiliar (`vastai search offers`, `python3`) los herede.
 2. Si `STUDIO_LLM_KEY` no fue pasada previamente en el entorno (y no estás en modo `STUDIO_STUB_LLM=1`), `comfy rent studio` la solicita mediante **`read -r -s`** (lectura silenciosa sin eco en la terminal, sin guardarla en disco ni en `~/.zsh_history` / `~/.bash_history`).
-3. La llave se inyecta únicamente en el flag `--env` de `vastai create instance` (`-e STUDIO_LLM_KEY="<valor>"`) junto con `-e MODEL_PROFILE="studio"` y las variables opcionales definidas en tu shell (`STUDIO_LLM_BASE_URL`, `STUDIO_LLM_MODEL`, `STUDIO_LLM_FALLBACK_BASE_URL`, `STUDIO_LLM_FALLBACK_MODEL`, `STUDIO_INCLUDE_ANIMATE`, `STUDIO_STUB_LLM`).
-4. En `--dry-run`, en `/status/api`, en `/studio/api/status` y en `comfy studio report`, la llave se muestra siempre como `<definida>` (o `<no definida>`), nunca en texto claro.
+3. La llave primaria se inyecta únicamente en el flag `--env` de `vastai create instance` (`-e STUDIO_LLM_KEY="<valor>"`) junto con `-e MODEL_PROFILE="studio"` y las variables opcionales definidas en tu shell (`STUDIO_LLM_BASE_URL`, `STUDIO_LLM_MODEL`, `STUDIO_LLM_FALLBACK_BASE_URL`, `STUDIO_LLM_FALLBACK_KEY`, `STUDIO_LLM_FALLBACK_MODEL`, `STUDIO_INCLUDE_ANIMATE`, `STUDIO_STUB_LLM`).
+4. **Aislamiento fail-closed de credenciales (`M2-SCR-004`)**: `STUDIO_LLM_KEY` se usa exclusivamente contra el proveedor primario y `STUDIO_LLM_FALLBACK_KEY` exclusivamente contra el proveedor de fallback (`STUDIO_LLM_FALLBACK_BASE_URL`). Si el primario falla y `STUDIO_LLM_FALLBACK_KEY` no está definida (o coincide con la primaria), el cliente LLM aborta **fail-closed** (`LLMProviderError`) sin reenviar jamás `STUDIO_LLM_KEY` a otro proveedor.
+5. En `--dry-run`, en `/status/api`, en `/studio/api/status` y en `comfy studio report`, tanto `STUDIO_LLM_KEY` como `STUDIO_LLM_FALLBACK_KEY` se muestran siempre como `<definida>` (o `<no definida>`), nunca en texto claro.
 
 ### 4.3 Ejemplo rápido (Runbooks S1 y S2)
 

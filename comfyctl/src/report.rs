@@ -380,6 +380,7 @@ pub fn build_report_markdown(
         "STUDIO_LLM_BASE_URL",
         "STUDIO_LLM_MODEL",
         "STUDIO_LLM_FALLBACK_BASE_URL",
+        "STUDIO_LLM_FALLBACK_KEY",
         "STUDIO_LLM_FALLBACK_MODEL",
         "STUDIO_COMFYUI_URL",
         "STUDIO_DATA_DIR",

@@ -293,6 +293,7 @@
         "STUDIO_LLM_BASE_URL": { "type": "string" },
         "STUDIO_LLM_MODEL": { "type": "string" },
         "STUDIO_LLM_FALLBACK_BASE_URL": { "type": "string" },
+        "STUDIO_LLM_FALLBACK_KEY": { "type": "string" },
         "STUDIO_LLM_FALLBACK_MODEL": { "type": "string" },
         "STUDIO_COMFYUI_URL": { "type": "string" },
         "STUDIO_DATA_DIR": { "type": "string" }

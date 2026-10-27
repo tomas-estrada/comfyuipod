@@ -90,6 +90,7 @@ with calls_file.open("a", encoding="utf-8") as fh:
     fh.write(json.dumps({
         "args": args,
         "has_llm_key_in_proc_env": "STUDIO_LLM_KEY" in os.environ,
+        "has_fallback_key_in_proc_env": "STUDIO_LLM_FALLBACK_KEY" in os.environ,
     }) + "\\n")
 
 if len(args) >= 2 and args[0] == "search" and args[1] == "offers":
@@ -166,6 +167,7 @@ def _run_comfy(
         "COMFY_USER",
         "HF_TOKEN",
         "STUDIO_LLM_KEY",
+        "STUDIO_LLM_FALLBACK_KEY",
         "STUDIO_LLM_BASE_URL",
         "STUDIO_LLM_MODEL",
         "STUDIO_LLM_FALLBACK_BASE_URL",
@@ -304,9 +306,10 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     )
 
     synthetic_llm_key = "sk" + "-studio-unit-secret-key-9988776655"
+    synthetic_fallback_key = "sk" + "-studio-fallback-secret-key-1122334455"
     synthetic_pod_pass = "pod-secret-pass-44332211"
 
-    # 1. Dry-run leyendo la llave desde stdin (read -r -s)
+    # 1. Dry-run leyendo la llave desde stdin (read -r -s) y con STUDIO_LLM_FALLBACK_KEY definida
     dry = _run_comfy(
         ["rent", "studio", "--dry-run"],
         bin_dir=bin_dir,
@@ -316,22 +319,29 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
             "COMFY_PASS": synthetic_pod_pass,
             "STUDIO_LLM_BASE_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             "STUDIO_LLM_MODEL": "qwen3-vl-plus",
+            "STUDIO_LLM_FALLBACK_KEY": synthetic_fallback_key,
         },
         stdin_text=f"{synthetic_llm_key}\n",
     )
     assert dry.returncode == 0, f"stderr={dry.stderr}\nstdout={dry.stdout}"
     combined_dry = dry.stdout + "\n" + dry.stderr
     assert synthetic_llm_key not in combined_dry, "La llave STUDIO_LLM_KEY se filtró en dry-run"
+    assert (
+        synthetic_fallback_key not in combined_dry
+    ), "La llave STUDIO_LLM_FALLBACK_KEY se filtró en dry-run"
     assert synthetic_pod_pass not in combined_dry, "COMFY_PASS se filtró en dry-run"
     assert "[DRY-RUN]" in dry.stdout
     assert "105" in dry.stdout  # Oferta 105 seleccionada tras filtrar 101..104
     assert "200" in dry.stdout
-    assert "STUDIO_LLM_KEY" in dry.stdout
+    assert "STUDIO_LLM_KEY=<definida>" in dry.stdout
+    assert "STUDIO_LLM_FALLBACK_KEY=<definida>" in dry.stdout
 
     # Verificar que no se escribió al archivo HISTFILE
     hist_file = state_dir / "bash_history"
     if hist_file.exists():
-        assert synthetic_llm_key not in hist_file.read_text(encoding="utf-8")
+        hist_txt = hist_file.read_text(encoding="utf-8")
+        assert synthetic_llm_key not in hist_txt
+        assert synthetic_fallback_key not in hist_txt
 
     # 2. Simulación completa con `--yes` (verifica env_flags entregados a vastai create instance)
     sim = _run_comfy(
@@ -344,6 +354,7 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
             "STUDIO_LLM_BASE_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             "STUDIO_LLM_MODEL": "qwen3-vl-plus",
             "STUDIO_LLM_FALLBACK_BASE_URL": "https://api.deepseek.com",
+            "STUDIO_LLM_FALLBACK_KEY": synthetic_fallback_key,
             "STUDIO_LLM_FALLBACK_MODEL": "deepseek-chat",
         },
         stdin_text=f"{synthetic_llm_key}\n",
@@ -351,6 +362,9 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     assert sim.returncode == 0, f"stderr={sim.stderr}\nstdout={sim.stdout}"
     combined_sim = sim.stdout + "\n" + sim.stderr
     assert synthetic_llm_key not in combined_sim, "STUDIO_LLM_KEY se imprimió en terminal"
+    assert (
+        synthetic_fallback_key not in combined_sim
+    ), "STUDIO_LLM_FALLBACK_KEY se imprimió en terminal"
     assert synthetic_pod_pass not in combined_sim, "COMFY_PASS se imprimió en terminal"
 
     calls = [
@@ -358,9 +372,10 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
         for line in (state_dir / "vastai_calls.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    # Ningún subproceso vastai debe heredar STUDIO_LLM_KEY en su entorno de proceso
+    # Ningún subproceso vastai hereda STUDIO_LLM_KEY ni STUDIO_LLM_FALLBACK_KEY en su entorno
     for call in calls:
         assert call["has_llm_key_in_proc_env"] is False
+        assert call["has_fallback_key_in_proc_env"] is False
 
     search_calls = [c for c in calls if c["args"][:2] == ["search", "offers"]]
     assert search_calls, "No se invocó vastai search offers"
@@ -381,6 +396,7 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     env_arg = c_args[c_args.index("--env") + 1]
     assert '-e MODEL_PROFILE="studio"' in env_arg
     assert f'-e STUDIO_LLM_KEY="{synthetic_llm_key}"' in env_arg
+    assert f'-e STUDIO_LLM_FALLBACK_KEY="{synthetic_fallback_key}"' in env_arg
     assert f'-e COMFY_PASS="{synthetic_pod_pass}"' in env_arg
     assert '-e STUDIO_LLM_MODEL="qwen3-vl-plus"' in env_arg
     assert '-e STUDIO_LLM_FALLBACK_MODEL="deepseek-chat"' in env_arg
@@ -616,6 +632,7 @@ class _MockPodServer:
                         "### Variables de entorno relevantes (enmascaradas)\n"
                         "- `MODEL_PROFILE` = `studio`\n"
                         f"- `STUDIO_LLM_KEY` = `{parent.leaked_llm_key}`\n"
+                        "- `STUDIO_LLM_FALLBACK_KEY` = `YOUR_FALLBACK_REPORT_KEY_HERE`\n"
                         f"- `COMFY_PASS` = `{parent.expected_pass}`\n"
                         f"- `HF_TOKEN` = `{parent.leaked_hf_token}`\n"
                         f"- Traza fugada: Authorization: Bearer {parent.leaked_llm_key}\n\n"
@@ -757,6 +774,7 @@ def test_comfy_studio_report_includes_diagnostics_and_masks_all_secrets(tmp_path
             extra_env={
                 "COMFY_PASS": pod_pass,
                 "STUDIO_LLM_KEY": leaked_llm_key,
+                "STUDIO_LLM_FALLBACK_KEY": "YOUR_FALLBACK_REPORT_KEY_HERE",
                 "HF_TOKEN": leaked_hf_token,
             },
         )
@@ -766,6 +784,9 @@ def test_comfy_studio_report_includes_diagnostics_and_masks_all_secrets(tmp_path
 
         # Cero fugas de secretos (VAL-SERVER-005 / VAL-CROSS-004)
         assert leaked_llm_key not in combined, "Fuga de STUDIO_LLM_KEY en comfy studio report"
+        assert (
+            "YOUR_FALLBACK_REPORT_KEY_HERE" not in combined
+        ), "Fuga de STUDIO_LLM_FALLBACK_KEY en comfy studio report"
         assert pod_pass not in combined, "Fuga de COMFY_PASS en comfy studio report"
         assert leaked_hf_token not in combined, "Fuga de HF_TOKEN en comfy studio report"
 

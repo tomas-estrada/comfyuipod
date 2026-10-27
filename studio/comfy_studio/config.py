@@ -25,7 +25,7 @@ DEFAULT_SSE_HEARTBEAT_SECONDS = 15.0
 
 _HF_TOKEN_RE = re.compile(r"hf_[A-Za-z0-9]{12,}")
 _SK_TOKEN_RE = re.compile(r"sk-[A-Za-z0-9._\-]{8,}")
-_STUDIO_LLM_KEY_ASSIGN_RE = re.compile(r"(?i)(STUDIO_LLM_KEY\s*[:=]\s*)(\S+)")
+_STUDIO_LLM_KEY_ASSIGN_RE = re.compile(r"(?i)(STUDIO_LLM_(?:FALLBACK_)?KEY\s*[:=]\s*)(\S+)")
 _COMFY_PASS_ASSIGN_RE = re.compile(r"(?i)(COMFY_PASS\s*[:=]\s*)(\S+)")
 _HF_TOKEN_ASSIGN_RE = re.compile(r"(?i)(HF_TOKEN\s*[:=]\s*)(\S+)")
 _BEARER_RE = re.compile(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{6,}")
@@ -61,11 +61,18 @@ class SecretRedactor:
         self,
         *,
         studio_llm_key: str | None = None,
+        studio_llm_fallback_key: str | None = None,
         comfy_pass: str | None = None,
         hf_token: str | None = None,
         extra_secrets: Iterable[str] = (),
     ) -> None:
-        candidates = [studio_llm_key, comfy_pass, hf_token, *extra_secrets]
+        candidates = [
+            studio_llm_key,
+            studio_llm_fallback_key,
+            comfy_pass,
+            hf_token,
+            *extra_secrets,
+        ]
         cleaned = sorted(
             {s.strip() for s in candidates if s and len(s.strip()) >= 2},
             key=len,
@@ -78,6 +85,7 @@ class SecretRedactor:
         source = env if env is not None else os.environ
         return cls(
             studio_llm_key=source.get("STUDIO_LLM_KEY"),
+            studio_llm_fallback_key=source.get("STUDIO_LLM_FALLBACK_KEY"),
             comfy_pass=source.get("COMFY_PASS") or source.get("STUDIO_AUTH_PASS"),
             hf_token=source.get("HF_TOKEN"),
         )
@@ -86,6 +94,7 @@ class SecretRedactor:
     def from_config(cls, config: StudioConfig) -> SecretRedactor:
         return cls(
             studio_llm_key=config.get_llm_key(),
+            studio_llm_fallback_key=config.get_llm_fallback_key(),
             comfy_pass=config.get_comfy_pass(),
         )
 
@@ -180,6 +189,7 @@ class StudioConfig:
     studio_llm_key: str | None = field(default=None, repr=False)
     studio_llm_model: str = DEFAULT_STUDIO_LLM_MODEL
     studio_llm_fallback_base_url: str = DEFAULT_STUDIO_LLM_FALLBACK_BASE_URL
+    studio_llm_fallback_key: str | None = field(default=None, repr=False)
     studio_llm_fallback_model: str = DEFAULT_STUDIO_LLM_FALLBACK_MODEL
     studio_comfyui_url: str = DEFAULT_STUDIO_COMFYUI_URL
     studio_data_dir: Path = field(
@@ -201,6 +211,9 @@ class StudioConfig:
         if self.studio_llm_key is not None:
             cleaned_key = self.studio_llm_key.strip()
             self.studio_llm_key = cleaned_key if cleaned_key else None
+        if self.studio_llm_fallback_key is not None:
+            cleaned_fb_key = self.studio_llm_fallback_key.strip()
+            self.studio_llm_fallback_key = cleaned_fb_key if cleaned_fb_key else None
         if self.comfy_pass is not None:
             cleaned_pass = self.comfy_pass.strip()
             self.comfy_pass = cleaned_pass if cleaned_pass else None
@@ -249,6 +262,9 @@ class StudioConfig:
                 source.get("STUDIO_LLM_FALLBACK_BASE_URL", "").strip()
                 or DEFAULT_STUDIO_LLM_FALLBACK_BASE_URL
             ),
+            studio_llm_fallback_key=(
+                source.get("STUDIO_LLM_FALLBACK_KEY", "").strip() or None
+            ),
             studio_llm_fallback_model=(
                 source.get("STUDIO_LLM_FALLBACK_MODEL", "").strip()
                 or DEFAULT_STUDIO_LLM_FALLBACK_MODEL
@@ -281,11 +297,17 @@ class StudioConfig:
     def get_llm_key(self) -> str | None:
         return self.studio_llm_key
 
+    def get_llm_fallback_key(self) -> str | None:
+        return self.studio_llm_fallback_key
+
     def get_comfy_pass(self) -> str | None:
         return self.comfy_pass
 
     def masked_llm_key_status(self) -> str:
         return "<definida>" if self.studio_llm_key else "<no definida>"
+
+    def masked_llm_fallback_key_status(self) -> str:
+        return "<definida>" if self.studio_llm_fallback_key else "<no definida>"
 
     def masked_comfy_pass_status(self) -> str:
         return "<definida>" if self.comfy_pass else "<no definida>"
@@ -300,6 +322,7 @@ class StudioConfig:
             "STUDIO_LLM_KEY": self.masked_llm_key_status(),
             "STUDIO_LLM_MODEL": self.studio_llm_model,
             "STUDIO_LLM_FALLBACK_BASE_URL": self.studio_llm_fallback_base_url,
+            "STUDIO_LLM_FALLBACK_KEY": self.masked_llm_fallback_key_status(),
             "STUDIO_LLM_FALLBACK_MODEL": self.studio_llm_fallback_model,
             "STUDIO_COMFYUI_URL": self.studio_comfyui_url,
             "STUDIO_DATA_DIR": str(self.studio_data_dir),

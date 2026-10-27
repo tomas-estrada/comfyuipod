@@ -474,6 +474,10 @@ pub fn build_masked_env(cfg: &RuntimeConfig) -> BTreeMap<String, String> {
         redactor.redact(&cfg.studio_llm_fallback_base_url),
     );
     map.insert(
+        "STUDIO_LLM_FALLBACK_KEY".to_string(),
+        cfg.masked_studio_llm_fallback_key_status(),
+    );
+    map.insert(
         "STUDIO_LLM_FALLBACK_MODEL".to_string(),
         redactor.redact(&cfg.studio_llm_fallback_model),
     );

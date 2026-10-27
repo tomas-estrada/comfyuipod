@@ -750,10 +750,10 @@ class ProjectStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM chat_messages WHERE project_id = ? "
-                "ORDER BY created_at ASC, rowid ASC LIMIT ?",
+                "ORDER BY created_at DESC, rowid DESC LIMIT ?",
                 (pid, max(1, int(limit))),
             ).fetchall()
-        return [self._row_to_chat_message(r) for r in rows]
+        return [self._row_to_chat_message(r) for r in reversed(rows)]
 
     def clear_chat_messages(self, project_id: str) -> int:
         pid = self._validate_project_id(project_id)

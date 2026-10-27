@@ -362,6 +362,11 @@ pub fn build_studio_server_command(cfg: &RuntimeConfig) -> Command {
     } else {
         cmd.env_remove("STUDIO_LLM_KEY");
     }
+    if let Some(ref fb_key) = cfg.studio_llm_fallback_key {
+        cmd.env("STUDIO_LLM_FALLBACK_KEY", fb_key);
+    } else {
+        cmd.env_remove("STUDIO_LLM_FALLBACK_KEY");
+    }
     cmd
 }
 

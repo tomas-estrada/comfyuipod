@@ -430,6 +430,7 @@ redact_and_enrich_report() {
     local secret_pass="${5:-}"
     local secret_llm="${6:-}"
     local secret_hf="${7:-}"
+    local secret_llm_fallback="${8:-}"
 
     RAW_MD="${raw_md}" \
     STUDIO_HEALTH_JSON="${studio_health_json}" \
@@ -438,6 +439,7 @@ redact_and_enrich_report() {
     _SECRET_PASS="${secret_pass}" \
     _SECRET_LLM="${secret_llm}" \
     _SECRET_HF="${secret_hf}" \
+    _SECRET_LLM_FALLBACK="${secret_llm_fallback}" \
     "${PYTHON_BIN}" - << 'PYEOF'
 import json, os, re
 
@@ -506,14 +508,14 @@ if health or st:
     text = text.rstrip() + "\n" + "\n".join(lines)
 
 # Redacción defensiva de cualquier valor sensible conocido en memoria o por patrón
-for env_name in ("_SECRET_PASS", "_SECRET_LLM", "_SECRET_HF"):
+for env_name in ("_SECRET_PASS", "_SECRET_LLM", "_SECRET_HF", "_SECRET_LLM_FALLBACK"):
     secret_val = os.environ.get(env_name, "")
     if secret_val and len(secret_val) >= 4:
         text = text.replace(secret_val, "<definida>")
 
 # Enmascarar asignaciones explícitas a variables sensibles en Markdown o logs
 secret_var_re = re.compile(
-    r"((?:`?(?:STUDIO_LLM_KEY|COMFY_PASS|HF_TOKEN|OPENAI_API_KEY|DASHSCOPE_API_KEY|DEEPSEEK_API_KEY|VAST_API_KEY)`?)\s*(?:=|:)\s*`?)([^`\s\n\r\"']+)(`?)"
+    r"((?:`?(?:STUDIO_LLM_KEY|STUDIO_LLM_FALLBACK_KEY|COMFY_PASS|HF_TOKEN|OPENAI_API_KEY|DASHSCOPE_API_KEY|DEEPSEEK_API_KEY|VAST_API_KEY)`?)\s*(?:=|:)\s*`?)([^`\s\n\r\"']+)(`?)"
 )
 def _mask_var(match):
     prefix, val, suffix = match.group(1), match.group(2), match.group(3)
@@ -558,7 +560,7 @@ cmd_report() {
     local raw_md
     raw_md="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL "http://${ip}:${port}/report.md")"
     local clean_md
-    clean_md="$(redact_and_enrich_report "${raw_md}" "" "" "" "${pass}" "${STUDIO_LLM_KEY:-}" "${HF_TOKEN:-}")"
+    clean_md="$(redact_and_enrich_report "${raw_md}" "" "" "" "${pass}" "${STUDIO_LLM_KEY:-}" "${HF_TOKEN:-}" "${STUDIO_LLM_FALLBACK_KEY:-}")"
 
     if [ "${to_stdout}" = "1" ]; then
         printf '%s\n' "${clean_md}"
@@ -602,7 +604,7 @@ cmd_studio_report() {
     status_api="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL --max-time 5 "http://${ip}:${port}/status/api" 2>/dev/null || echo "{}")"
 
     local clean_md
-    clean_md="$(redact_and_enrich_report "${raw_md}" "${studio_health}" "${studio_status}" "${status_api}" "${pass}" "${STUDIO_LLM_KEY:-}" "${HF_TOKEN:-}")"
+    clean_md="$(redact_and_enrich_report "${raw_md}" "${studio_health}" "${studio_status}" "${status_api}" "${pass}" "${STUDIO_LLM_KEY:-}" "${HF_TOKEN:-}" "${STUDIO_LLM_FALLBACK_KEY:-}")"
 
     if [ "${to_stdout}" = "1" ]; then
         printf '%s\n' "${clean_md}"
@@ -893,10 +895,13 @@ cmd_rent() {
     local pass="${COMFY_PASS:-}"
     local hf_token="${HF_TOKEN:-}"
     local studio_llm_key="${STUDIO_LLM_KEY:-}"
-    unset COMFY_PASS HF_TOKEN STUDIO_LLM_KEY
+    local studio_llm_fallback_key="${STUDIO_LLM_FALLBACK_KEY:-}"
+    unset COMFY_PASS HF_TOKEN STUDIO_LLM_KEY STUDIO_LLM_FALLBACK_KEY
 
     check_pass_safe "${pass}"
     check_secret_safe "${hf_token}" "HF_TOKEN"
+    studio_llm_fallback_key="${studio_llm_fallback_key%$'\r'}"
+    check_secret_safe "${studio_llm_fallback_key}" "STUDIO_LLM_FALLBACK_KEY"
 
     local disk_gb="120"
     local min_vram_gb="24"
@@ -1035,6 +1040,9 @@ PYEOF
             check_secret_safe "${STUDIO_LLM_FALLBACK_BASE_URL}" "STUDIO_LLM_FALLBACK_BASE_URL"
             env_flags="${env_flags} -e STUDIO_LLM_FALLBACK_BASE_URL=\"${STUDIO_LLM_FALLBACK_BASE_URL}\""
         fi
+        if [ -n "${studio_llm_fallback_key}" ]; then
+            env_flags="${env_flags} -e STUDIO_LLM_FALLBACK_KEY=\"${studio_llm_fallback_key}\""
+        fi
         if [ -n "${STUDIO_LLM_FALLBACK_MODEL:-}" ]; then
             check_secret_safe "${STUDIO_LLM_FALLBACK_MODEL}" "STUDIO_LLM_FALLBACK_MODEL"
             env_flags="${env_flags} -e STUDIO_LLM_FALLBACK_MODEL=\"${STUDIO_LLM_FALLBACK_MODEL}\""
@@ -1056,9 +1064,11 @@ PYEOF
         [ -z "${hf_token}" ] || hf_state="definida"
         local llm_key_state="<no definida>"
         [ -z "${studio_llm_key}" ] || llm_key_state="<definida>"
+        local llm_fallback_key_state="<no definida>"
+        [ -z "${studio_llm_fallback_key}" ] || llm_fallback_key_state="<definida>"
         echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, disco=${disk_gb} GB, --args)."
         echo "[DRY-RUN] Filtros aplicados: ${query}"
-        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
+        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_FALLBACK_KEY=${llm_fallback_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
         return 0
     fi
 

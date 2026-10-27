@@ -439,6 +439,7 @@ def create_app(
             "stub_llm": active_cfg.studio_stub_llm,
             "llm_model": active_cfg.studio_llm_model,
             "llm_key_status": active_cfg.masked_llm_key_status(),
+            "llm_fallback_key_status": active_cfg.masked_llm_fallback_key_status(),
             "schema_version": active_store.get_schema_version(),
         }
         return active_redactor.redact_value(payload)
@@ -473,6 +474,7 @@ def create_app(
                 "fallback_base_url": active_cfg.studio_llm_fallback_base_url,
                 "fallback_model": active_cfg.studio_llm_fallback_model,
                 "key_status": active_cfg.masked_llm_key_status(),
+                "fallback_key_status": active_cfg.masked_llm_fallback_key_status(),
                 "stub": active_cfg.studio_stub_llm,
             },
             "env_masked": active_cfg.to_public_dict(),
@@ -990,12 +992,14 @@ def create_app(
         limit: int = Query(default=200, ge=1, le=500),
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        active_redactor = request.app.state.config.redactor()
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
-        return {
+        payload = {
             "project_id": project_id,
             "messages": active_store.list_chat_messages(project_id, limit=limit),
         }
+        return active_redactor.redact_value(payload)
 
     @app.delete("/studio/api/projects/{project_id}/chat")
     async def clear_project_chat_history(

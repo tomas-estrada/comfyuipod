@@ -36,6 +36,7 @@ def studio_config(studio_data_dir: Path) -> StudioConfig:
     return StudioConfig(
         model_profile="studio",
         studio_llm_key="YOUR_STUDIO_API_KEY_HERE",
+        studio_llm_fallback_key="YOUR_STUDIO_FALLBACK_KEY_HERE",
         studio_comfyui_url="http://stub-comfyui.local:39172",
         studio_data_dir=studio_data_dir,
         studio_stub_llm=True,

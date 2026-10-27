@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,6 +39,8 @@ class StubLLMstep:
     fail_with_status: int | None = None
     fail_with_timeout: bool = False
     error_message: str = "Simulated upstream provider error"
+    chunks: list[str] | None = None
+    release_final_chunk: Any = None
 
 
 def _extract_last_user_text(messages: Sequence[dict[str, Any]]) -> str:
@@ -61,10 +63,19 @@ def _extract_last_user_text(messages: Sequence[dict[str, Any]]) -> str:
 class StubLLMClient:
     """Cliente LLM determinista en memoria que jamás realiza llamadas de red."""
 
-    def __init__(self, model: str = "qwen3-vl-plus") -> None:
+    def __init__(
+        self,
+        model: str = "qwen3-vl-plus",
+        *,
+        expected_primary_key: str | None = None,
+        expected_fallback_key: str | None = None,
+    ) -> None:
         self.model = model
+        self.expected_primary_key = expected_primary_key
+        self.expected_fallback_key = expected_fallback_key
         self.calls: list[list[dict[str, Any]]] = []
         self.tools_seen: list[list[dict[str, Any]]] = []
+        self.auth_seen: list[tuple[str, str]] = []
         self._steps: deque[StubLLMstep] = deque()
         self.fail_primary_status: int | None = None
         self.fail_primary_timeout: bool = False
@@ -76,13 +87,62 @@ class StubLLMClient:
     def clear_steps(self) -> None:
         self._steps.clear()
 
+    def _validate_auth(
+        self,
+        *,
+        provider: str,
+        api_key: str | None,
+        primary_key: str | None,
+    ) -> None:
+        auth_header = f"Bearer {api_key}" if api_key else ""
+        self.auth_seen.append((provider, auth_header))
+        if provider == "primary":
+            if (
+                self.expected_primary_key is not None
+                and api_key != self.expected_primary_key
+            ):
+                raise RuntimeError(
+                    "HTTP 401: Credencial STUDIO_LLM_KEY inválida en StubLLMClient"
+                )
+        elif provider == "fallback":
+            if not api_key:
+                raise RuntimeError(
+                    "HTTP 401: STUDIO_LLM_FALLBACK_KEY ausente (fail-closed)"
+                )
+            if primary_key and api_key == primary_key:
+                raise RuntimeError(
+                    "HTTP 401: La key primaria STUDIO_LLM_KEY jamás debe reenviarse al fallback"
+                )
+            if (
+                self.expected_fallback_key is not None
+                and api_key != self.expected_fallback_key
+            ):
+                raise RuntimeError(
+                    "HTTP 401: Credencial STUDIO_LLM_FALLBACK_KEY inválida en StubLLMClient"
+                )
+
     def chat(
         self,
         messages: Sequence[dict[str, Any]],
         *,
         tools: Sequence[dict[str, Any]] | None = None,
         model_override: str | None = None,
+        provider: str = "primary",
+        api_key: str | None = None,
+        primary_key: str | None = None,
     ) -> dict[str, Any]:
+        if (
+            api_key is not None
+            or provider == "fallback"
+            or self.expected_primary_key is not None
+            or self.expected_fallback_key is not None
+        ):
+            self._validate_auth(
+                provider=provider,
+                api_key=api_key,
+                primary_key=primary_key,
+            )
+
         msg_list = [dict(m) for m in messages]
         self.calls.append(msg_list)
         self.tools_seen.append([dict(t) for t in (tools or [])])
@@ -94,13 +154,20 @@ class StubLLMClient:
                 raise TimeoutError(step.error_message)
             if step.fail_with_status is not None:
                 raise RuntimeError(f"HTTP {step.fail_with_status}: {step.error_message}")
+            resolved_content = (
+                step.content
+                if step.content
+                else ("".join(step.chunks) if step.chunks else "")
+            )
             return {
                 "role": "assistant",
                 "model": active_model,
                 "stub": True,
-                "content": step.content,
+                "content": resolved_content,
                 "tool_calls": [tc.to_openai_dict() for tc in step.tool_calls],
                 "tools_available": len(tools) if tools else 0,
+                "chunks": list(step.chunks) if step.chunks else None,
+                "release_final_chunk": step.release_final_chunk,
             }
 
         last_user = _extract_last_user_text(msg_list)
@@ -128,6 +195,48 @@ class StubLLMClient:
             "tool_calls": [],
             "tools_available": len(tools) if tools else 0,
         }
+
+    async def stream_chat(
+        self,
+        messages: Sequence[dict[str, Any]],
+        *,
+        tools: Sequence[dict[str, Any]] | None = None,
+        model_override: str | None = None,
+        provider: str = "primary",
+        api_key: str | None = None,
+        primary_key: str | None = None,
+        on_token: Callable[[str, str], Any] | None = None,
+    ) -> dict[str, Any]:
+        raw = self.chat(
+            messages,
+            tools=tools,
+            model_override=model_override,
+            provider=provider,
+            api_key=api_key,
+            primary_key=primary_key,
+        )
+        active_model = str(raw.get("model") or model_override or self.model)
+        content = str(raw.get("content") or "")
+        explicit_chunks: list[str] | None = raw.get("chunks")
+        release_gate = raw.get("release_final_chunk")
+
+        if on_token is not None:
+            if explicit_chunks:
+                chunks_list = list(explicit_chunks)
+            elif content:
+                chunks_list = [piece async for piece in self.stream_tokens(content)]
+            else:
+                chunks_list = []
+
+            for idx, piece in enumerate(chunks_list):
+                is_last = idx == len(chunks_list) - 1
+                if is_last and release_gate is not None and hasattr(release_gate, "wait"):
+                    await release_gate.wait()
+                cb_res = on_token(piece, active_model)
+                if hasattr(cb_res, "__await__"):
+                    await cb_res
+
+        return raw
 
     def _build_auto_tool_calls(
         self,

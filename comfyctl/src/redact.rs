@@ -23,8 +23,25 @@ impl SecretRedactor {
         hf_token: Option<&str>,
         studio_llm_key: Option<&str>,
     ) -> Self {
+        Self::new_with_studio_keys(comfy_pass, hf_token, studio_llm_key, None)
+    }
+
+    pub fn new_with_studio_keys(
+        comfy_pass: Option<&str>,
+        hf_token: Option<&str>,
+        studio_llm_key: Option<&str>,
+        studio_llm_fallback_key: Option<&str>,
+    ) -> Self {
         let mut literals = Vec::new();
-        for candidate in [comfy_pass, hf_token, studio_llm_key].into_iter().flatten() {
+        for candidate in [
+            comfy_pass,
+            hf_token,
+            studio_llm_key,
+            studio_llm_fallback_key,
+        ]
+        .into_iter()
+        .flatten()
+        {
             let trimmed = candidate.trim();
             if trimmed.len() >= 2 && !literals.iter().any(|s| s == trimmed) {
                 literals.push(trimmed.to_string());
@@ -34,7 +51,7 @@ impl SecretRedactor {
             literals,
             rx_hf: Regex::new(r"hf_[A-Za-z0-9]{12,}").ok(),
             rx_sk: Regex::new(r"sk-[A-Za-z0-9._\-]{12,}").ok(),
-            rx_studio_env: Regex::new(r"(?i)(STUDIO_LLM_KEY\s*[:=]\s*)(\S+)").ok(),
+            rx_studio_env: Regex::new(r"(?i)(STUDIO_LLM_(?:FALLBACK_)?KEY\s*[:=]\s*)(\S+)").ok(),
             rx_bearer: Regex::new(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{8,}").ok(),
             // `.*` voraz: redacta las credenciales hasta el ÚLTIMO `@` de la línea,
             // de modo que una contraseña que contenga `/` o `@` también queda cubierta
@@ -44,10 +61,11 @@ impl SecretRedactor {
     }
 
     pub fn from_config(cfg: &RuntimeConfig) -> Self {
-        Self::new_with_studio(
+        Self::new_with_studio_keys(
             cfg.comfy_pass.as_deref(),
             cfg.hf_token.as_deref(),
             cfg.studio_llm_key.as_deref(),
+            cfg.studio_llm_fallback_key.as_deref(),
         )
     }
 

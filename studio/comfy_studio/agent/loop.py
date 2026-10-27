@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Sequence
@@ -229,7 +230,7 @@ class StudioAgent:
         ]
         validate_no_auth_urls_in_messages(messages)
 
-        # Persistimos el mensaje del usuario en la memoria SQLite del proyecto
+        # Persistimos el mensaje del usuario en la memoria SQLite del proyecto (redactado)
         attachments_meta = [
             {"type": "keyframe_asset", "asset_id": aid}
             for aid in (asset_ids or [])
@@ -237,8 +238,8 @@ class StudioAgent:
         self._store.add_chat_message(
             project["id"],
             role="user",
-            content=user_text,
-            tool_calls=attachments_meta,
+            content=self._redactor.redact(user_text),
+            tool_calls=self._redactor.redact_value(attachments_meta),
         )
 
         openai_tools = self._tool_belt.to_openai_tools()
@@ -260,55 +261,75 @@ class StudioAgent:
 
         for iteration in range(1, effective_max + 1):
             iterations_run = iteration
-            token_buffer: list[str] = []
+            token_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
 
             async def _on_token(
                 delta: str,
                 model_name: str,
-                _buf: list[str] = token_buffer,
+                _q: asyncio.Queue[tuple[str, str] | None] = token_queue,
             ) -> None:
-                _buf.append(delta)
+                await _q.put((delta, model_name))
 
-            llm_resp = await self._llm_client.stream_complete(
-                messages=messages,
-                tools=openai_tools,
-                on_token=_on_token,
-            )
+            async def _drive_stream(
+                _q: asyncio.Queue[tuple[str, str] | None] = token_queue,
+            ):
+                try:
+                    return await self._llm_client.stream_complete(
+                        messages=messages,
+                        tools=openai_tools,
+                        on_token=_on_token,
+                    )
+                finally:
+                    await _q.put(None)
+
+            llm_task = asyncio.create_task(_drive_stream())
+            try:
+                while True:
+                    item = await token_queue.get()
+                    if item is None:
+                        break
+                    piece, piece_model = item
+                    ev = await self._emit(
+                        "token",
+                        {
+                            "project_id": project["id"],
+                            "iteration": iteration,
+                            "delta": piece,
+                            "model": piece_model,
+                        },
+                    )
+                    yield ev
+                llm_resp = await llm_task
+            finally:
+                if not llm_task.done():
+                    llm_task.cancel()
+
             last_provider = llm_resp.provider
             last_model = llm_resp.model
 
-            for piece in token_buffer:
-                ev = await self._emit(
-                    "token",
-                    {
-                        "project_id": project["id"],
-                        "iteration": iteration,
-                        "delta": piece,
-                        "model": llm_resp.model,
-                    },
-                )
-                yield ev
-
             if llm_resp.content:
-                final_reply = llm_resp.content
+                final_reply = self._redactor.redact(llm_resp.content)
 
             if not llm_resp.tool_calls:
                 stop_reason = "completed"
                 break
 
             # El asistente solicitó llamadas a herramientas
-            assistant_tc_dicts = [tc.to_openai_dict() for tc in llm_resp.tool_calls]
+            assistant_tc_dicts = self._redactor.redact_value(
+                [tc.to_openai_dict() for tc in llm_resp.tool_calls]
+            )
+            redacted_assistant_content = self._redactor.redact(llm_resp.content or "")
             messages.append(
                 {
                     "role": "assistant",
-                    "content": llm_resp.content or "",
+                    "content": redacted_assistant_content,
                     "tool_calls": assistant_tc_dicts,
                 }
             )
             self._store.add_chat_message(
                 project["id"],
                 role="assistant",
-                content=llm_resp.content or "",
+                content=redacted_assistant_content,
                 tool_calls=assistant_tc_dicts,
             )
 
@@ -400,7 +421,7 @@ class StudioAgent:
         self._store.add_chat_message(
             project["id"],
             role="assistant",
-            content=final_reply,
+            content=self._redactor.redact(final_reply),
             tool_calls=[],
         )
 

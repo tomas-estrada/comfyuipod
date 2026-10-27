@@ -49,16 +49,25 @@ fn redactor_and_status_env_never_leak_studio_llm_key() {
 
     let raw_key = format!("{}{}", "sk-", "YOUR_API_KEY_HERE_12345");
     let custom_key = "YOUR_STUDIO_API_KEY_HERE";
+    let custom_fb_key = "YOUR_STUDIO_FALLBACK_KEY_HERE";
 
     let mut vars = BTreeMap::new();
     vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
     vars.insert("STUDIO_LLM_KEY".to_string(), custom_key.to_string());
+    vars.insert(
+        "STUDIO_LLM_FALLBACK_KEY".to_string(),
+        custom_fb_key.to_string(),
+    );
     let cfg = RuntimeConfig::from_map(&vars, None);
 
-    // 1. En build_masked_env (/status/api y /report.md), STUDIO_LLM_KEY aparece como "<definida>" y jamás en claro
+    // 1. En build_masked_env (/status/api y /report.md), STUDIO_LLM_KEY y STUDIO_LLM_FALLBACK_KEY aparecen como "<definida>" y jamás en claro
     let masked = build_masked_env(&cfg);
     assert_eq!(
         masked.get("STUDIO_LLM_KEY").map(String::as_str),
+        Some("<definida>")
+    );
+    assert_eq!(
+        masked.get("STUDIO_LLM_FALLBACK_KEY").map(String::as_str),
         Some("<definida>")
     );
     assert_eq!(
@@ -81,24 +90,37 @@ fn redactor_and_status_env_never_leak_studio_llm_key() {
     );
     for val in masked.values() {
         assert!(!val.contains(custom_key), "Leak detectado en env_masked");
+        assert!(!val.contains(custom_fb_key), "Leak detectado en env_masked");
     }
 
-    // 2. SecretRedactor::from_config redacta tanto el valor literal como patrones sk-* y STUDIO_LLM_KEY=*
+    // 2. SecretRedactor::from_config redacta tanto el valor literal como patrones sk-* y STUDIO_LLM_(FALLBACK_)KEY=*
     let redactor = SecretRedactor::from_config(&cfg);
     let log_sample = format!(
-        "Calling DashScope with key={custom_key}, fallback {raw_key} and env STUDIO_LLM_KEY=inline-secret-value-42"
+        "Calling DashScope with key={custom_key}, fallback_lit={custom_fb_key}, fallback {raw_key} and env STUDIO_LLM_KEY=inline-secret-value-42 STUDIO_LLM_FALLBACK_KEY=inline-fb-secret-99"
     );
     let redacted = redactor.redact(&log_sample);
     assert!(!redacted.contains(custom_key), "{redacted}");
+    assert!(!redacted.contains(custom_fb_key), "{redacted}");
     assert!(!redacted.contains(&raw_key), "{redacted}");
     assert!(!redacted.contains("inline-secret-value-42"), "{redacted}");
+    assert!(!redacted.contains("inline-fb-secret-99"), "{redacted}");
     assert!(redacted.contains("STUDIO_LLM_KEY=[REDACTED]"), "{redacted}");
+    assert!(
+        redacted.contains("STUDIO_LLM_FALLBACK_KEY=[REDACTED]"),
+        "{redacted}"
+    );
 
-    // 3. Sin STUDIO_LLM_KEY configurada, el estado enmascarado es "<no definida>"
+    // 3. Sin STUDIO_LLM_KEY ni STUDIO_LLM_FALLBACK_KEY configuradas, el estado enmascarado es "<no definida>"
     let empty_cfg = RuntimeConfig::from_map(&BTreeMap::new(), None);
     let empty_masked = build_masked_env(&empty_cfg);
     assert_eq!(
         empty_masked.get("STUDIO_LLM_KEY").map(String::as_str),
+        Some("<no definida>")
+    );
+    assert_eq!(
+        empty_masked
+            .get("STUDIO_LLM_FALLBACK_KEY")
+            .map(String::as_str),
         Some("<no definida>")
     );
 }

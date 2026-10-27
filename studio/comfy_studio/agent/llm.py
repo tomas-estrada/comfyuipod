@@ -188,9 +188,35 @@ class OpenAICompatibleLLMClient:
     def stub_client(self) -> StubLLMClient | None:
         return self._stub_client
 
-    def _headers(self) -> dict[str, str]:
+    def _ensure_fallback_key_available(self) -> str:
+        """Garantiza fail-closed para el proveedor de fallback.
+
+        Jamás reutiliza `STUDIO_LLM_KEY` para autenticar contra el proveedor secundario.
+        Si `STUDIO_LLM_FALLBACK_KEY` no está configurada o coincide con la primaria,
+        aborta antes de realizar ninguna petición al fallback.
+        """
+        fb_key = self._config.get_llm_fallback_key()
+        prim_key = self._config.get_llm_key()
+        if not fb_key:
+            raise LLMProviderError(
+                "STUDIO_LLM_FALLBACK_KEY no está definida "
+                "(fail-closed: nunca se reenvía STUDIO_LLM_KEY al proveedor de fallback)."
+            )
+        if prim_key and fb_key == prim_key:
+            raise LLMProviderError(
+                "STUDIO_LLM_FALLBACK_KEY debe ser distinta de STUDIO_LLM_KEY (fail-closed)."
+            )
+        return fb_key
+
+    def _headers(
+        self,
+        provider: Literal["primary", "fallback"] = "primary",
+    ) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        api_key = self._config.get_llm_key()
+        if provider == "fallback":
+            api_key = self._ensure_fallback_key_available()
+        else:
+            api_key = self._config.get_llm_key()
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         return headers
@@ -255,36 +281,120 @@ class OpenAICompatibleLLMClient:
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> LLMResponse:
         assert self._stub_client is not None
+        primary_key = self._config.get_llm_key()
         try:
             raw = self._stub_client.chat(
                 messages,
                 tools=tools,
                 model_override=self._config.studio_llm_model,
+                provider="primary",
+                api_key=primary_key,
+                primary_key=primary_key,
             )
             return LLMResponse(
-                content=str(raw.get("content") or ""),
+                content=self._redactor.redact(str(raw.get("content") or "")),
                 tool_calls=_parse_tool_calls(raw.get("tool_calls")),
                 model=str(raw.get("model") or self._config.studio_llm_model),
                 provider="stub",
             )
         except Exception as exc:
+            primary_err = exc
             safe_reason = self._redactor.redact(str(exc))
             logger.warning(
                 "Stub primario falló (%s); usando modelo fallback en stub (%s).",
                 safe_reason,
                 self._config.studio_llm_fallback_model,
             )
-            raw_fb = self._stub_client.chat(
+            try:
+                fb_key = self._ensure_fallback_key_available()
+                raw_fb = self._stub_client.chat(
+                    messages,
+                    tools=tools,
+                    model_override=self._config.studio_llm_fallback_model,
+                    provider="fallback",
+                    api_key=fb_key,
+                    primary_key=primary_key,
+                )
+                return LLMResponse(
+                    content=self._redactor.redact(str(raw_fb.get("content") or "")),
+                    tool_calls=_parse_tool_calls(raw_fb.get("tool_calls")),
+                    model=self._config.studio_llm_fallback_model,
+                    provider="fallback",
+                )
+            except Exception as fallback_exc:
+                msg = self._redactor.redact(
+                    f"Fallaron tanto el stub LLM primario ({primary_err}) "
+                    f"como el fallback secundario ({fallback_exc})."
+                )
+                logger.error("%s", msg)
+                raise LLMProviderError(msg) from None
+
+    async def _stream_complete_with_stub(
+        self,
+        messages: Sequence[dict[str, Any]],
+        *,
+        tools: Sequence[dict[str, Any]] | None = None,
+        on_token: Callable[[str, str], Any] | None = None,
+    ) -> LLMResponse:
+        assert self._stub_client is not None
+        primary_key = self._config.get_llm_key()
+
+        async def _redacted_on_token(piece: str, model_name: str) -> None:
+            if on_token is None:
+                return
+            safe_piece = self._redactor.redact(piece)
+            res = on_token(safe_piece, model_name)
+            if hasattr(res, "__await__"):
+                await res
+
+        try:
+            raw = await self._stub_client.stream_chat(
                 messages,
                 tools=tools,
-                model_override=self._config.studio_llm_fallback_model,
+                model_override=self._config.studio_llm_model,
+                provider="primary",
+                api_key=primary_key,
+                primary_key=primary_key,
+                on_token=_redacted_on_token if on_token is not None else None,
             )
             return LLMResponse(
-                content=str(raw_fb.get("content") or ""),
-                tool_calls=_parse_tool_calls(raw_fb.get("tool_calls")),
-                model=self._config.studio_llm_fallback_model,
-                provider="fallback",
+                content=self._redactor.redact(str(raw.get("content") or "")),
+                tool_calls=_parse_tool_calls(raw.get("tool_calls")),
+                model=str(raw.get("model") or self._config.studio_llm_model),
+                provider="stub",
             )
+        except Exception as exc:
+            primary_err = exc
+            safe_reason = self._redactor.redact(str(exc))
+            logger.warning(
+                "Stub primario falló (%s); usando modelo fallback en stub (%s).",
+                safe_reason,
+                self._config.studio_llm_fallback_model,
+            )
+            try:
+                fb_key = self._ensure_fallback_key_available()
+                raw_fb = await self._stub_client.stream_chat(
+                    messages,
+                    tools=tools,
+                    model_override=self._config.studio_llm_fallback_model,
+                    provider="fallback",
+                    api_key=fb_key,
+                    primary_key=primary_key,
+                    on_token=_redacted_on_token if on_token is not None else None,
+                )
+                return LLMResponse(
+                    content=self._redactor.redact(str(raw_fb.get("content") or "")),
+                    tool_calls=_parse_tool_calls(raw_fb.get("tool_calls")),
+                    model=self._config.studio_llm_fallback_model,
+                    provider="fallback",
+                )
+            except Exception as fallback_exc:
+                msg = self._redactor.redact(
+                    f"Fallaron tanto el stub LLM primario ({primary_err}) "
+                    f"como el fallback secundario ({fallback_exc})."
+                )
+                logger.error("%s", msg)
+                raise LLMProviderError(msg) from None
 
     async def _http_complete(
         self,
@@ -296,6 +406,7 @@ class OpenAICompatibleLLMClient:
         tools: Sequence[dict[str, Any]] | None,
         temperature: float,
     ) -> LLMResponse:
+        headers = self._headers(provider)
         endpoint = build_chat_completions_url(base_url)
         payload: dict[str, Any] = {
             "model": model,
@@ -314,7 +425,7 @@ class OpenAICompatibleLLMClient:
             try:
                 response = await client.post(
                     endpoint,
-                    headers=self._headers(),
+                    headers=headers,
                     json=payload,
                 )
             except httpx.HTTPError as exc:
@@ -352,6 +463,180 @@ class OpenAICompatibleLLMClient:
             finish_reason=finish_reason,
         )
 
+    async def _http_stream_complete(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        provider: Literal["primary", "fallback"],
+        messages: Sequence[dict[str, Any]],
+        tools: Sequence[dict[str, Any]] | None,
+        temperature: float,
+        on_token: Callable[[str, str], Any] | None = None,
+    ) -> LLMResponse:
+        headers = self._headers(provider)
+        endpoint = build_chat_completions_url(base_url)
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": list(messages),
+            "temperature": temperature,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = list(tools)
+            payload["tool_choice"] = "auto"
+
+        async with httpx.AsyncClient(
+            transport=self._transport,
+            timeout=self._timeout,
+        ) as client:
+            try:
+                async with client.stream(
+                    "POST",
+                    endpoint,
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    if response.status_code >= 400:
+                        raw_err = await response.aread()
+                        err_text = raw_err.decode("utf-8", errors="replace")
+                        body_preview = self._redactor.redact(err_text[:400])
+                        raise LLMProviderError(
+                            f"HTTP {response.status_code} desde {endpoint}: {body_preview}"
+                        )
+
+                    content_type = (response.headers.get("content-type") or "").lower()
+                    if "text/event-stream" in content_type:
+                        content_parts: list[str] = []
+                        tc_accum: dict[int, dict[str, Any]] = {}
+                        resolved_model = model
+                        finish_reason = "stop"
+
+                        async for raw_line in response.aiter_lines():
+                            line = raw_line.strip()
+                            if not line or line.startswith(":"):
+                                continue
+                            if not line.startswith("data:"):
+                                continue
+                            data_str = line[5:].strip()
+                            if not data_str:
+                                continue
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
+                            if not isinstance(chunk, dict):
+                                continue
+
+                            if chunk.get("model"):
+                                resolved_model = str(chunk["model"])
+                            choices = chunk.get("choices") or []
+                            first_choice = choices[0] if choices else {}
+                            if first_choice.get("finish_reason"):
+                                finish_reason = str(first_choice["finish_reason"])
+
+                            delta = (
+                                first_choice.get("delta")
+                                or first_choice.get("message")
+                                or {}
+                            )
+                            if not isinstance(delta, dict):
+                                continue
+
+                            piece = delta.get("content")
+                            if isinstance(piece, list):
+                                piece = "".join(
+                                    str(part.get("text", ""))
+                                    for part in piece
+                                    if isinstance(part, dict)
+                                )
+                            if piece:
+                                safe_piece = self._redactor.redact(str(piece))
+                                content_parts.append(safe_piece)
+                                if on_token is not None:
+                                    cb_res = on_token(safe_piece, resolved_model)
+                                    if hasattr(cb_res, "__await__"):
+                                        await cb_res
+
+                            delta_tcs = delta.get("tool_calls")
+                            if isinstance(delta_tcs, list):
+                                for pos, raw_tc in enumerate(delta_tcs):
+                                    if not isinstance(raw_tc, dict):
+                                        continue
+                                    tc_idx = int(raw_tc.get("index", pos))
+                                    entry = tc_accum.setdefault(
+                                        tc_idx,
+                                        {
+                                            "id": "",
+                                            "type": "function",
+                                            "function": {"name": "", "arguments": ""},
+                                        },
+                                    )
+                                    if raw_tc.get("id"):
+                                        entry["id"] = str(raw_tc["id"])
+                                    fn = raw_tc.get("function") or {}
+                                    if isinstance(fn, dict):
+                                        if fn.get("name"):
+                                            entry["function"]["name"] += str(fn["name"])
+                                        if "arguments" in fn and fn["arguments"] is not None:
+                                            if isinstance(fn["arguments"], dict):
+                                                entry["function"]["arguments"] = json.dumps(
+                                                    fn["arguments"], ensure_ascii=False
+                                                )
+                                            else:
+                                                entry["function"]["arguments"] += str(
+                                                    fn["arguments"]
+                                                )
+
+                        raw_tool_calls = [tc_accum[k] for k in sorted(tc_accum)]
+                        return LLMResponse(
+                            content=self._redactor.redact("".join(content_parts)),
+                            tool_calls=_parse_tool_calls(raw_tool_calls),
+                            model=resolved_model,
+                            provider=provider,
+                            finish_reason=finish_reason,
+                        )
+
+                    # Fallback compatible para respuestas JSON no-SSE a una petición stream=True
+                    raw_body = await response.aread()
+                    data = json.loads(raw_body.decode("utf-8"))
+            except httpx.HTTPError as exc:
+                safe_err = self._redactor.redact(str(exc))
+                raise LLMProviderError(
+                    f"Error de red/timeout hacia {endpoint}: {safe_err}"
+                ) from None
+
+        choices = data.get("choices") or []
+        first_choice = choices[0] if choices else {}
+        message = first_choice.get("message") or {}
+        content = message.get("content") or ""
+        if isinstance(content, list):
+            content = "".join(
+                str(part.get("text", ""))
+                for part in content
+                if isinstance(part, dict)
+            )
+        safe_content = self._redactor.redact(str(content))
+        tool_calls = _parse_tool_calls(message.get("tool_calls"))
+        finish_reason = str(first_choice.get("finish_reason") or "stop")
+        resolved_model = str(data.get("model") or model)
+
+        if safe_content and on_token is not None:
+            async for piece in self._iter_text_chunks(safe_content):
+                res = on_token(piece, resolved_model)
+                if hasattr(res, "__await__"):
+                    await res
+
+        return LLMResponse(
+            content=safe_content,
+            tool_calls=tool_calls,
+            model=resolved_model,
+            provider=provider,
+            finish_reason=finish_reason,
+        )
+
     async def stream_complete(
         self,
         messages: Sequence[dict[str, Any]],
@@ -360,18 +645,57 @@ class OpenAICompatibleLLMClient:
         temperature: float = 0.2,
         on_token: Callable[[str, str], Any] | None = None,
     ) -> LLMResponse:
-        """Completa un turno emitiendo tokens en streaming vía `on_token(delta, model)`."""
-        response = await self.complete(
-            messages=messages,
-            tools=tools,
-            temperature=temperature,
-        )
-        if response.content and on_token is not None:
-            async for piece in self._iter_text_chunks(response.content):
-                res = on_token(piece, response.model)
-                if hasattr(res, "__await__"):
-                    await res
-        return response
+        """Completa un turno con streaming incremental real (`stream=True` / SSE)."""
+        validate_no_auth_urls_in_messages(messages)
+
+        if self._stub_client is not None and self._transport is None:
+            return await self._stream_complete_with_stub(
+                messages,
+                tools=tools,
+                on_token=on_token,
+            )
+
+        primary_err: Exception | None = None
+        try:
+            return await self._http_stream_complete(
+                base_url=self._config.studio_llm_base_url,
+                model=self._config.studio_llm_model,
+                provider="primary",
+                messages=messages,
+                tools=tools,
+                temperature=temperature,
+                on_token=on_token,
+            )
+        except Exception as exc:
+            primary_err = exc
+            safe_reason = self._redactor.redact(str(exc))
+            logger.warning(
+                "Proveedor LLM primario (%s / %s) falló en streaming (%s). "
+                "Activando fallback secundario (%s / %s).",
+                self._config.studio_llm_base_url,
+                self._config.studio_llm_model,
+                safe_reason,
+                self._config.studio_llm_fallback_base_url,
+                self._config.studio_llm_fallback_model,
+            )
+
+        try:
+            return await self._http_stream_complete(
+                base_url=self._config.studio_llm_fallback_base_url,
+                model=self._config.studio_llm_fallback_model,
+                provider="fallback",
+                messages=messages,
+                tools=tools,
+                temperature=temperature,
+                on_token=on_token,
+            )
+        except Exception as fallback_exc:
+            msg = self._redactor.redact(
+                f"Fallaron tanto el proveedor LLM primario ({primary_err}) "
+                f"como el fallback secundario ({fallback_exc})."
+            )
+            logger.error("%s", msg)
+            raise LLMProviderError(msg) from None
 
     async def _iter_text_chunks(self, text: str) -> AsyncIterator[str]:
         words = text.split(" ")
