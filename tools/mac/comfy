@@ -461,6 +461,21 @@ health = parse_json(health_raw)
 st = parse_json(status_raw)
 api = parse_json(api_raw)
 
+_safe_markers = (
+    "<definida>",
+    "<definido>",
+    "<no definida>",
+    "<no definido>",
+    "<vacía>",
+    "<autogenerada>",
+    "<autogenerada — ver logs del contenedor>",
+    "<definida por el usuario>",
+    "[REDACTED]",
+    "no definida",
+    "no definido",
+    "autogenerada",
+)
+
 if health or st:
     lines = ["", "## 11. Estado de Comfy Studio (`/studio/api`)", ""]
     srv_state = health.get("server") or st.get("status") or "desconocido"
@@ -501,7 +516,7 @@ if health or st:
         for k in sorted(env_masked.keys()):
             v = str(env_masked[k])
             if any(tok in k.upper() for tok in ("KEY", "PASS", "TOKEN", "SECRET", "AUTH")):
-                if v and v not in ("<no definida>", "<vacía>", "<autogenerada>"):
+                if v and v not in _safe_markers:
                     v = "<definida>"
             lines.append(f"- `{k}` = `{v}`")
     lines.append("")
@@ -513,13 +528,16 @@ for env_name in ("_SECRET_PASS", "_SECRET_LLM", "_SECRET_HF", "_SECRET_LLM_FALLB
     if secret_val and len(secret_val) >= 4:
         text = text.replace(secret_val, "<definida>")
 
-# Enmascarar asignaciones explícitas a variables sensibles en Markdown o logs
+# Enmascarar asignaciones explícitas a variables sensibles en Markdown o logs,
+# preservando íntegros los marcadores multi-palabra (<no definida>, <definida por el usuario>, etc.)
 secret_var_re = re.compile(
-    r"((?:`?(?:STUDIO_LLM_KEY|STUDIO_LLM_FALLBACK_KEY|COMFY_PASS|HF_TOKEN|OPENAI_API_KEY|DASHSCOPE_API_KEY|DEEPSEEK_API_KEY|VAST_API_KEY)`?)\s*(?:=|:)\s*`?)([^`\s\n\r\"']+)(`?)"
+    r"((?:`?(?:STUDIO_LLM_KEY|STUDIO_LLM_FALLBACK_KEY|COMFY_PASS|HF_TOKEN|OPENAI_API_KEY|DASHSCOPE_API_KEY|DEEPSEEK_API_KEY|VAST_API_KEY)`?)\s*(?:=|:)\s*`?)"
+    r"(<[^><\n\r]{1,64}>|\[REDACTED\]|no definida|no definido|autogenerada|[^`\s\n\r\"']+)"
+    r"(`?)"
 )
 def _mask_var(match):
     prefix, val, suffix = match.group(1), match.group(2), match.group(3)
-    if val in ("<definida>", "<no definida>", "<vacía>", "<autogenerada>", "[REDACTED]"):
+    if val in _safe_markers:
         return match.group(0)
     return f"{prefix}<definida>{suffix}"
 
@@ -845,7 +863,7 @@ for r in rows:
     if cuda_v < 12.8:
         continue
     disk = float(r.get("disk_space") or 0)
-    if disk and disk < min_disk_gb:
+    if disk < min_disk_gb:
         continue
     inet = float(r.get("inet_down") or 0)
     if inet and inet < min_inet_down:
@@ -910,12 +928,15 @@ cmd_rent() {
         min_vram_gb="32"
         min_inet_down="5000"
         # Decisión del manifiesto Fase 3: el perfil studio requiere >= 200 GB de disco
-        # (~163.16 GiB en 77 modelos + espacio de trabajo), y >= 250 GB si se activa el
-        # opt-in STUDIO_INCLUDE_ANIMATE=1 (+13.6 GiB de wan2.2_animate_14B_int8_convrot).
+        # (~163.24 GB / ~152.03 GiB en 77 modelos + espacio de trabajo y S5=180 GB), y >= 250 GB
+        # si se activa el opt-in STUDIO_INCLUDE_ANIMATE=1 (+18.41 GB de wan2.2_animate_14B_int8_convrot).
+        local min_studio_disk_gb="200"
         if [ "${STUDIO_INCLUDE_ANIMATE:-0}" = "1" ]; then
-            disk_gb="${COMFY_DISK_GB:-250}"
-        else
-            disk_gb="${COMFY_DISK_GB:-200}"
+            min_studio_disk_gb="250"
+        fi
+        disk_gb="${COMFY_DISK_GB:-${min_studio_disk_gb}}"
+        if ! [[ "${disk_gb}" =~ ^[0-9]+$ ]] || [ "${disk_gb}" -lt "${min_studio_disk_gb}" ]; then
+            die "COMFY_DISK_GB='${disk_gb}' es insuficiente o inválido para 'comfy rent studio': el perfil 'studio' requiere al menos ${min_studio_disk_gb} GB de disco (>=200 GB base; >=250 GB con STUDIO_INCLUDE_ANIMATE=1 para alojar ~163.24 GB de modelos y cumplir S5=180 GB)."
         fi
 
         # VAL-SERVER-005: Lectura oculta (read -r -s) de STUDIO_LLM_KEY sin eco en terminal,
@@ -931,6 +952,9 @@ cmd_rent() {
         fi
     else
         disk_gb="${COMFY_DISK_GB:-120}"
+        if ! [[ "${disk_gb}" =~ ^[0-9]+$ ]] || [ "${disk_gb}" -le 0 ]; then
+            die "COMFY_DISK_GB='${disk_gb}' no es válido: debe ser un entero positivo en GB."
+        fi
     fi
 
     # O-01b: Filtros alineados con la guía de despliegue (cpu_ram>=32, cuda_vers>=12.8).

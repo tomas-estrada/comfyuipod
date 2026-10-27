@@ -432,6 +432,93 @@ def test_rent_studio_animate_opt_in_requires_250gb_disk(tmp_path: Path) -> None:
     assert '-e STUDIO_INCLUDE_ANIMATE="1"' in env_arg
 
 
+def test_rent_studio_rejects_insufficient_disk_override_and_accepts_valid_override(
+    tmp_path: Path,
+) -> None:
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    (state_dir / "offers_fixture.json").write_text(
+        json.dumps(_sample_offers_fixture()),
+        encoding="utf-8",
+    )
+    synthetic_llm_key = "sk" + "-disk-override-secret-12345678"
+
+    # 1. Override COMFY_DISK_GB=120 (< 200 GB mínimo de studio) debe rechazarse antes de
+    #    filtrar/seleccionar ofertas de 150 GB o llamar a vastai create instance.
+    low_base = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "COMFY_DISK_GB": "120",
+        },
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert low_base.returncode != 0, (
+        f"Se esperaba fallo con COMFY_DISK_GB=120; "
+        f"stdout={low_base.stdout}\nstderr={low_base.stderr}"
+    )
+    assert "COMFY_DISK_GB" in low_base.stderr and "200" in low_base.stderr
+    assert not (state_dir / "created_instance.json").exists()
+    assert not (state_dir / "vastai_calls.jsonl").exists()
+
+    # 2. Con STUDIO_INCLUDE_ANIMATE=1, el mínimo sube a 250 GB; COMFY_DISK_GB=200 debe rechazarse
+    #    y nunca seleccionar la oferta 105 (220 GB) ni llamar a create instance.
+    low_animate = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "STUDIO_INCLUDE_ANIMATE": "1",
+            "COMFY_DISK_GB": "200",
+        },
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert low_animate.returncode != 0, (
+        f"Se esperaba fallo con STUDIO_INCLUDE_ANIMATE=1 y COMFY_DISK_GB=200; "
+        f"stdout={low_animate.stdout}\nstderr={low_animate.stderr}"
+    )
+    assert "COMFY_DISK_GB" in low_animate.stderr and "250" in low_animate.stderr
+    assert not (state_dir / "created_instance.json").exists()
+    assert not (state_dir / "vastai_calls.jsonl").exists()
+
+    # 3. Valor no numérico en COMFY_DISK_GB también se rechaza con mensaje claro.
+    invalid_disk = _run_comfy(
+        ["rent", "studio", "--dry-run"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "COMFY_DISK_GB": "abc",
+        },
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert invalid_disk.returncode != 0
+    assert "COMFY_DISK_GB" in invalid_disk.stderr
+    assert not (state_dir / "created_instance.json").exists()
+
+    # 4. Override válido por encima del mínimo (COMFY_DISK_GB=260) se respeta: filtra
+    #    la oferta 105 (220 GB) y selecciona la 106 (300 GB) con --disk 260.
+    valid_override = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "COMFY_DISK_GB": "260",
+        },
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert valid_override.returncode == 0, (
+        f"stderr={valid_override.stderr}\nstdout={valid_override.stdout}"
+    )
+    created = json.loads((state_dir / "created_instance.json").read_text(encoding="utf-8"))
+    c_args = created["args"]
+    assert c_args[:3] == ["create", "instance", "106"]
+    assert c_args[c_args.index("--disk") + 1] == "260"
+
+
 class _MockPodServer:
     """Servidor HTTP local que simula el edge Nginx + comfyctl + studio-server."""
 
@@ -443,12 +530,14 @@ class _MockPodServer:
         leaked_llm_key: str = "YOUR_STUDIO_API_KEY_HERE",
         leaked_hf_token: str = "YOUR_HF_TOKEN_HERE",
         studio_healthy: bool = True,
+        llm_key_unset: bool = False,
     ) -> None:
         self.expected_user = expected_user
         self.expected_pass = expected_pass
         self.leaked_llm_key = leaked_llm_key
         self.leaked_hf_token = leaked_hf_token
         self.studio_healthy = studio_healthy
+        self.llm_key_unset = llm_key_unset
         self.requests: list[str] = []
 
         parent = self
@@ -492,6 +581,7 @@ class _MockPodServer:
                     if not parent.studio_healthy:
                         self._send(502, '{"status":"error"}')
                         return
+                    key_st = "<no definida>" if parent.llm_key_unset else "<definida>"
                     self._send(
                         200,
                         json.dumps(
@@ -502,13 +592,14 @@ class _MockPodServer:
                                 "comfyui_reachable": True,
                                 "model_profile": "studio",
                                 "llm_model": "qwen3-vl-plus",
-                                "llm_key_status": "<definida>",
+                                "llm_key_status": key_st,
                                 "schema_version": 1,
                             }
                         ),
                     )
                     return
                 if self.path == "/studio/api/status":
+                    key_st = "<no definida>" if parent.llm_key_unset else "<definida>"
                     self._send(
                         200,
                         json.dumps(
@@ -521,12 +612,13 @@ class _MockPodServer:
                                     "model": "qwen3-vl-plus",
                                     "fallback_base_url": "https://api.deepseek.com",
                                     "fallback_model": "deepseek-chat",
-                                    "key_status": "<definida>",
-                                    "stub": False,
+                                    "key_status": key_st,
+                                    "stub": parent.llm_key_unset,
                                 },
                                 "env_masked": {
                                     "MODEL_PROFILE": "studio",
-                                    "STUDIO_LLM_KEY": "<definida>",
+                                    "STUDIO_LLM_KEY": key_st,
+                                    "STUDIO_LLM_FALLBACK_KEY": key_st,
                                     "STUDIO_LLM_MODEL": "qwen3-vl-plus",
                                     "COMFY_USER": parent.expected_user,
                                     "COMFY_PASS": "<definida>",
@@ -607,8 +699,26 @@ class _MockPodServer:
                                 "env_masked": {
                                     "MODEL_PROFILE": "studio",
                                     "COMFY_USER": parent.expected_user,
-                                    "COMFY_PASS": "<definida>",
-                                    "STUDIO_LLM_KEY": "<definida>",
+                                    "COMFY_PASS": (
+                                        "<definida por el usuario>"
+                                        if parent.llm_key_unset
+                                        else "<definida>"
+                                    ),
+                                    "HF_TOKEN": (
+                                        "<no definido>"
+                                        if parent.llm_key_unset
+                                        else "<definido>"
+                                    ),
+                                    "STUDIO_LLM_KEY": (
+                                        "<no definida>"
+                                        if parent.llm_key_unset
+                                        else "<definida>"
+                                    ),
+                                    "STUDIO_LLM_FALLBACK_KEY": (
+                                        "<no definida>"
+                                        if parent.llm_key_unset
+                                        else "<definida>"
+                                    ),
                                     "STUDIO_LLM_MODEL": "qwen3-vl-plus",
                                 },
                             }
@@ -618,6 +728,23 @@ class _MockPodServer:
                 if self.path == "/report.md":
                     # Incluye datos de modelos, nodes, disco y una traza accidental con secretos
                     # para comprobar que `comfy studio report` redacta en defensa en profundidad.
+                    llm_rep_val = "<no definida>" if parent.llm_key_unset else parent.leaked_llm_key
+                    fb_rep_val = (
+                        "<no definida>"
+                        if parent.llm_key_unset
+                        else "YOUR_FALLBACK_REPORT_KEY_HERE"
+                    )
+                    hf_rep_val = "<no definido>" if parent.llm_key_unset else parent.leaked_hf_token
+                    pass_rep_val = (
+                        "<definida por el usuario>"
+                        if parent.llm_key_unset
+                        else parent.expected_pass
+                    )
+                    extra_trace = (
+                        "STUDIO_LLM_KEY=<no definida> STUDIO_LLM_FALLBACK_KEY=<no definida>\n\n"
+                        if parent.llm_key_unset
+                        else f"- Traza fugada: Authorization: Bearer {parent.leaked_llm_key}\n\n"
+                    )
                     md = (
                         "# Informe de Estado y Diagnóstico — ComfyUIPod\n"
                         "## 4. GPU, memoria y disco\n"
@@ -631,11 +758,11 @@ class _MockPodServer:
                         "ComfyUI-LivePortraitKJ).\n"
                         "### Variables de entorno relevantes (enmascaradas)\n"
                         "- `MODEL_PROFILE` = `studio`\n"
-                        f"- `STUDIO_LLM_KEY` = `{parent.leaked_llm_key}`\n"
-                        "- `STUDIO_LLM_FALLBACK_KEY` = `YOUR_FALLBACK_REPORT_KEY_HERE`\n"
-                        f"- `COMFY_PASS` = `{parent.expected_pass}`\n"
-                        f"- `HF_TOKEN` = `{parent.leaked_hf_token}`\n"
-                        f"- Traza fugada: Authorization: Bearer {parent.leaked_llm_key}\n\n"
+                        f"- `STUDIO_LLM_KEY` = `{llm_rep_val}`\n"
+                        f"- `STUDIO_LLM_FALLBACK_KEY` = `{fb_rep_val}`\n"
+                        f"- `COMFY_PASS` = `{pass_rep_val}`\n"
+                        f"- `HF_TOKEN` = `{hf_rep_val}`\n"
+                        f"{extra_trace}"
                         "## 9. Modelos\n"
                         "- `diffusion_models/`: 8 archivo(s) (115.20 GiB)\n"
                         "- `liveportrait/`: 6 archivo(s) (0.59 GiB)\n"
@@ -816,6 +943,69 @@ def test_comfy_studio_report_includes_diagnostics_and_masks_all_secrets(tmp_path
         assert leaked_llm_key not in (res_rep.stdout + res_rep.stderr)
         assert pod_pass not in (res_rep.stdout + res_rep.stderr)
         assert leaked_hf_token not in (res_rep.stdout + res_rep.stderr)
+
+
+def test_comfy_studio_report_preserves_multiword_unset_markers(tmp_path: Path) -> None:
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    pod_pass = "changeme-pod-pass-8899"
+
+    with _MockPodServer(
+        expected_pass=pod_pass,
+        studio_healthy=True,
+        llm_key_unset=True,
+    ) as srv:
+        (state_dir / "instances_fixture.json").write_text(
+            json.dumps(
+                {
+                    "instances": [
+                        {
+                            "id": 4242,
+                            "actual_status": "running",
+                            "public_ipaddr": "127.0.0.1",
+                            "gpu_name": "RTX 5090",
+                            "dph_total": 0.65,
+                            "label": "comfy-studio",
+                            "ports": {"8188/tcp": [{"HostPort": str(srv.port)}]},
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        res = _run_comfy(
+            ["studio", "report", "4242", "--stdout"],
+            bin_dir=bin_dir,
+            state_dir=state_dir,
+            extra_env={"COMFY_PASS": pod_pass},
+        )
+        assert res.returncode == 0, f"stderr={res.stderr}\nstdout={res.stdout}"
+        out = res.stdout
+
+        assert "<definida> definida>" not in out
+        assert "<definida> definido>" not in out
+        assert "`STUDIO_LLM_KEY`: `<no definida>`" in out
+        assert "- `STUDIO_LLM_KEY` = `<no definida>`" in out
+        assert "- `STUDIO_LLM_FALLBACK_KEY` = `<no definida>`" in out
+        assert "- `HF_TOKEN` = `<no definido>`" in out
+        assert "- `COMFY_PASS` = `<definida por el usuario>`" in out
+        assert "STUDIO_LLM_KEY=<no definida>" in out
+        assert "`STUDIO_LLM_KEY` = `<definida>`" not in out
+        assert "`STUDIO_LLM_FALLBACK_KEY` = `<definida>`" not in out
+
+        res_plain = _run_comfy(
+            ["report", "4242", "--stdout"],
+            bin_dir=bin_dir,
+            state_dir=state_dir,
+            extra_env={"COMFY_PASS": pod_pass},
+        )
+        assert res_plain.returncode == 0, f"stderr={res_plain.stderr}\nstdout={res_plain.stdout}"
+        out_plain = res_plain.stdout
+        assert "<definida> definida>" not in out_plain
+        assert "- `STUDIO_LLM_KEY` = `<no definida>`" in out_plain
+        assert "- `STUDIO_LLM_FALLBACK_KEY` = `<no definida>`" in out_plain
+        assert "- `HF_TOKEN` = `<no definido>`" in out_plain
+        assert "- `COMFY_PASS` = `<definida por el usuario>`" in out_plain
 
 
 def test_rent_non_studio_profile_preserves_legacy_filters(tmp_path: Path) -> None:

@@ -62,7 +62,7 @@ Cuando se invoca `comfy rent studio`, el helper aplica filtros específicos para
 - **Red y fiabilidad**: `inet_down>=5000` Mbps (5 Gbps para descargar los ~146 GB de Fase 3 con rapidez), `reliability>=0.98`, `verified=true`, `rentable=true`.
 - **Disco (`disk_space`)**:
   - Por defecto solicita **200 GB** (`disk_space>=200`, `--disk 200`), suficiente para los modelos de Fase 1 + Fase 2 + los 77 modelos de Fase 3 (`~163.24 GB` / `~152.03 GiB` en total) y espacio de trabajo.
-  - **Opt-in `STUDIO_INCLUDE_ANIMATE=1`**: si exportas `STUDIO_INCLUDE_ANIMATE=1` para incluir el modelo adicional `wan2.2_animate_14B_int8_convrot.safetensors` (`+18.41 GB` / `+17.15 GiB`), el helper exige y solicita automáticamente **250 GB** de disco (`disk_space>=250`, `--disk 250`). También puedes sobreescribir el tamaño manualmente con `COMFY_DISK_GB`.
+  - **Opt-in `STUDIO_INCLUDE_ANIMATE=1`**: si exportas `STUDIO_INCLUDE_ANIMATE=1` para incluir el modelo adicional `wan2.2_animate_14B_int8_convrot.safetensors` (`+18.41 GB` / `+17.15 GiB`), el helper exige y solicita automáticamente **250 GB** de disco (`disk_space>=250`, `--disk 250`). Puedes aumentar el tamaño manualmente con `COMFY_DISK_GB` (por ejemplo `COMFY_DISK_GB=300`), pero cualquier override inferior al mínimo del perfil (`< 200 GB` en `studio`, o `< 250 GB` con `STUDIO_INCLUDE_ANIMATE=1`) se rechaza con un error explícito antes de buscar ofertas o crear la instancia (`M2-SCR-015`).
 
 ### 4.2 Lectura oculta de `STUDIO_LLM_KEY` y credencial aislada `STUDIO_LLM_FALLBACK_KEY` (`VAL-SERVER-005` / `VAL-CROSS-004` / `M2-SCR-004`)
 Para proteger tus API keys de los proveedores LLM (primario DashScope / Qwen y fallback secundario DeepSeek):

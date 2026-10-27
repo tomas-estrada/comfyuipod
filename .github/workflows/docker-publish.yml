@@ -341,6 +341,12 @@ jobs:
           grep -q -- '--disk 200 --label comfy-studio' "$MOCK_CREATE_ARGS"
           grep -q -- '-e MODEL_PROFILE="studio"' "$MOCK_CREATE_ARGS"
           grep -q -- "-e STUDIO_LLM_KEY=\"${dummy_llm_key}\"" "$MOCK_CREATE_ARGS"
+          rm -f "$MOCK_CREATE_ARGS"
+          if printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_DISK_GB="120" tools/mac/comfy rent studio --yes >/dev/null 2>&1; then
+            echo "::error::comfy rent studio aceptó COMFY_DISK_GB=120 (< 200 GB mínimo)"
+            exit 1
+          fi
+          [ ! -e "$MOCK_CREATE_ARGS" ] || { echo "::error::create instance se invocó con COMFY_DISK_GB=120"; exit 1; }
           echo "[OK] tools/mac/comfy rent studio verificado en seco (VAL-SERVER-005 / VAL-CROSS-004)"
 
   rust:
@@ -1019,6 +1025,11 @@ jobs:
           grep -q "http://127.0.0.1:18188/studio/" <<<"$helper_open_out"
           helper_rep_out="$(PATH="${mock_hook_dir}:$PATH" COMFY_PASS="ci-secret-9f8e7d" STUDIO_LLM_KEY="$smoke_llm_key" tools/mac/comfy studio report 1001 --stdout)"
           grep -q "## 11. Estado de Comfy Studio" <<<"$helper_rep_out"
+          grep -F -q '`STUDIO_LLM_FALLBACK_KEY` = `<no definida>`' <<<"$helper_rep_out"
+          if grep -F -q '<definida> definida>' <<<"$helper_rep_out"; then
+            echo "::error::Marcador multi-palabra <no definida> truncado en comfy studio report"
+            exit 1
+          fi
 
           if grep -qE "ci-secret-9f8e7d|sk-ci-studio-secret-token-9999" <<<"${studio_rep}${studio_diag}${studio_status_api}${studio_st_json}${studio_logs}${helper_open_out}${helper_rep_out}"; then
             echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en artefactos, helper o logs de smoke-studio"
