@@ -297,6 +297,7 @@ jobs:
       - name: Verificar helper Mac tools/mac/comfy en seco y ciclo de STUDIO_LLM_KEY (VAL-SERVER-005 / VAL-CROSS-004)
         run: |
           set -euo pipefail
+          chmod +x tools/mac/comfy
           shellcheck tools/mac/comfy
           tools/mac/comfy --help
           tmp_helper="$(mktemp -d)"
@@ -1012,7 +1013,7 @@ jobs:
           fi
           exit 1
           EOF
-          chmod +x "${mock_hook_dir}/vastai"
+          chmod +x "${mock_hook_dir}/vastai" tools/mac/comfy
           smoke_llm_key="sk""-ci-studio-secret-token-9999"
           helper_open_out="$(PATH="${mock_hook_dir}:$PATH" COMFY_PASS="ci-secret-9f8e7d" COMFY_BROWSER="echo" tools/mac/comfy studio 1001)"
           grep -q "http://127.0.0.1:18188/studio/" <<<"$helper_open_out"
