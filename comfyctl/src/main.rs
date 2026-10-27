@@ -58,9 +58,10 @@ fn run() -> Result<u8, String> {
             Ok(0)
         }
         "strict-check" => {
+            let json_out = args.contains("--json");
             ensure_no_leftover_args(args)?;
             let cfg = RuntimeConfig::from_env();
-            let rc = strict::run_strict_check_cmd(&cfg)?;
+            let rc = strict::run_strict_check_cmd_with_format(&cfg, json_out)?;
             Ok(u8::try_from(rc).unwrap_or(1))
         }
         "supervise" => {

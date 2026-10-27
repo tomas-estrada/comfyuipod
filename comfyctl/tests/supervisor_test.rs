@@ -1,6 +1,13 @@
-use comfyctl::supervisor::{write_supervisor_json, SupervisorState};
+use comfyctl::config::RuntimeConfig;
+use comfyctl::strict::probe_studio_health;
+use comfyctl::supervisor::{
+    build_studio_server_command, should_start_studio_server, spawn_studio_server_if_enabled,
+    stop_studio_server, write_supervisor_json, SupervisorState,
+};
 use comfyctl::sys;
+use std::collections::BTreeMap;
 use std::fs;
+use std::net::TcpListener;
 
 #[test]
 fn supervisor_state_machine_respects_o02_sigterm_and_healthy_uptime() {
@@ -73,6 +80,86 @@ fn supervisor_atomic_write_and_secret_unlink() {
     let secret = sys::read_and_unlink_secret(&pass_path);
     assert_eq!(secret.as_deref(), Some("super-secret-pass"));
     assert!(!pass_path.exists());
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn supervisor_starts_studio_server_only_in_studio_profile() {
+    // 1. En cualquier perfil distinto de 'studio', should_start_studio_server es false y spawn devuelve None
+    for non_studio in ["all", "general", "realistic", "anime", "minimal"] {
+        let mut vars = BTreeMap::new();
+        vars.insert("MODEL_PROFILE".to_string(), non_studio.to_string());
+        let cfg = RuntimeConfig::from_map(&vars, None);
+        assert!(
+            !should_start_studio_server(&cfg),
+            "should_start_studio_server debía ser false para {non_studio}"
+        );
+        assert!(spawn_studio_server_if_enabled(&cfg).is_none());
+    }
+
+    // 2. En perfil 'studio', should_start_studio_server es true y el comando propaga STUDIO_* y limpia COMFY_PASS
+    let tmp_dir = std::env::temp_dir().join("comfyctl_sup_studio");
+    let _ = fs::remove_dir_all(&tmp_dir);
+    let _ = fs::create_dir_all(&tmp_dir);
+
+    let ephemeral_port = TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map_or(18190, |a| a.port());
+
+    let mut studio_vars = BTreeMap::new();
+    studio_vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    studio_vars.insert("STUDIO_SERVER_PORT".to_string(), ephemeral_port.to_string());
+    studio_vars.insert(
+        "STUDIO_DATA_DIR".to_string(),
+        tmp_dir.to_string_lossy().to_string(),
+    );
+    studio_vars.insert(
+        "STUDIO_LLM_KEY".to_string(),
+        "YOUR_STUDIO_API_KEY_HERE".to_string(),
+    );
+    let cfg_studio = RuntimeConfig::from_map(&studio_vars, Some("my-comfy-pass".to_string()));
+    assert!(should_start_studio_server(&cfg_studio));
+    assert_eq!(cfg_studio.studio_server_port, ephemeral_port);
+
+    let cmd = build_studio_server_command(&cfg_studio);
+    let envs: BTreeMap<String, Option<String>> = cmd
+        .get_envs()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().to_string(),
+                v.map(|val| val.to_string_lossy().to_string()),
+            )
+        })
+        .collect();
+    assert_eq!(envs.get("COMFY_PASS"), Some(&None));
+    assert_eq!(
+        envs.get("STUDIO_LLM_KEY"),
+        Some(&Some("YOUR_STUDIO_API_KEY_HERE".to_string()))
+    );
+    assert_eq!(
+        envs.get("STUDIO_LLM_MODEL"),
+        Some(&Some("qwen3-vl-plus".to_string()))
+    );
+    assert_eq!(
+        envs.get("STUDIO_LLM_FALLBACK_MODEL"),
+        Some(&Some("deepseek-chat".to_string()))
+    );
+
+    // 3. En entorno con python3 disponible, spawn_studio_server_if_enabled levanta el listener en 127.0.0.1:{port}
+    if cfg!(unix) {
+        let mut child_opt = spawn_studio_server_if_enabled(&cfg_studio);
+        assert!(
+            child_opt.is_some(),
+            "studio-server debía arrancar en perfil studio"
+        );
+        let (ok, detail) = probe_studio_health(&cfg_studio);
+        stop_studio_server(&mut child_opt);
+        assert!(
+            ok,
+            "studio-server levantado por supervisor debía responder HTTP 200: {detail}"
+        );
+    }
 
     let _ = fs::remove_dir_all(&tmp_dir);
 }

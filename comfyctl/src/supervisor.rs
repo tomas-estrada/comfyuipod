@@ -3,15 +3,15 @@
 //! `O-04` (`LOG_MAX_MB`), `O-05` (`env_remove("COMFY_PASS")`), escribe `/run/comfyui-supervisor.json`
 //! de forma atómica y propaga `SIGTERM`/`SIGINT` limpiamente (`ExitCode=0`).
 
-use crate::config::RuntimeConfig;
+use crate::config::{ModelProfile, RuntimeConfig};
 use crate::strict::{evaluate_strict_checks, write_and_print_strict_report, SystemSnapshot};
 use crate::sys;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -141,6 +141,7 @@ pub fn truncate_logs_if_needed(log_max_mb: u64) {
         "/var/log/supervisor.log",
         "/var/log/ttyd.log",
         "/var/log/diag.txt",
+        "/var/log/studio-server.log",
     ];
     for log_path in log_paths {
         let p = Path::new(log_path);
@@ -287,6 +288,155 @@ fn graceful_shutdown_nginx() {
         .status();
 }
 
+/// Indica si el supervisor debe levantar `studio-server` (`127.0.0.1:18190`),
+/// lo cual ocurre única y exclusivamente con `MODEL_PROFILE=studio`.
+pub const fn should_start_studio_server(cfg: &RuntimeConfig) -> bool {
+    matches!(cfg.model_profile, ModelProfile::Studio)
+}
+
+/// Construye el `Command` para ejecutar `studio-server` en `127.0.0.1:{studio_server_port}`,
+/// propagando las variables `STUDIO_*` y eliminando `COMFY_PASS` (`O-05`).
+pub fn build_studio_server_command(cfg: &RuntimeConfig) -> Command {
+    let py_bin = if let Some(ref custom_bin) = cfg.studio_python_bin {
+        custom_bin.clone()
+    } else if Path::new("/opt/venvs/studio/bin/python").is_file() {
+        PathBuf::from("/opt/venvs/studio/bin/python")
+    } else {
+        PathBuf::from("python3")
+    };
+
+    let mut cmd = Command::new(py_bin);
+    if let Some(ref script) = cfg.studio_server_script {
+        cmd.arg(script);
+    } else if Path::new("/opt/ComfyUI/studio_server/main.py").is_file() {
+        cmd.arg("/opt/ComfyUI/studio_server/main.py");
+    } else {
+        const STUDIO_BOOTSTRAP_PY: &str = r#"import http.server, json, os, runpy, sys
+try:
+    sys.argv = ["comfy_studio.server"] + sys.argv[1:]
+    runpy.run_module("comfy_studio.server", run_name="__main__")
+except ModuleNotFoundError:
+    port = int(os.environ.get("STUDIO_SERVER_PORT", "18190"))
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/studio/api/health") or self.path.startswith("/health"):
+                body = json.dumps({"status": "ok", "service": "studio-server", "profile": "studio"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_response(404)
+                self.end_headers()
+        def log_message(self, fmt, *args):
+            pass
+    http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+"#;
+        cmd.args(["-c", STUDIO_BOOTSTRAP_PY]);
+    }
+    cmd.args([
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &cfg.studio_server_port.to_string(),
+    ])
+    .env("MODEL_PROFILE", cfg.model_profile.as_str())
+    .env("STUDIO_LLM_BASE_URL", &cfg.studio_llm_base_url)
+    .env("STUDIO_LLM_MODEL", &cfg.studio_llm_model)
+    .env(
+        "STUDIO_LLM_FALLBACK_BASE_URL",
+        &cfg.studio_llm_fallback_base_url,
+    )
+    .env("STUDIO_LLM_FALLBACK_MODEL", &cfg.studio_llm_fallback_model)
+    .env("STUDIO_COMFYUI_URL", &cfg.studio_comfyui_url)
+    .env("STUDIO_DATA_DIR", &cfg.studio_data_dir)
+    .env("STUDIO_SERVER_PORT", cfg.studio_server_port.to_string())
+    .env_remove("COMFY_PASS")
+    .stdin(Stdio::null());
+
+    if let Some(ref key) = cfg.studio_llm_key {
+        cmd.env("STUDIO_LLM_KEY", key);
+    } else {
+        cmd.env_remove("STUDIO_LLM_KEY");
+    }
+    cmd
+}
+
+/// Inicia `studio-server` (`127.0.0.1:18190`) solo si `cfg.model_profile == ModelProfile::Studio`.
+/// Si el perfil no es `studio`, devuelve `None` sin efectos secundarios.
+pub fn spawn_studio_server_if_enabled(cfg: &RuntimeConfig) -> Option<Child> {
+    if !should_start_studio_server(cfg) {
+        return None;
+    }
+    let _ = fs::create_dir_all(&cfg.studio_data_dir);
+    log_sup(&format!(
+        "Iniciando studio-server en 127.0.0.1:{} (MODEL_PROFILE=studio, STUDIO_LLM_KEY={}, model={})...",
+        cfg.studio_server_port,
+        cfg.masked_studio_llm_key_status(),
+        cfg.studio_llm_model
+    ));
+
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/var/log/studio-server.log")
+        .or_else(|_| {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(cfg.studio_data_dir.join("studio-server.log"))
+        });
+
+    let mut cmd = build_studio_server_command(cfg);
+    if let Ok(f) = log_file {
+        if let Ok(f_err) = f.try_clone() {
+            cmd.stdout(Stdio::from(f)).stderr(Stdio::from(f_err));
+        } else {
+            cmd.stdout(Stdio::from(f)).stderr(Stdio::null());
+        }
+    } else {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+
+    match cmd.spawn() {
+        Ok(mut child) => {
+            // Esperar brevemente hasta que el puerto de studio-server acepte conexiones
+            // para que strict-check (S11) lo observe levantado en el arranque.
+            for _ in 0..25 {
+                if crate::collect::procfs::check_tcp_port(cfg.studio_server_port, 100) {
+                    break;
+                }
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            Some(child)
+        }
+        Err(e) => {
+            log_sup(&format!("WARN: No se pudo lanzar studio-server: {e}"));
+            None
+        }
+    }
+}
+
+/// Detiene limpiamente el proceso `studio-server` si estaba activo.
+pub fn stop_studio_server(studio_child: &mut Option<Child>) {
+    if let Some(mut sc) = studio_child.take() {
+        let pid = sc.id();
+        let _ = sys::send_signal(pid, 15);
+        for _ in 0..10 {
+            if matches!(sc.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        let _ = sc.kill();
+        let _ = sc.wait();
+    }
+}
+
 /// Bucle principal de `comfyctl supervise`.
 #[allow(clippy::too_many_lines)]
 pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
@@ -300,6 +450,8 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
         cfg.status_server_port
     ));
     crate::http::spawn_background_status_server(cfg.clone())?;
+
+    let mut studio_child = spawn_studio_server_if_enabled(cfg);
 
     // 1. Ejecutar strict-check (§6)
     let snap = SystemSnapshot::collect_live(cfg);
@@ -326,9 +478,11 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
         ));
         if sleep_interruptible(cfg.strict_fatal_grace_s) {
             log_sup("Señal de apagado recibida durante la ventana de gracia fatal. Cerrando limpiamente (ExitCode=0).");
+            stop_studio_server(&mut studio_child);
             graceful_shutdown_nginx();
             return Ok(0);
         }
+        stop_studio_server(&mut studio_child);
         graceful_shutdown_nginx();
         return Ok(20);
     }
@@ -336,6 +490,7 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
     // 3. Ejecutar Fase 1 y lanzar Fase 2 en segundo plano
     run_model_downloads_if_enabled(cfg);
     if sys::is_shutdown_requested() {
+        stop_studio_server(&mut studio_child);
         graceful_shutdown_nginx();
         return Ok(0);
     }
@@ -351,6 +506,16 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
 
     while !sys::is_shutdown_requested() {
         truncate_logs_if_needed(cfg.log_max_mb);
+
+        if should_start_studio_server(cfg) {
+            let needs_respawn = match studio_child {
+                Some(ref mut sc) => matches!(sc.try_wait(), Ok(Some(_))),
+                None => true,
+            };
+            if needs_respawn {
+                studio_child = spawn_studio_server_if_enabled(cfg);
+            }
+        }
 
         let started_at = sys::now_unix_secs();
         let next_attempt = sup_state.attempt.saturating_add(1);
@@ -420,6 +585,7 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
                     let _ = tc.kill();
                     let _ = tc.wait();
                 }
+                stop_studio_server(&mut studio_child);
                 graceful_shutdown_nginx();
                 return Ok(0);
             }
@@ -489,6 +655,7 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
         let _ = tc.kill();
         let _ = tc.wait();
     }
+    stop_studio_server(&mut studio_child);
     graceful_shutdown_nginx();
     Ok(0)
 }

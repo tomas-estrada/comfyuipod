@@ -92,10 +92,19 @@ pub struct TerminalServiceStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StudioServerServiceStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServicesStatus {
     pub nginx: NginxServiceStatus,
     pub status_server: StatusServerServiceStatus,
     pub terminal: TerminalServiceStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub studio_server: Option<StudioServerServiceStatus>,
 }
 
 pub fn load_image_meta(path: &Path) -> ImageMeta {
@@ -397,6 +406,13 @@ pub fn collect_services_status(cfg: &RuntimeConfig) -> ServicesStatus {
         false
     };
 
+    let studio_enabled = cfg.model_profile == crate::config::ModelProfile::Studio;
+    let studio_running = if studio_enabled {
+        check_tcp_port(cfg.studio_server_port, 200)
+    } else {
+        false
+    };
+
     ServicesStatus {
         nginx: NginxServiceStatus {
             running: nginx_running,
@@ -409,31 +425,65 @@ pub fn collect_services_status(cfg: &RuntimeConfig) -> ServicesStatus {
             enabled: cfg.enable_web_terminal,
             running: term_running,
         },
+        studio_server: Some(StudioServerServiceStatus {
+            enabled: studio_enabled,
+            running: studio_running,
+            port: cfg.studio_server_port,
+        }),
     }
 }
 
 pub fn build_masked_env(cfg: &RuntimeConfig) -> BTreeMap<String, String> {
+    let redactor = crate::redact::SecretRedactor::from_config(cfg);
     let mut map = BTreeMap::new();
     map.insert(
         "MODEL_PROFILE".to_string(),
         cfg.model_profile.as_str().to_string(),
     );
-    map.insert("COMFY_USER".to_string(), cfg.comfy_user.clone());
+    map.insert("COMFY_USER".to_string(), redactor.redact(&cfg.comfy_user));
     map.insert("COMFY_PASS".to_string(), cfg.masked_pass_status());
     map.insert("HF_TOKEN".to_string(), cfg.masked_hf_status());
     map.insert(
         "COMFYUI_EXTRA_ARGS".to_string(),
-        cfg.comfy_extra_args.clone(),
+        redactor.redact(&cfg.comfy_extra_args),
     );
     map.insert(
         "HF_HUB_DISABLE_XET".to_string(),
         cfg.hf_hub_disable_xet
-            .clone()
-            .unwrap_or_else(|| "<no definido>".to_string()),
+            .as_deref()
+            .map_or_else(|| "<no definido>".to_string(), |v| redactor.redact(v)),
     );
     map.insert(
         "ENABLE_WEB_TERMINAL".to_string(),
         if cfg.enable_web_terminal { "1" } else { "0" }.to_string(),
+    );
+    map.insert(
+        "STUDIO_LLM_KEY".to_string(),
+        cfg.masked_studio_llm_key_status(),
+    );
+    map.insert(
+        "STUDIO_LLM_BASE_URL".to_string(),
+        redactor.redact(&cfg.studio_llm_base_url),
+    );
+    map.insert(
+        "STUDIO_LLM_MODEL".to_string(),
+        redactor.redact(&cfg.studio_llm_model),
+    );
+    map.insert(
+        "STUDIO_LLM_FALLBACK_BASE_URL".to_string(),
+        redactor.redact(&cfg.studio_llm_fallback_base_url),
+    );
+    map.insert(
+        "STUDIO_LLM_FALLBACK_MODEL".to_string(),
+        redactor.redact(&cfg.studio_llm_fallback_model),
+    );
+    map.insert(
+        "STUDIO_COMFYUI_URL".to_string(),
+        redactor.redact(&cfg.studio_comfyui_url),
+    );
+    map.insert(
+        "STUDIO_DATA_DIR".to_string(),
+        redactor.redact(&cfg.studio_data_dir.display().to_string()),
     );
     map
 }

@@ -124,6 +124,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
                 enabled: false,
                 running: false,
             },
+            studio_server: None,
         },
         errors_recent: Vec::new(),
         triage: Vec::new(),

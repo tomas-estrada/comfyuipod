@@ -288,7 +288,14 @@
         "HF_TOKEN": { "type": "string" },
         "COMFYUI_EXTRA_ARGS": { "type": "string" },
         "HF_HUB_DISABLE_XET": { "type": "string" },
-        "ENABLE_WEB_TERMINAL": { "type": "string" }
+        "ENABLE_WEB_TERMINAL": { "type": "string" },
+        "STUDIO_LLM_KEY": { "type": "string" },
+        "STUDIO_LLM_BASE_URL": { "type": "string" },
+        "STUDIO_LLM_MODEL": { "type": "string" },
+        "STUDIO_LLM_FALLBACK_BASE_URL": { "type": "string" },
+        "STUDIO_LLM_FALLBACK_MODEL": { "type": "string" },
+        "STUDIO_COMFYUI_URL": { "type": "string" },
+        "STUDIO_DATA_DIR": { "type": "string" }
       }
     },
     "strict": {

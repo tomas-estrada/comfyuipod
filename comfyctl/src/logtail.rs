@@ -5,7 +5,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 /// Lista blanca estricta de nombres de log permitidos en `/logs/<name>` (§5.4 / O-04).
-pub const LOG_WHITELIST_NAMES: [&str; 9] = [
+pub const LOG_WHITELIST_NAMES: [&str; 10] = [
     "comfyui",
     "start",
     "download",
@@ -15,6 +15,7 @@ pub const LOG_WHITELIST_NAMES: [&str; 9] = [
     "diag",
     "container",
     "ttyd",
+    "studio",
 ];
 
 /// Resuelve un nombre de log de la lista blanca a su ruta bajo `log_dir` (por defecto `/var/log`).
@@ -28,6 +29,7 @@ pub fn resolve_log_path(name: &str, log_dir: &Path) -> Option<PathBuf> {
         "supervisor" => "supervisor.log",
         "diag" => "diag.txt",
         "ttyd" => "ttyd.log",
+        "studio" => "studio-server.log",
         _ => return None,
     };
     Some(log_dir.join(rel))

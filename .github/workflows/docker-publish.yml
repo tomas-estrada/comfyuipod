@@ -661,8 +661,10 @@ jobs:
             chmod 640 /etc/nginx/.htpasswd
             SKIP_MODEL_DOWNLOAD=1 STRICT_MIN_RAM_MB=4096 STRICT_MIN_DISK_GB=1 STRICT_START=1 COMFYUI_EXTRA_ARGS="--cpu" /usr/local/bin/comfyctl strict-check
             python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] in (\"ok\", \"warn\"), d; s7 = [c for c in d[\"checks\"] if c[\"id\"] == \"S7\"][0]; assert s7[\"status\"] == \"ok\", s7"
+            MODEL_PROFILE=studio STRICT_START=0 COMFYUI_EXTRA_ARGS="--cpu" /usr/local/bin/comfyctl strict-check --json > /tmp/studio-strict.json
+            python3 -c "import json; d = json.load(open(\"/tmp/studio-strict.json\")); s5 = [c for c in d[\"checks\"] if c[\"id\"] == \"S5\"][0]; s11 = [c for c in d[\"checks\"] if c[\"id\"] == \"S11\"][0]; assert \"180 GB\" in s5[\"detail\"], s5; assert s11[\"name\"] == \"studio_health\", s11"
           '
-          echo "[OK] Paso 11: comfyctl strict-check en modo --cpu -> 0 (S7 warn sin .htpasswd y ok con .htpasswd)"
+          echo "[OK] Paso 11: comfyctl strict-check en modo --cpu -> 0 (S7 warn sin .htpasswd, ok con .htpasswd, y perfil studio S5=180 GB + S11 studio_health)"
 
           # 12. comfyctl strict-check con nvidia-smi simulado (driver 550.54.14) devuelve 20 con STRICT_START=1 y 0 con STRICT_START=0 y cumple el esquema strict (§8.2 / R-02 / R-04 / R-13)
           strict_json_fatal="$(timeout 600 docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '

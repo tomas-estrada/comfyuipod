@@ -376,6 +376,13 @@ pub fn build_report_markdown(
         "COMFYUI_EXTRA_ARGS",
         "HF_HUB_DISABLE_XET",
         "ENABLE_WEB_TERMINAL",
+        "STUDIO_LLM_KEY",
+        "STUDIO_LLM_BASE_URL",
+        "STUDIO_LLM_MODEL",
+        "STUDIO_LLM_FALLBACK_BASE_URL",
+        "STUDIO_LLM_FALLBACK_MODEL",
+        "STUDIO_COMFYUI_URL",
+        "STUDIO_DATA_DIR",
     ] {
         if let Some(val) = env_m.get(key) {
             let _ = writeln!(out, "- `{key}` = `{val}`");

@@ -2,13 +2,15 @@
 //! Evalúa las 10 invariantes S1..S10 antes de iniciar Fase 1 o `ComfyUI`,
 //! persiste `/run/comfyui-strict.json` de forma atómica e imprime el banner.
 
-use crate::config::RuntimeConfig;
+use crate::config::{ModelProfile, RuntimeConfig};
 use crate::sys;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,7 +30,7 @@ pub struct StrictReport {
     pub checks: Vec<StrictCheckItem>,
 }
 
-/// Datos del sistema sondeados para evaluar S1..S10 (inyectables en tests).
+/// Datos del sistema sondeados para evaluar S1..S10 (+ S11 en perfil `studio`, inyectables en tests).
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct SystemSnapshot {
@@ -49,11 +51,14 @@ pub struct SystemSnapshot {
     pub comfy_install_detail: String,
     pub cuda_torch_ok: bool,
     pub cuda_torch_detail: String,
+    pub studio_health_ok: bool,
+    pub studio_health_detail: String,
 }
 
 impl SystemSnapshot {
     /// Recolecta el estado real del contenedor invocando `nvidia-smi`, `/proc/meminfo` + cgroups,
-    /// `statvfs`, `nginx -t` y `torch_cuda.py` con timeouts estrictos (`R-02`, `R-03`, `R-06`, `R-07`).
+    /// `statvfs`, `nginx -t`, `torch_cuda.py` y salud de `studio-server` (si `MODEL_PROFILE=studio`)
+    /// con timeouts estrictos (`R-02`, `R-03`, `R-06`, `R-07`).
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn collect_live(cfg: &RuntimeConfig) -> Self {
         let (gpu_query_ok, gpu_name, driver_version, vram_total_mb) = probe_nvidia_smi();
@@ -71,6 +76,7 @@ impl SystemSnapshot {
         let (htpasswd_ok, htpasswd_missing, htpasswd_detail) = probe_htpasswd(&cfg.htpasswd_path);
         let (comfy_install_ok, comfy_install_detail) = probe_comfy_install(&cfg.comfy_app_dir);
         let (cuda_torch_ok, cuda_torch_detail) = probe_cuda_torch(cfg.strict_require_gpu);
+        let (studio_health_ok, studio_health_detail) = probe_studio_health(cfg);
 
         Self {
             gpu_query_ok,
@@ -90,6 +96,8 @@ impl SystemSnapshot {
             comfy_install_detail,
             cuda_torch_ok,
             cuda_torch_detail,
+            studio_health_ok,
+            studio_health_detail,
         }
     }
 }
@@ -389,6 +397,77 @@ pub fn probe_cuda_torch(require_gpu: bool) -> (bool, String) {
     }
 }
 
+fn http_probe_once(port: u16, path: &str) -> Result<u16, String> {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+        .map_err(|e| format!("conexión a 127.0.0.1:{port} falló: {e}"))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let req = format!("GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| format!("error enviando petición HTTP a 127.0.0.1:{port}: {e}"))?;
+    let mut buf = [0_u8; 512];
+    let n = stream
+        .read(&mut buf)
+        .map_err(|e| format!("error leyendo respuesta HTTP de 127.0.0.1:{port}: {e}"))?;
+    if n == 0 {
+        return Err(format!("respuesta vacía de 127.0.0.1:{port}"));
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let status_line = text.lines().next().unwrap_or("");
+    let code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| format!("línea de estado HTTP inválida: {status_line}"))?;
+    Ok(code)
+}
+
+/// Comprueba la salud de `studio-server` en `127.0.0.1:{studio_server_port}` (`/studio/api/health`).
+pub fn probe_studio_health(cfg: &RuntimeConfig) -> (bool, String) {
+    if cfg.model_profile != ModelProfile::Studio {
+        return (true, "Omitido fuera del perfil studio".to_string());
+    }
+    let retries = std::env::var("STUDIO_HEALTH_RETRIES")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(10)
+        .max(1);
+    let port = cfg.studio_server_port;
+    let mut last_err = format!("studio-server no accesible en 127.0.0.1:{port}");
+    for attempt in 0..retries {
+        match http_probe_once(port, "/studio/api/health") {
+            Ok(200) => {
+                let msg = format!("studio-server healthy en 127.0.0.1:{port} (HTTP 200)");
+                return (true, msg);
+            }
+            Ok(404) => match http_probe_once(port, "/health") {
+                Ok(200) => {
+                    let msg = format!("studio-server healthy en 127.0.0.1:{port} (HTTP 200)");
+                    return (true, msg);
+                }
+                Ok(code) => {
+                    last_err = format!("HTTP {code} en 127.0.0.1:{port}/health");
+                }
+                Err(e) => {
+                    last_err = e;
+                }
+            },
+            Ok(code) => {
+                last_err = format!("HTTP {code} en 127.0.0.1:{port}/studio/api/health");
+            }
+            Err(e) => {
+                last_err = e;
+            }
+        }
+        if attempt + 1 < retries {
+            thread::sleep(Duration::from_millis(150));
+        }
+    }
+    (false, last_err)
+}
+
 fn parse_driver_major(driver: &str) -> u32 {
     driver
         .split('.')
@@ -399,10 +478,10 @@ fn parse_driver_major(driver: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// Evalúa las 10 comprobaciones S1..S10 sobre un `SystemSnapshot` (§6.2, `R-02`, `R-03`, `R-06`).
+/// Evalúa las comprobaciones S1..S10 (+ S11 en perfil `studio`) sobre un `SystemSnapshot` (§6.2, `R-02`, `R-03`, `R-06`).
 #[allow(clippy::too_many_lines)]
 pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> StrictReport {
-    let mut checks = Vec::with_capacity(10);
+    let mut checks = Vec::with_capacity(11);
 
     let status_for = |passed: bool, is_fatal_when_strict: bool| -> &'static str {
         if passed {
@@ -588,9 +667,14 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
         });
     }
 
-    // S5: Espacio libre en disco >= STRICT_MIN_DISK_GB (75 / 45 / 10 GB o 5 GB con SKIP_MODEL_DOWNLOAD=1)
+    // S5: Espacio libre en disco >= STRICT_MIN_DISK_GB (180 / 75 / 45 / 10 GB o 5 GB con SKIP_MODEL_DOWNLOAD=1)
     #[allow(clippy::cast_precision_loss)]
     let s5_ok = snap.disk_free_gb >= (cfg.strict_min_disk_gb as f64);
+    let rec_disk_flag = if cfg.model_profile == ModelProfile::Studio {
+        "--disk 220"
+    } else {
+        "--disk 120"
+    };
     checks.push(StrictCheckItem {
         id: "S5".to_string(),
         name: "disk_min".to_string(),
@@ -606,7 +690,7 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
             None
         } else {
             Some(format!(
-                "Disco insuficiente para el perfil '{}'. Aumenta el disco en Vast.ai (--disk 120) o usa -e MODEL_PROFILE=minimal.",
+                "Disco insuficiente para el perfil '{}'. Aumenta el disco en Vast.ai ({rec_disk_flag}) o usa -e MODEL_PROFILE=minimal.",
                 cfg.model_profile.as_str()
             ))
         },
@@ -707,7 +791,7 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
             None
         } else {
             Some(
-                "Valores válidos de MODEL_PROFILE: all | general | realistic | anime | minimal."
+                "Valores válidos de MODEL_PROFILE: all | general | realistic | anime | minimal | studio."
                     .to_string(),
             )
         },
@@ -737,6 +821,32 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
             status: "ok".to_string(),
             detail: "Omitido en modo CPU".to_string(),
             remediation: None,
+        });
+    }
+
+    // S11: Comprobación de salud del servidor de estudio (solo con MODEL_PROFILE=studio)
+    if cfg.model_profile == ModelProfile::Studio {
+        let s11_ok = snap.studio_health_ok;
+        checks.push(StrictCheckItem {
+            id: "S11".to_string(),
+            name: "studio_health".to_string(),
+            status: status_for(s11_ok, true).to_string(),
+            detail: if s11_ok {
+                snap.studio_health_detail.clone()
+            } else {
+                format!(
+                    "studio-server no saludable en 127.0.0.1:{}: {}",
+                    cfg.studio_server_port, snap.studio_health_detail
+                )
+            },
+            remediation: if s11_ok {
+                None
+            } else {
+                Some(format!(
+                    "El servidor del estudio (studio-server en 127.0.0.1:{}) no respondió a la comprobación de salud. Revisa /var/log/studio-server.log y las variables STUDIO_*.",
+                    cfg.studio_server_port
+                ))
+            },
         });
     }
 
@@ -805,9 +915,24 @@ pub fn write_and_print_strict_report(
 
 /// Ejecuta `comfyctl strict-check` y devuelve el código de salida (`0` o `20`).
 pub fn run_strict_check_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
+    run_strict_check_cmd_with_format(cfg, false)
+}
+
+/// Ejecuta `comfyctl strict-check` (con opción `--json` por stdout) y devuelve `0` o `20`.
+pub fn run_strict_check_cmd_with_format(
+    cfg: &RuntimeConfig,
+    json_stdout: bool,
+) -> Result<i32, String> {
     let snap = SystemSnapshot::collect_live(cfg);
     let report = evaluate_strict_checks(cfg, &snap);
-    write_and_print_strict_report(cfg, &report)?;
+    if json_stdout {
+        let json_bytes = serde_json::to_vec_pretty(&report)
+            .map_err(|e| format!("Error serializando StrictReport: {e}"))?;
+        let _ = sys::atomic_write(&cfg.strict_json_path, &json_bytes, 0o644);
+        println!("{}", String::from_utf8_lossy(&json_bytes));
+    } else {
+        write_and_print_strict_report(cfg, &report)?;
+    }
     if report.result == "fatal" {
         Ok(20)
     } else {

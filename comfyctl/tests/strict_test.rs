@@ -1,13 +1,16 @@
-use comfyctl::config::RuntimeConfig;
+use comfyctl::config::{ModelProfile, RuntimeConfig};
 use comfyctl::strict::{
-    evaluate_strict_checks, probe_htpasswd, probe_nvidia_smi, write_and_print_strict_report,
-    SystemSnapshot,
+    evaluate_strict_checks, probe_htpasswd, probe_nvidia_smi, probe_studio_health,
+    write_and_print_strict_report, SystemSnapshot,
 };
 use comfyctl::sys;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::Command;
+use std::thread;
 use std::time::{Duration, Instant};
 
 fn base_healthy_snapshot() -> SystemSnapshot {
@@ -30,6 +33,9 @@ fn base_healthy_snapshot() -> SystemSnapshot {
         cuda_torch_ok: true,
         cuda_torch_detail: "torch=2.9.1+cu128 cuda=12.8 device=NVIDIA GeForce RTX 5090 matmul=ok"
             .to_string(),
+        studio_health_ok: true,
+        studio_health_detail:
+            "studio-server healthy en 127.0.0.1:18190 (/studio/api/health HTTP 200)".to_string(),
     }
 }
 
@@ -331,4 +337,134 @@ fn probe_htpasswd_validates_format_and_rejects_garbage() {
     }
 
     let _ = fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn strict_studio_s5_disk_180gb_and_other_profiles_unchanged() {
+    // 1. Verificar tabla S5 intacta para todos los perfiles (180 / 75 / 45 / 10 GB)
+    let profile_thresholds = [
+        ("studio", ModelProfile::Studio, 180_u64),
+        ("all", ModelProfile::All, 75_u64),
+        ("general", ModelProfile::General, 45_u64),
+        ("realistic", ModelProfile::Realistic, 45_u64),
+        ("anime", ModelProfile::Anime, 45_u64),
+        ("minimal", ModelProfile::Minimal, 10_u64),
+    ];
+
+    for (raw, expected_profile, expected_gb) in profile_thresholds {
+        let mut vars = BTreeMap::new();
+        vars.insert("MODEL_PROFILE".to_string(), raw.to_string());
+        let cfg = RuntimeConfig::from_map(&vars, None);
+        assert_eq!(cfg.model_profile, expected_profile);
+        assert!(cfg.model_profile_valid);
+        assert_eq!(
+            cfg.strict_min_disk_gb, expected_gb,
+            "Umbral S5 inesperado para MODEL_PROFILE={raw}"
+        );
+
+        // Con SKIP_MODEL_DOWNLOAD=1 todos los perfiles bajan a 5 GB
+        vars.insert("SKIP_MODEL_DOWNLOAD".to_string(), "1".to_string());
+        let cfg_skip = RuntimeConfig::from_map(&vars, None);
+        assert_eq!(cfg_skip.strict_min_disk_gb, 5);
+    }
+
+    // 2. En perfil studio: 179.5 GB libres -> S5 fatal; 180.0 GB libres -> S5 ok
+    let mut studio_vars = BTreeMap::new();
+    studio_vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    let cfg_studio = RuntimeConfig::from_map(&studio_vars, None);
+
+    let mut snap_low = base_healthy_snapshot();
+    snap_low.disk_free_gb = 179.5;
+    let rep_low = evaluate_strict_checks(&cfg_studio, &snap_low);
+    assert_eq!(rep_low.result, "fatal");
+    let s5_low = rep_low.checks.iter().find(|c| c.id == "S5");
+    assert!(matches!(
+        s5_low,
+        Some(c)
+            if c.status == "fatal"
+                && c.detail.contains("180 GB")
+                && c.remediation
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("--disk 220")
+    ));
+
+    let mut snap_ok = base_healthy_snapshot();
+    snap_ok.disk_free_gb = 180.0;
+    let rep_ok = evaluate_strict_checks(&cfg_studio, &snap_ok);
+    assert_eq!(rep_ok.result, "ok");
+    let s5_ok = rep_ok.checks.iter().find(|c| c.id == "S5");
+    assert!(matches!(s5_ok, Some(c) if c.status == "ok"));
+}
+
+#[test]
+fn strict_studio_health_s11_and_live_http_probe() {
+    let mut vars = BTreeMap::new();
+    vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    let cfg_studio = RuntimeConfig::from_map(&vars, None);
+
+    // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añade S11 (studio_health)
+    let mut snap = base_healthy_snapshot();
+    snap.disk_free_gb = 200.0;
+    let rep_ok = evaluate_strict_checks(&cfg_studio, &snap);
+    assert_eq!(rep_ok.result, "ok");
+    assert_eq!(rep_ok.checks.len(), 11);
+    for expected_id in [
+        "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11",
+    ] {
+        assert!(
+            rep_ok
+                .checks
+                .iter()
+                .any(|c| c.id == expected_id && c.status == "ok"),
+            "Falta check {expected_id} en ok para perfil studio"
+        );
+    }
+
+    // 2. Cuando studio_health_ok es false -> S11 fatal con STRICT_START=1 y warn con STRICT_START=0
+    snap.studio_health_ok = false;
+    snap.studio_health_detail = "connection refused".to_string();
+    let rep_fatal = evaluate_strict_checks(&cfg_studio, &snap);
+    assert_eq!(rep_fatal.result, "fatal");
+    let s11_fatal = rep_fatal.checks.iter().find(|c| c.id == "S11");
+    assert!(matches!(
+        s11_fatal,
+        Some(c) if c.name == "studio_health" && c.status == "fatal" && c.remediation.is_some()
+    ));
+
+    vars.insert("STRICT_START".to_string(), "0".to_string());
+    let cfg_warn = RuntimeConfig::from_map(&vars, None);
+    let rep_warn = evaluate_strict_checks(&cfg_warn, &snap);
+    assert_eq!(rep_warn.result, "warn");
+    let s11_warn = rep_warn.checks.iter().find(|c| c.id == "S11");
+    assert!(matches!(s11_warn, Some(c) if c.status == "warn"));
+
+    // 3. Probe HTTP real contra un listener local en puerto efímero
+    let Ok(listener) = TcpListener::bind("127.0.0.1:0") else {
+        std::process::abort();
+    };
+    let port = listener.local_addr().map_or(18190, |addr| addr.port());
+    let srv = thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0_u8; 512];
+            let _ = stream.read(&mut buf);
+            let body = br#"{"status":"ok","service":"studio-server"}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.write_all(body);
+            let _ = stream.flush();
+        }
+    });
+
+    let mut probe_vars = BTreeMap::new();
+    probe_vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    probe_vars.insert("STUDIO_SERVER_PORT".to_string(), port.to_string());
+    let cfg_probe = RuntimeConfig::from_map(&probe_vars, None);
+    let (ok, detail) = probe_studio_health(&cfg_probe);
+    let _ = srv.join();
+    assert!(ok, "probe_studio_health debía devolver ok: {detail}");
+    assert!(detail.contains("HTTP 200"));
 }

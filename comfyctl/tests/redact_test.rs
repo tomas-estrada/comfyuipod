@@ -40,3 +40,65 @@ fn redactor_redacts_short_literals_and_url_passwords_with_special_chars() {
         "{cleaned_url}"
     );
 }
+
+#[test]
+fn redactor_and_status_env_never_leak_studio_llm_key() {
+    use comfyctl::collect::procfs::build_masked_env;
+    use comfyctl::config::RuntimeConfig;
+    use std::collections::BTreeMap;
+
+    let raw_key = format!("{}{}", "sk-", "YOUR_API_KEY_HERE_12345");
+    let custom_key = "YOUR_STUDIO_API_KEY_HERE";
+
+    let mut vars = BTreeMap::new();
+    vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    vars.insert("STUDIO_LLM_KEY".to_string(), custom_key.to_string());
+    let cfg = RuntimeConfig::from_map(&vars, None);
+
+    // 1. En build_masked_env (/status/api y /report.md), STUDIO_LLM_KEY aparece como "<definida>" y jamás en claro
+    let masked = build_masked_env(&cfg);
+    assert_eq!(
+        masked.get("STUDIO_LLM_KEY").map(String::as_str),
+        Some("<definida>")
+    );
+    assert_eq!(
+        masked.get("STUDIO_LLM_BASE_URL").map(String::as_str),
+        Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+    );
+    assert_eq!(
+        masked.get("STUDIO_LLM_MODEL").map(String::as_str),
+        Some("qwen3-vl-plus")
+    );
+    assert_eq!(
+        masked
+            .get("STUDIO_LLM_FALLBACK_BASE_URL")
+            .map(String::as_str),
+        Some("https://api.deepseek.com")
+    );
+    assert_eq!(
+        masked.get("STUDIO_LLM_FALLBACK_MODEL").map(String::as_str),
+        Some("deepseek-chat")
+    );
+    for val in masked.values() {
+        assert!(!val.contains(custom_key), "Leak detectado en env_masked");
+    }
+
+    // 2. SecretRedactor::from_config redacta tanto el valor literal como patrones sk-* y STUDIO_LLM_KEY=*
+    let redactor = SecretRedactor::from_config(&cfg);
+    let log_sample = format!(
+        "Calling DashScope with key={custom_key}, fallback {raw_key} and env STUDIO_LLM_KEY=inline-secret-value-42"
+    );
+    let redacted = redactor.redact(&log_sample);
+    assert!(!redacted.contains(custom_key), "{redacted}");
+    assert!(!redacted.contains(&raw_key), "{redacted}");
+    assert!(!redacted.contains("inline-secret-value-42"), "{redacted}");
+    assert!(redacted.contains("STUDIO_LLM_KEY=[REDACTED]"), "{redacted}");
+
+    // 3. Sin STUDIO_LLM_KEY configurada, el estado enmascarado es "<no definida>"
+    let empty_cfg = RuntimeConfig::from_map(&BTreeMap::new(), None);
+    let empty_masked = build_masked_env(&empty_cfg);
+    assert_eq!(
+        empty_masked.get("STUDIO_LLM_KEY").map(String::as_str),
+        Some("<no definida>")
+    );
+}

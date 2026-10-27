@@ -51,6 +51,7 @@ fn tail_lines_500mb_under_50ms_and_whitelist_security() {
 
     // Verificar lista blanca estricta de resolve_log_path
     assert!(resolve_log_path("comfyui", Path::new("/var/log")).is_some());
+    assert!(resolve_log_path("studio", Path::new("/var/log")).is_some());
     assert!(resolve_log_path("etc-passwd", Path::new("/var/log")).is_none());
     assert!(resolve_log_path("../etc/shadow", Path::new("/var/log")).is_none());
 }
