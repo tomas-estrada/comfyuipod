@@ -12,7 +12,7 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
    - Basada en `nvidia/cuda:12.8.0-runtime-ubuntu24.04` con la terna **PyTorch `2.9.1+cu128`** fijada y **`onnxruntime-gpu`** + **`opencv-python-headless`** protegidos mediante [`config/constraints.txt`](config/constraints.txt) y [`config/nodes.lock`](config/nodes.lock), más registro de librerías CUDA/cuDNN en `ldconfig`.
    - Conserva `build-essential` (`gcc`/`g++`) y `python3-dev` en la imagen para que `torch.compile` (Triton) y los custom nodes con extensiones C/C++ instalados desde ComfyUI-Manager funcionen en tiempo de ejecución.
 2. **Separación segura `/opt/ComfyUI` (código) y `/workspace/comfyui-data` (datos)**:
-   - ComfyUI y los 10 custom nodes están instalados en `/opt/ComfyUI`, mientras que `models/` (incluyendo `models/configs/*.yaml`), `input/`, `output/` y `user/` residen en `/workspace/comfyui-data`. Si montas un volumen persistente en `/workspace` en Vast.ai, **no se oculta la instalación** y los modelos descargados se reutilizan entre sesiones.
+   - ComfyUI y los 12 custom nodes están instalados en `/opt/ComfyUI`, mientras que `models/` (incluyendo `models/configs/*.yaml`), `input/`, `output/` y `user/` residen en `/workspace/comfyui-data`. Si montas un volumen persistente en `/workspace` en Vast.ai, **no se oculta la instalación** y los modelos descargados se reutilizan entre sesiones.
 3. **Acceso directo por navegador con HTTP Basic Auth, Portal `/home` y Observabilidad (`/status`, `/report.md`)**:
    - ComfyUI escucha únicamente en loopback (`127.0.0.1:18188`) y **Nginx** (`user www-data;`) protege el puerto público `8188` con usuario/contraseña (`COMFY_USER` y `COMFY_PASS`), pantalla de espera auto-recargable (`_starting.html`) durante la Fase 1, soporte WebSockets (`/ws` sin rate-limit), subida de vídeos sin límite (`client_max_body_size 0;`), `/healthz` (`HEAD /system_stats` sin exponer metadatos), cabeceras de seguridad en el servidor y en todas las locations (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`), compresión `gzip` (CSS/JS/JSON/SVG, mínimo 1024 bytes, `Vary: Accept-Encoding`) y un stack completo de observabilidad en el mismo puerto:
       - **`/home`**: Portal de inicio rápido (`<= 40 KB`, cero CDN externo, contraste WCAG AA) con acceso en 1 clic a ComfyUI, panel `/status`, informe `/report.md`, autodiagnóstico `/diag`, logs y terminal web opcional.
@@ -25,9 +25,10 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
    - Instalado desde `Comfy-Org/ComfyUI-Manager` con `security_level = weak` (seguro porque ComfyUI escucha solo en `127.0.0.1`) para instalar cualquier custom node o modelo faltante con **un clic** desde la UI.
 6. **`ffmpeg` completo de sistema (`libx264` + `h264_nvenc`) y autodiagnóstico `comfyctl diag` con timeouts**:
    - Fija `VHS_FORCE_FFMPEG_PATH=/usr/bin/ffmpeg`, `VHS_USE_IMAGEIO_FFMPEG=0` y `NVIDIA_DRIVER_CAPABILITIES=all`, y ejecuta `comfyctl diag` de forma síncrona antes de la Fase 1 (con timeouts duros por sonda vía `sys::run_command_with_timeout`) para probar GPU, kernel CUDA `matmul` en PyTorch, sesión real `InferenceSession` en `onnxruntime-gpu`, `h264_nvenc` y `libx264`.
-7. **Descarga automática resiliente en 2 fases (63.35 GiB reales medidos en HuggingFace con `hf` + `hf-xet`)**:
+7. **Descarga automática resiliente en hasta 3 fases (medidas vía `x-linked-size` en HuggingFace con `hf` + `hf-xet`)**:
    - **Fase 1 (Síncrona antes de abrir ComfyUI, 2.79 GiB)**: Descarga InsightFace `buffalo_l`, `inswapper_128.onnx`, `CodeFormer`, `GFPGANv1.4`, `facexlib` detectors, `YOLO face`, `SAM`, `SDXL VAE fp16-fix`, `SD1.5 VAE`, `4x-UltraSharp` y `4x-AnimeSharp`. Empieza tras el autodiagnóstico `comfyctl diag` (≤ 90 s en el peor caso, suma de timeouts de sonda; normalmente < 15 s) y, mientras dura (1-3 min según red, tope 10 min), Nginx muestra una pantalla de espera con enlaces a `/home` y `/status`.
-   - **Fase 2 (Segundo plano, 60.56 GiB en perfil `all`)**: Descarga todos los checkpoints populares, ControlNet Union ProMax e IP-Adapter con timeout por intento (`HF_FETCH_TIMEOUT=3600`), 3 reintentos automáticos y `rename()` atómico en el mismo filesystem mientras ya usas ComfyUI. Pulsa **`R`** en el navegador para refrescar los desplegables.
+   - **Fase 2 (Segundo plano, 60.56 GiB en perfil `all`; 13.22 GiB en `studio`)**: Descarga todos los checkpoints populares, ControlNet Union ProMax e IP-Adapter con timeout por intento (`HF_FETCH_TIMEOUT=3600`), 3 reintentos automáticos y `rename()` atómico en el mismo filesystem mientras ya usas ComfyUI. Pulsa **`R`** en el navegador para refrescar los desplegables.
+   - **Fase 3 (Segundo plano en `MODEL_PROFILE=studio`, 146.05 GB / 136.02 GiB base en 77 archivos)**: Lee [`config/models-studio.json`](config/models-studio.json) y descarga de forma idempotente y reanudable el inventario completo del estudio de vídeo y voz: Wan 2.2 (`Comfy-Org/Wan_2.2_ComfyUI_Repackaged` + LoRAs Lightning/Turbo/Relight + VACE 14B fp8_scaled + `clip_vision_h`), LatentSync 1.6 (`custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/`), LivePortrait (`models/liveportrait/`), IndexTTS-2 (`${COMFY_DATA_DIR}/indextts/checkpoints/`), `faster-whisper-large-v3` + aligners `wav2vec2` ES/EN, `funasr/campplus`, `CLIP ViT-L/14` e `IP-Adapter SDXL` (`h94/IP-Adapter`, sin pesos FaceID no comerciales). El modelo base de Wan 2.2 Animate (`wan2.2_animate_14B_int8_convrot.safetensors`, +18.41 GB / +17.15 GiB) es opt-in vía `STUDIO_INCLUDE_ANIMATE=1`.
 
 ---
 
@@ -54,30 +55,53 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
 
 | Categoría | Archivo en ComfyUI | Tamaño real | Perfiles (`MODEL_PROFILE`) | Repo HuggingFace | Carpeta destino |
 |---|---|---:|---|---|---|
-| **General / Fotorrealismo SDXL** | `Juggernaut-XI-byRunDiffusion.safetensors` | 6.62 GiB | `all`, `general`, `realistic` | `RunDiffusion/Juggernaut-XI-v11` | `models/checkpoints/` |
+| **General / Fotorrealismo SDXL** | `Juggernaut-XI-byRunDiffusion.safetensors` | 6.62 GiB | `all`, `general`, `realistic`, `studio` | `RunDiffusion/Juggernaut-XI-v11` | `models/checkpoints/` |
 | **Fotorrealismo SDXL** | `RealVisXL_V5.0_fp16.safetensors` | 6.46 GiB | `all`, `realistic` | `SG161222/RealVisXL_V5.0` | `models/checkpoints/` |
 | **General / Vídeo SD 1.5** | `Realistic_Vision_V6.0_NV_B1_fp16.safetensors` | 1.99 GiB | `all`, `general`, `realistic` | `SG161222/Realistic_Vision_V6.0_B1_noVAE` | `models/checkpoints/` |
 | **Ilustración / Anime SDXL** | `waiIllustriousSDXL_v160.safetensors` | 6.46 GiB | `all`, `general`, `anime` | `Ine007/waiIllustriousSDXL_v160` | `models/checkpoints/` |
 | **Ilustración / Anime SDXL** | `Illustrious-XL-v2.0.safetensors` | 6.46 GiB | `all`, `anime` | `OnomaAIResearch/Illustrious-XL-v2.0` | `models/checkpoints/` |
 | **Ilustración / Anime SDXL** | `NoobAI-XL-v1.1.safetensors` | 6.62 GiB | `all`, `anime` | `Laxhar/noobai-XL-1.1` | `models/checkpoints/` |
 | **Next-Gen SOTA (FP8)** | `flux1-dev-fp8.safetensors` | 16.06 GiB | `all` | `Comfy-Org/flux1-dev` | `models/checkpoints/` |
-| **ControlNet Union ProMax** | `controlnet-union-sdxl-promax.safetensors` | 2.34 GiB | `all`, `general`, `realistic`, `anime` | `xinsir/controlnet-union-sdxl-1.0` | `models/controlnet/` |
-| **IP-Adapter SDXL (x2)** | `ip-adapter-plus_sdxl_vit-h.safetensors`, `ip-adapter-plus-face_sdxl_vit-h.safetensors` | 1.58 GiB | `all`, `general`, `realistic`, `anime` | `h94/IP-Adapter` | `models/ipadapter/` |
-| **IP-Adapter SD 1.5 (x2)** | `ip-adapter-plus_sd15.safetensors`, `ip-adapter-plus-face_sd15.safetensors` | 0.18 GiB | `all`, `general`, `realistic`, `anime` | `h94/IP-Adapter` | `models/ipadapter/` |
-| **CLIP Vision ViT-H** | `CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors` | 2.35 GiB | `all`, `general`, `realistic`, `anime` | `h94/IP-Adapter` | `models/clip_vision/` |
-| **CLIP Vision ViT-bigG** | `CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors` | 3.44 GiB | `all`, `general`, `realistic`, `anime` | `h94/IP-Adapter` | `models/clip_vision/` |
+| **ControlNet Union ProMax** | `controlnet-union-sdxl-promax.safetensors` | 2.34 GiB | `all`, `general`, `realistic`, `anime`, `studio` | `xinsir/controlnet-union-sdxl-1.0` | `models/controlnet/` |
+| **IP-Adapter SDXL (x2)** | `ip-adapter-plus_sdxl_vit-h.safetensors`, `ip-adapter-plus-face_sdxl_vit-h.safetensors` | 1.58 GiB | `all`, `general`, `realistic`, `anime`, `studio` | `h94/IP-Adapter` | `models/ipadapter/` |
+| **IP-Adapter SD 1.5 (x2)** | `ip-adapter-plus_sd15.safetensors`, `ip-adapter-plus-face_sd15.safetensors` | 0.18 GiB | `all`, `general`, `realistic`, `anime`, `studio` | `h94/IP-Adapter` | `models/ipadapter/` |
+| **CLIP Vision ViT-H** | `CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors` | 2.35 GiB | `all`, `general`, `realistic`, `anime`, `studio` | `h94/IP-Adapter` | `models/clip_vision/` |
+| **CLIP Vision ViT-bigG** | `CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors` | 3.44 GiB | `all`, `general`, `realistic`, `anime`, `studio` | `h94/IP-Adapter` | `models/clip_vision/` |
+
+### Fase 3 — Inventario de Estudio de Vídeo y Voz (`MODEL_PROFILE=studio`, [`config/models-studio.json`](config/models-studio.json))
+
+Todos los tamaños han sido verificados contra la cabecera `x-linked-size` de HuggingFace y se validan en cada ejecución de CI mediante [`scripts/check_models_manifest.py`](scripts/check_models_manifest.py) sin descargar los pesos.
+
+| Categoría | Archivos | Tamaño exacto (bytes) | Tamaño (GB / GiB) | Licencia | Destino |
+|---|---:|---:|---:|---|---|
+| **`wan_core`** (Wan 2.2 `umt5-xxl fp8`, VAEs 2.1/2.2, `ti2v_5B_fp16`, pares `t2v`/`i2v` 14B fp8 high/low, LoRAs Lightning 4-step, Relight LoRA, `clip_vision_h`) | 14 | `83,184,917,475` | 83.18 GB / 77.47 GiB | Apache-2.0 | `models/{text_encoders,vae,diffusion_models,loras,clip_vision}/` |
+| **`vace_fp8`** (Wan 2.2 Fun VACE 14B `high_noise` + `low_noise` fp8_scaled, `Kijai/WanVideo_comfy_fp8_scaled`) | 2 | `34,692,112,208` | 34.69 GB / 32.31 GiB | Apache-2.0 | `models/diffusion_models/` |
+| **`lora_turbo_5b`** (`Wan2.2-TI2V-5B-Turbo-lora.safetensors`, `typesoder/Wan2.2-TI2V-5B-Turbo-LoRA`) | 1 | `332,348,584` | 0.33 GB / 0.31 GiB | Apache-2.0 | `models/loras/` |
+| **`latentsync`** (LatentSync 1.6 UNet + SyncNet + Whisper tiny + `sfd_face` + VAE SD-FT-MSE, `ByteDance/LatentSync-1.6`) | 12 | `9,970,426,719` | 9.97 GB / 9.29 GiB | `openrail++` / MIT | `custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/` |
+| **`liveportrait`** (`Kijai/LivePortrait_safetensors`: appearance, motion, warping, spade, stitching, landmark) | 6 | `635,366,851` | 0.64 GB / 0.59 GiB | MIT | `models/liveportrait/` |
+| **`indextts`** (IndexTTS-2: `gpt.pth`, `s2mel.pth`, `qwen0.6bemo4-merge`, `feat1.pt`, `feat2.pt`, `wav2vec2bert_stats.pt`, BPE/configs, `IndexTeam/IndexTTS-2`) | 22 | `5,491,182,363` | 5.49 GB / 5.11 GiB | ULA bilibili (avisar en usos comerciales) | `${COMFY_DATA_DIR}/indextts/checkpoints/` |
+| **`faster_whisper`** (`Systran/faster-whisper-large-v3`: `model.bin` + tokenizador) | 5 | `3,090,835,702` | 3.09 GB / 2.88 GiB | MIT | `models/whisper/faster-whisper-large-v3/` |
+| **`wav2vec2_aligners`** (`jonatasgrosman/wav2vec2-large-xlsr-53-{english,spanish}`) | 2 | `2,524,171,054` | 2.52 GB / 2.35 GiB | Apache-2.0 | `models/whisper/aligners/` |
+| **`clip_vit_l14`** (`openai/clip-vit-large-patch14`: `pytorch_model.bin` + tokenizador/configs) | 7 | `1,712,163,490` | 1.71 GB / 1.59 GiB | MIT (con caveats de model card) | `models/clip/clip-vit-large-patch14/` |
+| **`ipadapter_sdxl`** (`h94/IP-Adapter`: `ip-adapter_sdxl_vit-h`, `ip-adapter-plus_sdxl_vit-h` + `CLIP-ViT-H-14`, **sin FaceID**) | 3 | `4,388,305,741` | 4.39 GB / 4.09 GiB | Apache-2.0 | `models/ipadapter/` y `models/clip_vision/` |
+| **`campplus`** (`funasr/campplus`: `campplus_cn_common.bin` + configs) | 3 | `28,037,453` | 0.03 GB / 0.03 GiB | Apache-2.0 | `models/funasr/campplus/` |
+| **TOTAL FASE 3 POR DEFECTO (`MODEL_PROFILE=studio`)** | **77** | **`146,049,867,640`** | **146.05 GB / 136.02 GiB** | — | — |
+| **`animate_opt_in`** (`wan2.2_animate_14B_int8_convrot.safetensors`, solo con `STUDIO_INCLUDE_ANIMATE=1`) | +1 | `+18,413,068,672` | **+18.41 GB / +17.15 GiB** | Apache-2.0 | `models/diffusion_models/` |
+
+> **Nota sobre `STUDIO_INCLUDE_ANIMATE=1`**: El LoRA de relight de Wan 2.2 Animate (`wan2.2_animate_14B_relight_lora_bf16.safetensors`, 1.48 GB) viene incluido por defecto en `wan_core`, pero el modelo base de 14B (`wan2.2_animate_14B_int8_convrot.safetensors`, 18.41 GB) es **opt-in** mediante `-e STUDIO_INCLUDE_ANIMATE=1` para mantener el perfil `studio` por defecto dentro de un alquiler de disco de 220 GB. Si activas `STUDIO_INCLUDE_ANIMATE=1`, alquila al menos **250 GB** de disco en Vast.ai.
 
 ### Resumen de Tamaños y Tiempos por Perfil (`MODEL_PROFILE`)
 
-| Perfil (`MODEL_PROFILE`) | Fase 1 | Fase 2 | Total Modelos | Tiempo Fase 2 a 500 Mbps | Tiempo Fase 2 a 1 Gbps |
-|---|---:|---:|---:|---:|---:|
-| **`all`** *(por defecto)* | 2.79 GiB | 60.56 GiB | **63.35 GiB** | ~19 min | ~9.5 min |
-| **`general`** | 2.79 GiB | 24.96 GiB | **27.75 GiB** | ~8 min | ~4 min |
-| **`realistic`** | 2.79 GiB | 24.95 GiB | **27.74 GiB** | ~8 min | ~4 min |
-| **`anime`** | 2.79 GiB | 29.43 GiB | **32.22 GiB** | ~9.5 min | ~4.7 min |
-| **`minimal`** | 2.79 GiB | 0.00 GiB | **2.79 GiB** | 0 s | 0 s |
+| Perfil (`MODEL_PROFILE`) | Fase 1 | Fase 2 | Fase 3 | Total Modelos | Tiempo a 500 Mbps | Tiempo a 1 Gbps |
+|---|---:|---:|---:|---:|---:|---:|
+| **`all`** *(por defecto)* | 2.79 GiB | 60.56 GiB | 0.00 GiB | **63.35 GiB** | ~19 min | ~9.5 min |
+| **`general`** | 2.79 GiB | 24.96 GiB | 0.00 GiB | **27.75 GiB** | ~8 min | ~4 min |
+| **`realistic`** | 2.79 GiB | 24.95 GiB | 0.00 GiB | **27.74 GiB** | ~8 min | ~4 min |
+| **`anime`** | 2.79 GiB | 29.43 GiB | 0.00 GiB | **32.22 GiB** | ~9.5 min | ~4.7 min |
+| **`minimal`** | 2.79 GiB | 0.00 GiB | 0.00 GiB | **2.79 GiB** | 0 s | 0 s |
+| **`studio`** | 2.79 GiB | 13.22 GiB | 136.02 GiB *(146.05 GB)* | **≈ 148.0 GiB** *(~157 GB en disco)* | ~44 min | ~22 min |
 
-### Custom Nodes Preinstalados (Fijados por Commit SHA en [`config/nodes.lock`](config/nodes.lock))
+### Custom Nodes Preinstalados (12 Nodos Fijados por Commit SHA en [`config/nodes.lock`](config/nodes.lock))
 
 - [`Comfy-Org/ComfyUI-Manager`](https://github.com/Comfy-Org/ComfyUI-Manager)
 - [`Kosinkadink/ComfyUI-VideoHelperSuite`](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite)
@@ -88,6 +112,8 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
 - [`Fannovel16/ComfyUI-Frame-Interpolation`](https://github.com/Fannovel16/ComfyUI-Frame-Interpolation)
 - [`rgthree/rgthree-comfy`](https://github.com/rgthree/rgthree-comfy)
 - [`kijai/ComfyUI-KJNodes`](https://github.com/kijai/ComfyUI-KJNodes)
+- [`ShmuelRonen/ComfyUI-LatentSyncWrapper`](https://github.com/ShmuelRonen/ComfyUI-LatentSyncWrapper) (`360d5283d7276aee68b4237b1387e594e4ce640e`)
+- [`kijai/ComfyUI-LivePortraitKJ`](https://github.com/kijai/ComfyUI-LivePortraitKJ) (`4d9dc6205b793ffd0fb319816136d9b8c0dbfdff`)
 
 ---
 
@@ -106,7 +132,8 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
 | `STRICT_FATAL_GRACE` | `600` | Segundos de gracia tras un `FATAL` con `STRICT_START=1` durante los que se mantienen vivos Nginx, `/home`, `/status` y `/report.md` antes de salir con código `20`. |
 | `STRICT_REQUIRE_GPU` | `1` (auto: `0` si `COMFYUI_EXTRA_ARGS` incluye `--cpu`) | Fuerza (`1`) u omite (`0`) la sonda `S10` `cuda_torch` de `strict-check`. |
 | `STRICT_REQUIRE_HTPASSWD` | `1` en `comfyctl supervise` (`0` en subcomandos aislados) | Controla si `S7` exige `.htpasswd` ya presente (`fatal` si falta) o lo degrada a `warn`. |
-| `MODEL_PROFILE` | `all` | Perfil de modelos: `all` (63.35 GiB), `general` (27.75 GiB), `realistic` (27.74 GiB), `anime` (32.22 GiB) o `minimal` (2.79 GiB). Si se introduce un valor desconocido, usa `all` con advertencia. |
+| `MODEL_PROFILE` | `all` | Perfil de modelos: `all` (63.35 GiB), `general` (27.75 GiB), `realistic` (27.74 GiB), `anime` (32.22 GiB), `minimal` (2.79 GiB) o `studio` (Fase 1 2.79 GiB + Fase 2 SDXL/ControlNet 13.22 GiB + Fase 3 136.02 GiB / 146.05 GB ≈ 157 GB en disco). Si se introduce un valor desconocido, usa `all` con advertencia. |
+| `STUDIO_INCLUDE_ANIMATE` | `0` | En `MODEL_PROFILE=studio`, pon `1` para incluir el modelo base de Wan 2.2 Animate (`wan2.2_animate_14B_int8_convrot.safetensors`, +18.41 GB / +17.15 GiB, total Fase 3 = 78 archivos / 164.46 GB). Requiere alquilar al menos 250 GB de disco en Vast.ai. |
 | `SKIP_MODEL_DOWNLOAD` | `0` | Pon `1` para omitir por completo la descarga automática de modelos al arrancar. |
 | `HF_TOKEN` | *(Vacío)* | Token opcional de HuggingFace (leído automáticamente del entorno por `hf` sin exponerse en argumentos de proceso ni en `/report.md`). |
 | `COMFY_DATA_DIR` | `/workspace/comfyui-data` | Ruta donde se almacenan `models/`, `input/`, `output/` y `user/` (actualiza automáticamente `extra_model_paths.yaml`). |
@@ -270,7 +297,7 @@ vastai create instance <OFFER_ID> \
 - **Solución aplicada**: La Fase 1 de [`scripts/download-models.sh`](scripts/download-models.sh) descarga y descomprime `buffalo_l.zip` en `/workspace/comfyui-data/models/insightface/models/buffalo_l/` y crea el enlace en `/root/.insightface/models/buffalo_l`, junto con `inswapper_128.onnx`, `codeformer-v0.1.0.pth`, `GFPGANv1.4.pth`, `detection_Resnet50_Final.pth` y `parsing_parsenet.pth`.
 
 ### 6. Actualizaciones de ComfyUI y `PIP_CONSTRAINT` (BAJA-09 / BAJA-12)
-- **Versiones congeladas**: ComfyUI y los 10 custom nodes preinstalados se clonan en commits verificados en [`config/nodes.lock`](config/nodes.lock). Para actualizar ComfyUI core a una nueva versión, actualiza el SHA en `config/nodes.lock` y ejecuta el workflow de GitHub Actions en lugar de usar "Update ComfyUI" desde la UI.
+- **Versiones congeladas**: ComfyUI y los 12 custom nodes preinstalados se clonan en commits verificados en [`config/nodes.lock`](config/nodes.lock). Para actualizar ComfyUI core a una nueva versión, actualiza el SHA en `config/nodes.lock` y ejecuta el workflow de GitHub Actions en lugar de usar "Update ComfyUI" desde la UI.
 - **Protección `PIP_CONSTRAINT`**: La variable `PIP_CONSTRAINT=/etc/comfyui/constraints.txt` está activa en runtime para impedir que un custom node instalado desde ComfyUI-Manager degrade `torch` (`2.9.1+cu128`) o rompa `opencv-python-headless` / `onnxruntime-gpu`. Si algún nodo experimental requiere levantar esa restricción temporalmente, puedes pasar `-e PIP_CONSTRAINT=""` en las opciones del contenedor.
 - **No uses "Update ComfyUI" desde Manager**: `/opt/ComfyUI` es un clon superficial fijado por SHA; el botón de actualización del core puede fallar o dejar el frontend (`comfyui-frontend-package`) desalineado con el servidor. Instalar o actualizar *custom nodes* desde Manager sí está soportado.
 
@@ -285,5 +312,5 @@ vastai create instance <OFFER_ID> \
 - **Solución**: añade `-e HF_HUB_DISABLE_XET=1` a las Docker Options para forzar HTTP clásico. Es algo más lento pero estable. Los modelos ya descargados se conservan (`hf_fetch` salta los archivos existentes) y los parciales se reanudan en el siguiente arranque.
 
 ### 9. Un nodo aparece con `IMPORT FAILED` o `no kernel image is available for sm_120`
-- **Si pasa en la imagen recién arrancada**: no debería; el build falla si cualquiera de los 10 nodos no importa. Reporta el log completo.
+- **Si pasa en la imagen recién arrancada**: no debería; el build falla si cualquiera de los 12 nodos no importa. Reporta el log completo.
 - **Si pasa tras instalar algo desde Manager**: casi siempre un nodo arrastró su propio `torch` o `opencv` y pisó los fijados. Compara `pip3 freeze` con `/etc/comfyui/requirements.lock` (el artefacto `requirements-lock` del workflow es idéntico) para ver qué cambió, y reinstala la terna con `pip3 install --force-reinstall torch==2.9.1+cu128 torchvision==0.24.1+cu128 torchaudio==2.9.1+cu128 --index-url https://download.pytorch.org/whl/cu128`. Mientras `PIP_CONSTRAINT` siga activo esto no debería ocurrir; ocurre si se desactivó con `-e PIP_CONSTRAINT=""`.

@@ -14,3 +14,5 @@ node ComfyUI_IPAdapter_plus https://github.com/cubiq/ComfyUI_IPAdapter_plus.git 
 node ComfyUI-Frame-Interpolation https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git 26545cc2dd95bc3d27f056016300673bdeee78f5
 node rgthree-comfy https://github.com/rgthree/rgthree-comfy.git d7297b42f0fa78bec1c0411478f887423c249502
 node ComfyUI-KJNodes https://github.com/kijai/ComfyUI-KJNodes.git 17195fcfa8a05f601b766a0f09c9733284f47416
+node ComfyUI-LatentSyncWrapper https://github.com/ShmuelRonen/ComfyUI-LatentSyncWrapper.git 360d5283d7276aee68b4237b1387e594e4ce640e
+node ComfyUI-LivePortraitKJ https://github.com/kijai/ComfyUI-LivePortraitKJ.git 4d9dc6205b793ffd0fb319816136d9b8c0dbfdff

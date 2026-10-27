@@ -128,6 +128,12 @@ mkdir -p \
     "${COMFY_DATA_DIR}/models/ultralytics/bbox" \
     "${COMFY_DATA_DIR}/models/ultralytics/segm" \
     "${COMFY_DATA_DIR}/models/sams" \
+    "${COMFY_DATA_DIR}/models/liveportrait" \
+    "${COMFY_DATA_DIR}/models/whisper/faster-whisper-large-v3" \
+    "${COMFY_DATA_DIR}/models/whisper/aligners" \
+    "${COMFY_DATA_DIR}/models/funasr/campplus" \
+    "${COMFY_DATA_DIR}/models/latentsync_checkpoints" \
+    "${COMFY_DATA_DIR}/indextts/checkpoints" \
     "${COMFY_DATA_DIR}/user/__manager" \
     "${COMFY_DATA_DIR}/user/default/ComfyUI-Manager" \
     "${COMFY_DATA_DIR}/user/default/workflows" \
@@ -145,6 +151,14 @@ for subdir in models input output user; do
     fi
     ln -sfn "${COMFY_DATA_DIR}/${subdir}" "${COMFY_APP_DIR}/${subdir}"
 done
+
+if [ -d "${COMFY_APP_DIR}/custom_nodes/ComfyUI-LatentSyncWrapper" ]; then
+    latentsync_ckpt_dir="${COMFY_APP_DIR}/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints"
+    if [ -d "${latentsync_ckpt_dir}" ] && [ ! -L "${latentsync_ckpt_dir}" ]; then
+        rm -rf "${latentsync_ckpt_dir}"
+    fi
+    ln -sfn "${COMFY_DATA_DIR}/models/latentsync_checkpoints" "${latentsync_ckpt_dir}"
+fi
 
 if [ ! -e "/workspace/ComfyUI" ]; then
     ln -sfn "${COMFY_APP_DIR}" /workspace/ComfyUI

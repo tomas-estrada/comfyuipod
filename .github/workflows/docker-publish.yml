@@ -45,7 +45,7 @@ jobs:
 
       - name: Validar sondas Python, esquema de triage_patterns.json, paridad O-11 y portal sin CDN (§9.1)
         run: |
-          python3 -m py_compile config/probes/*.py
+          python3 -m py_compile config/probes/*.py scripts/check_models_manifest.py
           python3 - << 'EOF'
           import json, pathlib, re
 
@@ -102,7 +102,7 @@ jobs:
           print(f"Validated {len(patterns)} triage patterns, {len(expected_files)} expected models, frozen schemas (incl. strict), and portal ({portal_bytes} bytes, 0 external CDN refs).")
           EOF
 
-      - name: Ejecutar download-models.sh en seco con HF_CLI simulado y contrastar formato con parser (R-01 / R-08 / S-01 / S-02)
+      - name: Ejecutar download-models.sh en seco con HF_CLI simulado y contrastar formato con parser (R-01 / R-08 / S-01 / S-02 / VAL-PROFILE-002)
         run: |
           set -euo pipefail
           tmp_root="$(mktemp -d)"
@@ -158,6 +158,37 @@ jobs:
             || { echo "::error::El fixture download_models.log ha divergido del formato real; regenéralo con este dry-run"; exit 1; }
           echo "[OK] download-models.sh en seco: formato idéntico al fixture del parser (S-01/S-02)"
 
+          # S-01 Fase 3 (MODEL_PROFILE=studio, VAL-PROFILE-002): verificar conteo planeado (77 base / 78 con STUDIO_INCLUDE_ANIMATE=1),
+          # rutas de destino (models/*, custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/*, indextts/checkpoints/*) e idempotencia.
+          mkdir -p "$tmp_root/studio_data" "$tmp_root/studio_app/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints"
+          COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio \
+            bash scripts/download-models.sh --phase2 > "$tmp_root/dl_studio.log" 2>"$tmp_root/dl_studio.err" || { cat "$tmp_root/dl_studio.log"; cat "$tmp_root/dl_studio.err"; exit 1; }
+          grep -q "PLAN FASE 1: 12 archivos" "$tmp_root/dl_studio.log"
+          grep -q "PLAN FASE 2: 8 archivos (studio)" "$tmp_root/dl_studio.log"
+          grep -q "FASE 2 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
+          grep -q "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: studio)" "$tmp_root/dl_studio.log"
+          grep -q "PLAN FASE 3: 77 archivos (studio, STUDIO_INCLUDE_ANIMATE=0)" "$tmp_root/dl_studio.log"
+          grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_studio.log"
+          grep -q "FASE 3 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
+          [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors" ]
+          [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_vace_high_noise_14B_fp8_scaled.safetensors" ]
+          [ -s "$tmp_root/studio_data/models/liveportrait/appearance_feature_extractor.safetensors" ]
+          [ -s "$tmp_root/studio_data/models/whisper/faster-whisper-large-v3/model.bin" ]
+          [ -s "$tmp_root/studio_data/models/whisper/aligners/wav2vec2-large-xlsr-53-spanish/pytorch_model.bin" ]
+          [ -s "$tmp_root/studio_data/models/clip/clip-vit-large-patch14/pytorch_model.bin" ]
+          [ -s "$tmp_root/studio_data/models/ipadapter/ip-adapter_sdxl_vit-h.safetensors" ]
+          [ -s "$tmp_root/studio_data/models/funasr/campplus/campplus_cn_common.bin" ]
+          [ -s "$tmp_root/studio_data/indextts/checkpoints/gpt.pth" ]
+          [ -s "$tmp_root/studio_app/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/latentsync_unet.pt" ]
+          [ ! -e "$tmp_root/studio_data/models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors" ]
+          COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_ANIMATE=1 \
+            bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_anim.log" 2>"$tmp_root/dl_studio_anim.err" || { cat "$tmp_root/dl_studio_anim.log"; cat "$tmp_root/dl_studio_anim.err"; exit 1; }
+          grep -q "PLAN FASE 3: 78 archivos (studio, STUDIO_INCLUDE_ANIMATE=1)" "$tmp_root/dl_studio_anim.log"
+          grep -q "SKIP (ya existe): wan2.2_ti2v_5B_fp16.safetensors" "$tmp_root/dl_studio_anim.log"
+          grep -q "INICIO: wan2.2_animate_14B_int8_convrot.safetensors" "$tmp_root/dl_studio_anim.log"
+          [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors" ]
+          echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio, 77 base + 1 opt-in Animate) verificado en seco (S-01 / VAL-PROFILE-002)"
+
       - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01 - SHA v3.5.0 verificado)
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
@@ -165,9 +196,13 @@ jobs:
           failure-threshold: error
           ignore: DL3008,DL3013,DL3042,SC2086
 
-      - name: Verificar existencia real de todos los commit SHAs en config/nodes.lock (M-01 / N-03)
+      - name: Verificar existencia real de todos los commit SHAs en config/nodes.lock (M-01 / N-03 / VAL-PROFILE-004)
         run: |
           set -euo pipefail
+          node_count="$(awk '$1 == "node" {c++} END {print c+0}' config/nodes.lock)"
+          [ "$node_count" = "12" ] || { echo "::error::Se esperaban 12 custom nodes en config/nodes.lock, se encontraron ${node_count}"; exit 1; }
+          grep -q '^node ComfyUI-LatentSyncWrapper https://github.com/ShmuelRonen/ComfyUI-LatentSyncWrapper\.git 360d5283d7276aee68b4237b1387e594e4ce640e$' config/nodes.lock
+          grep -q '^node ComfyUI-LivePortraitKJ https://github.com/kijai/ComfyUI-LivePortraitKJ\.git 4d9dc6205b793ffd0fb319816136d9b8c0dbfdff$' config/nodes.lock
           awk '$1 ~ /^(core|dep|node)$/ {print $2, $3, $4}' config/nodes.lock | while read -r name url sha; do
             echo "Verificando $name ($url @ $sha)..."
             rm -rf /tmp/chk_sha
@@ -210,6 +245,11 @@ jobs:
           print(f"Total verified: {len(matches)} models | Total size: {total_bytes/1024**3:.2f} GiB | Failures: {failures}")
           sys.exit(1 if failures else 0)
           EOF
+
+      - name: Validar config/models-studio.json y tamaños exactos vía HEAD en HuggingFace (VAL-PROFILE-002)
+        run: |
+          python3 scripts/check_models_manifest.py --fixture
+          python3 scripts/check_models_manifest.py
 
   rust:
     name: Rust Lint, Unit Tests & Dependency Audit (comfyctl, §8.1)

@@ -64,6 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxext6 \
         libxrender1 \
         libgomp1 \
+        libsndfile1 \
     && ffmpeg -version \
     && ttyd --version \
     && rm -rf /var/lib/apt/lists/*
@@ -116,11 +117,12 @@ RUN pip3 install --upgrade --ignore-installed pip setuptools wheel \
         numba \
         gguf \
         accelerate \
-        diffusers
+        diffusers \
+        pytorch-lightning
 
-# 4. Preinstalar los 10 Custom Nodes fijados por SHA en config/nodes.lock (REP-01 / MED-03 / CRIT-02)
+# 4. Preinstalar los 12 Custom Nodes fijados por SHA en config/nodes.lock (REP-01 / MED-03 / CRIT-02)
 #    - Soporta tanto requirements.txt como requirements-no-cupy.txt (ComfyUI-Frame-Interpolation).
-#    - Filtra paquetes que pisan PyTorch/OpenCV/ONNX o sam2 (ya instalado por SHA en paso 3).
+#    - Filtra paquetes que pisan PyTorch/OpenCV/ONNX/NumPy o sam2 (ya instalado por SHA en paso 3).
 #    - Limpia todas las variantes de OpenCV/ONNX y reinstala con --force-reinstall --no-deps (CRIT-02).
 WORKDIR /opt/ComfyUI/custom_nodes
 RUN awk '$1 == "node" {print $2, $3, $4}' /etc/comfyui/nodes.lock | while read -r dir_name repo_url sha; do \
@@ -132,7 +134,7 @@ RUN awk '$1 == "node" {print $2, $3, $4}' /etc/comfyui/nodes.lock | while read -
         git checkout -B main FETCH_HEAD && \
         for req_file in requirements.txt requirements-no-cupy.txt; do \
             if [ -f "${req_file}" ]; then \
-                grep -Ev '^\s*(#|$|onnxruntime(\s*[<>=!~]|$)|opencv-python(\s*[<>=!~]|$)|opencv-contrib-python(\s*[<>=!~]|$)|torch(\s*[<>=!~]|$)|torchvision(\s*[<>=!~]|$)|torchaudio(\s*[<>=!~]|$)|git\+https://github\.com/facebookresearch/sam2)' "${req_file}" > /tmp/req_filtered.txt || true; \
+                grep -Ev '^\s*(#|$|onnxruntime(\s*[<>=!~]|$)|opencv-python(\s*[<>=!~]|$)|opencv-contrib-python(\s*[<>=!~]|$)|numpy(\s*[<>=!~]|$)|torch(\s*[<>=!~]|$)|torchvision(\s*[<>=!~]|$)|torchaudio(\s*[<>=!~]|$)|git\+https://github\.com/facebookresearch/sam2)' "${req_file}" > /tmp/req_filtered.txt || true; \
                 if [ -s /tmp/req_filtered.txt ]; then \
                     pip3 install -r /tmp/req_filtered.txt; \
                 fi; \
@@ -141,6 +143,10 @@ RUN awk '$1 == "node" {print $2, $3, $4}' /etc/comfyui/nodes.lock | while read -
         done && \
         cd /opt/ComfyUI/custom_nodes; \
     done \
+    && if [ -d /opt/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/.git/info ]; then \
+        printf 'checkpoints\ncheckpoints/\n' >> /opt/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/.git/info/exclude; \
+    fi \
+    && touch /root/.latentsync16_dependencies_installed \
     && pip3 uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless onnxruntime onnxruntime-gpu || true \
     && pip3 install --no-deps --force-reinstall "opencv-python-headless>=4.10.0.84,<5.0.0" "onnxruntime-gpu>=1.20.0,<2.0.0" \
     && pip3 freeze > /etc/comfyui/requirements.lock \
@@ -174,6 +180,12 @@ RUN mkdir -p /etc/comfyui/models_configs \
         /workspace/comfyui-data/models/ultralytics/bbox \
         /workspace/comfyui-data/models/ultralytics/segm \
         /workspace/comfyui-data/models/sams \
+        /workspace/comfyui-data/models/liveportrait \
+        /workspace/comfyui-data/models/whisper/faster-whisper-large-v3 \
+        /workspace/comfyui-data/models/whisper/aligners \
+        /workspace/comfyui-data/models/funasr/campplus \
+        /workspace/comfyui-data/models/latentsync_checkpoints \
+        /workspace/comfyui-data/indextts/checkpoints \
         /workspace/comfyui-data/user/__manager \
         /workspace/comfyui-data/user/default/ComfyUI-Manager \
         /workspace/comfyui-data/user/default/workflows \
@@ -185,6 +197,10 @@ RUN mkdir -p /etc/comfyui/models_configs \
     && ln -sfn /workspace/comfyui-data/input /opt/ComfyUI/input \
     && ln -sfn /workspace/comfyui-data/output /opt/ComfyUI/output \
     && ln -sfn /workspace/comfyui-data/user /opt/ComfyUI/user \
+    && if [ -d /opt/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper ]; then \
+        rm -rf /opt/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints && \
+        ln -sfn /workspace/comfyui-data/models/latentsync_checkpoints /opt/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints; \
+    fi \
     && ln -sfn /opt/ComfyUI /workspace/ComfyUI
 
 # 6. Copiar archivos de configuración, portal, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
@@ -198,6 +214,7 @@ COPY config/_starting.html /etc/comfyui/_starting.html
 COPY config/portal/index.html /etc/comfyui/portal/index.html
 COPY config/probes/ /etc/comfyui/probes/
 COPY config/nginx.conf /etc/nginx/nginx.conf
+COPY config/models-studio.json /etc/comfyui/models-studio.json
 COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
 COPY scripts/start.sh /start.sh
@@ -210,12 +227,13 @@ RUN sed -i 's/\r$//' \
         /etc/comfyui/_starting.html \
         /etc/comfyui/portal/index.html \
         /etc/comfyui/probes/*.py \
+        /etc/comfyui/models-studio.json \
         /etc/comfyui/triage_patterns.json \
         /etc/nginx/nginx.conf && \
     chmod +x /usr/local/bin/download-models.sh /start.sh && \
     /usr/local/bin/comfyctl version && \
     python3 -m py_compile /etc/comfyui/probes/*.py && \
-    IMAGE_TAG="${IMAGE_TAG}" BUILD_DATE="${BUILD_DATE}" python3 -c "import json, os, subprocess, torch; sha = subprocess.check_output(['git', '-C', '/opt/ComfyUI', 'rev-parse', 'HEAD'], text=True).strip(); json.dump({'tag': os.environ.get('IMAGE_TAG', 'dev'), 'built_at': os.environ.get('BUILD_DATE', 'unknown'), 'comfyui_sha': sha, 'pytorch': torch.__version__, 'cuda': str(torch.version.cuda), 'ubuntu': '24.04'}, open('/etc/comfyui/image.json', 'w', encoding='utf-8'), indent=2); pats = json.load(open('/etc/comfyui/triage_patterns.json', encoding='utf-8')); assert len(pats) >= 17" && \
+    IMAGE_TAG="${IMAGE_TAG}" BUILD_DATE="${BUILD_DATE}" python3 -c "import json, os, subprocess, torch; sha = subprocess.check_output(['git', '-C', '/opt/ComfyUI', 'rev-parse', 'HEAD'], text=True).strip(); json.dump({'tag': os.environ.get('IMAGE_TAG', 'dev'), 'built_at': os.environ.get('BUILD_DATE', 'unknown'), 'comfyui_sha': sha, 'pytorch': torch.__version__, 'cuda': str(torch.version.cuda), 'ubuntu': '24.04'}, open('/etc/comfyui/image.json', 'w', encoding='utf-8'), indent=2); pats = json.load(open('/etc/comfyui/triage_patterns.json', encoding='utf-8')); assert len(pats) >= 17; ms = json.load(open('/etc/comfyui/models-studio.json', encoding='utf-8')); assert len(ms.get('models', [])) == 78" && \
     cp /etc/comfyui/extra_model_paths.yaml /opt/ComfyUI/extra_model_paths.yaml && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/__manager/config.ini && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini && \

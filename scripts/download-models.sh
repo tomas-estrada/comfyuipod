@@ -7,7 +7,26 @@
 #              inswapper_128, CodeFormer, GFPGAN, facexlib, YOLO face, SAM, VAEs,
 #              Upscalers). Se ejecuta antes de abrir ComfyUI.
 #   --phase2 : Checkpoints principales, ControlNet Union ProMax e IP-Adapter
-#              (60.56 GiB en perfil 'all'). Se ejecuta en segundo plano.
+#              (60.56 GiB en perfil 'all'; 13.22 GiB / 8 archivos en 'studio').
+#              Se ejecuta en segundo plano.
+#   --phase3 : Inventario de estudio de vídeo y voz desde config/models-studio.json
+#              (146.05 GB = 136.02 GiB por defecto en 77 archivos; +18.41 GB =
+#              +17.15 GiB opt-in con STUDIO_INCLUDE_ANIMATE=1). Exclusivo 'studio'.
+#
+# Desglose de Fase 3 por categoría (config/models-studio.json, x-linked-size):
+#   - wan_core          : 14 archivos |  83,184,917,475 B ( 83.18 GB /  77.47 GiB) | Apache-2.0
+#   - vace_fp8          :  2 archivos |  34,692,112,208 B ( 34.69 GB /  32.31 GiB) | Apache-2.0
+#   - lora_turbo_5b     :  1 archivo  |     332,348,584 B (  0.33 GB /   0.31 GiB) | Apache-2.0
+#   - latentsync        : 12 archivos |   9,970,426,719 B (  9.97 GB /   9.29 GiB) | openrail++ / MIT
+#   - liveportrait      :  6 archivos |     635,366,851 B (  0.64 GB /   0.59 GiB) | MIT
+#   - indextts          : 22 archivos |   5,491,182,363 B (  5.49 GB /   5.11 GiB) | ULA bilibili
+#   - faster_whisper    :  5 archivos |   3,090,835,702 B (  3.09 GB /   2.88 GiB) | MIT
+#   - wav2vec2_aligners :  2 archivos |   2,524,171,054 B (  2.52 GB /   2.35 GiB) | Apache-2.0
+#   - clip_vit_l14      :  7 archivos |   1,712,163,490 B (  1.71 GB /   1.59 GiB) | MIT (caveats card)
+#   - ipadapter_sdxl    :  3 archivos |   4,388,305,741 B (  4.39 GB /   4.09 GiB) | Apache-2.0
+#   - campplus          :  3 archivos |      28,037,453 B (  0.03 GB /   0.03 GiB) | Apache-2.0
+#   - TOTAL FASE 3 BASE : 77 archivos | 146,049,867,640 B (146.05 GB / 136.02 GiB)
+#   - animate_opt_in    : +1 archivo  | +18,413,068,672 B (+18.41 GB / +17.15 GiB) | Apache-2.0 (STUDIO_INCLUDE_ANIMATE=1)
 #
 # Perfiles soportados vía variable de entorno MODEL_PROFILE (por defecto 'all'):
 #   - all       : Fase 1 (2.79 GiB) + Fase 2 (60.56 GiB) = 63.35 GiB total
@@ -15,18 +34,41 @@
 #   - realistic : Fase 1 (2.79 GiB) + Fase 2 (24.95 GiB) = 27.74 GiB total
 #   - anime     : Fase 1 (2.79 GiB) + Fase 2 (29.43 GiB) = 32.22 GiB total
 #   - minimal   : Solo Fase 1 (2.79 GiB; omite Fase 2)
+#   - studio    : Fase 1 (2.79 GiB) + Fase 2 SDXL/ControlNet (13.22 GiB) +
+#                 Fase 3 (136.02 GiB / 146.05 GB) ≈ 152.03 GiB (≈157 GB en disco)
 #
 # Variables de entorno adicionales de control de descarga (§11):
-#   - HF_FETCH_TIMEOUT   : Timeout en segundos por archivo e intento (default: 3600).
-#   - HF_HUB_DISABLE_XET : Si se define a "1", desactiva el motor Rust hf_xet y usa
-#                          descarga HTTP clásica (útil si el host tiene HostBuffer
-#                          limitado o si hf_xet consume demasiada RAM).
+#   - HF_FETCH_TIMEOUT       : Timeout en segundos por archivo e intento (default: 3600).
+#   - HF_HUB_DISABLE_XET     : Si se define a "1", desactiva el motor Rust hf_xet y usa
+#                              descarga HTTP clásica (útil si el host tiene HostBuffer
+#                              limitado o si hf_xet consume demasiada RAM).
+#   - STUDIO_INCLUDE_ANIMATE : Si se define a "1" en perfil 'studio', añade el modelo
+#                              base wan2.2_animate_14B_int8_convrot (+18.41 GB; requiere
+#                              alquiler de disco ≥ 250 GB).
 # ==============================================================================
 
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMFY_DATA_DIR="${COMFY_DATA_DIR:-/workspace/comfyui-data}"
 MODELS_DIR="${COMFY_DATA_DIR}/models"
+if [ -z "${COMFY_APP_DIR:-}" ]; then
+    if [ -d "/opt/ComfyUI/custom_nodes" ] && [ -w "/opt/ComfyUI/custom_nodes" ]; then
+        COMFY_APP_DIR="/opt/ComfyUI"
+    else
+        COMFY_APP_DIR="${COMFY_DATA_DIR}"
+    fi
+fi
+STUDIO_MANIFEST="${STUDIO_MANIFEST:-}"
+if [ -z "${STUDIO_MANIFEST}" ]; then
+    if [ -f "${SCRIPT_DIR}/../config/models-studio.json" ]; then
+        STUDIO_MANIFEST="${SCRIPT_DIR}/../config/models-studio.json"
+    elif [ -f "/etc/comfyui/models-studio.json" ]; then
+        STUDIO_MANIFEST="/etc/comfyui/models-studio.json"
+    else
+        STUDIO_MANIFEST="config/models-studio.json"
+    fi
+fi
 # STAGE_DIR en el mismo filesystem que MODELS_DIR para que mv sea rename() atómico
 STAGE_DIR="${MODELS_DIR}/.hf_stage"
 MODEL_PROFILE="${MODEL_PROFILE:-all}"
@@ -40,7 +82,7 @@ log() {
 
 # Validar MODEL_PROFILE (BAJA-04)
 case "${MODEL_PROFILE}" in
-    all|general|realistic|anime|minimal)
+    all|general|realistic|anime|minimal|studio)
         ;;
     *)
         log "WARN: MODEL_PROFILE='${MODEL_PROFILE}' no reconocido; usando 'all'."
@@ -223,6 +265,9 @@ run_phase2() {
         general|realistic|anime)
             phase2_planned=10
             ;;
+        studio)
+            phase2_planned=8
+            ;;
         *)
             phase2_planned=14
             ;;
@@ -235,12 +280,14 @@ run_phase2() {
     log "pulsa 'R' en el navegador para refrescar la lista de modelos."
     log "======================================================================"
 
-    # 1. Checkpoints Fotorrealistas / Multipropósito (perfiles: all, general, realistic)
-    if [[ "${MODEL_PROFILE}" =~ ^(all|general|realistic)$ ]]; then
+    # 1. Checkpoints Fotorrealistas / Multipropósito (perfiles: all, general, realistic, studio)
+    if [[ "${MODEL_PROFILE}" =~ ^(all|general|realistic|studio)$ ]]; then
         # Juggernaut XI v11 (6.62 GiB)
         hf_fetch "RunDiffusion/Juggernaut-XI-v11" "Juggernaut-XI-byRunDiffusion.safetensors" \
             "${MODELS_DIR}/checkpoints" "Juggernaut-XI-byRunDiffusion.safetensors" "model" || true
+    fi
 
+    if [[ "${MODEL_PROFILE}" =~ ^(all|general|realistic)$ ]]; then
         # Realistic Vision V6.0 FP16 SD 1.5 (1.99 GiB)
         hf_fetch "SG161222/Realistic_Vision_V6.0_B1_noVAE" "Realistic_Vision_V6.0_NV_B1_fp16.safetensors" \
             "${MODELS_DIR}/checkpoints" "Realistic_Vision_V6.0_NV_B1_fp16.safetensors" "model" || true
@@ -304,6 +351,83 @@ run_phase2() {
     log "======================================================================"
 }
 
+# ------------------------------------------------------------------------------
+# Fase 3: Inventario de Estudio de Vídeo y Voz (146.05 GB base / 77 archivos)
+# ------------------------------------------------------------------------------
+run_phase3() {
+    FAILED_MODELS=()
+    if [ "${MODEL_PROFILE}" != "studio" ]; then
+        log "PLAN FASE 3: 0 archivos (${MODEL_PROFILE})"
+        log "MODEL_PROFILE=${MODEL_PROFILE} activo: omitiendo Fase 3 (exclusiva del perfil 'studio')."
+        return 0
+    fi
+
+    if [ ! -f "${STUDIO_MANIFEST}" ]; then
+        log "ERROR: No se encontró el manifiesto de Fase 3 en ${STUDIO_MANIFEST}"
+        return 1
+    fi
+
+    local include_animate="${STUDIO_INCLUDE_ANIMATE:-0}"
+    local phase3_planned=77
+    if [ "${include_animate}" = "1" ]; then
+        phase3_planned=78
+    fi
+
+    log "======================================================================"
+    log "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: ${MODEL_PROFILE})"
+    log "PLAN FASE 3: ${phase3_planned} archivos (${MODEL_PROFILE}, STUDIO_INCLUDE_ANIMATE=${include_animate})"
+    log "Manifiesto: ${STUDIO_MANIFEST} (146.05 GB base; +18.41 GB con Animate opt-in)."
+    log "======================================================================"
+
+    while IFS=$'\t' read -r repo_id remote_path target_dir filename _expected_bytes; do
+        [ -z "${repo_id}" ] && continue
+        local resolved_dir
+        case "${target_dir}" in
+            models/*)
+                resolved_dir="${MODELS_DIR}/${target_dir#models/}"
+                ;;
+            models)
+                resolved_dir="${MODELS_DIR}"
+                ;;
+            \$\{COMFY_DATA_DIR\}/*)
+                resolved_dir="${COMFY_DATA_DIR}/${target_dir#\$\{COMFY_DATA_DIR\}/}"
+                ;;
+            custom_nodes/*)
+                resolved_dir="${COMFY_APP_DIR}/${target_dir}"
+                ;;
+            /*)
+                resolved_dir="${target_dir}"
+                ;;
+            *)
+                resolved_dir="${COMFY_DATA_DIR}/${target_dir}"
+                ;;
+        esac
+
+        hf_fetch "${repo_id}" "${remote_path}" "${resolved_dir}" "${filename}" || true
+    done < <(
+        STUDIO_MANIFEST_PATH="${STUDIO_MANIFEST}" STUDIO_INCLUDE_ANIMATE_FLAG="${include_animate}" \
+        python3 -c '
+import json, os
+data = json.load(open(os.environ["STUDIO_MANIFEST_PATH"], encoding="utf-8"))
+inc_anim = os.environ.get("STUDIO_INCLUDE_ANIMATE_FLAG", "0") == "1"
+for m in data["models"]:
+    opt = m.get("opt_in")
+    if opt == "STUDIO_INCLUDE_ANIMATE" and not inc_anim:
+        continue
+    print("\t".join([m["repo_id"], m["remote_path"], m["target_dir"], m["filename"], str(m["bytes"])]))
+'
+    )
+
+    if [ "${#FAILED_MODELS[@]}" -eq 0 ]; then
+        rm -rf "${STAGE_DIR}" 2>/dev/null || true
+    fi
+
+    print_summary "FASE 3"
+    log "======================================================================"
+    log "FASE 3 COMPLETADA (Perfil: ${MODEL_PROFILE})."
+    log "======================================================================"
+}
+
 case "${1:---all}" in
     --phase1)
         run_phase1
@@ -313,9 +437,18 @@ case "${1:---all}" in
         # el timeout de 600s en start.sh (idempotente: los archivos ya existentes hacen SKIP en <1ms).
         run_phase1
         run_phase2
+        if [ "${MODEL_PROFILE}" = "studio" ]; then
+            run_phase3
+        fi
+        ;;
+    --phase3)
+        run_phase3
         ;;
     --all|*)
         run_phase1
         run_phase2
+        if [ "${MODEL_PROFILE}" = "studio" ]; then
+            run_phase3
+        fi
         ;;
 esac
