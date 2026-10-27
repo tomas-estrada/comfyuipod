@@ -932,3 +932,361 @@ async def test_agent_loop_wan_i2v_and_sdxl_image_registry_integration_scr005_scr
     assert sdxl_res["job_id"] in gallery_job_ids
 
 
+class _MultiChunkGatedSSEStream(httpx.AsyncByteStream):
+    """Stream SSE que emite el primer chunk de inmediato y espera el gate para el resto."""
+
+    def __init__(
+        self,
+        first_chunk_bytes: bytes,
+        remaining_chunks_bytes: list[bytes],
+        release_final_chunk: asyncio.Event,
+    ) -> None:
+        self._first = first_chunk_bytes
+        self._remaining = remaining_chunks_bytes
+        self._release = release_final_chunk
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self._first
+        await asyncio.wait_for(self._release.wait(), timeout=2.0)
+        for chunk in self._remaining:
+            yield chunk
+
+
+@pytest.mark.anyio
+async def test_split_key_across_stream_chunks_redacted_in_http_sse_and_stub_scr017(
+    studio_config: StudioConfig,
+    studio_data_dir: Path,
+    stub_comfyui_transport: httpx.ASGITransport,
+    client: TestClient,
+) -> None:
+    """M2-SCR-017: Una key primaria o de fallback partida entre 2+ chunks no se filtra
+    en ningún token emitido ni en la concatenación (tanto en HTTP SSE como en stub guionizado),
+    conservando la entrega incremental del primer token antes del chunk final.
+    """
+    primary_key = studio_config.get_llm_key()
+    fallback_key = studio_config.get_llm_fallback_key()
+    assert primary_key is not None and len(primary_key) >= 12
+    assert fallback_key is not None and len(fallback_key) >= 12
+
+    prim_a, prim_b, prim_c = primary_key[:6], primary_key[6:14], primary_key[14:]
+    fb_a, fb_b = fallback_key[:10], fallback_key[10:]
+
+    store = ProjectStore(studio_data_dir)
+    comfy_client = ComfyUIClient(
+        base_url=studio_config.studio_comfyui_url,
+        transport=stub_comfyui_transport,
+        store=store,
+        broker=ProgressBroker(),
+        redactor=studio_config.redactor(),
+    )
+
+    # 1. Transporte HTTP SSE: key primaria y de fallback partidas entre múltiples deltas SSE
+    http_broker = ProgressBroker()
+    http_project = store.create_project(name="SCR-017 HTTP SSE Split Key")
+    http_gate = asyncio.Event()
+
+    def _sse_delta_frame(text_piece: str, finish: str | None = None) -> bytes:
+        payload = {
+            "id": "cmpl-scr017",
+            "model": "qwen3-vl-plus",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": text_piece},
+                    "finish_reason": finish,
+                }
+            ],
+        }
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+    class _SplitKeySSETransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            first_bytes = _sse_delta_frame(f"Primer tramo seguro: {prim_a}")
+            rest_bytes = [
+                _sse_delta_frame(prim_b),
+                _sse_delta_frame(f"{prim_c} y respaldo {fb_a}"),
+                _sse_delta_frame(f"{fb_b} cierre limpio.", finish="stop"),
+                b"data: [DONE]\n\n",
+            ]
+            return httpx.Response(
+                status_code=200,
+                headers={"Content-Type": "text/event-stream; charset=utf-8"},
+                stream=_MultiChunkGatedSSEStream(first_bytes, rest_bytes, http_gate),
+                request=request,
+            )
+
+    http_cfg = StudioConfig(
+        studio_data_dir=studio_data_dir,
+        studio_llm_key=primary_key,
+        studio_llm_fallback_key=fallback_key,
+        studio_stub_llm=False,
+    )
+    http_agent = StudioAgent(
+        config=http_cfg,
+        store=store,
+        comfyui_client=comfy_client,
+        broker=http_broker,
+        llm_client=OpenAICompatibleLLMClient(
+            config=http_cfg,
+            transport=_SplitKeySSETransport(),
+        ),
+    )
+
+    http_iter = http_agent.stream_turn(
+        project_id=http_project["id"],
+        user_message="Prueba de redacción en fronteras SSE",
+    ).__aiter__()
+
+    # El primer token seguro llega ANTES de liberar el chunk final, sin el prefijo de la key
+    first_http_ev = await asyncio.wait_for(http_iter.__anext__(), timeout=1.0)
+    assert not http_gate.is_set(), "El primer token debe llegar antes del chunk final"
+    assert first_http_ev["type"] == "token"
+    assert first_http_ev["delta"] == "Primer tramo seguro: "
+    assert prim_a not in first_http_ev["delta"]
+
+    http_gate.set()
+    rest_http_events = [ev async for ev in http_iter]
+    all_http_events = [first_http_ev, *rest_http_events]
+    http_token_deltas = [e["delta"] for e in all_http_events if e["type"] == "token"]
+    http_concat = "".join(http_token_deltas)
+
+    for delta_piece in http_token_deltas:
+        assert primary_key not in delta_piece
+        assert fallback_key not in delta_piece
+        assert prim_a not in delta_piece
+        assert prim_b not in delta_piece
+        assert prim_c not in delta_piece
+        assert fb_a not in delta_piece
+        assert fb_b not in delta_piece
+
+    assert primary_key not in http_concat
+    assert fallback_key not in http_concat
+    assert http_concat == (
+        f"Primer tramo seguro: {SECRET_PLACEHOLDER} y respaldo {SECRET_PLACEHOLDER} cierre limpio."
+    )
+    assert all_http_events[-1]["type"] == "done"
+    assert all_http_events[-1]["reply"] == http_concat
+
+    # Verificar que el replay del ProgressBroker tampoco contiene fragmentos de las keys
+    replay_frames = [
+        frame
+        async for frame in http_broker.stream(
+            heartbeat_interval=5.0,
+            replay=True,
+            max_events=len(http_broker.recent_events()) + 1,
+        )
+    ]
+    replay_blob = "".join(replay_frames)
+    assert primary_key not in replay_blob
+    assert fallback_key not in replay_blob
+    assert prim_a not in replay_blob
+    assert fb_a not in replay_blob
+
+    # 1b. Transporte HTTP SSE en ruta de FALLBACK (primario falla con 502 y parte la fallback key)
+    fb_http_gate = asyncio.Event()
+
+    class _FallbackSplitKeySSETransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if "dashscope" in str(request.url):
+                return httpx.Response(
+                    status_code=502,
+                    text=f"Bad gateway primary {primary_key}",
+                    request=request,
+                )
+            first_bytes = _sse_delta_frame(f"Fallback SSE activo: {fb_a}")
+            rest_bytes = [
+                _sse_delta_frame(f"{fb_b} y primaria {prim_a}{prim_b}"),
+                _sse_delta_frame(f"{prim_c} ok.", finish="stop"),
+                b"data: [DONE]\n\n",
+            ]
+            return httpx.Response(
+                status_code=200,
+                headers={"Content-Type": "text/event-stream; charset=utf-8"},
+                stream=_MultiChunkGatedSSEStream(first_bytes, rest_bytes, fb_http_gate),
+                request=request,
+            )
+
+    fb_http_agent = StudioAgent(
+        config=http_cfg,
+        store=store,
+        comfyui_client=comfy_client,
+        broker=http_broker,
+        llm_client=OpenAICompatibleLLMClient(
+            config=http_cfg,
+            transport=_FallbackSplitKeySSETransport(),
+        ),
+    )
+    fb_http_iter = fb_http_agent.stream_turn(
+        project_id=http_project["id"],
+        user_message="Prueba fallback SSE con llave partida",
+    ).__aiter__()
+
+    first_fb_http_ev = await asyncio.wait_for(fb_http_iter.__anext__(), timeout=1.0)
+    assert not fb_http_gate.is_set()
+    assert first_fb_http_ev["type"] == "token"
+    assert first_fb_http_ev["delta"] == "Fallback SSE activo: "
+    assert fb_a not in first_fb_http_ev["delta"]
+
+    fb_http_gate.set()
+    rest_fb_http_events = [ev async for ev in fb_http_iter]
+    all_fb_http_events = [first_fb_http_ev, *rest_fb_http_events]
+    fb_http_deltas = [e["delta"] for e in all_fb_http_events if e["type"] == "token"]
+    fb_http_concat = "".join(fb_http_deltas)
+    for delta_piece in fb_http_deltas:
+        assert fallback_key not in delta_piece
+        assert primary_key not in delta_piece
+        assert fb_a not in delta_piece
+        assert fb_b not in delta_piece
+    assert fb_http_concat == (
+        f"Fallback SSE activo: {SECRET_PLACEHOLDER} y primaria {SECRET_PLACEHOLDER} ok."
+    )
+    assert all_fb_http_events[-1]["reply"] == fb_http_concat
+
+    # 2. Stub guionizado (STUDIO_STUB_LLM=1) con chunks + release_final_chunk (primario y fallback)
+    stub_gate = asyncio.Event()
+    stub_llm = client.app.state.stub_llm
+    assert isinstance(stub_llm, StubLLMClient)
+    stub_llm.clear_steps()
+    stub_llm.enqueue_step(
+        StubLLMstep(
+            chunks=[
+                f"Inicio stub en vivo: {prim_a}",
+                f"{prim_b}{prim_c} intermedio {fb_a}",
+                f"{fb_b} cierre stub.",
+            ],
+            release_final_chunk=stub_gate,
+        )
+    )
+
+    stub_project = store.create_project(name="SCR-017 Stub Split Key")
+    app_agent: StudioAgent = client.app.state.agent
+    stub_iter = app_agent.stream_turn(
+        project_id=stub_project["id"],
+        user_message="Prueba de redacción en fronteras con stub",
+    ).__aiter__()
+
+    first_stub_ev = await asyncio.wait_for(stub_iter.__anext__(), timeout=1.0)
+    assert not stub_gate.is_set(), "El primer token del stub debe llegar antes del chunk final"
+    assert first_stub_ev["type"] == "token"
+    assert first_stub_ev["delta"] == "Inicio stub en vivo: "
+    assert prim_a not in first_stub_ev["delta"]
+
+    stub_gate.set()
+    rest_stub_events = [ev async for ev in stub_iter]
+    all_stub_events = [first_stub_ev, *rest_stub_events]
+    stub_token_deltas = [e["delta"] for e in all_stub_events if e["type"] == "token"]
+    stub_concat = "".join(stub_token_deltas)
+
+    for delta_piece in stub_token_deltas:
+        assert primary_key not in delta_piece
+        assert fallback_key not in delta_piece
+        assert prim_a not in delta_piece
+        assert fb_a not in delta_piece
+
+    assert stub_concat == (
+        f"Inicio stub en vivo: {SECRET_PLACEHOLDER} intermedio {SECRET_PLACEHOLDER} cierre stub."
+    )
+    assert all_stub_events[-1]["reply"] == stub_concat
+
+    # 2b. Stub guionizado en ruta de FALLBACK (primario falla y 2º step usa fallback_key partida)
+    stub_fb_gate = asyncio.Event()
+    stub_llm.enqueue_step(
+        StubLLMstep(
+            fail_with_status=502,
+            error_message=f"Fallo primario stub {primary_key}",
+        )
+    )
+    stub_llm.enqueue_step(
+        StubLLMstep(
+            chunks=[
+                f"Stub fallback en vivo: {fb_a}",
+                f"{fb_b} fin fallback stub.",
+            ],
+            release_final_chunk=stub_fb_gate,
+        )
+    )
+    stub_fb_iter = app_agent.stream_turn(
+        project_id=stub_project["id"],
+        user_message="Prueba de fallback en stub con llave partida",
+    ).__aiter__()
+
+    first_stub_fb_ev = await asyncio.wait_for(stub_fb_iter.__anext__(), timeout=1.0)
+    assert not stub_fb_gate.is_set()
+    assert first_stub_fb_ev["type"] == "token"
+    assert first_stub_fb_ev["delta"] == "Stub fallback en vivo: "
+    assert fb_a not in first_stub_fb_ev["delta"]
+
+    stub_fb_gate.set()
+    rest_stub_fb_events = [ev async for ev in stub_fb_iter]
+    all_stub_fb_events = [first_stub_fb_ev, *rest_stub_fb_events]
+    stub_fb_deltas = [e["delta"] for e in all_stub_fb_events if e["type"] == "token"]
+    stub_fb_concat = "".join(stub_fb_deltas)
+    for delta_piece in stub_fb_deltas:
+        assert fallback_key not in delta_piece
+        assert fb_a not in delta_piece
+        assert fb_b not in delta_piece
+    assert stub_fb_concat == f"Stub fallback en vivo: {SECRET_PLACEHOLDER} fin fallback stub."
+    assert all_stub_fb_events[-1]["reply"] == stub_fb_concat
+
+    # 3. Verificación end-to-end en el endpoint HTTP SSE POST /studio/api/projects/{id}/chat
+    #    + GET /studio/api/progress?replay=true + GET /studio/api/projects/{id}/chat
+    chat_proj = client.post(
+        "/studio/api/projects",
+        json={"name": "SCR-017 Chat Endpoint SSE"},
+    ).json()
+    chat_pid = chat_proj["id"]
+
+    stub_llm.enqueue_step(
+        StubLLMstep(
+            chunks=[
+                f"Respuesta SSE panel: {prim_a}{prim_b}",
+                f"{prim_c} y {fb_a}",
+                f"{fb_b} completado.",
+            ],
+        )
+    )
+    sse_resp = client.post(
+        f"/studio/api/projects/{chat_pid}/chat",
+        json={"message": "Ejecuta turno SSE con llave partida", "stream": True},
+    )
+    assert sse_resp.status_code == 200
+    assert primary_key not in sse_resp.text
+    assert fallback_key not in sse_resp.text
+    assert prim_a not in sse_resp.text
+    assert fb_a not in sse_resp.text
+
+    parsed_sse_tokens: list[str] = []
+    for block in sse_resp.text.split("\n\n"):
+        lines = [ln.strip() for ln in block.strip().splitlines() if ln.strip()]
+        ev_name = ""
+        ev_data = ""
+        for ln in lines:
+            if ln.startswith("event:"):
+                ev_name = ln[6:].strip()
+            elif ln.startswith("data:"):
+                ev_data = ln[5:].strip()
+        if ev_name == "token" and ev_data:
+            parsed_sse_tokens.append(json.loads(ev_data)["delta"])
+
+    assert "".join(parsed_sse_tokens) == (
+        f"Respuesta SSE panel: {SECRET_PLACEHOLDER} y {SECRET_PLACEHOLDER} completado."
+    )
+
+    progress_resp = client.get("/studio/api/progress?replay=true&max_events=25")
+    assert progress_resp.status_code == 200
+    assert primary_key not in progress_resp.text
+    assert fallback_key not in progress_resp.text
+    assert prim_a not in progress_resp.text
+    assert fb_a not in progress_resp.text
+
+    hist_resp = client.get(f"/studio/api/projects/{chat_pid}/chat")
+    assert hist_resp.status_code == 200
+    assert primary_key not in hist_resp.text
+    assert fallback_key not in hist_resp.text
+    assistant_msgs = [m for m in hist_resp.json()["messages"] if m["role"] == "assistant"]
+    assert assistant_msgs[-1]["content"] == (
+        f"Respuesta SSE panel: {SECRET_PLACEHOLDER} y {SECRET_PLACEHOLDER} completado."
+    )
+
+
+

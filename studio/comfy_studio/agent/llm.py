@@ -172,7 +172,13 @@ class OpenAICompatibleLLMClient:
         self._config = config
         self._transport = transport
         self._timeout = timeout
-        self._redactor = redactor or config.redactor()
+        base_redactor = redactor or config.redactor()
+        self._redactor = SecretRedactor(
+            studio_llm_key=config.get_llm_key(),
+            studio_llm_fallback_key=config.get_llm_fallback_key(),
+            comfy_pass=config.get_comfy_pass(),
+            extra_secrets=base_redactor.literal_secrets,
+        )
         self._stub_client = stub_client or (
             StubLLMClient(model=config.studio_llm_model)
             if config.studio_stub_llm and transport is None
@@ -339,26 +345,58 @@ class OpenAICompatibleLLMClient:
         assert self._stub_client is not None
         primary_key = self._config.get_llm_key()
 
-        async def _redacted_on_token(piece: str, model_name: str) -> None:
-            if on_token is None:
-                return
-            safe_piece = self._redactor.redact(piece)
-            res = on_token(safe_piece, model_name)
-            if hasattr(res, "__await__"):
-                await res
+        async def _run_stub_stream(
+            *,
+            model_override: str,
+            provider_kind: Literal["primary", "fallback"],
+            api_key: str | None,
+        ) -> tuple[dict[str, Any], str]:
+            stream_redactor = self._redactor.create_stream()
+            emitted_parts: list[str] = []
+            last_model = model_override
 
-        try:
-            raw = await self._stub_client.stream_chat(
+            async def _redacted_on_token(piece: str, model_name: str) -> None:
+                nonlocal last_model
+                if model_name:
+                    last_model = model_name
+                safe_piece = stream_redactor.push(str(piece))
+                if not safe_piece:
+                    return
+                emitted_parts.append(safe_piece)
+                if on_token is not None:
+                    res = on_token(safe_piece, last_model)
+                    if hasattr(res, "__await__"):
+                        await res
+
+            raw_res = await self._stub_client.stream_chat(
                 messages,
                 tools=tools,
-                model_override=self._config.studio_llm_model,
-                provider="primary",
-                api_key=primary_key,
+                model_override=model_override,
+                provider=provider_kind,
+                api_key=api_key,
                 primary_key=primary_key,
-                on_token=_redacted_on_token if on_token is not None else None,
+                on_token=_redacted_on_token,
+            )
+            resolved_model = str(raw_res.get("model") or last_model)
+            tail_piece = stream_redactor.flush()
+            if tail_piece:
+                emitted_parts.append(tail_piece)
+                if on_token is not None:
+                    res = on_token(tail_piece, resolved_model)
+                    if hasattr(res, "__await__"):
+                        await res
+            joined_stream = "".join(emitted_parts)
+            raw_content = str(raw_res.get("content") or joined_stream)
+            return raw_res, self._redactor.redact(raw_content)
+
+        try:
+            raw, safe_content = await _run_stub_stream(
+                model_override=self._config.studio_llm_model,
+                provider_kind="primary",
+                api_key=primary_key,
             )
             return LLMResponse(
-                content=self._redactor.redact(str(raw.get("content") or "")),
+                content=safe_content,
                 tool_calls=_parse_tool_calls(raw.get("tool_calls")),
                 model=str(raw.get("model") or self._config.studio_llm_model),
                 provider="stub",
@@ -373,17 +411,13 @@ class OpenAICompatibleLLMClient:
             )
             try:
                 fb_key = self._ensure_fallback_key_available()
-                raw_fb = await self._stub_client.stream_chat(
-                    messages,
-                    tools=tools,
+                raw_fb, safe_fb_content = await _run_stub_stream(
                     model_override=self._config.studio_llm_fallback_model,
-                    provider="fallback",
+                    provider_kind="fallback",
                     api_key=fb_key,
-                    primary_key=primary_key,
-                    on_token=_redacted_on_token if on_token is not None else None,
                 )
                 return LLMResponse(
-                    content=self._redactor.redact(str(raw_fb.get("content") or "")),
+                    content=safe_fb_content,
                     tool_calls=_parse_tool_calls(raw_fb.get("tool_calls")),
                     model=self._config.studio_llm_fallback_model,
                     provider="fallback",
@@ -511,6 +545,7 @@ class OpenAICompatibleLLMClient:
                         tc_accum: dict[int, dict[str, Any]] = {}
                         resolved_model = model
                         finish_reason = "stop"
+                        stream_redactor = self._redactor.create_stream()
 
                         async for raw_line in response.aiter_lines():
                             line = raw_line.strip()
@@ -553,12 +588,13 @@ class OpenAICompatibleLLMClient:
                                     if isinstance(part, dict)
                                 )
                             if piece:
-                                safe_piece = self._redactor.redact(str(piece))
-                                content_parts.append(safe_piece)
-                                if on_token is not None:
-                                    cb_res = on_token(safe_piece, resolved_model)
-                                    if hasattr(cb_res, "__await__"):
-                                        await cb_res
+                                safe_piece = stream_redactor.push(str(piece))
+                                if safe_piece:
+                                    content_parts.append(safe_piece)
+                                    if on_token is not None:
+                                        cb_res = on_token(safe_piece, resolved_model)
+                                        if hasattr(cb_res, "__await__"):
+                                            await cb_res
 
                             delta_tcs = delta.get("tool_calls")
                             if isinstance(delta_tcs, list):
@@ -589,6 +625,14 @@ class OpenAICompatibleLLMClient:
                                                 entry["function"]["arguments"] += str(
                                                     fn["arguments"]
                                                 )
+
+                        tail_piece = stream_redactor.flush()
+                        if tail_piece:
+                            content_parts.append(tail_piece)
+                            if on_token is not None:
+                                cb_res = on_token(tail_piece, resolved_model)
+                                if hasattr(cb_res, "__await__"):
+                                    await cb_res
 
                         raw_tool_calls = [tc_accum[k] for k in sorted(tc_accum)]
                         return LLMResponse(

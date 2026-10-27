@@ -153,3 +153,75 @@ def test_status_and_health_endpoints_never_expose_studio_llm_key(
     assert status_json["env_masked"]["STUDIO_LLM_KEY"] == "<definida>"
     assert status_json["env_masked"]["STUDIO_LLM_FALLBACK_KEY"] == "<definida>"
     assert status_json["llm"]["fallback_key_status"] == "<definida>"
+
+
+def test_stream_redactor_scrubs_secrets_split_across_chunk_boundaries() -> None:
+    """M2-SCR-017: El redactor de streaming redacta secretos partidos entre 2+ chunks."""
+    primary_key = "PRIMARY_SECRET_KEY_ABCDEF123456"
+    fallback_key = "FALLBACK_SECRET_KEY_UVWXYZ789012"
+    redactor = SecretRedactor(
+        studio_llm_key=primary_key,
+        studio_llm_fallback_key=fallback_key,
+    )
+
+    stream = redactor.create_stream()
+
+    # El primer chunk tiene texto seguro seguido de un prefijo parcial de la key primaria
+    out1 = stream.push("Texto inicial en vivo: " + primary_key[:10])
+    assert out1 == "Texto inicial en vivo: "
+    assert primary_key[:10] not in out1
+
+    # El segundo chunk sigue a mitad de la key primaria (aún incompleta)
+    out2 = stream.push(primary_key[10:20])
+    assert out2 == ""
+
+    # El tercer chunk completa la key primaria y empieza un prefijo de la key de fallback
+    out3 = stream.push(primary_key[20:] + " y luego " + fallback_key[:12])
+    assert out3 == f"{SECRET_PLACEHOLDER} y luego "
+    assert primary_key not in out3
+    assert fallback_key[:12] not in out3
+
+    # El cuarto chunk completa la key de fallback y añade texto final
+    out4 = stream.push(fallback_key[12:] + " listo.")
+    out5 = stream.flush()
+    combined = out1 + out2 + out3 + out4 + out5
+
+    assert combined == (
+        f"Texto inicial en vivo: {SECRET_PLACEHOLDER} y luego {SECRET_PLACEHOLDER} listo."
+    )
+    assert primary_key not in combined
+    assert fallback_key not in combined
+
+    # Prueba adicional: key partida carácter por carácter y falsa alarma de prefijo
+    char_stream = redactor.create_stream()
+    char_outputs: list[str] = []
+    full_input = f"Inicio PRIM_FALSA_ALARMA y {primary_key} y {fallback_key}"
+    for ch in full_input:
+        piece = char_stream.push(ch)
+        if piece:
+            char_outputs.append(piece)
+    tail = char_stream.flush()
+    if tail:
+        char_outputs.append(tail)
+
+    reconstructed = "".join(char_outputs)
+    assert reconstructed == (
+        f"Inicio PRIM_FALSA_ALARMA y {SECRET_PLACEHOLDER} y {SECRET_PLACEHOLDER}"
+    )
+    assert primary_key not in reconstructed
+    assert fallback_key not in reconstructed
+
+    # Patrones heurísticos (sk-, STUDIO_LLM_KEY=) partidos entre chunks también se redactan
+    regex_stream = redactor.create_stream()
+    r1 = regex_stream.push("Token s")
+    r2 = regex_stream.push("k-abcdefgh123456 y STUDIO_LLM_")
+    r3 = regex_stream.push("FALLBACK_KEY=valor_secreto_999 fin")
+    r4 = regex_stream.flush()
+    regex_combined = r1 + r2 + r3 + r4
+    assert "sk-abcdefgh123456" not in regex_combined
+    assert "valor_secreto_999" not in regex_combined
+    assert regex_combined == (
+        f"Token {SECRET_PLACEHOLDER} y STUDIO_LLM_FALLBACK_KEY={SECRET_PLACEHOLDER} fin"
+    )
+
+

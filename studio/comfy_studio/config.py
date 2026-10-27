@@ -31,6 +31,30 @@ _HF_TOKEN_ASSIGN_RE = re.compile(r"(?i)(HF_TOKEN\s*[:=]\s*)(\S+)")
 _BEARER_RE = re.compile(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{6,}")
 _URL_USERINFO_RE = re.compile(r"(https?://[^/\s:@]+:)(.*)(@)")
 
+_CASE_SENSITIVE_STREAM_PREFIXES: tuple[str, ...] = (
+    "hf_",
+    "sk-",
+    "http://",
+    "https://",
+)
+_CASE_INSENSITIVE_STREAM_PREFIXES: tuple[str, ...] = (
+    "bearer ",
+    "studio_llm_key",
+    "studio_llm_fallback_key",
+    "comfy_pass",
+    "hf_token",
+)
+_INFLIGHT_STREAM_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^hf_[A-Za-z0-9]*$"),
+    re.compile(r"^sk-[A-Za-z0-9._\-]*$"),
+    re.compile(r"(?i)^Bearer\s+[A-Za-z0-9._\-]*$"),
+    re.compile(r"(?i)^STUDIO_LLM_(?:FALLBACK_)?KEY(?:\s*|\s*[:=]\s*\S*)$"),
+    re.compile(r"(?i)^COMFY_PASS(?:\s*|\s*[:=]\s*\S*)$"),
+    re.compile(r"(?i)^HF_TOKEN(?:\s*|\s*[:=]\s*\S*)$"),
+    re.compile(r"^https?://[^/\s@]*$"),
+)
+
+
 
 def _parse_bool(raw: str | None, default: bool = False) -> bool:
     if raw is None:
@@ -98,6 +122,14 @@ class SecretRedactor:
             comfy_pass=config.get_comfy_pass(),
         )
 
+    @property
+    def literal_secrets(self) -> tuple[str, ...]:
+        return self._literal_secrets
+
+    def create_stream(self) -> SecretStreamRedactor:
+        """Crea un redactor incremental con retención en fronteras de chunk."""
+        return SecretStreamRedactor(self)
+
     def redact(self, text: str) -> str:
         if not text:
             return text
@@ -123,6 +155,92 @@ class SecretRedactor:
         if isinstance(value, tuple):
             return tuple(self.redact_value(v) for v in value)
         return value
+
+
+class SecretStreamRedactor:
+    """Redactor con estado para streams de tokens (SSE y stub guionizado).
+
+    Retiene únicamente el sufijo en vuelo que coincida con un prefijo parcial
+    de algún secreto literal o patrón sensible y emite de inmediato el prefijo
+    seguro, garantizando que secretos partidos entre 2+ chunks nunca se filtren
+    sin sacrificar la entrega incremental del stream.
+    """
+
+    def __init__(self, redactor: SecretRedactor) -> None:
+        self._redactor = redactor
+        self._buffer = ""
+
+    def _is_proper_literal_prefix(self, candidate: str) -> bool:
+        for secret in self._redactor.literal_secrets:
+            if len(secret) > len(candidate) and secret.startswith(candidate):
+                return True
+        return False
+
+    @staticmethod
+    def _is_inflight_regex_suffix(candidate: str) -> bool:
+        if candidate:
+            for kw in _CASE_SENSITIVE_STREAM_PREFIXES:
+                if len(kw) > len(candidate) and kw.startswith(candidate):
+                    return True
+            lower_cand = candidate.lower()
+            for kw in _CASE_INSENSITIVE_STREAM_PREFIXES:
+                if len(kw) > len(lower_cand) and kw.startswith(lower_cand):
+                    return True
+        for pattern in _INFLIGHT_STREAM_REGEXES:
+            if pattern.match(candidate):
+                return True
+        return False
+
+    def _redact_completed_literals_in_buffer(self) -> None:
+        if not self._buffer:
+            return
+        for secret in self._redactor.literal_secrets:
+            search_pos = 0
+            while True:
+                idx = self._buffer.find(secret, search_pos)
+                if idx < 0:
+                    break
+                tail = self._buffer[idx:]
+                if self._is_proper_literal_prefix(tail) or self._is_inflight_regex_suffix(tail):
+                    search_pos = idx + 1
+                    continue
+                self._buffer = (
+                    self._buffer[:idx]
+                    + SECRET_PLACEHOLDER
+                    + self._buffer[idx + len(secret) :]
+                )
+                search_pos = idx + len(SECRET_PLACEHOLDER)
+
+    def _find_holdback_index(self) -> int:
+        buf = self._buffer
+        n = len(buf)
+        for k in range(n):
+            suffix = buf[k:]
+            if self._is_proper_literal_prefix(suffix) or self._is_inflight_regex_suffix(suffix):
+                return k
+        return n
+
+    def push(self, piece: str) -> str:
+        """Procesa un nuevo fragmento del stream y devuelve la parte segura lista para emitir."""
+        if not piece:
+            return ""
+        self._buffer += piece
+        self._redact_completed_literals_in_buffer()
+        hold_from = self._find_holdback_index()
+        if hold_from <= 0:
+            return ""
+        ready = self._buffer[:hold_from]
+        self._buffer = self._buffer[hold_from:]
+        return self._redactor.redact(ready)
+
+    def flush(self) -> str:
+        """Vacía y redacta cualquier remanente retenido al finalizar el stream."""
+        if not self._buffer:
+            return ""
+        remaining = self._buffer
+        self._buffer = ""
+        return self._redactor.redact(remaining)
+
 
 
 class RedactingLogFilter(logging.Filter):
