@@ -349,11 +349,14 @@ class ComfyUIClient:
         redacted_msg = self._redact(error.message)
         error.message = redacted_msg
         error.args = (redacted_msg,)
+        eff_prompt_id = prompt_id or error.prompt_id
+        if error.prompt_id is None and eff_prompt_id is not None:
+            error.prompt_id = eff_prompt_id
         if job_id and self._store is not None:
             self._store.update_job(
                 job_id,
                 status="error",
-                prompt_id=prompt_id or error.prompt_id,
+                prompt_id=eff_prompt_id,
                 error=redacted_msg,
                 result={
                     "error": redacted_msg,
@@ -367,9 +370,58 @@ class ComfyUIClient:
                 {
                     "job_id": job_id,
                     "project_id": project_id,
-                    "prompt_id": prompt_id or error.prompt_id,
+                    "prompt_id": eff_prompt_id,
                     "status": "error",
                     "error": redacted_msg,
+                },
+            )
+
+    def _complete_job(
+        self,
+        result: PromptResult,
+        *,
+        job_id: str | None = None,
+        project_id: str | None = None,
+        progress_max: float | None = None,
+    ) -> None:
+        eff_max = float(progress_max) if progress_max is not None else 1.0
+        if job_id and self._store is not None:
+            if progress_max is None:
+                existing = self._store.get_job(job_id)
+                eff_max = float(max((existing or {}).get("progress_max") or 1.0, 1.0))
+            self._store.update_job(
+                job_id,
+                status="done",
+                prompt_id=result.prompt_id,
+                progress_value=eff_max,
+                progress_max=eff_max,
+                current_node=None,
+                result={
+                    "prompt_id": result.prompt_id,
+                    "outputs": [o.model_dump() for o in result.outputs],
+                },
+            )
+        if self._broker is not None:
+            self._broker.publish(
+                "progress",
+                {
+                    "job_id": job_id,
+                    "project_id": project_id,
+                    "prompt_id": result.prompt_id,
+                    "status": "done",
+                    "value": eff_max,
+                    "max": eff_max,
+                    "node": None,
+                },
+            )
+            self._broker.publish(
+                "job",
+                {
+                    "job_id": job_id,
+                    "project_id": project_id,
+                    "prompt_id": result.prompt_id,
+                    "status": "done",
+                    "outputs": [o.model_dump() for o in result.outputs],
                 },
             )
 
@@ -699,6 +751,7 @@ class ComfyUIClient:
         timeout: float | None = None,
         job_id: str | None = None,
         project_id: str | None = None,
+        finalize_job: bool = True,
     ) -> PromptResult:
         """Sondea /queue y /history/{prompt_id} hasta que el prompt complete o falle."""
         interval = poll_interval if poll_interval is not None else self.poll_interval
@@ -714,42 +767,21 @@ class ComfyUIClient:
                 if isinstance(entry, dict) and entry:
                     result = self._inspect_history_entry(prompt_id, entry)
                     if result is not None:
-                        progress_max = max(tick, 1)
-                        if job_id and self._store is not None:
+                        progress_max = float(max(tick, 1))
+                        if finalize_job:
+                            self._complete_job(
+                                result,
+                                job_id=job_id,
+                                project_id=project_id,
+                                progress_max=progress_max,
+                            )
+                        elif job_id and self._store is not None:
                             self._store.update_job(
                                 job_id,
-                                status="done",
+                                status="running",
                                 prompt_id=prompt_id,
-                                progress_value=float(progress_max),
-                                progress_max=float(progress_max),
-                                current_node=None,
-                                result={
-                                    "prompt_id": prompt_id,
-                                    "outputs": [o.model_dump() for o in result.outputs],
-                                },
-                            )
-                        if self._broker is not None:
-                            self._broker.publish(
-                                "progress",
-                                {
-                                    "job_id": job_id,
-                                    "project_id": project_id,
-                                    "prompt_id": prompt_id,
-                                    "status": "done",
-                                    "value": float(progress_max),
-                                    "max": float(progress_max),
-                                    "node": None,
-                                },
-                            )
-                            self._broker.publish(
-                                "job",
-                                {
-                                    "job_id": job_id,
-                                    "project_id": project_id,
-                                    "prompt_id": prompt_id,
-                                    "status": "done",
-                                    "outputs": [o.model_dump() for o in result.outputs],
-                                },
+                                progress_value=progress_max,
+                                progress_max=progress_max,
                             )
                         return result
 
@@ -936,17 +968,32 @@ class ComfyUIClient:
         *,
         subfolder: str = "",
         storage_type: str = "output",
+        job_id: str | None = None,
+        project_id: str | None = None,
+        prompt_id: str | None = None,
     ) -> bytes:
         """Descarga bytes de una salida o input mediante GET /view."""
-        resp = await self._request(
-            "GET",
-            "/view",
-            params={
-                "filename": filename,
-                "subfolder": subfolder,
-                "type": storage_type,
-            },
-        )
+        try:
+            resp = await self._request(
+                "GET",
+                "/view",
+                params={
+                    "filename": filename,
+                    "subfolder": subfolder,
+                    "type": storage_type,
+                },
+            )
+        except ComfyUIError as exc:
+            if exc.prompt_id is None and prompt_id is not None:
+                exc.prompt_id = prompt_id
+            if job_id is not None:
+                self._fail_job(
+                    exc,
+                    job_id=job_id,
+                    project_id=project_id,
+                    prompt_id=prompt_id,
+                )
+            raise
         return resp.content
 
     async def upload_image(
@@ -1063,38 +1110,82 @@ class ComfyUIClient:
             timeout=timeout,
             job_id=job_id,
             project_id=project_id,
+            finalize_job=False,
         )
 
-        if persist_outputs and project_id and self._store is not None:
+        saved_asset_ids: list[str] = []
+        try:
+            downloaded_outputs: list[tuple[ComfyUIOutputFile, bytes]] = []
             for out_file in result.outputs:
                 content = await self.view_output(
                     out_file.filename,
                     subfolder=out_file.subfolder,
                     storage_type=out_file.storage_type,
+                    prompt_id=submission.prompt_id,
                 )
-                mime = (
-                    "video/mp4"
-                    if out_file.filename.endswith(".mp4")
-                    else "image/png"
-                )
-                meta: dict[str, Any] = {
-                    "prompt_id": submission.prompt_id,
-                    "node_id": out_file.node_id,
-                    "comfy_filename": out_file.filename,
-                    "subfolder": out_file.subfolder,
-                    "storage_type": out_file.storage_type,
-                }
-                if template_id:
-                    meta["template_id"] = template_id
-                self._store.save_upload(
-                    project_id,
-                    filename=out_file.filename,
-                    content_type=mime,
-                    data=content,
-                    max_upload_bytes=DEFAULT_MAX_UPLOAD_BYTES,
-                    category="outputs",
-                    job_id=job_id,
-                    metadata=meta,
-                )
+                downloaded_outputs.append((out_file, content))
 
+            if persist_outputs and project_id and self._store is not None:
+                for out_file, content in downloaded_outputs:
+                    mime = (
+                        "video/mp4"
+                        if out_file.filename.endswith(".mp4")
+                        else "image/png"
+                    )
+                    meta: dict[str, Any] = {
+                        "prompt_id": submission.prompt_id,
+                        "node_id": out_file.node_id,
+                        "comfy_filename": out_file.filename,
+                        "subfolder": out_file.subfolder,
+                        "storage_type": out_file.storage_type,
+                    }
+                    if template_id:
+                        meta["template_id"] = template_id
+                    saved = self._store.save_upload(
+                        project_id,
+                        filename=out_file.filename,
+                        content_type=mime,
+                        data=content,
+                        max_upload_bytes=DEFAULT_MAX_UPLOAD_BYTES,
+                        category="outputs",
+                        job_id=job_id,
+                        metadata=meta,
+                    )
+                    if isinstance(saved, dict) and saved.get("id"):
+                        saved_asset_ids.append(str(saved["id"]))
+        except ComfyUIError as exc:
+            if project_id and self._store is not None:
+                for aid in saved_asset_ids:
+                    self._store.delete_asset(project_id, aid)
+            self._fail_job(
+                exc,
+                job_id=job_id,
+                project_id=project_id,
+                prompt_id=submission.prompt_id,
+            )
+            raise
+        except Exception as exc:
+            if project_id and self._store is not None:
+                for aid in saved_asset_ids:
+                    self._store.delete_asset(project_id, aid)
+            persist_err = ComfyUIError(
+                self._redact(
+                    f"Error persistiendo salidas de ComfyUI para prompt "
+                    f"{submission.prompt_id}: {exc}"
+                ),
+                prompt_id=submission.prompt_id,
+            )
+            self._fail_job(
+                persist_err,
+                job_id=job_id,
+                project_id=project_id,
+                prompt_id=submission.prompt_id,
+            )
+            raise persist_err from exc
+
+        self._complete_job(
+            result,
+            job_id=job_id,
+            project_id=project_id,
+        )
         return result

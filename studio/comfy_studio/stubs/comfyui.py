@@ -110,6 +110,11 @@ class ComfyUIStubState:
     fail_next_node_errors: dict[str, Any] | None = None
     fail_execution_error: str | None = None
     response_delay_seconds: float = 0.0
+    fail_view_status: int | None = None
+    fail_view_error: str | None = None
+    fail_view_remaining: int | None = None
+    fail_view_timeout: bool = False
+    view_delay_seconds: float = 0.0
 
 
 def _upload_storage_key(storage_type: str, subfolder: str, filename: str) -> str:
@@ -386,6 +391,35 @@ def create_stub_comfyui_app(state: ComfyUIStubState | None = None) -> FastAPI:
         type: str = Query("output"),
     ) -> Response:
         await _apply_fault_injection()
+        if stub_state.view_delay_seconds > 0:
+            await asyncio.sleep(stub_state.view_delay_seconds)
+        if stub_state.fail_view_timeout:
+            should_timeout = (
+                stub_state.fail_view_remaining is None
+                or stub_state.fail_view_remaining > 0
+            )
+            if should_timeout:
+                if stub_state.fail_view_remaining is not None:
+                    stub_state.fail_view_remaining -= 1
+                import httpx
+
+                raise httpx.ReadTimeout(
+                    stub_state.fail_view_error
+                    or f"Simulated /view read timeout for {filename}"
+                )
+        if stub_state.fail_view_status is not None:
+            should_fail = (
+                stub_state.fail_view_remaining is None
+                or stub_state.fail_view_remaining > 0
+            )
+            if should_fail:
+                if stub_state.fail_view_remaining is not None:
+                    stub_state.fail_view_remaining -= 1
+                raise HTTPException(
+                    status_code=stub_state.fail_view_status,
+                    detail=stub_state.fail_view_error
+                    or f"Simulated /view HTTP {stub_state.fail_view_status} failure for {filename}",
+                )
         scoped_key = _upload_storage_key(type, subfolder, filename)
         content = stub_state.uploads.get(scoped_key)
         if content is None:

@@ -294,3 +294,55 @@ def test_tools_endpoint_lists_schemas(client: TestClient) -> None:
     body = resp.json()
     names = {t["function"]["name"] for t in body["tools"]}
     assert {"enqueue_render", "search_assets", "propose_edl"}.issubset(names)
+
+
+@pytest.mark.anyio
+async def test_enqueue_render_history_succeeds_view_fails_marks_job_error_and_emits_sse_error(
+    tool_context: ToolContext,
+    stub_comfyui_state: ComfyUIStubState,
+) -> None:
+    """Regresión M2-SCR-002 en tool enqueue_render del agente: si /history completa pero GET /view
+    falla, el job queda en status=error con SSE de error (nunca done) y galería vacía.
+    """
+    from comfy_studio.comfyui_client import ComfyUIError
+
+    stub_comfyui_state.fail_view_status = 404
+    stub_comfyui_state.fail_view_error = "Output clip not found on /view"
+
+    belt = create_default_tool_belt()
+    with pytest.raises(ComfyUIError):
+        await belt.execute(
+            "enqueue_render",
+            {
+                "template_id": "wan_t2v",
+                "params": {
+                    "prompt": "Plano nocturno con lluvia",
+                    "width": 832,
+                    "height": 480,
+                    "frames": 81,
+                    "steps": 4,
+                },
+            },
+            tool_context,
+        )
+
+    jobs = tool_context.store.list_jobs(project_id=tool_context.project_id)
+    assert len(jobs) == 1
+    failed_job = jobs[0]
+    assert failed_job["status"] == "error"
+    assert failed_job["error"]
+    assert failed_job["prompt_id"] is not None
+
+    assert tool_context.broker is not None
+    events = tool_context.broker.recent_events()
+    job_events = [
+        payload
+        for ev_type, payload in events
+        if ev_type in ("job", "progress") and payload.get("job_id") == failed_job["id"]
+    ]
+    assert any(p.get("status") == "error" for p in job_events)
+    assert not any(p.get("status") == "done" for p in job_events)
+
+    outputs = tool_context.store.list_assets(tool_context.project_id, category="outputs")
+    assert outputs == []
+

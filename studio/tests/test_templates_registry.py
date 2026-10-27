@@ -380,3 +380,61 @@ def test_spanish_docs_file_exists_and_documents_all_six_templates() -> None:
     assert "480p" in content
     assert "Lightning" in content
     assert "offload" in content.lower()
+
+
+def test_submit_template_history_succeeds_view_fails_marks_job_error_and_emits_sse_error(
+    client: TestClient,
+    stub_comfyui_state: ComfyUIStubState,
+) -> None:
+    """Regresión M2-SCR-002 en registry/submit: si /history completa pero GET /view falla,
+    el job queda en status=error (nunca done), SSE emite error y galería queda vacía.
+    """
+    proj = client.post("/studio/api/projects", json={"name": "Registry View Fail"}).json()
+    project_id = proj["id"]
+
+    stub_comfyui_state.fail_view_status = 404
+    stub_comfyui_state.fail_view_error = "Output video missing on ComfyUI /view"
+
+    sub_resp = client.post(
+        "/studio/api/templates/wan_t2v/submit",
+        json={
+            "project_id": project_id,
+            "params": {
+                "prompt": "Faro en tormenta nocturna",
+                "width": 832,
+                "height": 480,
+                "frames": 81,
+                "steps": 4,
+            },
+        },
+    )
+    assert sub_resp.status_code == 404
+    assert "missing" in sub_resp.text.lower() or "404" in sub_resp.text.lower()
+
+    # El job creado en el proyecto debe estar en status=error y jamás en done
+    jobs_resp = client.get(f"/studio/api/jobs?project_id={project_id}")
+    assert jobs_resp.status_code == 200
+    jobs = jobs_resp.json()["jobs"]
+    assert len(jobs) == 1
+    failed_job = jobs[0]
+    assert failed_job["status"] == "error"
+    assert failed_job["error"]
+    assert failed_job["prompt_id"] is not None
+
+    # El stream SSE debe reflejar status=error para ese job y ningún evento status=done
+    sse_resp = client.get("/studio/api/progress?replay=1&max_events=6")
+    assert sse_resp.status_code == 200
+    broker_events = client.app.state.broker.recent_events()  # type: ignore[union-attr]
+    job_events_for_id = [
+        payload
+        for ev_type, payload in broker_events
+        if ev_type in ("job", "progress") and payload.get("job_id") == failed_job["id"]
+    ]
+    assert any(p.get("status") == "error" for p in job_events_for_id)
+    assert not any(p.get("status") == "done" for p in job_events_for_id)
+
+    # La galería del proyecto no debe tener salidas huérfanas ni silenciosas
+    gallery_resp = client.get(f"/studio/api/projects/{project_id}/gallery")
+    assert gallery_resp.status_code == 200
+    assert gallery_resp.json()["assets"] == []
+

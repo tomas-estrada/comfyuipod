@@ -621,3 +621,187 @@ def test_object_info_interrupt_free_and_connection_error() -> None:
     # Frames binarios de preview en /ws se ignoran sin lanzar excepción
     assert parse_ws_event(b"\x00\x01\xff\xd8binary-jpeg-preview") is None
 
+
+@pytest.mark.anyio
+async def test_execute_prompt_job_history_succeeds_view_fails_marks_job_error_never_done(
+    studio_data_dir: Path,
+    sample_workflow: dict[str, Any],
+) -> None:
+    """Regresión M2-SCR-002: si /history completa pero GET /view falla (404, 5xx o timeout),
+    el job queda en status=error con SSE de error (nunca done) y sin salidas en galería.
+    """
+    async def no_sleep(_d: float) -> None:
+        return None
+
+    for mode in ("404", "503", "timeout"):
+        state = ComfyUIStubState(
+            healthy=True,
+            poll_ticks_before_complete=1,
+            fail_view_status=404 if mode == "404" else (503 if mode == "503" else None),
+            fail_view_error=f"Output missing or unavailable ({mode})",
+            fail_view_timeout=(mode == "timeout"),
+        )
+        stub_app = create_stub_comfyui_app(state)
+        store = ProjectStore(studio_data_dir / f"case_{mode}")
+        broker = ProgressBroker()
+        project = store.create_project(name=f"View Failure {mode}")
+        job = store.create_job(
+            kind="render",
+            project_id=project["id"],
+            template_id="wan_t2v",
+        )
+
+        client = ComfyUIClient(
+            base_url="http://stub-comfyui.local:39172",
+            transport=httpx.ASGITransport(app=stub_app),
+            store=store,
+            broker=broker,
+            timeout=0.05 if mode == "timeout" else 5.0,
+            max_retries=2,
+            sleep_func=no_sleep,
+        )
+
+        expected_exc = ComfyUITimeoutError if mode == "timeout" else ComfyUIError
+        with pytest.raises(expected_exc):
+            await client.execute_prompt_job(
+                sample_workflow,
+                job_id=job["id"],
+                project_id=project["id"],
+                template_id="wan_t2v",
+                poll_interval=0.001,
+                persist_outputs=True,
+            )
+
+        updated_job = store.get_job(job["id"])
+        assert updated_job is not None
+        assert updated_job["status"] == "error", (
+            f"Job quedó en {updated_job['status']} para modo {mode}"
+        )
+        assert updated_job["error"]
+        assert updated_job["prompt_id"] is not None
+
+        events = broker.recent_events()
+        done_events = [
+            payload
+            for ev_type, payload in events
+            if ev_type in ("job", "progress") and payload.get("status") == "done"
+        ]
+        assert done_events == [], f"Se emitió SSE done indebido en modo {mode}: {done_events}"
+
+        err_job_events = [
+            payload
+            for ev_type, payload in events
+            if ev_type == "job" and payload.get("status") == "error"
+        ]
+        assert len(err_job_events) == 1
+        assert err_job_events[0]["job_id"] == job["id"]
+        assert err_job_events[0]["error"]
+
+        output_assets = store.list_assets(project["id"], category="outputs")
+        assert output_assets == []
+
+
+@pytest.mark.anyio
+async def test_execute_prompt_job_emits_done_only_after_outputs_persisted(
+    studio_data_dir: Path,
+    sample_workflow: dict[str, Any],
+) -> None:
+    """Completitud (done + SSE done) solo ocurre tras recuperar y persistir salidas."""
+    state = ComfyUIStubState(healthy=True, poll_ticks_before_complete=1)
+    stub_app = create_stub_comfyui_app(state)
+    store = ProjectStore(studio_data_dir)
+    broker = ProgressBroker()
+    project = store.create_project(name="Completion Order Check")
+    job = store.create_job(
+        kind="render",
+        project_id=project["id"],
+        template_id="wan_t2v",
+    )
+
+    observed_assets_on_done: list[int] = []
+    observed_db_status_on_done: list[str] = []
+    orig_publish = broker.publish
+
+    def spy_publish(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        if event_type == "job" and data.get("status") == "done":
+            assets_now = store.list_assets(project["id"], category="outputs")
+            observed_assets_on_done.append(len(assets_now))
+            job_now = store.get_job(job["id"])
+            observed_db_status_on_done.append(job_now["status"] if job_now else "missing")
+        return orig_publish(event_type, data)
+
+    broker.publish = spy_publish  # type: ignore[method-assign]
+
+    client = ComfyUIClient(
+        base_url="http://stub-comfyui.local:39172",
+        transport=httpx.ASGITransport(app=stub_app),
+        store=store,
+        broker=broker,
+    )
+
+    result = await client.execute_prompt_job(
+        sample_workflow,
+        job_id=job["id"],
+        project_id=project["id"],
+        template_id="wan_t2v",
+        poll_interval=0.001,
+        persist_outputs=True,
+    )
+    assert result.completed is True
+    assert observed_assets_on_done == [len(result.outputs)]
+    assert observed_db_status_on_done == ["done"]
+
+    # Si la persistencia falla a mitad (ej. 2º archivo), se revierte el 1º y queda en error
+    job_persist_fail = store.create_job(
+        kind="render",
+        project_id=project["id"],
+        template_id="wan_t2v",
+    )
+    broker_fail = ProgressBroker()
+    client_fail = ComfyUIClient(
+        base_url="http://stub-comfyui.local:39172",
+        transport=httpx.ASGITransport(app=stub_app),
+        store=store,
+        broker=broker_fail,
+    )
+    orig_save_upload = store.save_upload
+    call_count = 0
+
+    def flaky_save_upload(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise OSError("Simulated disk full while persisting second output")
+        return orig_save_upload(*args, **kwargs)
+
+    store.save_upload = flaky_save_upload  # type: ignore[method-assign]
+    try:
+        with pytest.raises(ComfyUIError, match="persistiendo salidas"):
+            await client_fail.execute_prompt_job(
+                sample_workflow,
+                job_id=job_persist_fail["id"],
+                project_id=project["id"],
+                template_id="wan_t2v",
+                poll_interval=0.001,
+                persist_outputs=True,
+            )
+    finally:
+        store.save_upload = orig_save_upload  # type: ignore[method-assign]
+
+    failed_persist_job = store.get_job(job_persist_fail["id"])
+    assert failed_persist_job is not None
+    assert failed_persist_job["status"] == "error"
+    fail_events = broker_fail.recent_events()
+    assert any(
+        ev == "job" and p.get("status") == "error" and p.get("job_id") == job_persist_fail["id"]
+        for ev, p in fail_events
+    )
+    assert not any(p.get("status") == "done" for _, p in fail_events)
+    assert [
+        a
+        for a in store.list_assets(project["id"], category="outputs")
+        if a.get("job_id") == job_persist_fail["id"]
+    ] == []
+
+
+
