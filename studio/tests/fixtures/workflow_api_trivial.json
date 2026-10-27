@@ -1,0 +1,37 @@
+{
+  "1": {
+    "class_type": "VHS_LoadVideo",
+    "inputs": {
+      "video": "input_clip.mp4",
+      "force_rate": 16,
+      "custom_width": 832,
+      "custom_height": 480,
+      "frame_load_cap": 81,
+      "skip_first_frames": 0,
+      "select_every_nth": 1
+    }
+  },
+  "2": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 42,
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "latent_image": ["1", 0]
+    }
+  },
+  "3": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["2", 0],
+      "frame_rate": 16,
+      "loop_count": 0,
+      "filename_prefix": "studio_render",
+      "format": "video/h264-mp4",
+      "save_output": true
+    }
+  }
+}

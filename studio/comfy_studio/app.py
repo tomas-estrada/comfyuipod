@@ -14,6 +14,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from comfy_studio.comfyui_client import ComfyUIClient
 from comfy_studio.config import (
     StudioConfig,
     install_log_redaction,
@@ -122,6 +123,13 @@ def create_app(
     app.state.broker = broker
     app.state.stub_llm = stub_llm
     app.state.comfyui_transport = comfyui_transport
+    app.state.comfyui_client = ComfyUIClient(
+        base_url=cfg.studio_comfyui_url,
+        transport=comfyui_transport,
+        store=store,
+        broker=broker,
+        redactor=redactor,
+    )
 
     @app.middleware("http")
     async def edge_auth_and_redaction_middleware(request: Request, call_next):
