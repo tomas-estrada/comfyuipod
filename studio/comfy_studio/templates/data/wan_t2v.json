@@ -1,0 +1,286 @@
+{
+  "id": "wan_t2v",
+  "name": "Wan 2.2 14B — Texto a Vídeo (T2V + Lightning 4-Step)",
+  "category": "video_generation",
+  "output_kind": "video",
+  "summary": "Generación de vídeo desde texto con el par de expertos Wan 2.2 T2V 14B fp8_scaled y LoRAs Lightning v1.1 de 4 pasos.",
+  "description": "Genera clips de vídeo desde cero únicamente a partir de una descripción textual detallada. Configurado con los modelos Wan 2.2 T2V 14B fp8_scaled (high-noise + low-noise) y las LoRAs LightX2V v1.1 de 4 pasos a 480p con offload para máxima velocidad de iteración.",
+  "performance_defaults": {
+    "precision": "fp8_scaled",
+    "resolution": "480p",
+    "width": 832,
+    "height": 480,
+    "frames": 81,
+    "steps": 4,
+    "cfg": 1.0,
+    "lora_lightning_4step": true,
+    "offload": true
+  },
+  "models": [
+    "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+    "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+    "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+    "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan_2.1_vae.safetensors"
+  ],
+  "required_nodes": [
+    "UNETLoader",
+    "LoraLoaderModelOnly",
+    "CLIPLoader",
+    "VAELoader",
+    "CLIPTextEncode",
+    "EmptyHunyuanLatentVideo",
+    "KSamplerAdvanced",
+    "VAEDecode",
+    "VHS_VideoCombine"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción cinematográfica del plano de vídeo a generar (sujeto, acción, iluminación, lente y movimiento de cámara)."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "borroso, baja calidad, artefactos, anatomía deformada, texto sobreimpreso",
+      "description": "Elementos no deseados a suprimir durante la síntesis de vídeo."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 832,
+      "min": 256,
+      "max": 1280,
+      "description": "Ancho del vídeo en píxeles (832 por defecto para 480p horizontal; usar 480 para 9:16 vertical)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 480,
+      "min": 256,
+      "max": 1280,
+      "description": "Alto del vídeo en píxeles (480 por defecto para 480p horizontal; usar 832 para 9:16 vertical)."
+    },
+    "frames": {
+      "type": "integer",
+      "required": false,
+      "default": 81,
+      "min": 1,
+      "max": 241,
+      "description": "Número de fotogramas a generar (81 frames ≈ 5 s a 16 fps)."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 4,
+      "min": 1,
+      "max": 50,
+      "description": "Pasos totales de muestreo (4 por defecto con LoRA Lightning v1.1)."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 1.0,
+      "min": 1.0,
+      "max": 15.0,
+      "description": "Escala CFG (1.0 óptimo con LoRA Lightning)."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista de muestreo."
+    },
+    "offload": {
+      "type": "boolean",
+      "required": false,
+      "default": true,
+      "description": "Activa el offload entre el experto high-noise y low-noise."
+    }
+  },
+  "docs": {
+    "uso": "Generación de planos B-roll, escenas conceptuales o tomas completas desde texto cuando no se parte de un vídeo o fotografía previa.",
+    "inputs": [
+      "prompt (obligatorio): descripción detallada de la escena, movimiento y estilo de cámara.",
+      "width / height (832x480 por defecto): dimensiones del plano (invertir a 480x832 para reels 9:16).",
+      "frames (81 por defecto): longitud en fotogramas a 16 fps."
+    ],
+    "defaults": {
+      "resolution": "832x480 (480p 16:9)",
+      "frames": 81,
+      "steps": 4,
+      "cfg": 1.0,
+      "lora_lightning_4step": true,
+      "offload": true
+    },
+    "notas_rendimiento": "Utiliza las LoRAs LightX2V v1.1 de 4 pasos para Wan 2.2 T2V 14B fp8_scaled (no aplicables al modelo 5B TI2V, el cual emplea su propia LoRA Turbo de 64 rangos)."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+        "weight_dtype": "fp8_e4m3fn"
+      },
+      "_meta": {
+        "title": "Cargar Wan 2.2 T2V High Noise 14B"
+      }
+    },
+    "2": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+        "weight_dtype": "fp8_e4m3fn"
+      },
+      "_meta": {
+        "title": "Cargar Wan 2.2 T2V Low Noise 14B"
+      }
+    },
+    "3": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "model": ["1", 0],
+        "lora_name": "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
+        "strength_model": 1.0
+      },
+      "_meta": {
+        "title": "LoRA Lightning v1.1 High Noise"
+      }
+    },
+    "4": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "model": ["2", 0],
+        "lora_name": "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
+        "strength_model": 1.0
+      },
+      "_meta": {
+        "title": "LoRA Lightning v1.1 Low Noise"
+      }
+    },
+    "5": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "wan"
+      },
+      "_meta": {
+        "title": "Cargar UMT5 XXL fp8"
+      }
+    },
+    "6": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "wan_2.1_vae.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Wan VAE"
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{prompt}}",
+        "clip": ["5", 0]
+      },
+      "_meta": {
+        "title": "Prompt Positivo"
+      }
+    },
+    "8": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["5", 0]
+      },
+      "_meta": {
+        "title": "Prompt Negativo"
+      }
+    },
+    "9": {
+      "class_type": "EmptyHunyuanLatentVideo",
+      "inputs": {
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "length": "{{frames}}",
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "Latente de Vídeo Vacío (832x480x81)"
+      }
+    },
+    "10": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "add_noise": "enable",
+        "noise_seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "start_at_step": 0,
+        "end_at_step": 2,
+        "return_with_leftover_noise": "enable",
+        "offload": "{{offload}}",
+        "model": ["3", 0],
+        "positive": ["7", 0],
+        "negative": ["8", 0],
+        "latent_image": ["9", 0]
+      },
+      "_meta": {
+        "title": "Muestreo High-Noise (2 pasos)"
+      }
+    },
+    "11": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "add_noise": "disable",
+        "noise_seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "start_at_step": 2,
+        "end_at_step": "{{steps}}",
+        "return_with_leftover_noise": "disable",
+        "offload": "{{offload}}",
+        "model": ["4", 0],
+        "positive": ["7", 0],
+        "negative": ["8", 0],
+        "latent_image": ["10", 0]
+      },
+      "_meta": {
+        "title": "Muestreo Low-Noise (2 pasos)"
+      }
+    },
+    "12": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["11", 0],
+        "vae": ["6", 0]
+      },
+      "_meta": {
+        "title": "Decodificar Latente"
+      }
+    },
+    "13": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "images": ["12", 0],
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "{{output_prefix}}",
+        "format": "video/h264-mp4",
+        "save_output": true
+      },
+      "_meta": {
+        "title": "Guardar Vídeo en Galería del Proyecto"
+      }
+    }
+  }
+}

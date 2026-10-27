@@ -1046,6 +1046,7 @@ class ComfyUIClient:
         *,
         job_id: str | None = None,
         project_id: str | None = None,
+        template_id: str | None = None,
         poll_interval: float | None = None,
         timeout: float | None = None,
         persist_outputs: bool = True,
@@ -1076,6 +1077,15 @@ class ComfyUIClient:
                     if out_file.filename.endswith(".mp4")
                     else "image/png"
                 )
+                meta: dict[str, Any] = {
+                    "prompt_id": submission.prompt_id,
+                    "node_id": out_file.node_id,
+                    "comfy_filename": out_file.filename,
+                    "subfolder": out_file.subfolder,
+                    "storage_type": out_file.storage_type,
+                }
+                if template_id:
+                    meta["template_id"] = template_id
                 self._store.save_upload(
                     project_id,
                     filename=out_file.filename,
@@ -1083,6 +1093,8 @@ class ComfyUIClient:
                     data=content,
                     max_upload_bytes=DEFAULT_MAX_UPLOAD_BYTES,
                     category="outputs",
+                    job_id=job_id,
+                    metadata=meta,
                 )
 
         return result

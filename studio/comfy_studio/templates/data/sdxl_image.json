@@ -1,0 +1,178 @@
+{
+  "id": "sdxl_image",
+  "name": "SDXL Juggernaut XI — Imagen Fija y Keyframes de Referencia",
+  "category": "image_generation",
+  "output_kind": "image",
+  "summary": "Generación fotorrealista de imágenes fijas y keyframes de referencia en alta resolución (1024x1024) con Juggernaut XI SDXL.",
+  "description": "Genera fotografías de referencia, fondos limpios o primeros/últimos fotogramas para alimentar flujos posteriores de Wan I2V, FLF2V o VACE Restyle. Utiliza el checkpoint Juggernaut-XI-byRunDiffusion.safetensors a 1024x1024 y 25 pasos con sampler dpmpp_2m_sde karras.",
+  "performance_defaults": {
+    "precision": "fp16",
+    "resolution": "1024x1024",
+    "width": 1024,
+    "height": 1024,
+    "steps": 25,
+    "cfg": 6.0,
+    "offload": false
+  },
+  "models": [
+    "Juggernaut-XI-byRunDiffusion.safetensors"
+  ],
+  "required_nodes": [
+    "CheckpointLoaderSimple",
+    "CLIPTextEncode",
+    "EmptyLatentImage",
+    "KSampler",
+    "VAEDecode",
+    "SaveImage"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción fotográfica detallada del sujeto, escenario, iluminación y óptica."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "borroso, baja calidad, marca de agua, texto, manos deformadas, CGI artificial",
+      "description": "Elementos visuales a evitar en la imagen generada."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 1024,
+      "min": 512,
+      "max": 2048,
+      "description": "Ancho de la imagen en píxeles (1024 por defecto; 1344x768 para 16:9)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 1024,
+      "min": 512,
+      "max": 2048,
+      "description": "Alto de la imagen en píxeles (1024 por defecto; 768x1344 para 9:16)."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 25,
+      "min": 1,
+      "max": 100,
+      "description": "Pasos de muestreo (25 por defecto con dpmpp_2m_sde + karras)."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 6.0,
+      "min": 1.0,
+      "max": 20.0,
+      "description": "Escala CFG del sampler (6.0 por defecto para Juggernaut XI)."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista de muestreo."
+    }
+  },
+  "docs": {
+    "uso": "Creación rápida de keyframes maestros, referencias de personaje/vestuario o fondos estáticos de alta definición antes de pasar a generación de vídeo.",
+    "inputs": [
+      "prompt (obligatorio): descripción fotográfica de la imagen deseada.",
+      "width / height (1024x1024 por defecto): resolución nativa SDXL.",
+      "steps (25 por defecto) y cfg (6.0 por defecto): equilibrio óptimo de detalle y naturalidad."
+    ],
+    "defaults": {
+      "resolution": "1024x1024",
+      "steps": 25,
+      "cfg": 6.0,
+      "sampler": "dpmpp_2m_sde",
+      "scheduler": "karras"
+    },
+    "notas_rendimiento": "Juggernaut XI SDXL ocupa ~6.6 GiB de VRAM en fp16 y genera una imagen 1024x1024 en pocos segundos en RTX 5090/4090."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "Juggernaut-XI-byRunDiffusion.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Checkpoint Juggernaut XI SDXL"
+      }
+    },
+    "2": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{prompt}}",
+        "clip": ["1", 1]
+      },
+      "_meta": {
+        "title": "Prompt Positivo SDXL"
+      }
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["1", 1]
+      },
+      "_meta": {
+        "title": "Prompt Negativo SDXL"
+      }
+    },
+    "4": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "Latente SDXL (1024x1024)"
+      }
+    },
+    "5": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "dpmpp_2m_sde",
+        "scheduler": "karras",
+        "denoise": 1.0,
+        "model": ["1", 0],
+        "positive": ["2", 0],
+        "negative": ["3", 0],
+        "latent_image": ["4", 0]
+      },
+      "_meta": {
+        "title": "Muestreador KSampler SDXL"
+      }
+    },
+    "6": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["5", 0],
+        "vae": ["1", 2]
+      },
+      "_meta": {
+        "title": "Decodificar Imagen SDXL"
+      }
+    },
+    "7": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "{{output_prefix}}",
+        "images": ["6", 0]
+      },
+      "_meta": {
+        "title": "Guardar Imagen en Galería del Proyecto"
+      }
+    }
+  }
+}

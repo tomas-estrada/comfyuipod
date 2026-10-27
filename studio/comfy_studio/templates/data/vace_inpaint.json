@@ -1,0 +1,330 @@
+{
+  "id": "vace_inpaint",
+  "name": "Wan 2.2 VACE 14B — Inpainting de Vídeo (480p + Offload)",
+  "category": "video_edit",
+  "output_kind": "video",
+  "summary": "Edición e inpainting localizado sobre vídeo con máscara usando el par Wan 2.2 Fun VACE 14B fp8_scaled a 480p con offload activado.",
+  "description": "Reemplaza o modifica regiones específicas de un vídeo base guiado por una máscara y un prompt textual manteniendo la coherencia temporal del movimiento original. Configurado por defecto en fp8_scaled a 480p (832x480) con offload de bloques para caber dentro de los 32 GiB de VRAM de la RTX 5090 (el par fp8 ocupa 32.2 GiB en disco frente a los 64.6 GiB de bf16).",
+  "performance_defaults": {
+    "precision": "fp8_scaled",
+    "resolution": "480p",
+    "width": 832,
+    "height": 480,
+    "frames": 81,
+    "steps": 4,
+    "cfg": 1.0,
+    "strength": 0.85,
+    "offload": true,
+    "vram_pair_gib": 32.2
+  },
+  "models": [
+    "wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors",
+    "wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan_2.1_vae.safetensors"
+  ],
+  "required_nodes": [
+    "UNETLoader",
+    "CLIPLoader",
+    "VAELoader",
+    "VHS_LoadVideo",
+    "LoadImage",
+    "CLIPTextEncode",
+    "WanVaceToVideo",
+    "KSamplerAdvanced",
+    "VAEDecode",
+    "VHS_VideoCombine"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción en español o inglés del contenido a insertar o modificar dentro del área enmascarada."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "borroso, baja calidad, parpadeo, artefactos de compresión, extremidades deformadas",
+      "description": "Elementos visuales no deseados a evitar durante el muestreo."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 832,
+      "min": 256,
+      "max": 1280,
+      "description": "Ancho de salida en píxeles (832 por defecto para 480p 16:9)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 480,
+      "min": 256,
+      "max": 1280,
+      "description": "Alto de salida en píxeles (480 por defecto para mantener consumo de VRAM estable con VACE 14B)."
+    },
+    "frames": {
+      "type": "integer",
+      "required": false,
+      "default": 81,
+      "min": 1,
+      "max": 241,
+      "description": "Cantidad de fotogramas a procesar (81 frames ≈ 5 s a 16 fps)."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 4,
+      "min": 1,
+      "max": 50,
+      "description": "Pasos totales de muestreo dividido entre experto high-noise y low-noise."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 1.0,
+      "min": 1.0,
+      "max": 15.0,
+      "description": "Escala de guía CFG."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista de generación."
+    },
+    "strength": {
+      "type": "number",
+      "required": false,
+      "default": 0.85,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Intensidad del acondicionamiento VACE sobre la región enmascarada (0.0 a 1.0)."
+    },
+    "offload": {
+      "type": "boolean",
+      "required": false,
+      "default": true,
+      "description": "Activa el offload secuencial entre expertos high-noise y low-noise para no exceder 32 GiB de VRAM."
+    },
+    "video_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "video",
+      "description": "ID del asset de vídeo base en el proyecto sobre el que se aplicará el inpainting."
+    },
+    "mask_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "image",
+      "description": "ID del asset de máscara en blanco y negro en el proyecto que delimita la zona editable."
+    },
+    "video_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_video.mp4",
+      "description": "Nombre del archivo de vídeo en la carpeta input de ComfyUI (se rellena automáticamente al usar video_asset_id)."
+    },
+    "mask_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_mask.png",
+      "description": "Nombre del archivo de máscara en la carpeta input de ComfyUI (se rellena automáticamente al usar mask_asset_id)."
+    }
+  },
+  "docs": {
+    "uso": "Ideal para reemplazar fondos, objetos, vestuario o elementos puntuales dentro de un plano de vídeo existente conservando el movimiento y la iluminación fuera de la máscara.",
+    "inputs": [
+      "prompt (obligatorio): descripción detallada del nuevo elemento o fondo.",
+      "video_asset_id / video_input: clip de vídeo original del proyecto.",
+      "mask_asset_id / mask_input: máscara donde el blanco indica la región a regenerar.",
+      "strength (0.85 por defecto): controla cuánto se respeta la estructura original bajo la máscara."
+    ],
+    "defaults": {
+      "resolution": "832x480 (480p 16:9)",
+      "frames": 81,
+      "steps": 4,
+      "cfg": 1.0,
+      "strength": 0.85,
+      "offload": true,
+      "precision": "fp8_scaled"
+    },
+    "notas_rendimiento": "El par VACE 14B fp8_scaled suma 32.2 GiB (frente a 64.6 GiB en bf16). Se ejecuta por defecto a 480p (832x480) con offload activo entre el experto de alto ruido y el de bajo ruido para evitar OOM en GPUs de 32 GB."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors",
+        "weight_dtype": "fp8_e4m3fn"
+      },
+      "_meta": {
+        "title": "Cargar VACE 14B High Noise (fp8)"
+      }
+    },
+    "2": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors",
+        "weight_dtype": "fp8_e4m3fn"
+      },
+      "_meta": {
+        "title": "Cargar VACE 14B Low Noise (fp8)"
+      }
+    },
+    "3": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "wan"
+      },
+      "_meta": {
+        "title": "Cargar UMT5 XXL fp8"
+      }
+    },
+    "4": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "wan_2.1_vae.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Wan VAE"
+      }
+    },
+    "5": {
+      "class_type": "VHS_LoadVideo",
+      "inputs": {
+        "video": "{{video_input}}",
+        "force_rate": 16,
+        "custom_width": "{{width}}",
+        "custom_height": "{{height}}",
+        "frame_load_cap": "{{frames}}",
+        "skip_first_frames": 0,
+        "select_every_nth": 1
+      },
+      "_meta": {
+        "title": "Cargar Vídeo Base"
+      }
+    },
+    "6": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "{{mask_input}}"
+      },
+      "_meta": {
+        "title": "Cargar Máscara de Inpainting"
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{prompt}}",
+        "clip": ["3", 0]
+      },
+      "_meta": {
+        "title": "Prompt Positivo"
+      }
+    },
+    "8": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["3", 0]
+      },
+      "_meta": {
+        "title": "Prompt Negativo"
+      }
+    },
+    "9": {
+      "class_type": "WanVaceToVideo",
+      "inputs": {
+        "positive": ["7", 0],
+        "negative": ["8", 0],
+        "vae": ["4", 0],
+        "control_video": ["5", 0],
+        "control_mask": ["6", 1],
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "length": "{{frames}}",
+        "batch_size": 1,
+        "strength": "{{strength}}"
+      },
+      "_meta": {
+        "title": "Codificación VACE Inpaint (480p)"
+      }
+    },
+    "10": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "add_noise": "enable",
+        "noise_seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "uni_pc",
+        "scheduler": "simple",
+        "start_at_step": 0,
+        "end_at_step": 2,
+        "return_with_leftover_noise": "enable",
+        "offload": "{{offload}}",
+        "model": ["1", 0],
+        "positive": ["9", 0],
+        "negative": ["9", 1],
+        "latent_image": ["9", 2]
+      },
+      "_meta": {
+        "title": "Muestreo Experto High-Noise (Offload)"
+      }
+    },
+    "11": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "add_noise": "disable",
+        "noise_seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "uni_pc",
+        "scheduler": "simple",
+        "start_at_step": 2,
+        "end_at_step": "{{steps}}",
+        "return_with_leftover_noise": "disable",
+        "offload": "{{offload}}",
+        "model": ["2", 0],
+        "positive": ["9", 0],
+        "negative": ["9", 1],
+        "latent_image": ["10", 0]
+      },
+      "_meta": {
+        "title": "Muestreo Experto Low-Noise (Offload)"
+      }
+    },
+    "12": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["11", 0],
+        "vae": ["4", 0]
+      },
+      "_meta": {
+        "title": "Decodificar Latente a Fotogramas"
+      }
+    },
+    "13": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "images": ["12", 0],
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "{{output_prefix}}",
+        "format": "video/h264-mp4",
+        "save_output": true
+      },
+      "_meta": {
+        "title": "Guardar Vídeo en Galería del Proyecto"
+      }
+    }
+  }
+}

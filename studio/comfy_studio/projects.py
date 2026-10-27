@@ -269,9 +269,11 @@ class ProjectStore:
 
     @staticmethod
     def _row_to_asset(row: sqlite3.Row) -> dict[str, Any]:
+        aid = row["id"]
+        pid = row["project_id"]
         return {
-            "id": row["id"],
-            "project_id": row["project_id"],
+            "id": aid,
+            "project_id": pid,
             "kind": row["kind"],
             "category": row["category"],
             "filename": row["filename"],
@@ -282,6 +284,9 @@ class ProjectStore:
             "version": row["version"],
             "job_id": row["job_id"],
             "metadata": json.loads(row["metadata_json"] or "{}"),
+            "preview_url": f"/studio/api/projects/{pid}/assets/{aid}/file",
+            "download_url": f"/studio/api/projects/{pid}/assets/{aid}/file?download=1",
+            "view_url": f"/studio/api/view?project_id={pid}&asset_id={aid}",
             "created_at": row["created_at"],
         }
 
@@ -433,6 +438,7 @@ class ProjectStore:
         data: bytes,
         max_upload_bytes: int,
         category: str = "uploads",
+        job_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self.get_project(project_id) is None:
@@ -487,7 +493,7 @@ class ProjectStore:
                     size_bytes,
                     rel_path,
                     1,
-                    None,
+                    job_id,
                     json.dumps(metadata or {}, ensure_ascii=False),
                     now,
                 ),

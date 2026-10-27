@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from comfy_studio.agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
-from comfy_studio.comfyui_client import ComfyUIClient
+from comfy_studio.comfyui_client import ComfyUIClient, ComfyUIError
 from comfy_studio.config import (
     StudioConfig,
     install_log_redaction,
@@ -23,6 +23,12 @@ from comfy_studio.config import (
 from comfy_studio.progress import ProgressBroker, format_sse_event
 from comfy_studio.projects import MediaValidationError, ProjectStore
 from comfy_studio.stubs.llm import StubLLMClient
+from comfy_studio.templates import (
+    TemplateNotFoundError,
+    TemplateParamError,
+    TemplateRegistry,
+    get_default_registry,
+)
 
 logger = logging.getLogger("comfy_studio.app")
 
@@ -139,6 +145,7 @@ def create_app(
         broker=broker,
         redactor=redactor,
     )
+    app.state.template_registry = get_default_registry()
     app.state.tool_belt = create_default_tool_belt()
     app.state.llm_client = OpenAICompatibleLLMClient(
         config=cfg,
@@ -378,19 +385,208 @@ def create_app(
         project_id: str,
         asset_id: str,
         request: Request,
+        download: bool = Query(default=False),
     ) -> Response:
         active_store: ProjectStore = request.app.state.store
         asset = active_store.get_asset(project_id, asset_id)
         path = active_store.get_asset_path(project_id, asset_id)
         if asset is None or path is None:
             raise HTTPException(status_code=404, detail="Archivo de medio no encontrado")
+        disposition = "attachment" if download else "inline"
         return Response(
             content=path.read_bytes(),
             media_type=asset["mime_type"],
             headers={
-                "Content-Disposition": f'inline; filename="{asset["original_filename"]}"'
+                "Content-Disposition": f'{disposition}; filename="{asset["original_filename"]}"'
             },
         )
+
+    @app.get("/studio/api/projects/{project_id}/gallery")
+    async def list_project_gallery(
+        project_id: str,
+        request: Request,
+        kind: str | None = Query(default=None),
+        category: str = Query(default="outputs"),
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        eff_category = None if category == "all" else category
+        items = active_store.list_assets(
+            project_id,
+            kind=kind,
+            category=eff_category,
+        )
+        return {
+            "project_id": project_id,
+            "assets": items,
+            "outputs": items,
+        }
+
+    @app.get("/studio/api/view")
+    async def view_media_output(
+        request: Request,
+        project_id: str | None = Query(default=None),
+        asset_id: str | None = Query(default=None),
+        filename: str | None = Query(default=None),
+        subfolder: str = Query(default=""),
+        type: str = Query(default="output"),
+        download: bool = Query(default=False),
+    ) -> Response:
+        active_store: ProjectStore = request.app.state.store
+        active_comfyui: ComfyUIClient = request.app.state.comfyui_client
+        disposition = "attachment" if download else "inline"
+
+        if project_id and asset_id:
+            asset = active_store.get_asset(project_id, asset_id)
+            path = active_store.get_asset_path(project_id, asset_id)
+            if asset is None or path is None:
+                raise HTTPException(status_code=404, detail="Asset de galería no encontrado")
+            return Response(
+                content=path.read_bytes(),
+                media_type=asset["mime_type"],
+                headers={
+                    "Content-Disposition": (
+                        f'{disposition}; filename="{asset["original_filename"]}"'
+                    )
+                },
+            )
+
+        if project_id and filename:
+            for candidate in active_store.list_assets(project_id):
+                if filename in {
+                    candidate.get("filename"),
+                    candidate.get("original_filename"),
+                    (candidate.get("metadata") or {}).get("comfy_filename"),
+                }:
+                    cpath = active_store.get_asset_path(project_id, candidate["id"])
+                    if cpath is not None:
+                        return Response(
+                            content=cpath.read_bytes(),
+                            media_type=candidate["mime_type"],
+                            headers={
+                                "Content-Disposition": (
+                                    f'{disposition}; filename="{candidate["original_filename"]}"'
+                                )
+                            },
+                        )
+
+        if filename:
+            try:
+                raw_bytes = await active_comfyui.view_output(
+                    filename,
+                    subfolder=subfolder,
+                    storage_type=type,
+                )
+            except ComfyUIError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code or 404,
+                    detail=exc.message,
+                ) from exc
+            media_type = "video/mp4" if filename.lower().endswith(".mp4") else "image/png"
+            safe_name = os.path.basename(filename) or "output.bin"
+            return Response(
+                content=raw_bytes,
+                media_type=media_type,
+                headers={
+                    "Content-Disposition": f'{disposition}; filename="{safe_name}"'
+                },
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail="Debe especificar 'project_id' + 'asset_id' o 'filename'.",
+        )
+
+    # --- Registro de plantillas (list / get / submit) ---
+
+    @app.get("/studio/api/templates")
+    async def list_templates_endpoint(
+        request: Request,
+        include_workflow: bool = Query(default=False),
+    ) -> dict[str, Any]:
+        active_registry: TemplateRegistry = request.app.state.template_registry
+        return {
+            "templates": active_registry.list_templates(
+                include_workflow=include_workflow
+            )
+        }
+
+    @app.get("/studio/api/templates/{template_id}")
+    async def get_template_endpoint(
+        template_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_registry: TemplateRegistry = request.app.state.template_registry
+        try:
+            return active_registry.get_template(template_id, include_workflow=True)
+        except TemplateNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/studio/api/templates/{template_id}/submit")
+    @app.post("/studio/api/projects/{project_id}/templates/{template_id}/submit")
+    async def submit_template_endpoint(
+        template_id: str,
+        request: Request,
+        project_id: str | None = None,
+    ):
+        active_registry: TemplateRegistry = request.app.state.template_registry
+        active_store: ProjectStore = request.app.state.store
+        active_comfyui: ComfyUIClient = request.app.state.comfyui_client
+        active_broker: ProgressBroker = request.app.state.broker
+        active_redactor = request.app.state.config.redactor()
+
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cuerpo JSON inválido: {exc}",
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=422,
+                detail="El cuerpo de la petición debe ser un objeto JSON.",
+            )
+
+        eff_project_id = project_id or payload.get("project_id")
+        if "params" in payload:
+            raw_params = payload.get("params")
+        else:
+            raw_params = {k: v for k, v in payload.items() if k != "project_id"}
+
+        try:
+            result = await active_registry.submit_render(
+                template_id,
+                raw_params,
+                project_id=eff_project_id,
+                store=active_store,
+                comfyui_client=active_comfyui,
+                broker=active_broker,
+                strict=True,
+            )
+        except TemplateNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TemplateParamError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=active_redactor.redact_value(
+                    {
+                        "detail": exc.message,
+                        "errors": exc.errors,
+                    }
+                ),
+            )
+        except ComfyUIError as exc:
+            raise HTTPException(
+                status_code=exc.status_code or 502,
+                detail=active_redactor.redact(exc.message),
+            ) from exc
+
+        return active_redactor.redact_value(result)
 
     @app.delete("/studio/api/projects/{project_id}/assets/{asset_id}")
     @app.delete("/studio/api/projects/{project_id}/media/{asset_id}")
