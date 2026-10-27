@@ -13,7 +13,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from comfy_studio.app import _verify_basic_auth, create_app
+from comfy_studio.app import (
+    _MULTIPART_ENVELOPE_OVERHEAD_BYTES,
+    _verify_basic_auth,
+    create_app,
+)
 from comfy_studio.config import StudioConfig
 
 
@@ -279,13 +283,139 @@ def test_upload_rejects_oversized_content_length_without_spooling_to_disk(
         content=_exploding_stream(),
         headers={
             "Content-Type": "multipart/form-data; boundary=boundary",
-            "Content-Length": str(limit + 4096),
+            "Content-Length": str(limit + _MULTIPART_ENVELOPE_OVERHEAD_BYTES + 1),
         },
     )
     assert early_resp.status_code == 413
     assert stream_reads == 0
     assert rollover_calls == 0
     assert list((studio_data_dir / "projects" / project_id / "uploads").iterdir()) == []
+
+
+def test_upload_exact_limit_with_multipart_envelope_overhead_succeeds_and_above_limit_fails(
+    tmp_path: Path,
+    stub_comfyui_transport: httpx.ASGITransport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M2-SCR-016: archivo exactamente en max_upload_bytes + sobre multipart sube con 201."""
+    small_limit = 16 * 1024  # 16 KiB (>= 4 KiB; sin fixture pesado de 512 MiB)
+    data_dir = tmp_path / "studio_small_limit"
+    cfg = StudioConfig(
+        model_profile="studio",
+        studio_llm_key="YOUR_STUDIO_API_KEY_HERE",
+        studio_llm_fallback_key="YOUR_STUDIO_FALLBACK_KEY_HERE",
+        studio_comfyui_url="http://stub-comfyui.local:39172",
+        studio_data_dir=data_dir,
+        studio_stub_llm=True,
+        comfy_user="admin",
+        comfy_pass="changeme-test-pass-42",
+        require_auth=True,
+        max_upload_bytes=small_limit,
+    )
+    custom_app = create_app(config=cfg, comfyui_transport=stub_comfyui_transport)
+    custom_client = TestClient(custom_app)
+    custom_client.auth = ("admin", "changeme-test-pass-42")
+
+    proj = custom_client.post(
+        "/studio/api/projects",
+        json={"name": "Proyecto Límite Exacto"},
+    ).json()
+    project_id = proj["id"]
+    uploads_dir = data_dir / "projects" / project_id / "uploads"
+
+    mp4_header = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+    exact_payload = mp4_header + (b"V" * (small_limit - len(mp4_header)))
+    assert len(exact_payload) == small_limit
+
+    # 1. Camino ordinario del panel (FormData con Content-Length = archivo + sobre + category)
+    exact_resp = custom_client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("exact_limit.mp4", exact_payload, "video/mp4")},
+        data={"category": "uploads"},
+    )
+    assert exact_resp.status_code == 201, (
+        f"Archivo exactamente en el límite debe aceptarse (201), recibido "
+        f"{exact_resp.status_code}: {exact_resp.text}"
+    )
+    exact_asset = exact_resp.json()
+    assert exact_asset["size_bytes"] == small_limit
+    assert exact_asset["category"] == "uploads"
+    assert exact_asset["kind"] == "video"
+    saved_path = (data_dir / exact_asset["rel_path"]).resolve()
+    assert saved_path.read_bytes() == exact_payload
+
+    # 2. Contenido por encima del límite por archivo (exacto + 1 byte) sigue dando 413 en el parser
+    rollover_calls = 0
+    orig_rollover = SpooledTemporaryFile.rollover
+
+    def _spy_rollover(self: SpooledTemporaryFile[bytes]) -> None:
+        nonlocal rollover_calls
+        rollover_calls += 1
+        return orig_rollover(self)
+
+    monkeypatch.setattr(SpooledTemporaryFile, "rollover", _spy_rollover)
+
+    over_by_one_payload = exact_payload + b"X"
+    assert len(over_by_one_payload) == small_limit + 1
+    over_resp = custom_client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("over_by_one.mp4", over_by_one_payload, "video/mp4")},
+        data={"category": "uploads"},
+    )
+    assert over_resp.status_code == 413
+    assert rollover_calls == 0
+    assert len(list(uploads_dir.iterdir())) == 1
+
+    # 3. Content-Length > max_upload_bytes + sobre multipart se rechaza sin leer stream
+    stream_reads = 0
+
+    def _exploding_stream() -> Iterator[bytes]:
+        nonlocal stream_reads
+        stream_reads += 1
+        yield b"--boundary\r\n"
+
+    envelope_exceeded_resp = custom_client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        content=_exploding_stream(),
+        headers={
+            "Content-Type": "multipart/form-data; boundary=boundary",
+            "Content-Length": str(small_limit + _MULTIPART_ENVELOPE_OVERHEAD_BYTES + 1),
+        },
+    )
+    assert envelope_exceeded_resp.status_code == 413
+    assert stream_reads == 0
+
+    # 4. Consistencia con el camino chunked (ASGITransport/async-body): exacto 201 y +1 byte 413
+    boundary = "studio-exact-limit-boundary"
+
+    async def _run_chunked(total_file_bytes: int) -> httpx.Response:
+        progress = {"chunks_yielded": 0, "bytes_yielded": 0}
+        transport = httpx.ASGITransport(app=custom_app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            auth=("admin", "changeme-test-pass-42"),
+        ) as async_client:
+            return await async_client.post(
+                f"/studio/api/projects/{project_id}/assets",
+                content=_aiter_multipart_chunks(
+                    boundary=boundary,
+                    filename="chunked_exact.mp4",
+                    content_type="video/mp4",
+                    chunk_size=4096,
+                    total_file_bytes=total_file_bytes,
+                    progress=progress,
+                ),
+                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            )
+
+    chunked_exact_resp = anyio.run(_run_chunked, small_limit)
+    assert chunked_exact_resp.status_code == 201
+    assert chunked_exact_resp.json()["size_bytes"] == small_limit
+
+    chunked_over_resp = anyio.run(_run_chunked, small_limit + 1)
+    assert chunked_over_resp.status_code == 413
+    assert rollover_calls == 0
 
 
 def test_upload_rejects_chunked_stream_exceeding_limit_without_unbounded_spool_or_400(

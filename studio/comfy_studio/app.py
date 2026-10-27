@@ -111,9 +111,11 @@ def _verify_basic_auth(
 
 _UPLOAD_MEDIA_SUFFIXES = ("/assets", "/media", "/uploads")
 _MULTIPART_ENVELOPE_OVERHEAD_BYTES = 64 * 1024  # 64 KiB para cabeceras/boundaries multipart
-# Límites sintéticos < 4 KiB admiten sobre multipart
-_MIN_DIRECT_CONTENT_LENGTH_LIMIT_BYTES = 4 * 1024
 _MAX_IN_MEMORY_SPOOL_BYTES = 8 * 1024 * 1024  # hasta 8 MiB en memoria antes de spool a disco
+
+
+def _max_upload_request_bytes(max_upload_bytes: int) -> int:
+    return max_upload_bytes + _MULTIPART_ENVELOPE_OVERHEAD_BYTES
 
 
 def _is_media_upload_request(request: Request) -> bool:
@@ -143,11 +145,7 @@ def _check_upload_content_length(headers: Headers, max_upload_bytes: int) -> Non
             status_code=400,
             detail="Cabecera Content-Length inválida",
         )
-    effective_cl_ceiling = (
-        max_upload_bytes
-        if max_upload_bytes >= _MIN_DIRECT_CONTENT_LENGTH_LIMIT_BYTES
-        else max_upload_bytes + _MULTIPART_ENVELOPE_OVERHEAD_BYTES
-    )
+    effective_cl_ceiling = _max_upload_request_bytes(max_upload_bytes)
     if content_length > effective_cl_ceiling:
         raise HTTPException(
             status_code=413,
@@ -228,7 +226,7 @@ class _BoundedMultiPartParser(MultiPartParser):
 
 
 def _install_bounded_form_parser(request: Request, max_upload_bytes: int) -> None:
-    max_stream_bytes = max_upload_bytes + _MULTIPART_ENVELOPE_OVERHEAD_BYTES
+    max_stream_bytes = _max_upload_request_bytes(max_upload_bytes)
 
     async def _bounded_get_form(
         *,
