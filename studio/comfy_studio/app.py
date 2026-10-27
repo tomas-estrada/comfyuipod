@@ -7,14 +7,20 @@ import binascii
 import logging
 import os
 import secrets
+from collections.abc import AsyncGenerator, Callable, Coroutine
+from contextlib import aclosing
 from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from python_multipart.multipart import parse_options_header
+from starlette.datastructures import FormData, Headers
+from starlette.formparsers import FormParser, MultiPartException, MultiPartParser
 
 from comfy_studio.agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
 from comfy_studio.comfyui_client import ComfyUIClient, ComfyUIError
@@ -87,14 +93,217 @@ def _verify_basic_auth(
         return False
     try:
         decoded = base64.b64decode(token.strip(), validate=True).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError):
+    except (binascii.Error, UnicodeDecodeError, ValueError):
         return False
     if ":" not in decoded:
         return False
     user, password = decoded.split(":", 1)
-    user_ok = secrets.compare_digest(user, expected_user)
-    pass_ok = secrets.compare_digest(password, expected_pass)
+    user_ok = secrets.compare_digest(
+        user.encode(),
+        expected_user.encode(),
+    )
+    pass_ok = secrets.compare_digest(
+        password.encode(),
+        expected_pass.encode(),
+    )
     return user_ok and pass_ok
+
+
+_UPLOAD_MEDIA_SUFFIXES = ("/assets", "/media", "/uploads")
+_MULTIPART_ENVELOPE_OVERHEAD_BYTES = 64 * 1024  # 64 KiB para cabeceras/boundaries multipart
+# Límites sintéticos < 4 KiB admiten sobre multipart
+_MIN_DIRECT_CONTENT_LENGTH_LIMIT_BYTES = 4 * 1024
+_MAX_IN_MEMORY_SPOOL_BYTES = 8 * 1024 * 1024  # hasta 8 MiB en memoria antes de spool a disco
+
+
+def _is_media_upload_request(request: Request) -> bool:
+    if request.method.upper() != "POST":
+        return False
+    path = request.url.path.rstrip("/")
+    if not path.startswith("/studio/api/projects/"):
+        return False
+    rest = path[len("/studio/api/projects/") :]
+    parts = [part for part in rest.split("/") if part]
+    return len(parts) == 2 and f"/{parts[1]}" in _UPLOAD_MEDIA_SUFFIXES
+
+
+def _check_upload_content_length(headers: Headers, max_upload_bytes: int) -> None:
+    raw_cl = headers.get("content-length")
+    if raw_cl is None:
+        return
+    try:
+        content_length = int(raw_cl.strip())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Cabecera Content-Length inválida",
+        ) from exc
+    if content_length < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Cabecera Content-Length inválida",
+        )
+    effective_cl_ceiling = (
+        max_upload_bytes
+        if max_upload_bytes >= _MIN_DIRECT_CONTENT_LENGTH_LIMIT_BYTES
+        else max_upload_bytes + _MULTIPART_ENVELOPE_OVERHEAD_BYTES
+    )
+    if content_length > effective_cl_ceiling:
+        raise HTTPException(
+            status_code=413,
+            detail=f"El archivo supera el límite permitido ({max_upload_bytes} bytes)",
+        )
+
+
+async def _bounded_request_stream(
+    request: Request,
+    *,
+    max_stream_bytes: int,
+    max_upload_bytes: int,
+) -> AsyncGenerator[bytes, None]:
+    total_bytes = 0
+    async for chunk in request.stream():
+        total_bytes += len(chunk)
+        if total_bytes > max_stream_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"El archivo supera el límite permitido ({max_upload_bytes} bytes)",
+            )
+        yield chunk
+
+
+class _BoundedMultiPartParser(MultiPartParser):
+    """Parser multipart que acota los bytes por archivo ANTES de volcar a disco temporal."""
+
+    def __init__(
+        self,
+        headers: Headers,
+        stream: AsyncGenerator[bytes, None],
+        *,
+        max_files: int | float = 1000,
+        max_fields: int | float = 1000,
+        max_part_size: int = 1024 * 1024,
+        max_file_size: int,
+    ) -> None:
+        super().__init__(
+            headers,
+            stream,
+            max_files=max_files,
+            max_fields=max_fields,
+            max_part_size=max_part_size,
+        )
+        self.max_file_size = max_file_size
+        self.spool_max_size = min(
+            max(max_file_size, 1024 * 1024),
+            _MAX_IN_MEMORY_SPOOL_BYTES,
+        )
+        self._part_file_bytes: dict[int, int] = {}
+        self._total_file_bytes = 0
+
+    def on_part_data(self, data: bytes, start: int, end: int) -> None:
+        if self._current_part.file is not None:
+            chunk_len = end - start
+            part_key = id(self._current_part)
+            new_part_size = self._part_file_bytes.get(part_key, 0) + chunk_len
+            self._total_file_bytes += chunk_len
+            if new_part_size > self.max_file_size or self._total_file_bytes > self.max_file_size:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"El archivo supera el límite permitido ({self.max_file_size} bytes)",
+                )
+            self._part_file_bytes[part_key] = new_part_size
+        super().on_part_data(data, start, end)
+
+    async def parse(self) -> FormData:
+        try:
+            return await super().parse()
+        except OSError as exc:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "El archivo supera el límite permitido o agotó el almacenamiento "
+                    f"temporal ({self.max_file_size} bytes)"
+                ),
+            ) from exc
+
+
+def _install_bounded_form_parser(request: Request, max_upload_bytes: int) -> None:
+    max_stream_bytes = max_upload_bytes + _MULTIPART_ENVELOPE_OVERHEAD_BYTES
+
+    async def _bounded_get_form(
+        *,
+        max_files: int | float = 1000,
+        max_fields: int | float = 1000,
+        max_part_size: int = 1024 * 1024,
+    ) -> FormData:
+        if getattr(request, "_form", None) is None:
+            _check_upload_content_length(request.headers, max_upload_bytes)
+            content_type_header = request.headers.get("Content-Type")
+            content_type, _ = parse_options_header(content_type_header)
+            if content_type == b"multipart/form-data":
+                try:
+                    async with aclosing(
+                        _bounded_request_stream(
+                            request,
+                            max_stream_bytes=max_stream_bytes,
+                            max_upload_bytes=max_upload_bytes,
+                        )
+                    ) as stream:
+                        multipart_parser = _BoundedMultiPartParser(
+                            request.headers,
+                            stream,
+                            max_files=max_files,
+                            max_fields=max_fields,
+                            max_part_size=max_part_size,
+                            max_file_size=max_upload_bytes,
+                        )
+                        request._form = await multipart_parser.parse()
+                except MultiPartException as exc:
+                    if "app" in request.scope:
+                        raise HTTPException(status_code=400, detail=exc.message) from exc
+                    raise exc
+            elif content_type == b"application/x-www-form-urlencoded":
+                try:
+                    async with aclosing(
+                        _bounded_request_stream(
+                            request,
+                            max_stream_bytes=max_stream_bytes,
+                            max_upload_bytes=max_upload_bytes,
+                        )
+                    ) as stream:
+                        form_parser = FormParser(
+                            request.headers,
+                            stream,
+                            max_fields=max_fields,
+                            max_part_size=max_part_size,
+                        )
+                        request._form = await form_parser.parse()
+                except MultiPartException as exc:
+                    if "app" in request.scope:
+                        raise HTTPException(status_code=400, detail=exc.message) from exc
+                    raise exc
+            else:
+                request._form = FormData()
+        return request._form  # type: ignore[return-value]
+
+    request._get_form = _bounded_get_form  # type: ignore[method-assign]
+
+
+class _BoundedUploadAPIRoute(APIRoute):
+    """APIRoute que aplica recepción acotada antes de que FastAPI resuelva request.form()."""
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original_route_handler = super().get_route_handler()
+
+        async def custom_route_handler(request: Request) -> Response:
+            if _is_media_upload_request(request):
+                active_cfg: StudioConfig = request.app.state.config
+                limit = active_cfg.max_upload_bytes
+                _check_upload_content_length(request.headers, limit)
+                _install_bounded_form_parser(request, limit)
+            return await original_route_handler(request)
+
+        return custom_route_handler
 
 
 async def _probe_comfyui(
@@ -134,6 +343,7 @@ def create_app(
         title="Comfy Studio Server",
         version="0.1.0",
     )
+    app.router.route_class = _BoundedUploadAPIRoute
     app.state.config = cfg
     app.state.redactor = redactor
     app.state.store = store
@@ -192,6 +402,18 @@ def create_app(
                     status_code=401,
                     content={"detail": "Credenciales requeridas"},
                     headers={"WWW-Authenticate": 'Basic realm="ComfyUI Vast.ai Access"'},
+                )
+
+        if _is_media_upload_request(request):
+            try:
+                _check_upload_content_length(
+                    request.headers,
+                    active_cfg.max_upload_bytes,
+                )
+            except HTTPException as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": exc.detail},
                 )
 
         return await call_next(request)

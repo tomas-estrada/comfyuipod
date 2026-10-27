@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import errno
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from tempfile import SpooledTemporaryFile
 
+import anyio
+import httpx
+import pytest
 from fastapi.testclient import TestClient
+
+from comfy_studio.app import _verify_basic_auth, create_app
+from comfy_studio.config import StudioConfig
 
 
 def test_projects_crud_lifecycle(
@@ -191,3 +201,170 @@ def test_upload_rejects_invalid_mime_size_limit_and_path_traversal(
     saved_path = (studio_data_dir / saved_asset["rel_path"]).resolve()
     assert saved_path.is_relative_to(proj_dir / "uploads")
     assert not (studio_data_dir / "escape_attempt.png").exists()
+
+
+async def _aiter_multipart_chunks(
+    *,
+    boundary: str,
+    filename: str,
+    content_type: str,
+    chunk_size: int,
+    total_file_bytes: int,
+    progress: dict[str, int],
+) -> AsyncIterator[bytes]:
+    header = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode()
+    footer = f"\r\n--{boundary}--\r\n".encode()
+
+    progress["bytes_yielded"] += len(header)
+    yield header
+
+    remaining = total_file_bytes
+    block = b"V" * chunk_size
+    while remaining > 0:
+        piece = block if remaining >= chunk_size else b"V" * remaining
+        remaining -= len(piece)
+        progress["chunks_yielded"] += 1
+        progress["bytes_yielded"] += len(piece)
+        yield piece
+
+    progress["bytes_yielded"] += len(footer)
+    yield footer
+
+
+def test_upload_rejects_oversized_content_length_without_spooling_to_disk(
+    client: TestClient,
+    studio_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proj = client.post(
+        "/studio/api/projects",
+        json={"name": "Hardening Content-Length"},
+    ).json()
+    project_id = proj["id"]
+    limit = 2 * 1024 * 1024  # 2 MiB en fixture studio_config
+
+    rollover_calls = 0
+    orig_rollover = SpooledTemporaryFile.rollover
+
+    def _spy_rollover(self: SpooledTemporaryFile[bytes]) -> None:
+        nonlocal rollover_calls
+        rollover_calls += 1
+        return orig_rollover(self)
+
+    monkeypatch.setattr(SpooledTemporaryFile, "rollover", _spy_rollover)
+
+    # 1. Subida multipart con Content-Length > límite: 413 inmediato sin hacer rollover a disco
+    oversized_payload = b"A" * (limit + 1024)
+    resp = client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("huge.mp4", oversized_payload, "video/mp4")},
+    )
+    assert resp.status_code == 413
+    assert rollover_calls == 0
+
+    # 2. Si Content-Length ya supera el límite, ni siquiera debe consumirse el stream entrante
+    stream_reads = 0
+
+    def _exploding_stream() -> Iterator[bytes]:
+        nonlocal stream_reads
+        stream_reads += 1
+        yield b"--boundary\r\n"
+
+    early_resp = client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        content=_exploding_stream(),
+        headers={
+            "Content-Type": "multipart/form-data; boundary=boundary",
+            "Content-Length": str(limit + 4096),
+        },
+    )
+    assert early_resp.status_code == 413
+    assert stream_reads == 0
+    assert rollover_calls == 0
+    assert list((studio_data_dir / "projects" / project_id / "uploads").iterdir()) == []
+
+
+def test_upload_rejects_chunked_stream_exceeding_limit_without_unbounded_spool_or_400(
+    app,
+    client: TestClient,
+    studio_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proj = client.post(
+        "/studio/api/projects",
+        json={"name": "Hardening Chunked"},
+    ).json()
+    project_id = proj["id"]
+    limit = 2 * 1024 * 1024  # 2 MiB
+    chunk_size = 64 * 1024  # 64 KiB por chunk
+    total_attempted_bytes = 8 * 1024 * 1024  # 8 MiB (4x el límite)
+    boundary = "studio-chunked-boundary-99"
+
+    # Si el disco temporal estuviera lleno (ENOSPC) al intentar rollover,
+    # nunca debe acabar en 400 ni agotar el espacio temporal.
+    def _enospc_rollover(self: SpooledTemporaryFile[bytes]) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(SpooledTemporaryFile, "rollover", _enospc_rollover)
+
+    progress = {"chunks_yielded": 0, "bytes_yielded": 0}
+
+    async def _run_chunked_upload() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+            auth=("admin", "changeme-test-pass-42"),
+        ) as async_client:
+            return await async_client.post(
+                f"/studio/api/projects/{project_id}/assets",
+                content=_aiter_multipart_chunks(
+                    boundary=boundary,
+                    filename="recording.mp4",
+                    content_type="video/mp4",
+                    chunk_size=chunk_size,
+                    total_file_bytes=total_attempted_bytes,
+                    progress=progress,
+                ),
+                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            )
+
+    resp = anyio.run(_run_chunked_upload)
+    assert resp.status_code == 413, f"Esperado 413, recibido {resp.status_code}: {resp.text}"
+    # El stream debe cortarse en cuanto cruza el límite (~2 MiB), nunca leer los 8 MiB completos
+    assert progress["bytes_yielded"] <= limit + (2 * chunk_size)
+    assert list((studio_data_dir / "projects" / project_id / "uploads").iterdir()) == []
+
+
+def test_basic_auth_handles_utf8_credentials_and_non_ascii_token(
+    tmp_path: Path,
+) -> None:
+    cfg = StudioConfig(
+        studio_data_dir=tmp_path / "data",
+        comfy_user="admin",
+        comfy_pass="contraseña-segura",
+        require_auth=True,
+        studio_stub_llm=True,
+    )
+    app = create_app(config=cfg)
+    with TestClient(app) as utf8_client:
+        valid_token = base64.b64encode("admin:contraseña-segura".encode()).decode("ascii")
+        ok_resp = utf8_client.get(
+            "/studio/api/health",
+            headers={"Authorization": f"Basic {valid_token}"},
+        )
+        assert ok_resp.status_code == 200
+
+        wrong_token = base64.b64encode("admin:otra-contraseña".encode()).decode("ascii")
+        bad_resp = utf8_client.get(
+            "/studio/api/health",
+            headers={"Authorization": f"Basic {wrong_token}"},
+        )
+        assert bad_resp.status_code == 401
+
+    assert _verify_basic_auth("Basic token-con-ñ-no-ascii", "admin", "contraseña-segura") is False
+
