@@ -932,7 +932,7 @@ jobs:
           elapsed = time.monotonic() - t0
           assert elapsed < 2.0, f"SSE first event took {elapsed:.3f}s (>= 2.0s)"
           assert "text/event-stream" in out.lower(), f"Missing text/event-stream header: {out}"
-          assert "x-accel-buffering: no" in out.lower(), f"Missing X-Accel-Buffering: no header: {out}"
+          assert "cache-control: no-cache" in out.lower(), f"Missing Cache-Control: no-cache header: {out}"
           assert "event: heartbeat" in out, f"Missing immediate heartbeat event: {out}"
           print(f"[OK] SSE /studio/api/progress recibido en {elapsed * 1000:.1f} ms (< 2000 ms, proxy_buffering off)")
           EOF
