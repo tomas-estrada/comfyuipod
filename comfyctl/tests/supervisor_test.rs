@@ -482,9 +482,9 @@ while True:
         "ComfyUI debía seguir vivo con el mismo PID {comfy_pid_1}"
     );
     let st_after = read_supervisor_state_file(&sup_json_path);
-    let comfy_unchanged = st_after.as_ref().is_some_and(|st| {
-        st.state == "running" && st.pid == Some(comfy_pid_1) && st.attempt == 1
-    });
+    let comfy_unchanged = st_after
+        .as_ref()
+        .is_some_and(|st| st.state == "running" && st.pid == Some(comfy_pid_1) && st.attempt == 1);
     assert!(
         comfy_unchanged,
         "El estado de ComfyUI debía permanecer running/attempt=1: {st_after:?}"
