@@ -683,3 +683,155 @@ class ProjectStore:
             )
             conn.commit()
         return self.get_job(current["id"])
+
+    # ------------------------------------------------------------------
+    # Chat messages (session memory per project)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_chat_message(row: sqlite3.Row) -> dict[str, Any]:
+        raw_tc = row["tool_calls_json"]
+        try:
+            tc_data = json.loads(raw_tc) if raw_tc else []
+        except json.JSONDecodeError:
+            tc_data = []
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "role": row["role"],
+            "content": row["content"],
+            "tool_calls": tc_data,
+            "created_at": row["created_at"],
+        }
+
+    def add_chat_message(
+        self,
+        project_id: str,
+        *,
+        role: str,
+        content: str,
+        tool_calls: list[dict[str, Any]] | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        if project is None:
+            raise ValueError(f"Proyecto no encontrado: {project_id!r}")
+        pid = project["id"]
+        msg_id = f"msg-{uuid.uuid4().hex[:12]}"
+        now = _utc_now_iso()
+        tc_json = json.dumps(tool_calls or [], ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO chat_messages "
+                "(id, project_id, role, content, tool_calls_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (msg_id, pid, role, content, tc_json, now),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM chat_messages WHERE id = ?",
+                (msg_id,),
+            ).fetchone()
+        assert row is not None
+        return self._row_to_chat_message(row)
+
+    def list_chat_messages(
+        self,
+        project_id: str,
+        *,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chat_messages WHERE project_id = ? "
+                "ORDER BY created_at ASC, rowid ASC LIMIT ?",
+                (pid, max(1, int(limit))),
+            ).fetchall()
+        return [self._row_to_chat_message(r) for r in rows]
+
+    def clear_chat_messages(self, project_id: str) -> int:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM chat_messages WHERE project_id = ?",
+                (pid,),
+            )
+            conn.commit()
+        return int(cur.rowcount or 0)
+
+    # ------------------------------------------------------------------
+    # EDL versions (propose_edl / build_edl)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_edl_version(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            edl_doc = json.loads(row["edl_json"] or "{}")
+        except json.JSONDecodeError:
+            edl_doc = {}
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "version": int(row["version"]),
+            "edl": edl_doc,
+            "output_asset_id": row["output_asset_id"],
+            "created_at": row["created_at"],
+        }
+
+    def save_edl_version(
+        self,
+        project_id: str,
+        *,
+        edl: dict[str, Any],
+        output_asset_id: str | None = None,
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        if project is None:
+            raise ValueError(f"Proyecto no encontrado: {project_id!r}")
+        pid = project["id"]
+        edl_id = f"edl-{uuid.uuid4().hex[:12]}"
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            row_ver = conn.execute(
+                "SELECT COALESCE(MAX(version), 0) AS max_ver "
+                "FROM edl_versions WHERE project_id = ?",
+                (pid,),
+            ).fetchone()
+            next_version = int(row_ver["max_ver"] if row_ver else 0) + 1
+            edl_payload = dict(edl)
+            edl_payload["version"] = next_version
+            conn.execute(
+                "INSERT INTO edl_versions "
+                "(id, project_id, version, edl_json, output_asset_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    edl_id,
+                    pid,
+                    next_version,
+                    json.dumps(edl_payload, ensure_ascii=False),
+                    output_asset_id,
+                    now,
+                ),
+            )
+            conn.commit()
+            saved_row = conn.execute(
+                "SELECT * FROM edl_versions WHERE id = ?",
+                (edl_id,),
+            ).fetchone()
+        assert saved_row is not None
+        return self._row_to_edl_version(saved_row)
+
+    def list_edl_versions(self, project_id: str) -> list[dict[str, Any]]:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM edl_versions WHERE project_id = ? "
+                "ORDER BY version DESC, created_at DESC",
+                (pid,),
+            ).fetchall()
+        return [self._row_to_edl_version(r) for r in rows]
+
+    def get_latest_edl(self, project_id: str) -> dict[str, Any] | None:
+        versions = self.list_edl_versions(project_id)
+        return versions[0] if versions else None
+

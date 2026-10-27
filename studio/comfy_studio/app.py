@@ -14,12 +14,13 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from comfy_studio.agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
 from comfy_studio.comfyui_client import ComfyUIClient
 from comfy_studio.config import (
     StudioConfig,
     install_log_redaction,
 )
-from comfy_studio.progress import ProgressBroker
+from comfy_studio.progress import ProgressBroker, format_sse_event
 from comfy_studio.projects import MediaValidationError, ProjectStore
 from comfy_studio.stubs.llm import StubLLMClient
 
@@ -56,6 +57,14 @@ class JobProgressRequest(BaseModel):
     current_node: str | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
+
+
+class ChatTurnRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=20000)
+    asset_ids: list[str] = Field(default_factory=list)
+    keyframe_data_urls: list[str] = Field(default_factory=list)
+    stream: bool = Field(default=False)
+    max_iterations: int | None = Field(default=None, ge=1, le=25)
 
 
 def _verify_basic_auth(
@@ -128,6 +137,21 @@ def create_app(
         transport=comfyui_transport,
         store=store,
         broker=broker,
+        redactor=redactor,
+    )
+    app.state.tool_belt = create_default_tool_belt()
+    app.state.llm_client = OpenAICompatibleLLMClient(
+        config=cfg,
+        stub_client=stub_llm,
+        redactor=redactor,
+    )
+    app.state.agent = StudioAgent(
+        config=cfg,
+        store=store,
+        comfyui_client=app.state.comfyui_client,
+        broker=broker,
+        llm_client=app.state.llm_client,
+        tool_belt=app.state.tool_belt,
         redactor=redactor,
     )
 
@@ -475,6 +499,108 @@ def create_app(
             },
         )
         return updated
+
+    @app.get("/studio/api/agent/tools")
+    @app.get("/studio/api/tools")
+    async def list_agent_tools(request: Request) -> dict[str, Any]:
+        active_agent: StudioAgent = request.app.state.agent
+        return {"tools": active_agent.tool_belt.to_openai_tools()}
+
+    @app.post("/studio/api/projects/{project_id}/chat")
+    async def project_chat_turn(
+        project_id: str,
+        body: ChatTurnRequest,
+        request: Request,
+    ):
+        active_store: ProjectStore = request.app.state.store
+        active_agent: StudioAgent = request.app.state.agent
+        active_redactor = request.app.state.config.redactor()
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+        wants_stream = body.stream or "text/event-stream" in (
+            request.headers.get("accept") or ""
+        )
+        if wants_stream:
+            async def _sse_gen():
+                try:
+                    async for ev in active_agent.stream_turn(
+                        project_id=project_id,
+                        user_message=body.message,
+                        asset_ids=body.asset_ids,
+                        keyframe_data_urls=body.keyframe_data_urls,
+                        max_iterations=body.max_iterations,
+                    ):
+                        yield format_sse_event(ev["type"], active_redactor.redact_value(ev))
+                except ValueError as exc:
+                    err_ev = active_redactor.redact_value(
+                        {"type": "error", "detail": str(exc)}
+                    )
+                    yield format_sse_event("error", err_ev)
+
+            return StreamingResponse(
+                _sse_gen(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache, no-transform",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
+        try:
+            turn_result = await active_agent.run_turn(
+                project_id=project_id,
+                user_message=body.message,
+                asset_ids=body.asset_ids,
+                keyframe_data_urls=body.keyframe_data_urls,
+                max_iterations=body.max_iterations,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=active_redactor.redact(str(exc)),
+            ) from exc
+        return active_redactor.redact_value(turn_result.to_dict())
+
+    @app.get("/studio/api/projects/{project_id}/chat")
+    async def get_project_chat_history(
+        project_id: str,
+        request: Request,
+        limit: int = Query(default=200, ge=1, le=500),
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        return {
+            "project_id": project_id,
+            "messages": active_store.list_chat_messages(project_id, limit=limit),
+        }
+
+    @app.delete("/studio/api/projects/{project_id}/chat")
+    async def clear_project_chat_history(
+        project_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        removed = active_store.clear_chat_messages(project_id)
+        return {"deleted": True, "project_id": project_id, "removed_count": removed}
+
+    @app.get("/studio/api/projects/{project_id}/edl")
+    async def list_project_edls(
+        project_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        return {
+            "project_id": project_id,
+            "versions": active_store.list_edl_versions(project_id),
+            "latest": active_store.get_latest_edl(project_id),
+        }
 
     @app.get("/studio/api/progress")
     async def sse_progress(
