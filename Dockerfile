@@ -37,6 +37,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COMFY_DATA_DIR=/workspace/comfyui-data \
     OPEN_BUTTON_PORT=8188
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # 1. Dependencias del sistema: ffmpeg completo (libx264 + nvenc), Nginx, ttyd, tini, git, openssl
 #    y build-essential + python3-dev conservados (ALTA-03) para que torch.compile (Triton)
 #    y la instalación en 1 clic de nodos con extensiones C/C++ desde ComfyUI-Manager funcionen en runtime.
@@ -58,6 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-dev \
         python3-pip \
+        python3-venv \
         libgl1 \
         libglib2.0-0 \
         libsm6 \
@@ -70,7 +73,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Copiar archivos de bloqueo y restricciones de versión (REP-01 / REP-02 / ALTA-05)
-RUN mkdir -p /etc/comfyui /etc/comfyui/portal /etc/comfyui/probes
+RUN mkdir -p /etc/comfyui /etc/comfyui/portal /etc/comfyui/probes /etc/comfyui/panel
 COPY config/constraints.txt /etc/comfyui/constraints.txt
 COPY config/nodes.lock /etc/comfyui/nodes.lock
 RUN sed -i 's/\r$//' /etc/comfyui/constraints.txt /etc/comfyui/nodes.lock
@@ -88,20 +91,18 @@ RUN pip3 install --upgrade --ignore-installed pip setuptools wheel \
         --index-url https://download.pytorch.org/whl/cu128 \
     && awk '$1 == "core" {print $3, $4}' /etc/comfyui/nodes.lock | while read -r repo_url sha; do \
         git init /opt/ComfyUI && \
-        cd /opt/ComfyUI && \
-        git remote add origin "$repo_url" && \
-        git fetch --depth=1 origin "$sha" && \
-        git checkout -B main FETCH_HEAD; \
+        git -C /opt/ComfyUI remote add origin "$repo_url" && \
+        git -C /opt/ComfyUI fetch --depth=1 origin "$sha" && \
+        git -C /opt/ComfyUI checkout -B main FETCH_HEAD; \
     done \
     && pip3 install -r /opt/ComfyUI/requirements.txt \
     && awk '$1 == "dep" && $2 == "sam2" {print $3, $4}' /etc/comfyui/nodes.lock | while read -r repo_url sha; do \
         git init /tmp/sam2 && \
-        cd /tmp/sam2 && \
-        git remote add origin "$repo_url" && \
-        git fetch --depth=1 origin "$sha" && \
-        git checkout FETCH_HEAD && \
-        SAM2_BUILD_CUDA=0 pip3 install --no-build-isolation . && \
-        cd / && rm -rf /tmp/sam2; \
+        git -C /tmp/sam2 remote add origin "$repo_url" && \
+        git -C /tmp/sam2 fetch --depth=1 origin "$sha" && \
+        git -C /tmp/sam2 checkout FETCH_HEAD && \
+        SAM2_BUILD_CUDA=0 pip3 install --no-build-isolation /tmp/sam2 && \
+        rm -rf /tmp/sam2; \
     done \
     && pip3 install \
         "huggingface-hub>=1.0.0,<3.0.0" \
@@ -128,11 +129,10 @@ WORKDIR /opt/ComfyUI/custom_nodes
 RUN awk '$1 == "node" {print $2, $3, $4}' /etc/comfyui/nodes.lock | while read -r dir_name repo_url sha; do \
         echo "=== Clonando ${dir_name} (${sha}) ===" && \
         git init "${dir_name}" && \
-        cd "${dir_name}" && \
-        git remote add origin "${repo_url}" && \
-        git fetch --depth=1 origin "${sha}" && \
-        git checkout -B main FETCH_HEAD && \
-        for req_file in requirements.txt requirements-no-cupy.txt; do \
+        git -C "${dir_name}" remote add origin "${repo_url}" && \
+        git -C "${dir_name}" fetch --depth=1 origin "${sha}" && \
+        git -C "${dir_name}" checkout -B main FETCH_HEAD && \
+        for req_file in "${dir_name}/requirements.txt" "${dir_name}/requirements-no-cupy.txt"; do \
             if [ -f "${req_file}" ]; then \
                 grep -Ev '^\s*(#|$|onnxruntime(\s*[<>=!~]|$)|opencv-python(\s*[<>=!~]|$)|opencv-contrib-python(\s*[<>=!~]|$)|numpy(\s*[<>=!~]|$)|torch(\s*[<>=!~]|$)|torchvision(\s*[<>=!~]|$)|torchaudio(\s*[<>=!~]|$)|git\+https://github\.com/facebookresearch/sam2)' "${req_file}" > /tmp/req_filtered.txt || true; \
                 if [ -s /tmp/req_filtered.txt ]; then \
@@ -140,8 +140,7 @@ RUN awk '$1 == "node" {print $2, $3, $4}' /etc/comfyui/nodes.lock | while read -
                 fi; \
                 rm -f /tmp/req_filtered.txt; \
             fi; \
-        done && \
-        cd /opt/ComfyUI/custom_nodes; \
+        done; \
     done \
     && if [ -d /opt/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/.git/info ]; then \
         printf 'checkpoints\ncheckpoints/\n' >> /opt/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/.git/info/exclude; \
@@ -203,7 +202,7 @@ RUN mkdir -p /etc/comfyui/models_configs \
     fi \
     && ln -sfn /opt/ComfyUI /workspace/ComfyUI
 
-# 6. Copiar archivos de configuración, portal, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
+# 6. Copiar archivos de configuración, portal, estudio, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
 ARG IMAGE_TAG=dev
 ARG BUILD_DATE=unknown
 
@@ -218,6 +217,8 @@ COPY config/models-studio.json /etc/comfyui/models-studio.json
 COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
 COPY scripts/start.sh /start.sh
+COPY studio/ /opt/studio/
+COPY panel/ /etc/comfyui/panel/
 
 RUN sed -i 's/\r$//' \
         /usr/local/bin/download-models.sh \
@@ -226,19 +227,27 @@ RUN sed -i 's/\r$//' \
         /etc/comfyui/manager-config.ini \
         /etc/comfyui/_starting.html \
         /etc/comfyui/portal/index.html \
+        /etc/comfyui/panel/index.html \
+        /etc/comfyui/panel/style.css \
+        /etc/comfyui/panel/app.js \
         /etc/comfyui/probes/*.py \
         /etc/comfyui/models-studio.json \
         /etc/comfyui/triage_patterns.json \
         /etc/nginx/nginx.conf && \
+    find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json" \) -exec sed -i 's/\r$//' {} + && \
     chmod +x /usr/local/bin/download-models.sh /start.sh && \
     /usr/local/bin/comfyctl version && \
     python3 -m py_compile /etc/comfyui/probes/*.py && \
+    python3 -m venv /opt/venvs/studio && \
+    /opt/venvs/studio/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    /opt/venvs/studio/bin/pip install --no-cache-dir /opt/studio && \
+    /opt/venvs/studio/bin/python -m compileall -q /opt/venvs/studio/lib && \
+    /opt/venvs/studio/bin/python -m comfy_studio.templates && \
     IMAGE_TAG="${IMAGE_TAG}" BUILD_DATE="${BUILD_DATE}" python3 -c "import json, os, subprocess, torch; sha = subprocess.check_output(['git', '-C', '/opt/ComfyUI', 'rev-parse', 'HEAD'], text=True).strip(); json.dump({'tag': os.environ.get('IMAGE_TAG', 'dev'), 'built_at': os.environ.get('BUILD_DATE', 'unknown'), 'comfyui_sha': sha, 'pytorch': torch.__version__, 'cuda': str(torch.version.cuda), 'ubuntu': '24.04'}, open('/etc/comfyui/image.json', 'w', encoding='utf-8'), indent=2); pats = json.load(open('/etc/comfyui/triage_patterns.json', encoding='utf-8')); assert len(pats) >= 17; ms = json.load(open('/etc/comfyui/models-studio.json', encoding='utf-8')); assert len(ms.get('models', [])) == 78" && \
     cp /etc/comfyui/extra_model_paths.yaml /opt/ComfyUI/extra_model_paths.yaml && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/__manager/config.ini && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini && \
     nginx -t && \
-    cd /opt/ComfyUI && \
     ( \
         rc=0; \
         timeout 600 python3 main.py --cpu --quick-test-for-ci > /tmp/comfy_warmup.log 2>&1 || rc=$?; \
@@ -265,6 +274,7 @@ EXPOSE 8188
 # contenedor marcaria "unhealthy" (~900s tras arrancar) estando perfectamente sano.
 # timeout=10s > proxy_connect/read 5s de nginx; el probe HEAD sano completa en <1s.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=900s --retries=3 \
-    CMD curl -fsSI http://127.0.0.1:8188/healthz >/dev/null || exit 1
+    CMD ["curl", "-fsSI", "http://127.0.0.1:8188/healthz"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/start.sh"]
+

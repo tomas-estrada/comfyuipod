@@ -39,16 +39,18 @@ touch \
     /var/log/comfyui.log \
     /var/log/supervisor.log \
     /var/log/download-models.log \
-    /var/log/diag.txt
+    /var/log/diag.txt \
+    /var/log/studio-server.log
 # Permisos: 600 para logs que contienen secretos o solo los lee comfyctl (root) —
-# start.log guarda el banner con la contraseña autogenerada; supervisor.log, diag.txt y
-# ttyd.log solo los sirve comfyctl vía /logs/<name> con redacción de secretos.
+# start.log guarda el banner con la contraseña autogenerada; supervisor.log, diag.txt,
+# studio-server.log y ttyd.log solo los sirve comfyctl vía /logs/<name> con redacción de secretos.
 # 644 para comfyui.log (lo inspecciona CI vía docker exec) y download-models.log
 # (nginx lo lee directamente como www-data en /download-status).
 chmod 600 \
     /var/log/start.log \
     /var/log/supervisor.log \
-    /var/log/diag.txt
+    /var/log/diag.txt \
+    /var/log/studio-server.log
 chmod 644 \
     /var/log/comfyui.log \
     /var/log/download-models.log

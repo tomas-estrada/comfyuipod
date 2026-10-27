@@ -7,4 +7,8 @@ comfyctl/target
 docs
 tools
 *.txt
+.venv
 **/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.egg-info/

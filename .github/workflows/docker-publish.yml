@@ -65,7 +65,7 @@ jobs:
           portal_bytes = portal.stat().st_size
           assert portal_bytes < 40960, f"Portal index.html exceeds 40 KiB ({portal_bytes} bytes)"
           allowed_links = {"https://github.com/Comfy-Org/ComfyUI"}
-          for html_path in (portal, pathlib.Path("config/_starting.html"), pathlib.Path("comfyctl/src/status_html.html")):
+          for html_path in (portal, pathlib.Path("config/_starting.html"), pathlib.Path("comfyctl/src/status_html.html"), pathlib.Path("panel/index.html")):
               txt = html_path.read_text(encoding="utf-8")
               assert "http://" not in txt.lower(), f"Insecure http:// found in {html_path}"
               res_refs = re.findall(r'(?:src\s*=\s*["\']https?://|<link[^>]+href\s*=\s*["\']https?://|@import\s+["\']https?://|url\(\s*["\']?https?://)', txt, re.I)
@@ -283,6 +283,17 @@ jobs:
           python3 scripts/check_models_manifest.py --fixture
           python3 scripts/check_models_manifest.py
 
+      - name: Validar paquete comfy_studio, panel web y plantillas (ruff + pytest + templates)
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/studio-ci-venv
+          /tmp/studio-ci-venv/bin/pip install --no-cache-dir --upgrade pip
+          /tmp/studio-ci-venv/bin/pip install --no-cache-dir -e "./studio[dev]"
+          /tmp/studio-ci-venv/bin/ruff check studio panel
+          /tmp/studio-ci-venv/bin/pytest studio/tests -q
+          /tmp/studio-ci-venv/bin/python -m comfy_studio.templates
+          rm -rf /tmp/studio-ci-venv
+
   rust:
     name: Rust Lint, Unit Tests & Dependency Audit (comfyctl, §8.1)
     # Fijado a ubuntu-24.04 por el rollout de ubuntu-latest (ver comentario en el job validate).
@@ -449,6 +460,7 @@ jobs:
           timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/image.json
           timeout 300 docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
             "import torch, onnxruntime as ort, insightface, cv2, huggingface_hub, hf_xet; print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'CV2:', cv2.__version__, 'HF:', huggingface_hub.__version__, 'ORT:', ort.get_available_providers())"
+          timeout 300 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" -m comfy_studio.templates
           timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
 
           echo "=== Iniciando Smoke Test Full-Stack del contenedor (§9.2) ==="
@@ -478,9 +490,13 @@ jobs:
             exit 1
           fi
           echo "Contenedor smoke arrancado (cid=${cid})"
+          studio_cid=""
+          mock_hook_dir=""
           cleanup() {
             if [ -n "$cid" ]; then timeout 60 docker rm -f "$cid" >/dev/null 2>&1 || true; fi
-            timeout 60 docker rm -f smoke >/dev/null 2>&1 || true
+            if [ -n "$studio_cid" ]; then timeout 60 docker rm -f "$studio_cid" >/dev/null 2>&1 || true; fi
+            if [ -n "$mock_hook_dir" ]; then rm -rf "$mock_hook_dir" >/dev/null 2>&1 || true; fi
+            timeout 60 docker rm -f smoke smoke-studio >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
 
@@ -600,6 +616,8 @@ jobs:
           validate_schema(s, sup_schema, "$.supervisor_state")
           c = d.get("comfyui") or {}
           assert c.get("state") == "running" and c.get("port_open") is True and c.get("pid"), f"Unexpected comfyui status: {c}"
+          st_svc = (d.get("services") or {}).get("studio_server") or {}
+          assert st_svc.get("enabled") is False and st_svc.get("running") is False, f"Unexpected studio_server in non-studio profile: {st_svc}"
           print(c["pid"])
           ')"
           echo "[OK] /home, /status/api y /run/comfyui-supervisor.json verificados contra esquemas congelados (pid=${comfy_pid})"
@@ -641,7 +659,7 @@ jobs:
           [ "$code_405" = "405" ] || { echo "::error::Se esperaba 405 en POST /status/api, se obtuvo ${code_405}"; exit 1; }
           echo "[OK] Nginx corre bajo www-data y /logs/etc-passwd -> 404, POST -> 405"
 
-          # 8. Puertos internos 18188, 18189 y 7681 escuchan SOLO en 127.0.0.1 (0100007F en /proc/net/tcp)
+          # 8. Puertos internos 18188, 18189 y 7681 escuchan SOLO en 127.0.0.1 (0100007F en /proc/net/tcp) y 18190 permanece cerrado en perfil no-studio (VAL-CROSS-003)
           timeout 60 docker exec "$cid" python3 -c '
           lines = open("/proc/net/tcp").read().splitlines()[1:]
           listeners = {}
@@ -652,7 +670,8 @@ jobs:
                   listeners.setdefault(int(port_hex, 16), set()).add(ip_hex)
           for p in (18188, 18189, 7681):
               assert listeners.get(p) == {"0100007F"}, f"Port {p} not bound exclusively to 127.0.0.1: {listeners.get(p)}"
-          print("Verified loopback-only listeners:", {p: list(listeners[p]) for p in (18188, 18189, 7681)})
+          assert 18190 not in listeners, f"Port 18190 must remain closed in non-studio profile, got {listeners.get(18190)}"
+          print("Verified loopback-only listeners (18190 closed in non-studio):", {p: list(listeners[p]) for p in (18188, 18189, 7681)})
           '
 
           # 9. Probar supervisor: matar main.py con kill -9 y verificar relanzamiento (rc=137, restarts==1)
@@ -682,6 +701,8 @@ jobs:
           timeout 90 docker stop -t 30 "$cid"
           exit_code="$(timeout 30 docker inspect "$cid" --format '{{.State.ExitCode}}')"
           [ "$exit_code" = "0" ] || { timeout 30 docker logs "$cid" || true; echo "::error::docker stop devolvió ExitCode=${exit_code} (esperado 0)"; exit 1; }
+          timeout 60 docker rm -f "$cid" >/dev/null 2>&1 || true
+          cid=""
           echo "[OK] Contenedor apagado limpiamente con ExitCode=0"
 
           # 11. comfyctl strict-check en modo --cpu devuelve 0 y genera /run/comfyui-strict.json con result in (ok, warn) (§8.2 / R-02 / R-03)
@@ -764,6 +785,183 @@ jobs:
           done
           timeout 300 docker run --rm --entrypoint /usr/local/bin/comfyctl "${CANDIDATE_TAG}" diag | grep -q "\[DIAG\] resumen:"
           echo "[OK] Paso 14: Paridad de esquemas congelados, 11 cabeceras de /report.md y comfyctl diag verificada"
+
+          # 15. Smoke Test E2E con MODEL_PROFILE=studio y ComfyUI simulado (VAL-PROFILE-001 / VAL-PROFILE-005 / VAL-SERVER-002 / VAL-CROSS-003)
+          echo "=== Paso 15: Iniciando Smoke Test E2E con MODEL_PROFILE=studio ==="
+          mock_hook_dir="$(mktemp -d)"
+          chmod 755 "$mock_hook_dir"
+          cat > "${mock_hook_dir}/sitecustomize.py" << 'EOF'
+          import json
+          import os
+          import signal
+          import sys
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          if (
+              os.environ.get("MOCK_COMFYUI_SERVER") == "1"
+              and len(sys.argv) >= 2
+              and os.path.basename(sys.argv[0]) == "main.py"
+              and "--port" in sys.argv
+          ):
+              signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+              signal.signal(signal.SIGINT, lambda *_: os._exit(0))
+
+              class _MockComfyHandler(BaseHTTPRequestHandler):
+                  def log_message(self, fmt, *args):
+                      return
+
+                  def _reply(self, code, payload, head_only=False):
+                      raw = json.dumps(payload).encode("utf-8")
+                      self.send_response(code)
+                      self.send_header("Content-Type", "application/json")
+                      self.send_header("Content-Length", str(len(raw)))
+                      self.end_headers()
+                      if not head_only:
+                          self.wfile.write(raw)
+
+                  def do_HEAD(self):
+                      self._reply(200, {"system": {"os": "linux"}, "devices": [{"name": "RTX 5090"}]}, head_only=True)
+
+                  def do_GET(self):
+                      if self.path.startswith("/system_stats"):
+                          self._reply(200, {"system": {"os": "linux"}, "devices": [{"name": "RTX 5090"}]})
+                      elif self.path.startswith("/queue"):
+                          self._reply(200, {"queue_running": [], "queue_pending": []})
+                      elif self.path.startswith("/history"):
+                          self._reply(200, {})
+                      elif self.path.startswith("/object_info"):
+                          self._reply(200, {})
+                      else:
+                          self._reply(200, {"status": "ok"})
+
+              HTTPServer(("127.0.0.1", 18188), _MockComfyHandler).serve_forever()
+          EOF
+          chmod 644 "${mock_hook_dir}/sitecustomize.py"
+
+          studio_cid="$(timeout 300 docker run -d --name smoke-studio -p 18188:8188 \
+            -e MODEL_PROFILE=studio \
+            -e SKIP_MODEL_DOWNLOAD=1 \
+            -e STRICT_MIN_RAM_MB=4096 \
+            -e STRICT_MIN_DISK_GB=1 \
+            -e COMFYUI_EXTRA_ARGS="--cpu" \
+            -e COMFY_USER=admin \
+            -e COMFY_PASS=ci-secret-9f8e7d \
+            -e STUDIO_LLM_KEY=sk-ci-studio-secret-token-9999 \
+            -e STUDIO_STUB_LLM=1 \
+            -e ENABLE_WEB_TERMINAL=1 \
+            -e PYTHONPATH=/tmp/mock_comfy_hook \
+            -e MOCK_COMFYUI_SERVER=1 \
+            -v "${mock_hook_dir}:/tmp/mock_comfy_hook:ro" \
+            "${CANDIDATE_TAG}")"
+
+          studio_deadline=$((SECONDS + 300))
+          while true; do
+            if curl -fsSI --max-time 5 http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
+              echo "[OK] smoke-studio /healthz respondió 200"
+              break
+            fi
+            if [ "$SECONDS" -ge "$studio_deadline" ]; then
+              timeout 30 docker logs "$studio_cid" || true
+              echo "::error::smoke-studio no alcanzó /healthz == 200 en <=300s"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          timeout 60 docker exec "$studio_cid" nginx -t
+
+          for st_route in "/studio/" "/studio/style.css" "/studio/app.js" "/studio/api/health" "/studio/api/templates" "/studio/api/progress"; do
+            code="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" "http://127.0.0.1:18188${st_route}")"
+            [ "$code" = "401" ] || { echo "::error::Se esperaba 401 sin auth en ${st_route}, se obtuvo ${code}"; exit 1; }
+          done
+          echo "[OK] Rutas /studio/* protegidas con Basic Auth (401 sin credenciales, VAL-SERVER-002)"
+
+          for st_ok_route in "/studio/" "/studio/style.css" "/studio/app.js" "/studio/api/health" "/studio/api/status" "/studio/api/templates"; do
+            code="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:ci-secret-9f8e7d "http://127.0.0.1:18188${st_ok_route}")"
+            [ "$code" = "200" ] || { echo "::error::Se esperaba 200 con auth en ${st_ok_route}, se obtuvo ${code}"; exit 1; }
+          done
+
+          studio_html="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/)"
+          grep -q "Comfy Studio" <<<"$studio_html"
+          grep -q "/studio/style.css" <<<"$studio_html"
+          grep -q "/studio/app.js" <<<"$studio_html"
+
+          studio_health_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/api/health)"
+          studio_tpl_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/api/templates)"
+          studio_status_api="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api)"
+          ST_HEALTH="$studio_health_json" ST_TPL="$studio_tpl_json" ST_API="$studio_status_api" python3 -c '
+          import json, os
+          h = json.loads(os.environ["ST_HEALTH"])
+          assert h.get("status") == "ok" and h.get("server") == "ok" and h.get("comfyui") == "ok", f"Unexpected /studio/api/health: {h}"
+          assert h.get("comfyui_reachable") is True and h.get("model_profile") == "studio" and h.get("llm_key_status") == "<definida>", h
+          t = json.loads(os.environ["ST_TPL"])
+          tpl_ids = {item["id"] for item in t.get("templates", [])}
+          expected_tpls = {"wan_t2v", "wan_i2v", "wan_flf2v", "vace_inpaint", "vace_restyle", "sdxl_image"}
+          assert tpl_ids == expected_tpls, f"Unexpected templates: {tpl_ids}"
+          api = json.loads(os.environ["ST_API"])
+          st_svc = (api.get("services") or {}).get("studio_server") or {}
+          assert st_svc == {"enabled": True, "running": True, "port": 18190}, f"Unexpected studio_server service: {st_svc}"
+          s11 = [c for c in (api.get("strict") or {}).get("checks", []) if c.get("id") == "S11"]
+          assert len(s11) == 1 and s11[0].get("status") == "ok", f"Expected S11 studio_health ok, got {s11}"
+          '
+          echo "[OK] /studio/, /studio/api/health, /studio/api/templates y S11 studio_health verificados"
+
+          python3 - << 'EOF'
+          import subprocess, time
+          t0 = time.monotonic()
+          out = subprocess.check_output(
+              [
+                  "curl",
+                  "-fsSN",
+                  "--max-time",
+                  "2",
+                  "-D",
+                  "-",
+                  "-u",
+                  "admin:ci-secret-9f8e7d",
+                  "http://127.0.0.1:18188/studio/api/progress?max_events=1",
+              ],
+              text=True,
+          )
+          elapsed = time.monotonic() - t0
+          assert elapsed < 2.0, f"SSE first event took {elapsed:.3f}s (>= 2.0s)"
+          assert "text/event-stream" in out.lower(), f"Missing text/event-stream header: {out}"
+          assert "x-accel-buffering: no" in out.lower(), f"Missing X-Accel-Buffering: no header: {out}"
+          assert "event: heartbeat" in out, f"Missing immediate heartbeat event: {out}"
+          print(f"[OK] SSE /studio/api/progress recibido en {elapsed * 1000:.1f} ms (< 2000 ms, proxy_buffering off)")
+          EOF
+
+          timeout 60 docker exec "$studio_cid" python3 -c '
+          lines = open("/proc/net/tcp").read().splitlines()[1:]
+          listeners = {}
+          for ln in lines:
+              parts = ln.split()
+              if parts[3] == "0A":
+                  ip_hex, port_hex = parts[1].split(":")
+                  listeners.setdefault(int(port_hex, 16), set()).add(ip_hex)
+          for p in (18188, 18189, 18190, 7681):
+              assert listeners.get(p) == {"0100007F"}, f"Port {p} not bound exclusively to 127.0.0.1: {listeners.get(p)}"
+          print("Verified studio loopback-only listeners:", {p: list(listeners[p]) for p in (18188, 18189, 18190, 7681)})
+          '
+
+          studio_rep="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/report.md)"
+          grep -q "Sin cambios respecto a" <<<"$studio_rep"
+          studio_diag="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/diag)"
+          studio_st_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/api/status)"
+          studio_logs="$(timeout 30 docker logs "$studio_cid" 2>&1)"
+          if grep -qE "ci-secret-9f8e7d|sk-ci-studio-secret-token-9999" <<<"${studio_rep}${studio_diag}${studio_status_api}${studio_st_json}${studio_logs}"; then
+            echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en artefactos o logs de smoke-studio"
+            exit 1
+          fi
+
+          timeout 90 docker stop -t 30 "$studio_cid"
+          studio_exit_code="$(timeout 30 docker inspect "$studio_cid" --format '{{.State.ExitCode}}')"
+          [ "$studio_exit_code" = "0" ] || { timeout 30 docker logs "$studio_cid" || true; echo "::error::docker stop smoke-studio devolvió ExitCode=${studio_exit_code}"; exit 1; }
+          timeout 60 docker rm -f "$studio_cid" >/dev/null 2>&1 || true
+          studio_cid=""
+          rm -rf "$mock_hook_dir" >/dev/null 2>&1 || true
+          mock_hook_dir=""
+          echo "[OK] Paso 15: Smoke Test E2E con MODEL_PROFILE=studio superado limpiamente"
 
       - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
