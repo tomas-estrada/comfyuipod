@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -368,4 +369,711 @@ def test_panel_wan_flf2v_launcher_uses_registered_first_and_last_frame_params(
     assert wf["9"]["inputs"]["image"] != "last_frame.png"
     assert first_asset["filename"] in wf["8"]["inputs"]["image"]
     assert last_asset["filename"] in wf["9"]["inputs"]["image"]
+
+
+def _run_panel_dom_harness(scenario_payload: dict) -> dict:
+    """Ejecuta panel/app.js real en Node con DOM real de elementos y devuelve evidencia DOM."""
+    harness_js = r"""
+const fs = require("fs");
+const vm = require("vm");
+
+const payload = JSON.parse(fs.readFileSync(0, "utf-8"));
+const appJsCode = fs.readFileSync(payload.appJsPath, "utf-8");
+
+function decodeEntities(str) {
+  return String(str || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+class DomElement {
+  constructor(tagName, ownerDocument) {
+    this.tagName = String(tagName || "div").toUpperCase();
+    this.ownerDocument = ownerDocument;
+    this.id = "";
+    this.className = "";
+    this.value = "";
+    this.checked = false;
+    this.disabled = false;
+    this.hidden = false;
+    this.scrollTop = 0;
+    this.scrollHeight = 100;
+    this.style = {};
+    this.attributes = new Map();
+    this.children = [];
+    this.parentNode = null;
+    this.listeners = new Map();
+    this._textContent = "";
+    const self = this;
+    this.classList = {
+      _set() {
+        return new Set(String(self.className || "").split(/\s+/).filter(Boolean));
+      },
+      add(...cls) {
+        const s = this._set();
+        cls.forEach((c) => s.add(c));
+        self.className = Array.from(s).join(" ");
+      },
+      remove(...cls) {
+        const s = this._set();
+        cls.forEach((c) => s.delete(c));
+        self.className = Array.from(s).join(" ");
+      },
+      toggle(c, force) {
+        const s = this._set();
+        const shouldAdd = force === undefined ? !s.has(c) : Boolean(force);
+        if (shouldAdd) s.add(c);
+        else s.delete(c);
+        self.className = Array.from(s).join(" ");
+      },
+      contains(c) {
+        return this._set().has(c);
+      },
+    };
+  }
+
+  setAttribute(name, val) {
+    const strVal = String(val);
+    this.attributes.set(name, strVal);
+    if (name === "id") {
+      this.id = strVal;
+      if (this.ownerDocument) this.ownerDocument.registerId(this);
+    } else if (name === "class") {
+      this.className = strVal;
+    } else if (name === "value") {
+      this.value = strVal;
+    } else if (name === "hidden") {
+      this.hidden = true;
+    }
+  }
+
+  getAttribute(name) {
+    if (name === "id") return this.id || null;
+    if (name === "class") return this.className || null;
+    return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
+  hasAttribute(name) {
+    return this.getAttribute(name) !== null;
+  }
+
+  removeAttribute(name) {
+    this.attributes.delete(name);
+    if (name === "hidden") this.hidden = false;
+  }
+
+  appendChild(child) {
+    if (child.parentNode) {
+      child.parentNode.removeChild(child);
+    }
+    child.parentNode = this;
+    this.children.push(child);
+    if (this.ownerDocument) this.ownerDocument.registerSubtree(child);
+    return child;
+  }
+
+  removeChild(child) {
+    const idx = this.children.indexOf(child);
+    if (idx >= 0) {
+      this.children.splice(idx, 1);
+      child.parentNode = null;
+    }
+  }
+
+  remove() {
+    if (this.parentNode) {
+      this.parentNode.removeChild(this);
+    }
+  }
+
+  contains(node) {
+    if (!node) return false;
+    if (node === this) return true;
+    for (const ch of this.children) {
+      if (ch.contains(node)) return true;
+    }
+    return false;
+  }
+
+  get textContent() {
+    if (this.children.length === 0) return this._textContent;
+    return this.children.map((c) => c.textContent).join("");
+  }
+
+  set textContent(val) {
+    this.children.forEach((c) => { c.parentNode = null; });
+    this.children = [];
+    this._textContent = String(val ?? "");
+  }
+
+  get innerHTML() {
+    if (this.children.length === 0) return this._textContent;
+    return this.children.map((c) => c.outerHTML).join("");
+  }
+
+  set innerHTML(html) {
+    this.children.forEach((c) => { c.parentNode = null; });
+    this.children = [];
+    this._textContent = "";
+    const parsed = parseHtmlFragment(String(html ?? ""), this.ownerDocument);
+    parsed.forEach((el) => this.appendChild(el));
+  }
+
+  get outerHTML() {
+    const attrs = [];
+    if (this.id) attrs.push(`id="${this.id}"`);
+    if (this.className) attrs.push(`class="${this.className}"`);
+    for (const [k, v] of this.attributes.entries()) {
+      if (k !== "id" && k !== "class") attrs.push(`${k}="${v}"`);
+    }
+    const attrStr = attrs.length ? " " + attrs.join(" ") : "";
+    const tag = this.tagName.toLowerCase();
+    return `<${tag}${attrStr}>${this.innerHTML}</${tag}>`;
+  }
+
+  matches(selector) {
+    const sel = selector.trim();
+    if (!sel) return false;
+    if (sel.startsWith("#")) return this.id === sel.slice(1);
+    const attrRegex = /\[([a-zA-Z0-9_-]+)(?:="([^"]*)")?\]/g;
+    let base = sel.replace(attrRegex, "").trim();
+    if (base) {
+      if (base.startsWith(".")) {
+        const reqClasses = base.slice(1).split(".").filter(Boolean);
+        for (const rc of reqClasses) {
+          if (!this.classList.contains(rc)) return false;
+        }
+      } else {
+        const parts = base.split(".");
+        const tagPart = parts[0];
+        if (tagPart && this.tagName !== tagPart.toUpperCase()) return false;
+        for (const rc of parts.slice(1)) {
+          if (!this.classList.contains(rc)) return false;
+        }
+      }
+    }
+    let m;
+    while ((m = attrRegex.exec(sel)) !== null) {
+      const attrName = m[1];
+      const attrVal = m[2];
+      const actual = this.getAttribute(attrName);
+      if (actual === null) return false;
+      if (attrVal !== undefined && actual !== attrVal) return false;
+    }
+    return true;
+  }
+
+  querySelectorAll(selector) {
+    const out = [];
+    const walk = (node) => {
+      for (const ch of node.children) {
+        if (ch.matches(selector)) out.push(ch);
+        walk(ch);
+      }
+    };
+    walk(this);
+    return out;
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
+  }
+
+  closest(selector) {
+    let cur = this;
+    while (cur && cur instanceof DomElement) {
+      if (cur.matches(selector)) return cur;
+      cur = cur.parentNode;
+    }
+    return null;
+  }
+
+  addEventListener(type, fn) {
+    if (!this.listeners.has(type)) this.listeners.set(type, []);
+    this.listeners.get(type).push(fn);
+  }
+
+  async dispatchAsync(type, eventInit = {}) {
+    const evt = {
+      type,
+      target: eventInit.target || this,
+      currentTarget: this,
+      preventDefault() { this.defaultPrevented = true; },
+      ...eventInit,
+    };
+    let cur = this;
+    while (cur) {
+      const handlers = (cur.listeners && cur.listeners.get(type)) || [];
+      for (const h of handlers) {
+        await h(evt);
+      }
+      cur = cur.parentNode || (cur !== this.ownerDocument ? this.ownerDocument : null);
+    }
+  }
+}
+
+function parseHtmlFragment(html, doc) {
+  const tokenRegex = /<\/?([a-zA-Z0-9-]+)([^>]*)>|([^<]+)/g;
+  const root = new DomElement("fragment", doc);
+  const stack = [root];
+  const voidTags = new Set(["IMG", "INPUT", "BR", "HR", "META", "LINK"]);
+  let match;
+  while ((match = tokenRegex.exec(html)) !== null) {
+    const full = match[0];
+    if (match[3] !== undefined) {
+      const text = decodeEntities(match[3]);
+      if (text.trim()) {
+        const top = stack[stack.length - 1];
+        if (top.children.length === 0) {
+          top._textContent += text.trim();
+        } else {
+          const span = new DomElement("span", doc);
+          span._textContent = text.trim();
+          top.appendChild(span);
+        }
+      }
+      continue;
+    }
+    const isClosing = full.startsWith("</");
+    const tag = match[1];
+    const attrChunk = match[2] || "";
+    if (isClosing) {
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    const el = new DomElement(tag, doc);
+    const attrRx = /([a-zA-Z0-9_-]+)(?:="([^"]*)")?/g;
+    let am;
+    while ((am = attrRx.exec(attrChunk)) !== null) {
+      el.setAttribute(am[1], decodeEntities(am[2] ?? ""));
+    }
+    stack[stack.length - 1].appendChild(el);
+    if (!voidTags.has(el.tagName) && !attrChunk.trim().endsWith("/")) {
+      stack.push(el);
+    }
+  }
+  return Array.from(root.children);
+}
+
+class DomDocument {
+  constructor() {
+    this.byId = new Map();
+    this.listeners = new Map();
+    this.body = new DomElement("body", this);
+  }
+  createElement(tag) {
+    return new DomElement(tag, this);
+  }
+  registerId(el) {
+    if (el.id) this.byId.set(el.id, el);
+  }
+  registerSubtree(el) {
+    if (el.id) this.byId.set(el.id, el);
+    for (const ch of el.children) this.registerSubtree(ch);
+  }
+  getElementById(id) {
+    return this.byId.get(id) || null;
+  }
+  querySelectorAll(sel) {
+    return this.body.querySelectorAll(sel);
+  }
+  querySelector(sel) {
+    return this.body.querySelector(sel);
+  }
+  addEventListener(type, fn) {
+    if (!this.listeners.has(type)) this.listeners.set(type, []);
+    this.listeners.get(type).push(fn);
+  }
+  async dispatchDOMContentLoaded() {
+    const handlers = this.listeners.get("DOMContentLoaded") || [];
+    for (const h of handlers) {
+      await h({ type: "DOMContentLoaded" });
+    }
+  }
+}
+
+const document = new DomDocument();
+const elementSpecs = [
+  ["div", "active-project-badge"],
+  ["h2", "active-project-title"],
+  ["code", "active-project-id-code"],
+  ["span", "active-project-summary"],
+  ["div", "projects-list"],
+  ["div", "project-assets-list"],
+  ["span", "project-assets-count"],
+  ["div", "chat-keyframes-selector"],
+  ["div", "chat-messages-list"],
+  ["span", "chat-stream-status"],
+  ["button", "chat-send-btn"],
+  ["input", "chat-stream-checkbox", { checked: true }],
+  ["form", "chat-form"],
+  ["textarea", "chat-message-input"],
+  ["div", "chat-tool-events"],
+  ["span", "tool-events-count"],
+  ["button", "clear-chat-btn"],
+  ["div", "templates-list"],
+  ["div", "jobs-list"],
+  ["div", "gallery-grid"],
+  ["select", "gallery-category-filter", { value: "all" }],
+  ["div", "toast-container"],
+];
+for (const [tag, id, extra] of elementSpecs) {
+  const el = document.createElement(tag);
+  el.setAttribute("id", id);
+  if (extra) Object.assign(el, extra);
+  document.body.appendChild(el);
+}
+
+const projectsById = {};
+for (const p of payload.projects) {
+  projectsById[p.id] = JSON.parse(JSON.stringify(p));
+}
+const chatsByProject = {};
+for (const [pid, msgs] of Object.entries(payload.initialChats)) {
+  chatsByProject[pid] = JSON.parse(JSON.stringify(msgs));
+}
+
+const chatPostLog = [];
+const chatGetLog = [];
+let pendingGateResolve = null;
+const pendingStreamStarted = new Promise((res) => {
+  global.__notifyStreamStarted = res;
+});
+const pendingStreamGate = new Promise((res) => {
+  pendingGateResolve = res;
+});
+
+function makeJsonResponse(status, obj) {
+  const text = JSON.stringify(obj);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: () => "application/json" },
+    async json() { return JSON.parse(text); },
+    async text() { return text; },
+  };
+}
+
+function makeSseResponse(chunksPromiseFactory) {
+  const encoder = new TextEncoder();
+  let step = 0;
+  let chunks = null;
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: () => "text/event-stream" },
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (!chunks) {
+              chunks = await chunksPromiseFactory();
+            }
+            if (step >= chunks.length) {
+              return { done: true, value: undefined };
+            }
+            const chunk = chunks[step++];
+            return { done: false, value: encoder.encode(chunk) };
+          },
+        };
+      },
+    },
+  };
+}
+
+async function fetchImpl(url, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const u = new URL(url, "http://127.0.0.1:39171");
+  const path = u.pathname;
+
+  if (method === "GET" && path === "/studio/api/health") {
+    return makeJsonResponse(200, { status: "ok", llm_mode: "stub", comfyui_reachable: true });
+  }
+  if (method === "GET" && path === "/studio/api/templates") {
+    return makeJsonResponse(200, { templates: [] });
+  }
+  if (method === "GET" && path === "/studio/api/projects") {
+    return makeJsonResponse(200, { projects: Object.values(projectsById) });
+  }
+  const projMatch = path.match(/^\/studio\/api\/projects\/([^/]+)$/);
+  if (method === "GET" && projMatch) {
+    const pid = decodeURIComponent(projMatch[1]);
+    return makeJsonResponse(200, projectsById[pid]);
+  }
+  const chatMatch = path.match(/^\/studio\/api\/projects\/([^/]+)\/chat$/);
+  if (chatMatch) {
+    const pid = decodeURIComponent(chatMatch[1]);
+    if (method === "GET") {
+      chatGetLog.push(pid);
+      return makeJsonResponse(200, { project_id: pid, messages: chatsByProject[pid] || [] });
+    }
+    if (method === "POST") {
+      const body = JSON.parse(options.body || "{}");
+      chatPostLog.push({ project_id: pid, message: body.message });
+      if (chatPostLog.length === 1 && payload.holdFirstTurn) {
+        global.__notifyStreamStarted();
+        return makeSseResponse(async () => {
+          await pendingStreamGate;
+          const replyText = `Respuesta diferida para ${pid}: ${body.message}`;
+          chatsByProject[pid] = (chatsByProject[pid] || []).concat([
+            { role: "user", content: body.message },
+            { role: "assistant", content: replyText },
+          ]);
+          const donePayload = { reply: replyText, tool_calls: [], tool_results: [] };
+          return [
+            `event: token\ndata: ${JSON.stringify({ text: replyText, iteration: 0 })}\n\n`,
+            `event: done\ndata: ${JSON.stringify(donePayload)}\n\n`,
+          ];
+        });
+      }
+      const replyText = `Respuesta inmediata para ${pid}: ${body.message}`;
+      chatsByProject[pid] = (chatsByProject[pid] || []).concat([
+        { role: "user", content: body.message },
+        { role: "assistant", content: replyText },
+      ]);
+      const donePayload = { reply: replyText, tool_calls: [], tool_results: [] };
+      return makeSseResponse(async () => [
+        `event: token\ndata: ${JSON.stringify({ text: replyText, iteration: 0 })}\n\n`,
+        `event: done\ndata: ${JSON.stringify(donePayload)}\n\n`,
+      ]);
+    }
+  }
+  const galMatch = path.match(/^\/studio\/api\/projects\/([^/]+)\/gallery$/);
+  if (method === "GET" && galMatch) {
+    return makeJsonResponse(200, { items: [] });
+  }
+  if (method === "GET" && path === "/studio/api/jobs") {
+    return makeJsonResponse(200, { jobs: [] });
+  }
+  return makeJsonResponse(404, { detail: "not found" });
+}
+
+function getVisibleMessages() {
+  const listEl = document.getElementById("chat-messages-list");
+  return listEl.querySelectorAll(".chat-msg-text").map((el) => el.textContent.trim());
+}
+
+function snapshotDom() {
+  const listEl = document.getElementById("chat-messages-list");
+  return {
+    activeBadgeText: document.getElementById("active-project-badge").textContent.trim(),
+    activeProjectTitle: document.getElementById("active-project-title").textContent.trim(),
+    activeProjectIdCode: document.getElementById("active-project-id-code").textContent.trim(),
+    chatDomProjectIdAttr: listEl.getAttribute("data-chat-project-id"),
+    visibleMessages: getVisibleMessages(),
+    sendBtnDisabled: Boolean(document.getElementById("chat-send-btn").disabled),
+  };
+}
+
+async function flushAsync(ticks = 25) {
+  for (let i = 0; i < ticks; i++) {
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+async function selectProjectInDom(projectId) {
+  const listRoot = document.getElementById("projects-list");
+  const btns = listRoot.querySelectorAll('[data-action="select-project"]');
+  const targetBtn = btns.find((b) => b.getAttribute("data-project-id") === projectId);
+  if (!targetBtn) {
+    throw new Error(`No select-project button found for ${projectId}`);
+  }
+  await targetBtn.dispatchAsync("click", { target: targetBtn });
+  await flushAsync();
+}
+
+async function submitChatMessageInDom(text) {
+  const input = document.getElementById("chat-message-input");
+  const form = document.getElementById("chat-form");
+  input.value = text;
+  await form.dispatchAsync("submit", { target: form });
+}
+
+(async () => {
+  document.readyState = "loading";
+  const win = {
+    location: { origin: "http://127.0.0.1:39171" },
+    document,
+    fetch: fetchImpl,
+  };
+  const runApp = new Function("window", "document", "fetch", appJsCode);
+  runApp(win, document, fetchImpl);
+  await document.dispatchDOMContentLoaded();
+  await flushAsync();
+
+  const initialSnap = snapshotDom();
+
+  // Iniciar turno pendiente en proyecto A (sin await aún para simular vuelo asíncrono)
+  const firstTurnPromise = submitChatMessageInDom(payload.firstMessageInA);
+  await pendingStreamStarted;
+  await flushAsync(5);
+  const duringPendingInASnap = snapshotDom();
+
+  // Navegar a proyecto B mientras el turno de A sigue pendiente
+  await selectProjectInDom(payload.projectBId);
+  const afterSwitchToBSnap = snapshotDom();
+
+  if (payload.switchBackToABeforeFinish) {
+    await selectProjectInDom(payload.projectAId);
+  }
+  const beforeReleaseSnap = snapshotDom();
+
+  // Liberar el stream SSE de A y esperar su finalización completa
+  pendingGateResolve();
+  await firstTurnPromise;
+  await flushAsync();
+  const afterAFinishedSnap = snapshotDom();
+
+  let afterSecondMessageSnap = null;
+  if (payload.secondMessageInVisibleChat) {
+    await submitChatMessageInDom(payload.secondMessageInVisibleChat);
+    await flushAsync();
+    afterSecondMessageSnap = snapshotDom();
+  }
+
+  process.stdout.write(JSON.stringify({
+    initialSnap,
+    duringPendingInASnap,
+    afterSwitchToBSnap,
+    beforeReleaseSnap,
+    afterAFinishedSnap,
+    afterSecondMessageSnap,
+    chatPostLog,
+    chatGetLog,
+    chatsByProject,
+  }));
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+"""
+    proc = subprocess.run(
+        ["node", "-e", harness_js],
+        input=json.dumps(scenario_payload),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"Node harness failed:\n{proc.stderr}")
+    return json.loads(proc.stdout)
+
+
+def test_panel_chat_pending_turn_switch_to_b_keeps_b_active_and_routes_next_message_to_b(
+    client: TestClient,
+) -> None:
+    """Regresión M2-SCR-019: turno pendiente en A -> abrir B antes de que A termine ->
+    la finalización de A NO debe cambiar el proyecto activo a A ni dejar el DOM de B
+    desemparejado, y el siguiente mensaje enviado sobre la conversación visible debe
+    publicarse en B (nunca en A)."""
+    proj_b = client.post("/studio/api/projects", json={"name": "Proyecto Destino B"}).json()
+    proj_a = client.post("/studio/api/projects", json={"name": "Proyecto Origen A"}).json()
+
+    seed_b = client.post(
+        f"/studio/api/projects/{proj_b['id']}/chat",
+        json={"message": "Historial previo exclusivo de B", "stream": False},
+    )
+    assert seed_b.status_code == 200
+    chat_b_initial = client.get(f"/studio/api/projects/{proj_b['id']}/chat").json()["messages"]
+    chat_a_initial = client.get(f"/studio/api/projects/{proj_a['id']}/chat").json()["messages"]
+
+    result = _run_panel_dom_harness(
+        {
+            "appJsPath": str(PANEL_DIR / "app.js"),
+            "projects": [proj_a, proj_b],
+            "initialChats": {
+                proj_a["id"]: chat_a_initial,
+                proj_b["id"]: chat_b_initial,
+            },
+            "projectAId": proj_a["id"],
+            "projectBId": proj_b["id"],
+            "holdFirstTurn": True,
+            "firstMessageInA": "Turno en vuelo de A",
+            "switchBackToABeforeFinish": False,
+            "secondMessageInVisibleChat": "Mensaje siguiente en conversacion visible",
+        }
+    )
+
+    # 1. Al cambiar a B durante el turno pendiente de A, B se muestra con su propio historial
+    assert result["afterSwitchToBSnap"]["activeProjectIdCode"] == proj_b["id"]
+    assert result["afterSwitchToBSnap"]["chatDomProjectIdAttr"] == proj_b["id"]
+    assert any(
+        "Historial previo exclusivo de B" in m
+        for m in result["afterSwitchToBSnap"]["visibleMessages"]
+    )
+    assert all(
+        "Turno en vuelo de A" not in m
+        for m in result["afterSwitchToBSnap"]["visibleMessages"]
+    )
+
+    # 2. Cuando el turno de A termina en segundo plano, B DEBE permanecer activo y visible
+    assert result["afterAFinishedSnap"]["activeProjectIdCode"] == proj_b["id"]
+    assert result["afterAFinishedSnap"]["chatDomProjectIdAttr"] == proj_b["id"]
+    assert "Proyecto Destino B" in result["afterAFinishedSnap"]["activeBadgeText"]
+    assert any(
+        "Historial previo exclusivo de B" in m
+        for m in result["afterAFinishedSnap"]["visibleMessages"]
+    )
+    assert all(
+        "Turno en vuelo de A" not in m
+        for m in result["afterAFinishedSnap"]["visibleMessages"]
+    )
+
+    # 3. El siguiente mensaje escrito en la conversación mostrada se publica en B (no en A)
+    assert len(result["chatPostLog"]) == 2
+    assert result["chatPostLog"][0] == {
+        "project_id": proj_a["id"],
+        "message": "Turno en vuelo de A",
+    }
+    assert result["chatPostLog"][1] == {
+        "project_id": proj_b["id"],
+        "message": "Mensaje siguiente en conversacion visible",
+    }
+    assert result["afterSecondMessageSnap"]["chatDomProjectIdAttr"] == proj_b["id"]
+    assert any(
+        "Mensaje siguiente en conversacion visible" in m
+        for m in result["afterSecondMessageSnap"]["visibleMessages"]
+    )
+
+
+def test_panel_chat_pending_turn_roundtrip_a_b_a_reloads_completed_history_of_a(
+    client: TestClient,
+) -> None:
+    """Regresión M2-SCR-019: si el usuario navega A -> B -> A mientras el turno de A sigue
+    pendiente (descartando las burbujas en vivo de A), al finalizar A no debe preservarse
+    un DOM obsoleto con preserveChatDom=true sino recargarse el historial actualizado de A."""
+    proj_b = client.post("/studio/api/projects", json={"name": "Proyecto Paso B"}).json()
+    proj_a = client.post("/studio/api/projects", json={"name": "Proyecto Retorno A"}).json()
+
+    result = _run_panel_dom_harness(
+        {
+            "appJsPath": str(PANEL_DIR / "app.js"),
+            "projects": [proj_a, proj_b],
+            "initialChats": {
+                proj_a["id"]: [],
+                proj_b["id"]: [{"role": "user", "content": "Mensaje de B"}],
+            },
+            "projectAId": proj_a["id"],
+            "projectBId": proj_b["id"],
+            "holdFirstTurn": True,
+            "firstMessageInA": "Turno de A tras ida y vuelta",
+            "switchBackToABeforeFinish": True,
+            "secondMessageInVisibleChat": None,
+        }
+    )
+
+    assert result["afterAFinishedSnap"]["activeProjectIdCode"] == proj_a["id"]
+    assert result["afterAFinishedSnap"]["chatDomProjectIdAttr"] == proj_a["id"]
+    assert any(
+        "Turno de A tras ida y vuelta" in m
+        for m in result["afterAFinishedSnap"]["visibleMessages"]
+    )
+    assert any(
+        f"Respuesta diferida para {proj_a['id']}: Turno de A tras ida y vuelta" in m
+        for m in result["afterAFinishedSnap"]["visibleMessages"]
+    )
+
 

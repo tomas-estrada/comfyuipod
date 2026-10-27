@@ -20,6 +20,11 @@
         edlData: null,
         toolEvents: [],
         selectedKeyframeIds: new Set(),
+        chatDomProjectId: null,
+        chatDomEpoch: 0,
+        selectProjectSeq: 0,
+        pendingSelectProjectPromise: null,
+        pendingChatByProject: {},
         sseSource: null,
         sseConnected: false,
         auth: loadSavedAuth(),
@@ -236,6 +241,18 @@
         }
     }
 
+    function getPendingChatCount(projectId) {
+        if (!projectId) return 0;
+        return Number(state.pendingChatByProject[projectId] || 0);
+    }
+
+    function syncChatControlsState() {
+        const sendBtn = document.getElementById("chat-send-btn");
+        if (sendBtn) {
+            sendBtn.disabled = getPendingChatCount(state.activeProjectId) > 0;
+        }
+    }
+
     function renderProjectsList() {
         const container = document.getElementById("projects-list");
         const activeBadge = document.getElementById("active-project-badge");
@@ -246,6 +263,7 @@
             activeBadge.textContent = activeProj
                 ? `Proyecto: ${activeProj.name}`
                 : "Proyecto: Ninguno";
+            activeBadge.setAttribute("data-active-project-id", activeProj ? activeProj.id : "");
         }
 
         if (state.projects.length === 0) {
@@ -319,53 +337,123 @@
 
     async function selectProject(projectId, announce, options) {
         const opts = options || {};
+        const listEl = document.getElementById("chat-messages-list");
+        const statusEl = document.getElementById("chat-stream-status");
         const previousLoadedId = state.activeProjectDetail
             ? state.activeProjectDetail.id
             : state.activeProjectId;
-        if (previousLoadedId !== projectId) {
+        const isSwitchingProject =
+            previousLoadedId !== projectId || state.activeProjectId !== projectId;
+
+        const shouldPreserveChatDom = Boolean(
+            opts.preserveChatDom &&
+                !isSwitchingProject &&
+                state.chatDomProjectId === projectId &&
+                (opts.expectedDomEpoch == null || state.chatDomEpoch === opts.expectedDomEpoch) &&
+                listEl &&
+                listEl.getAttribute("data-chat-project-id") === projectId
+        );
+
+        if (isSwitchingProject) {
             state.selectedKeyframeIds.clear();
+            state.toolEvents = [];
+            renderToolEvents();
         }
+        if (!shouldPreserveChatDom) {
+            state.chatDomEpoch += 1;
+            if (isSwitchingProject || state.chatDomProjectId !== projectId) {
+                renderChatHistory([], projectId);
+            }
+            if (statusEl && getPendingChatCount(projectId) === 0) {
+                statusEl.textContent = "Estado del turno: En espera de instrucción.";
+            }
+        }
+
         state.activeProjectId = projectId;
         renderProjectsList();
+        syncChatControlsState();
 
-        try {
-            const resp = await apiFetch(`/studio/api/projects/${encodeURIComponent(projectId)}`);
-            if (!resp.ok) return;
-            const detail = await resp.json();
-            state.activeProjectDetail = detail;
-            state.assets = Array.isArray(detail.assets) ? detail.assets : [];
-            state.jobs = Array.isArray(detail.jobs) ? detail.jobs : [];
-            if (Array.isArray(detail.edl_versions)) {
-                state.edlData = {
-                    project_id: projectId,
-                    versions: detail.edl_versions,
-                    latest: detail.edl_versions[0] || null,
-                };
-            }
+        const reqSeq = ++state.selectProjectSeq;
+        const runSelect = (async () => {
+            try {
+                const resp = await apiFetch(
+                    `/studio/api/projects/${encodeURIComponent(projectId)}`
+                );
+                if (
+                    !resp.ok ||
+                    state.activeProjectId !== projectId ||
+                    state.selectProjectSeq !== reqSeq
+                ) {
+                    return;
+                }
+                const detail = await resp.json();
+                if (
+                    state.activeProjectId !== projectId ||
+                    state.selectProjectSeq !== reqSeq
+                ) {
+                    return;
+                }
+                state.activeProjectDetail = detail;
+                state.assets = Array.isArray(detail.assets) ? detail.assets : [];
+                state.jobs = Array.isArray(detail.jobs) ? detail.jobs : [];
+                if (Array.isArray(detail.edl_versions)) {
+                    state.edlData = {
+                        project_id: projectId,
+                        versions: detail.edl_versions,
+                        latest: detail.edl_versions[0] || null,
+                    };
+                }
 
-            const validImageAssetIds = new Set(
-                state.assets.filter((a) => a.kind === "image").map((a) => a.id)
-            );
-            for (const kfId of Array.from(state.selectedKeyframeIds)) {
-                if (!validImageAssetIds.has(kfId)) {
-                    state.selectedKeyframeIds.delete(kfId);
+                const validImageAssetIds = new Set(
+                    state.assets.filter((a) => a.kind === "image").map((a) => a.id)
+                );
+                for (const kfId of Array.from(state.selectedKeyframeIds)) {
+                    if (!validImageAssetIds.has(kfId)) {
+                        state.selectedKeyframeIds.delete(kfId);
+                    }
+                }
+
+                renderActiveProjectDetail();
+                renderProjectAssets();
+                renderKeyframesSelector();
+                renderTemplateAssetOptions();
+                const canStillPreserveChatDom = Boolean(
+                    shouldPreserveChatDom &&
+                        state.chatDomProjectId === projectId &&
+                        (opts.expectedDomEpoch == null ||
+                            state.chatDomEpoch === opts.expectedDomEpoch) &&
+                        listEl &&
+                        listEl.getAttribute("data-chat-project-id") === projectId
+                );
+                if (!canStillPreserveChatDom) {
+                    await refreshChatHistory(projectId);
+                }
+                if (
+                    state.activeProjectId !== projectId ||
+                    state.selectProjectSeq !== reqSeq
+                ) {
+                    return;
+                }
+                await refreshGallery();
+
+                if (
+                    announce &&
+                    state.activeProjectId === projectId &&
+                    state.selectProjectSeq === reqSeq
+                ) {
+                    setToast(`Proyecto activo: «${detail.name}» (${detail.id}).`, "success");
+                }
+            } catch (_err) {
+                if (state.activeProjectId === projectId) {
+                    setToast("Error al cargar el detalle del proyecto.", "error");
                 }
             }
+        })();
 
-            renderActiveProjectDetail();
-            renderProjectAssets();
-            renderKeyframesSelector();
-            renderTemplateAssetOptions();
-            if (!opts.preserveChatDom) {
-                await refreshChatHistory();
-            }
-            await refreshGallery();
-
-            if (announce) {
-                setToast(`Proyecto activo: «${detail.name}» (${detail.id}).`, "success");
-            }
-        } catch (_err) {
-            setToast("Error al cargar el detalle del proyecto.", "error");
+        state.pendingSelectProjectPromise = runSelect;
+        await runSelect;
+        if (state.pendingSelectProjectPromise === runSelect) {
+            state.pendingSelectProjectPromise = null;
         }
     }
 
@@ -521,30 +609,43 @@
     }
 
     /* --- CHAT & STREAMING SSE --- */
-    async function refreshChatHistory() {
+    async function refreshChatHistory(forProjectId) {
         const listEl = document.getElementById("chat-messages-list");
-        if (!listEl || !state.activeProjectId) return;
+        const targetProjectId = forProjectId || state.activeProjectId;
+        if (!listEl || !targetProjectId) return;
+        const epochAtRequest = state.chatDomEpoch;
 
         try {
             const resp = await apiFetch(
-                `/studio/api/projects/${encodeURIComponent(state.activeProjectId)}/chat`
+                `/studio/api/projects/${encodeURIComponent(targetProjectId)}/chat`
             );
             if (!resp.ok) return;
             const data = await resp.json();
+            if (
+                state.activeProjectId !== targetProjectId ||
+                state.chatDomEpoch !== epochAtRequest
+            ) {
+                return;
+            }
             const messages = Array.isArray(data.messages) ? data.messages : [];
-            renderChatHistory(messages);
+            renderChatHistory(messages, targetProjectId);
         } catch (_err) {
             // Mantener estado actual si falla lectura inicial
         }
     }
 
-    function renderChatHistory(messages) {
+    function renderChatHistory(messages, forProjectId) {
         const listEl = document.getElementById("chat-messages-list");
         if (!listEl) return;
+        const ownerProjectId = forProjectId || state.activeProjectId || "";
+        if (ownerProjectId) {
+            state.chatDomProjectId = ownerProjectId;
+            listEl.setAttribute("data-chat-project-id", ownerProjectId);
+        }
 
         if (!messages || messages.length === 0) {
             listEl.innerHTML = `
-                <div class="chat-msg chat-msg-system">
+                <div class="chat-msg chat-msg-system" data-project-id="${escapeHtml(ownerProjectId)}">
                     <strong>Agente listo para el proyecto.</strong> Escribe una instrucción o usa uno de los botones rápidos para transmitir tokens SSE y eventos de herramientas en vivo.
                 </div>
             `;
@@ -554,7 +655,7 @@
         const visible = messages.filter((m) => m.role === "user" || m.role === "assistant");
         if (visible.length === 0) {
             listEl.innerHTML = `
-                <div class="chat-msg chat-msg-system">
+                <div class="chat-msg chat-msg-system" data-project-id="${escapeHtml(ownerProjectId)}">
                     <strong>Agente listo.</strong> Envía un mensaje para iniciar la conversación.
                 </div>
             `;
@@ -570,7 +671,7 @@
                         ? msg.content
                         : JSON.stringify(msg.content);
                 return `
-                <div class="chat-msg ${isUser ? "chat-msg-user" : "chat-msg-assistant"}">
+                <div class="chat-msg ${isUser ? "chat-msg-user" : "chat-msg-assistant"}" data-project-id="${escapeHtml(ownerProjectId)}">
                     <span class="chat-msg-role">${escapeHtml(roleLabel)}</span>
                     <div class="chat-msg-text">${escapeHtml(text)}</div>
                 </div>
@@ -580,7 +681,10 @@
         listEl.scrollTop = listEl.scrollHeight;
     }
 
-    function appendToolEvent(type, payload) {
+    function appendToolEvent(type, payload, forProjectId) {
+        if (forProjectId && state.activeProjectId !== forProjectId) {
+            return;
+        }
         state.toolEvents.unshift({
             type,
             payload,
@@ -653,6 +757,9 @@
         const cleanMsg = String(messageText || "").trim();
         if (!cleanMsg) return;
 
+        if (state.pendingSelectProjectPromise) {
+            await state.pendingSelectProjectPromise;
+        }
         const projectId = await ensureActiveProject();
         if (!projectId) {
             setToast("Crea un proyecto antes de enviar un mensaje al agente.", "error");
@@ -661,17 +768,26 @@
 
         const listEl = document.getElementById("chat-messages-list");
         const statusEl = document.getElementById("chat-stream-status");
-        const sendBtn = document.getElementById("chat-send-btn");
         const streamCheckbox = document.getElementById("chat-stream-checkbox");
         const useStream = streamCheckbox ? streamCheckbox.checked : true;
 
+        if (state.chatDomProjectId !== projectId) {
+            await refreshChatHistory(projectId);
+        }
+
+        state.chatDomEpoch += 1;
+        const turnDomEpoch = state.chatDomEpoch;
+        state.chatDomProjectId = projectId;
+
         if (listEl) {
+            listEl.setAttribute("data-chat-project-id", projectId);
             const sysPlaceholder = listEl.querySelector(".chat-msg-system");
             if (sysPlaceholder) {
                 sysPlaceholder.remove();
             }
             const userBubble = document.createElement("div");
             userBubble.className = "chat-msg chat-msg-user";
+            userBubble.setAttribute("data-project-id", projectId);
             userBubble.innerHTML = `
                 <span class="chat-msg-role">Tú (Director)</span>
                 <div class="chat-msg-text">${escapeHtml(cleanMsg)}</div>
@@ -682,6 +798,7 @@
         const assistantBubble = document.createElement("div");
         assistantBubble.className = "chat-msg chat-msg-assistant";
         assistantBubble.setAttribute("data-live-stream", "true");
+        assistantBubble.setAttribute("data-project-id", projectId);
         assistantBubble.innerHTML = `
             <span class="chat-msg-role">Agente Studio (Streaming SSE)</span>
             <div class="chat-msg-text" data-stream-tokens="">Pensando…</div>
@@ -692,12 +809,22 @@
         }
         const tokenContainer = assistantBubble.querySelector("[data-stream-tokens]");
 
-        if (statusEl) {
+        function isOriginConversationDisplayed() {
+            return Boolean(
+                state.activeProjectId === projectId &&
+                    state.chatDomProjectId === projectId &&
+                    state.chatDomEpoch === turnDomEpoch &&
+                    listEl &&
+                    listEl.getAttribute("data-chat-project-id") === projectId &&
+                    listEl.contains(assistantBubble)
+            );
+        }
+
+        if (statusEl && isOriginConversationDisplayed()) {
             statusEl.textContent = "Transmitiendo turno SSE con el agente…";
         }
-        if (sendBtn) {
-            sendBtn.disabled = true;
-        }
+        state.pendingChatByProject[projectId] = getPendingChatCount(projectId) + 1;
+        syncChatControlsState();
 
         const validProjectImageIds = new Set(
             state.assets.filter((a) => a.kind === "image").map((a) => a.id)
@@ -722,24 +849,32 @@
 
             if (!resp.ok) {
                 const errText = await resp.text();
-                if (tokenContainer) {
-                    tokenContainer.textContent = `Error HTTP ${resp.status}: ${errText}`;
-                }
-                if (statusEl) {
-                    statusEl.textContent = `Error en chat (HTTP ${resp.status}).`;
+                if (isOriginConversationDisplayed()) {
+                    if (tokenContainer) {
+                        tokenContainer.textContent = `Error HTTP ${resp.status}: ${errText}`;
+                    }
+                    if (statusEl) {
+                        statusEl.textContent = `Error en chat (HTTP ${resp.status}).`;
+                    }
                 }
                 return;
             }
 
             if (!useStream) {
                 const body = await resp.json();
-                if (tokenContainer) {
-                    tokenContainer.textContent = body.reply || "";
-                }
-                (body.tool_calls || []).forEach((tc) => appendToolEvent("tool_call", tc));
-                (body.tool_results || []).forEach((tr) => appendToolEvent("tool_result", tr));
-                if (statusEl) {
-                    statusEl.textContent = `Turno completado: ${(body.tool_calls || []).length} herramientas invocadas.`;
+                if (isOriginConversationDisplayed()) {
+                    if (tokenContainer) {
+                        tokenContainer.textContent = body.reply || "";
+                    }
+                    (body.tool_calls || []).forEach((tc) =>
+                        appendToolEvent("tool_call", tc, projectId)
+                    );
+                    (body.tool_results || []).forEach((tr) =>
+                        appendToolEvent("tool_result", tr, projectId)
+                    );
+                    if (statusEl) {
+                        statusEl.textContent = `Turno completado: ${(body.tool_calls || []).length} herramientas invocadas.`;
+                    }
                 }
             } else {
                 let accumulatedTokens = "";
@@ -782,65 +917,90 @@
                                     : payload.text || "";
                             accumulatedTokens += piece;
                             tokenCount += 1;
-                            if (tokenContainer) {
-                                tokenContainer.textContent = accumulatedTokens;
-                                tokenContainer.setAttribute(
-                                    "data-stream-tokens",
-                                    String(tokenCount)
-                                );
-                            }
-                            if (statusEl) {
-                                statusEl.textContent = `Streaming SSE en vivo: ${tokenCount} fragmentos de tokens recibidos…`;
+                            if (isOriginConversationDisplayed()) {
+                                if (tokenContainer) {
+                                    tokenContainer.textContent = accumulatedTokens;
+                                    tokenContainer.setAttribute(
+                                        "data-stream-tokens",
+                                        String(tokenCount)
+                                    );
+                                }
+                                if (statusEl) {
+                                    statusEl.textContent = `Streaming SSE en vivo: ${tokenCount} fragmentos de tokens recibidos…`;
+                                }
                             }
                         } else if (evtName === "tool_call") {
                             toolCallCount += 1;
-                            appendToolEvent("tool_call", payload);
-                            if (statusEl) {
-                                statusEl.textContent = `Ejecutando herramienta: ${payload.name}…`;
+                            if (isOriginConversationDisplayed()) {
+                                appendToolEvent("tool_call", payload, projectId);
+                                if (statusEl) {
+                                    statusEl.textContent = `Ejecutando herramienta: ${payload.name}…`;
+                                }
                             }
                         } else if (evtName === "tool_result") {
-                            appendToolEvent("tool_result", payload);
-                            if (statusEl) {
-                                statusEl.textContent = `Resultado recibido de herramienta: ${payload.name}.`;
+                            if (isOriginConversationDisplayed()) {
+                                appendToolEvent("tool_result", payload, projectId);
+                                if (statusEl) {
+                                    statusEl.textContent = `Resultado recibido de herramienta: ${payload.name}.`;
+                                }
                             }
                         } else if (evtName === "done") {
-                            if (tokenContainer) {
-                                tokenContainer.setAttribute(
-                                    "data-text-before-done",
-                                    tokenContainer.textContent || ""
-                                );
-                            }
-                            if (!accumulatedTokens && payload.reply && tokenContainer) {
-                                tokenContainer.textContent = payload.reply;
-                            } else if (payload.reply && tokenContainer) {
-                                tokenContainer.textContent = payload.reply;
-                            }
-                            if (statusEl) {
-                                statusEl.textContent = `Turno completado (SSE): ${tokenCount} tokens y ${toolCallCount} llamadas a tools.`;
+                            if (isOriginConversationDisplayed()) {
+                                if (tokenContainer) {
+                                    tokenContainer.setAttribute(
+                                        "data-text-before-done",
+                                        tokenContainer.textContent || ""
+                                    );
+                                }
+                                if (!accumulatedTokens && payload.reply && tokenContainer) {
+                                    tokenContainer.textContent = payload.reply;
+                                } else if (payload.reply && tokenContainer) {
+                                    tokenContainer.textContent = payload.reply;
+                                }
+                                if (statusEl) {
+                                    statusEl.textContent = `Turno completado (SSE): ${tokenCount} tokens y ${toolCallCount} llamadas a tools.`;
+                                }
                             }
                         } else if (evtName === "error") {
-                            if (tokenContainer) {
+                            if (isOriginConversationDisplayed() && tokenContainer) {
                                 tokenContainer.textContent = `Error del agente: ${payload.detail || payload.error || "desconocido"}`;
                             }
                         }
                     }
-                    if (listEl) {
+                    if (listEl && isOriginConversationDisplayed()) {
                         listEl.scrollTop = listEl.scrollHeight;
                     }
                 }
             }
 
+            if (state.activeProjectId !== projectId) {
+                if (state.activeProjectId && state.chatDomProjectId !== state.activeProjectId) {
+                    await refreshChatHistory(state.activeProjectId);
+                }
+                return;
+            }
+
+            const preserveOriginDom = isOriginConversationDisplayed();
             setToast("Respuesta del agente completada.", "success");
-            await selectProject(projectId, false, { preserveChatDom: true });
+            await selectProject(projectId, false, {
+                preserveChatDom: preserveOriginDom,
+                expectedDomEpoch: preserveOriginDom ? turnDomEpoch : null,
+            });
         } catch (err) {
-            if (tokenContainer) {
-                tokenContainer.textContent = `Error de red en chat: ${err.message}`;
+            if (isOriginConversationDisplayed()) {
+                if (tokenContainer) {
+                    tokenContainer.textContent = `Error de red en chat: ${err.message}`;
+                }
+                setToast(`Error en chat: ${err.message}`, "error");
             }
-            setToast(`Error en chat: ${err.message}`, "error");
         } finally {
-            if (sendBtn) {
-                sendBtn.disabled = false;
+            const remaining = Math.max(0, getPendingChatCount(projectId) - 1);
+            if (remaining === 0) {
+                delete state.pendingChatByProject[projectId];
+            } else {
+                state.pendingChatByProject[projectId] = remaining;
             }
+            syncChatControlsState();
         }
     }
 
@@ -900,13 +1060,15 @@
     }
 
     async function refreshJobs() {
+        const targetProjectId = state.activeProjectId;
         try {
-            const query = state.activeProjectId
-                ? `?project_id=${encodeURIComponent(state.activeProjectId)}`
+            const query = targetProjectId
+                ? `?project_id=${encodeURIComponent(targetProjectId)}`
                 : "";
             const resp = await apiFetch(`/studio/api/jobs${query}`);
-            if (!resp.ok) return;
+            if (!resp.ok || state.activeProjectId !== targetProjectId) return;
             const data = await resp.json();
+            if (state.activeProjectId !== targetProjectId) return;
             state.jobs = Array.isArray(data.jobs) ? data.jobs : [];
             renderJobsList();
         } catch (_err) {
@@ -1035,9 +1197,11 @@
                 `Render completado: Job ${result.job_id} (${templateId}). Salida registrada en Galería.`,
                 "success"
             );
-            await selectProject(projectId, false);
-            await refreshJobs();
-            await refreshGallery();
+            if (state.activeProjectId === projectId) {
+                await selectProject(projectId, false);
+                await refreshJobs();
+                await refreshGallery();
+            }
         } catch (err) {
             setToast(`Error al lanzar render: ${err.message}`, "error");
         } finally {
@@ -1047,7 +1211,8 @@
 
     /* --- GALLERY, PREVIEW & DOWNLOAD --- */
     async function refreshGallery() {
-        if (!state.activeProjectId) {
+        const targetProjectId = state.activeProjectId;
+        if (!targetProjectId) {
             state.galleryItems = [];
             renderGallery();
             return;
@@ -1057,10 +1222,11 @@
 
         try {
             const resp = await apiFetch(
-                `/studio/api/projects/${encodeURIComponent(state.activeProjectId)}/gallery?category=${encodeURIComponent(category)}`
+                `/studio/api/projects/${encodeURIComponent(targetProjectId)}/gallery?category=${encodeURIComponent(category)}`
             );
-            if (!resp.ok) return;
+            if (!resp.ok || state.activeProjectId !== targetProjectId) return;
             const data = await resp.json();
+            if (state.activeProjectId !== targetProjectId) return;
             state.galleryItems = Array.isArray(data.assets) ? data.assets : [];
 
             if (
@@ -1261,19 +1427,24 @@
 
     /* --- TIMELINE EDL --- */
     async function refreshEdl() {
-        if (!state.activeProjectId) {
+        const targetProjectId = state.activeProjectId;
+        if (!targetProjectId) {
             renderEdlView();
             return;
         }
         try {
             const resp = await apiFetch(
-                `/studio/api/projects/${encodeURIComponent(state.activeProjectId)}/edl`
+                `/studio/api/projects/${encodeURIComponent(targetProjectId)}/edl`
             );
-            if (!resp.ok) return;
-            state.edlData = await resp.json();
+            if (!resp.ok || state.activeProjectId !== targetProjectId) return;
+            const edlData = await resp.json();
+            if (state.activeProjectId !== targetProjectId) return;
+            state.edlData = edlData;
             renderEdlView();
         } catch (_err) {
-            renderEdlView();
+            if (state.activeProjectId === targetProjectId) {
+                renderEdlView();
+            }
         }
     }
 
@@ -1592,7 +1763,9 @@
                     const msg = `Subida completada: ${uploaded.original_filename} (${uploaded.kind}, ${formatBytes(uploaded.size_bytes)})`;
                     if (statusMsg) statusMsg.textContent = msg;
                     setToast(msg, "success");
-                    await selectProject(projectId, false);
+                    if (state.activeProjectId === projectId) {
+                        await selectProject(projectId, false);
+                    }
                 } else {
                     const errBody = await resp.text();
                     if (statusMsg) statusMsg.textContent = `Error (${resp.status}): ${errBody}`;
@@ -1619,15 +1792,17 @@
         const clearChatBtn = document.getElementById("clear-chat-btn");
         if (clearChatBtn) {
             clearChatBtn.addEventListener("click", async () => {
-                if (!state.activeProjectId) return;
+                const targetProjectId = state.activeProjectId;
+                if (!targetProjectId) return;
                 const resp = await apiFetch(
-                    `/studio/api/projects/${encodeURIComponent(state.activeProjectId)}/chat`,
+                    `/studio/api/projects/${encodeURIComponent(targetProjectId)}/chat`,
                     { method: "DELETE" }
                 );
-                if (resp.ok) {
+                if (resp.ok && state.activeProjectId === targetProjectId) {
+                    state.chatDomEpoch += 1;
                     state.toolEvents = [];
                     renderToolEvents();
-                    renderChatHistory([]);
+                    renderChatHistory([], targetProjectId);
                     setToast("Conversación del proyecto reiniciada.", "success");
                 }
             });
