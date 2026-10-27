@@ -294,6 +294,54 @@ jobs:
           /tmp/studio-ci-venv/bin/python -m comfy_studio.templates
           rm -rf /tmp/studio-ci-venv
 
+      - name: Verificar helper Mac tools/mac/comfy en seco y ciclo de STUDIO_LLM_KEY (VAL-SERVER-005 / VAL-CROSS-004)
+        run: |
+          set -euo pipefail
+          shellcheck tools/mac/comfy
+          tools/mac/comfy --help
+          tmp_helper="$(mktemp -d)"
+          trap 'rm -rf "$tmp_helper"' EXIT
+          cat > "$tmp_helper/vastai" << 'EOF'
+          #!/usr/bin/env bash
+          if [ "${1:-}" = "search" ] && [ "${2:-}" = "offers" ]; then
+            cat << 'JSON'
+          [
+            {"id": 901, "gpu_name": "RTX_5090", "gpu_ram": 32768, "cpu_ram": 65536, "cuda_vers": 12.8, "disk_space": 150, "inet_down": 6000, "reliability": 0.99, "verified": true, "rentable": true, "dph_total": 0.40, "storage_cost": 0.15},
+            {"id": 902, "gpu_name": "RTX_5090", "gpu_ram": 32768, "cpu_ram": 65536, "cuda_vers": 12.8, "disk_space": 240, "inet_down": 6000, "reliability": 0.992, "verified": true, "rentable": true, "dph_total": 0.65, "storage_cost": 0.15}
+          ]
+          JSON
+            exit 0
+          fi
+          if [ "${1:-}" = "create" ] && [ "${2:-}" = "instance" ]; then
+            printf '%s\n' "$*" > "$MOCK_CREATE_ARGS"
+            echo "Started. {'success': True, 'new_contract': 902001}"
+            exit 0
+          fi
+          exit 1
+          EOF
+          chmod +x "$tmp_helper/vastai"
+          dummy_llm_key="sk""-ci-dryrun-key-123456"
+          dummy_pod_pass="ci-pass-placeholder-789"
+          dry_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" tools/mac/comfy rent studio --dry-run 2>&1)"
+          printf '%s\n' "$dry_out"
+          echo "$dry_out" | grep -q "Se alquilaría la oferta ID 902"
+          echo "$dry_out" | grep -q "disco=200 GB"
+          echo "$dry_out" | grep -q "STUDIO_LLM_KEY=<definida>"
+          if echo "$dry_out" | grep -qE "${dummy_llm_key}|${dummy_pod_pass}"; then
+            echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en comfy rent studio --dry-run"
+            exit 1
+          fi
+          MOCK_CREATE_ARGS="$tmp_helper/create.txt"
+          sim_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" tools/mac/comfy rent studio --yes 2>&1)"
+          if echo "$sim_out" | grep -qE "${dummy_llm_key}|${dummy_pod_pass}"; then
+            echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en comfy rent studio --yes"
+            exit 1
+          fi
+          grep -q -- '--disk 200 --label comfy-studio' "$MOCK_CREATE_ARGS"
+          grep -q -- '-e MODEL_PROFILE="studio"' "$MOCK_CREATE_ARGS"
+          grep -q -- "-e STUDIO_LLM_KEY=\"${dummy_llm_key}\"" "$MOCK_CREATE_ARGS"
+          echo "[OK] tools/mac/comfy rent studio verificado en seco (VAL-SERVER-005 / VAL-CROSS-004)"
+
   rust:
     name: Rust Lint, Unit Tests & Dependency Audit (comfyctl, §8.1)
     # Fijado a ubuntu-24.04 por el rollout de ubuntu-latest (ver comentario en el job validate).
@@ -955,8 +1003,24 @@ jobs:
           studio_diag="$(curl -fsS --max-time 60 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/diag)"
           studio_st_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/api/status)"
           studio_logs="$(timeout 30 docker logs "$studio_cid" 2>&1)"
-          if grep -qE "ci-secret-9f8e7d|sk-ci-studio-secret-token-9999" <<<"${studio_rep}${studio_diag}${studio_status_api}${studio_st_json}${studio_logs}"; then
-            echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en artefactos o logs de smoke-studio"
+
+          cat > "${mock_hook_dir}/vastai" << 'EOF'
+          #!/usr/bin/env bash
+          if [ "${1:-}" = "show" ] && [ "${2:-}" = "instances" ]; then
+            echo '{"instances":[{"id":1001,"actual_status":"running","public_ipaddr":"127.0.0.1","gpu_name":"RTX 5090","dph_total":0.65,"label":"comfy-studio","ports":{"8188/tcp":[{"HostPort":"18188"}]}}]}'
+            exit 0
+          fi
+          exit 1
+          EOF
+          chmod +x "${mock_hook_dir}/vastai"
+          smoke_llm_key="sk""-ci-studio-secret-token-9999"
+          helper_open_out="$(PATH="${mock_hook_dir}:$PATH" COMFY_PASS="ci-secret-9f8e7d" COMFY_BROWSER="echo" tools/mac/comfy studio 1001)"
+          grep -q "http://127.0.0.1:18188/studio/" <<<"$helper_open_out"
+          helper_rep_out="$(PATH="${mock_hook_dir}:$PATH" COMFY_PASS="ci-secret-9f8e7d" STUDIO_LLM_KEY="$smoke_llm_key" tools/mac/comfy studio report 1001 --stdout)"
+          grep -q "## 11. Estado de Comfy Studio" <<<"$helper_rep_out"
+
+          if grep -qE "ci-secret-9f8e7d|sk-ci-studio-secret-token-9999" <<<"${studio_rep}${studio_diag}${studio_status_api}${studio_st_json}${studio_logs}${helper_open_out}${helper_rep_out}"; then
+            echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en artefactos, helper o logs de smoke-studio"
             exit 1
           fi
 

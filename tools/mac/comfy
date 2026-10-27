@@ -3,21 +3,30 @@
 # comfy — CLI helper para macOS / Linux para gestionar instancias ComfyUIPod en Vast.ai
 # ==============================================================================
 # Subcomandos (§10.1):
-#   comfy [open] [id] [home|comfy|status|report|terminal]
+#   comfy [open] [id] [home|comfy|status|report|terminal|studio]
+#   comfy studio [id]
+#   comfy studio report [id] [--stdout]
 #   comfy url [id]
 #   comfy all
 #   comfy logs [id] [N]
 #   comfy pass [id]
-#   comfy report [id]
+#   comfy report [id] [--stdout]
 #   comfy watch [id]
-#   comfy rent [all|general|realistic|anime|minimal]
+#   comfy rent [all|general|realistic|anime|minimal|studio] [--dry-run] [--yes]
 #   comfy destroy <id>
 # ==============================================================================
 
 set -euo pipefail
 
+# VAL-SERVER-005 / VAL-CROSS-004: Desactivar historial del shell en este proceso
+# para evitar cualquier persistencia accidental de credenciales o llaves leídas.
+HISTFILE=/dev/null
+unset HISTFILE
+set +o history 2>/dev/null || true
+
 COMFY_IMAGE="${COMFY_IMAGE:-}"
 COMFY_USER="${COMFY_USER:-admin}"
+PYTHON_BIN="${COMFY_PYTHON:-python3}"
 
 die() {
     echo "[ERROR] $*" >&2
@@ -34,6 +43,18 @@ check_pass_safe() {
     case "$1" in
         *$'\n'*|*$'\r'*)
             die "La contraseña contiene saltos de línea (\\n o \\r); no es válida. Eliminalos de COMFY_PASS."
+            ;;
+    esac
+}
+
+# Validar que un secreto reenviado en --env no contenga saltos de línea ni comillas dobles
+# que puedan romper el parseo de flags `-e KEY="VALUE"` en vastai create instance.
+check_secret_safe() {
+    local secret_val="$1"
+    local secret_name="${2:-secreto}"
+    case "${secret_val}" in
+        *$'\n'*|*$'\r'*|*$'"'*)
+            die "El valor de ${secret_name} contiene saltos de línea o comillas dobles no válidas."
             ;;
     esac
 }
@@ -67,7 +88,7 @@ open_browser() {
 # Obtiene JSON crudo de vastai show instances --raw
 fetch_instances_json() {
     require_cmd vastai
-    require_cmd python3
+    require_cmd "${PYTHON_BIN}"
     vastai show instances --raw
 }
 
@@ -79,7 +100,7 @@ resolve_instance() {
     local raw_json
     raw_json="$(fetch_instances_json)"
 
-    RAW_JSON="${raw_json}" python3 - "${requested_id}" "${allow_starting}" << 'PYEOF'
+    RAW_JSON="${raw_json}" "${PYTHON_BIN}" - "${requested_id}" "${allow_starting}" << 'PYEOF'
 import json, os, sys
 
 req_id = sys.argv[1].strip()
@@ -167,7 +188,7 @@ fetch_logs_text() {
 cmd_all() {
     local raw_json
     raw_json="$(fetch_instances_json)"
-    RAW_JSON="${raw_json}" python3 - << 'PYEOF'
+    RAW_JSON="${raw_json}" "${PYTHON_BIN}" - << 'PYEOF'
 import json, os, sys
 
 raw = os.environ.get("RAW_JSON", "")
@@ -216,7 +237,7 @@ cmd_open() {
     local target_view="home"
 
     case "${arg1}" in
-        home|comfy|status|report|terminal|"")
+        home|comfy|status|report|terminal|studio|"")
             target_view="${arg1:-home}"
             ;;
         *)
@@ -232,12 +253,14 @@ cmd_open() {
         status)   path_suffix="/status" ;;
         report)   path_suffix="/report.md" ;;
         terminal) path_suffix="/terminal/" ;;
-        *)        die "Vista no reconocida: '${target_view}'. Usa: home | comfy | status | report | terminal" ;;
+        studio)   path_suffix="/studio/" ;;
+        *)        die "Vista no reconocida: '${target_view}'. Usa: home | comfy | status | report | terminal | studio" ;;
     esac
 
     # O-14: Esperar hasta 10 min (200 * 3s) si la instancia sigue arrancando o Nginx aún no responde
     require_cmd curl
-    local deadline=$((SECONDS + 600))
+    local wait_timeout="${COMFY_OPEN_TIMEOUT:-600}"
+    local deadline=$((SECONDS + wait_timeout))
     local resolved_id="" ip="" port="" status=""
     local healthz_ok="0"
     local portal_ok="0"
@@ -272,18 +295,22 @@ cmd_open() {
                         local api_json
                         api_json="$(curl_auth "${COMFY_USER}" "${probe_pass}" -fsSL --max-time 3 "http://${ip}:${port}/status/api" 2>/dev/null || true)"
                         if [ -n "${api_json}" ]; then
-                            if API_JSON="${api_json}" python3 -c 'import json, os, sys; sys.exit(0 if (json.loads(os.environ["API_JSON"]).get("strict") or {}).get("result") == "fatal" else 1)' 2>/dev/null; then
+                            if API_JSON="${api_json}" "${PYTHON_BIN}" -c 'import json, os, sys; sys.exit(0 if (json.loads(os.environ["API_JSON"]).get("strict") or {}).get("result") == "fatal" else 1)' 2>/dev/null; then
                                 rm -f "${resolve_err_file}"
                                 echo "[FATAL] La instancia ${resolved_id} falló el arranque estricto (strict.result=fatal):" >&2
-                                API_JSON="${api_json}" python3 -c '
+                                API_JSON="${api_json}" "${PYTHON_BIN}" - << 'PYEOF'
 import json, os, sys
 st = json.loads(os.environ["API_JSON"]).get("strict") or {}
 for c in st.get("checks") or []:
     if c.get("status") == "fatal":
-        print(f"  * {c.get(\"id\")} ({c.get(\"name\")}): {c.get(\"detail\")}", file=sys.stderr)
-        if c.get("remediation"):
-            print(f"    Remediación: {c.get(\"remediation\")}", file=sys.stderr)
-'
+        cid = c.get("id")
+        cname = c.get("name")
+        cdetail = c.get("detail")
+        crem = c.get("remediation")
+        print(f"  * {cid} ({cname}): {cdetail}", file=sys.stderr)
+        if crem:
+            print(f"    Remediación: {crem}", file=sys.stderr)
+PYEOF
                                 echo "Abriendo http://${ip}:${port}/home para inspección y abortando espera..." >&2
                                 open_browser "http://${ip}:${port}/home"
                                 return 20
@@ -318,13 +345,13 @@ for c in st.get("checks") or []:
     rm -f "${resolve_err_file}"
 
     if [ -z "${ip}" ] || [ -z "${port}" ]; then
-        die "Timeout (10 min) esperando IP/puerto público de la instancia."
+        die "Timeout esperando IP/puerto público de la instancia."
     fi
 
     if [ "${healthz_ok}" != "1" ] && [ "${portal_ok}" != "1" ]; then
         # No die: el portal puede seguir levantándose; Nginx mostrará su página
         # de auto-refresco /_starting.html o aún no responderá.
-        echo "[WARN] /healthz no respondió OK en 10 min; el portal puede no estar listo aún (página _starting.html o en blanco). Revisa 'comfy logs ${resolved_id}'." >&2
+        echo "[WARN] /healthz no respondió OK en el tiempo esperado; el portal puede no estar listo aún (página _starting.html o en blanco). Revisa 'comfy logs ${resolved_id}'." >&2
     fi
 
     local full_url="http://${ip}:${port}${path_suffix}"
@@ -387,8 +414,124 @@ resolve_auth_pass() {
     fi
     read -r -s -p "Introduce COMFY_PASS para ${COMFY_USER}: " input_pass >&2 || die "Entrada cerrada (EOF)."
     echo "" >&2
+    input_pass="${input_pass%$'\r'}"
     check_pass_safe "${input_pass}"
     echo "${input_pass}"
+}
+
+# VAL-SERVER-005 / VAL-CROSS-004: Redacción defensiva del informe en el cliente
+# para garantizar que ni STUDIO_LLM_KEY, ni COMFY_PASS, ni HF_TOKEN ni tokens sk-*/hf_*/Bearer
+# aparezcan jamás en claro, incluso si algún log upstream los incluyera accidentalmente.
+redact_and_enrich_report() {
+    local raw_md="$1"
+    local studio_health_json="${2:-}"
+    local studio_status_json="${3:-}"
+    local status_api_json="${4:-}"
+    local secret_pass="${5:-}"
+    local secret_llm="${6:-}"
+    local secret_hf="${7:-}"
+
+    RAW_MD="${raw_md}" \
+    STUDIO_HEALTH_JSON="${studio_health_json}" \
+    STUDIO_STATUS_JSON="${studio_status_json}" \
+    STATUS_API_JSON="${status_api_json}" \
+    _SECRET_PASS="${secret_pass}" \
+    _SECRET_LLM="${secret_llm}" \
+    _SECRET_HF="${secret_hf}" \
+    "${PYTHON_BIN}" - << 'PYEOF'
+import json, os, re
+
+text = os.environ.get("RAW_MD", "")
+health_raw = os.environ.get("STUDIO_HEALTH_JSON", "").strip()
+status_raw = os.environ.get("STUDIO_STATUS_JSON", "").strip()
+api_raw = os.environ.get("STATUS_API_JSON", "").strip()
+
+def parse_json(raw_str):
+    if not raw_str:
+        return {}
+    try:
+        val = json.loads(raw_str)
+        return val if isinstance(val, dict) else {}
+    except Exception:
+        return {}
+
+health = parse_json(health_raw)
+st = parse_json(status_raw)
+api = parse_json(api_raw)
+
+if health or st:
+    lines = ["", "## 11. Estado de Comfy Studio (`/studio/api`)", ""]
+    srv_state = health.get("server") or st.get("status") or "desconocido"
+    comfy_state = health.get("comfyui") or (st.get("comfyui") or {}).get("status") or "desconocido"
+    comfy_reach = health.get("comfyui_reachable")
+    if comfy_reach is None:
+        comfy_reach = (st.get("comfyui") or {}).get("reachable")
+    profile = health.get("model_profile") or (st.get("env_masked") or {}).get("MODEL_PROFILE") or "studio"
+    llm = st.get("llm") or {}
+    llm_model = health.get("llm_model") or llm.get("model") or "-"
+    llm_fallback = llm.get("fallback_model") or "-"
+    key_status = health.get("llm_key_status") or llm.get("key_status") or "<no definida>"
+    if key_status not in ("<definida>", "<no definida>"):
+        key_status = "<definida>"
+    db = st.get("db") or {}
+    disk = api.get("disk") or {}
+
+    lines.append(f"- **Studio server**: `{srv_state}` · **ComfyUI**: `{comfy_state}` (reachable: `{comfy_reach}`)")
+    lines.append(f"- **Perfil activo (`MODEL_PROFILE`)**: `{profile}`")
+    lines.append(f"- **LLM**: modelo `{llm_model}` · fallback `{llm_fallback}` · `STUDIO_LLM_KEY`: `{key_status}`")
+    if db:
+        lines.append(
+            f"- **SQLite Studio**: schema `v{db.get('schema_version', 1)}` · "
+            f"`{db.get('projects_count', 0)}` proyecto(s) · `{db.get('jobs_count', 0)}` job(s)"
+        )
+    if disk:
+        lines.append(
+            f"- **Disco (`{disk.get('path', '/workspace/comfyui-data')}`)**: "
+            f"`{disk.get('used_gb', 0)}` GB usados / `{disk.get('total_gb', 0)}` GB totales "
+            f"(`{disk.get('free_gb', 0)}` GB libres)"
+        )
+
+    env_masked = dict(api.get("env_masked") or {})
+    env_masked.update(st.get("env_masked") or {})
+    if env_masked:
+        lines.append("")
+        lines.append("### Variables de entorno Studio (enmascaradas)")
+        for k in sorted(env_masked.keys()):
+            v = str(env_masked[k])
+            if any(tok in k.upper() for tok in ("KEY", "PASS", "TOKEN", "SECRET", "AUTH")):
+                if v and v not in ("<no definida>", "<vacía>", "<autogenerada>"):
+                    v = "<definida>"
+            lines.append(f"- `{k}` = `{v}`")
+    lines.append("")
+    text = text.rstrip() + "\n" + "\n".join(lines)
+
+# Redacción defensiva de cualquier valor sensible conocido en memoria o por patrón
+for env_name in ("_SECRET_PASS", "_SECRET_LLM", "_SECRET_HF"):
+    secret_val = os.environ.get(env_name, "")
+    if secret_val and len(secret_val) >= 4:
+        text = text.replace(secret_val, "<definida>")
+
+# Enmascarar asignaciones explícitas a variables sensibles en Markdown o logs
+secret_var_re = re.compile(
+    r"((?:`?(?:STUDIO_LLM_KEY|COMFY_PASS|HF_TOKEN|OPENAI_API_KEY|DASHSCOPE_API_KEY|DEEPSEEK_API_KEY|VAST_API_KEY)`?)\s*(?:=|:)\s*`?)([^`\s\n\r\"']+)(`?)"
+)
+def _mask_var(match):
+    prefix, val, suffix = match.group(1), match.group(2), match.group(3)
+    if val in ("<definida>", "<no definida>", "<vacía>", "<autogenerada>", "[REDACTED]"):
+        return match.group(0)
+    return f"{prefix}<definida>{suffix}"
+
+text = secret_var_re.sub(_mask_var, text)
+
+# Patrones de tokens y cabeceras de autorización
+text = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "[REDACTED]", text)
+text = re.sub(r"\bhf_[A-Za-z0-9]{8,}\b", "[REDACTED]", text)
+text = re.sub(r"(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[^\s\"'`]+", r"\1[REDACTED]", text)
+text = re.sub(r"(?i)\b(bearer\s+)[A-Za-z0-9._\-]{8,}", r"\1[REDACTED]", text)
+text = re.sub(r"https?://[^/\s:@]+:[^/\s@]+@", "https://[REDACTED]@", text)
+
+print(text, end="" if text.endswith("\n") else "\n")
+PYEOF
 }
 
 cmd_report() {
@@ -412,18 +555,165 @@ cmd_report() {
     local pass
     pass="$(resolve_auth_pass "${inst_id}")"
 
+    local raw_md
+    raw_md="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL "http://${ip}:${port}/report.md")"
+    local clean_md
+    clean_md="$(redact_and_enrich_report "${raw_md}" "" "" "" "${pass}" "${STUDIO_LLM_KEY:-}" "${HF_TOKEN:-}")"
+
     if [ "${to_stdout}" = "1" ]; then
-        curl_auth "${COMFY_USER}" "${pass}" -fsSL "http://${ip}:${port}/report.md"
+        printf '%s\n' "${clean_md}"
         return 0
     fi
 
     local out_file="/tmp/comfy-report-${inst_id}.md"
-    curl_auth "${COMFY_USER}" "${pass}" -fsSL "http://${ip}:${port}/report.md" -o "${out_file}"
+    (umask 077 && printf '%s\n' "${clean_md}" >"${out_file}")
     echo "Informe guardado en: ${out_file} ($(wc -c <"${out_file}" | tr -d ' ') bytes)"
     if command -v pbcopy >/dev/null 2>&1; then
         pbcopy <"${out_file}"
         echo "Copiado al portapapeles de macOS (pbcopy)."
     fi
+}
+
+cmd_studio_report() {
+    local arg1="${1:-}"
+    local arg2="${2:-}"
+    local to_stdout="0"
+    local inst_id=""
+    if [ "${arg1}" = "--stdout" ]; then
+        to_stdout="1"
+        inst_id="${arg2}"
+    elif [ "${arg2}" = "--stdout" ]; then
+        to_stdout="1"
+        inst_id="${arg1}"
+    else
+        inst_id="${arg1}"
+    fi
+
+    local info ip port
+    info="$(resolve_instance "${inst_id}")"
+    IFS='|' read -r inst_id ip port _ _ <<<"${info}"
+    local pass
+    pass="$(resolve_auth_pass "${inst_id}")"
+
+    local raw_md studio_health studio_status status_api
+    raw_md="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL "http://${ip}:${port}/report.md")"
+    studio_health="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL --max-time 5 "http://${ip}:${port}/studio/api/health" 2>/dev/null || echo "{}")"
+    studio_status="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL --max-time 5 "http://${ip}:${port}/studio/api/status" 2>/dev/null || echo "{}")"
+    status_api="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL --max-time 5 "http://${ip}:${port}/status/api" 2>/dev/null || echo "{}")"
+
+    local clean_md
+    clean_md="$(redact_and_enrich_report "${raw_md}" "${studio_health}" "${studio_status}" "${status_api}" "${pass}" "${STUDIO_LLM_KEY:-}" "${HF_TOKEN:-}")"
+
+    if [ "${to_stdout}" = "1" ]; then
+        printf '%s\n' "${clean_md}"
+        return 0
+    fi
+
+    local out_file="/tmp/comfy-studio-report-${inst_id}.md"
+    (umask 077 && printf '%s\n' "${clean_md}" >"${out_file}")
+    echo "Informe de Studio guardado en: ${out_file} ($(wc -c <"${out_file}" | tr -d ' ') bytes)"
+    if command -v pbcopy >/dev/null 2>&1; then
+        pbcopy <"${out_file}"
+        echo "Copiado al portapapeles de macOS (pbcopy)."
+    fi
+}
+
+cmd_studio() {
+    local first_arg="${1:-}"
+    if [ "${first_arg}" = "report" ]; then
+        shift || true
+        cmd_studio_report "${1:-}" "${2:-}"
+        return 0
+    fi
+
+    local inst_id="${first_arg}"
+    require_cmd curl
+    require_cmd "${PYTHON_BIN}"
+
+    local wait_timeout="${COMFY_WAIT_TIMEOUT:-60}"
+    local deadline=$((SECONDS + wait_timeout))
+    local resolved_id="" ip="" port="" status=""
+    local resolve_err_file="/tmp/comfy-studio-resolve-err.$$"
+
+    while [ "${SECONDS}" -lt "${deadline}" ]; do
+        local info=""
+        if info="$(resolve_instance "${inst_id}" "1" 2>"${resolve_err_file}")"; then
+            IFS='|' read -r resolved_id ip port status _ <<<"${info}"
+            if [ "${status}" = "exited" ] || [ "${status}" = "stopped" ]; then
+                rm -f "${resolve_err_file}"
+                die "La instancia ${resolved_id} está en estado '${status}'. Revisa 'comfy logs ${resolved_id}'."
+            fi
+            if [ "${status}" = "running" ] && [ -n "${ip}" ] && [ -n "${port}" ]; then
+                break
+            fi
+        fi
+        sleep 2
+    done
+    rm -f "${resolve_err_file}"
+
+    if [ -z "${ip}" ] || [ -z "${port}" ]; then
+        die "No se pudo resolver IP/puerto público para la instancia ${inst_id:-activa}."
+    fi
+
+    local portal_url="http://${ip}:${port}/home"
+    local studio_url="http://${ip}:${port}/studio/"
+    local health_url="http://${ip}:${port}/studio/api/health"
+    local pass
+    pass="$(resolve_auth_pass "${resolved_id}")"
+
+    local health_summary=""
+    local health_deadline=$((SECONDS + wait_timeout))
+    while [ "${SECONDS}" -lt "${health_deadline}" ]; do
+        local health_json=""
+        if health_json="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL --max-time 5 "${health_url}" 2>/dev/null)"; then
+            if health_summary="$(HEALTH_JSON="${health_json}" "${PYTHON_BIN}" - << 'PYEOF'
+import json, os, sys
+d = json.loads(os.environ.get("HEALTH_JSON", "{}"))
+if d.get("status") == "ok" and d.get("server") == "ok":
+    key_st = d.get("llm_key_status", "<no definida>")
+    if key_st not in ("<definida>", "<no definida>"):
+        key_st = "<definida>"
+    srv = d.get("server", "ok")
+    comfy = d.get("comfyui", "unknown")
+    prof = d.get("model_profile", "-")
+    sys.stdout.write(f"server={srv}, comfyui={comfy}, model_profile={prof}, llm_key={key_st}\n")
+    sys.exit(0)
+sys.exit(1)
+PYEOF
+)"; then
+                health_summary="${health_summary%$'\r'}"
+                break
+            fi
+        fi
+        local api_json=""
+        if api_json="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL --max-time 3 "http://${ip}:${port}/status/api" 2>/dev/null || true)" && [ -n "${api_json}" ]; then
+            if API_JSON="${api_json}" "${PYTHON_BIN}" -c 'import json, os, sys; sys.exit(0 if (json.loads(os.environ["API_JSON"]).get("strict") or {}).get("result") == "fatal" else 1)' 2>/dev/null; then
+                echo "[FATAL] La instancia ${resolved_id} falló el arranque estricto (strict.result=fatal):" >&2
+                API_JSON="${api_json}" "${PYTHON_BIN}" - << 'PYEOF'
+import json, os, sys
+st = json.loads(os.environ["API_JSON"]).get("strict") or {}
+for c in st.get("checks") or []:
+    if c.get("status") == "fatal":
+        print(f"  * {c.get('id')} ({c.get('name')}): {c.get('detail')}", file=sys.stderr)
+        if c.get("remediation"):
+            print(f"    Remediación: {c.get('remediation')}", file=sys.stderr)
+PYEOF
+                echo "Abriendo ${portal_url} para inspección y abortando espera..." >&2
+                open_browser "${portal_url}"
+                return 20
+            fi
+        fi
+        sleep 1
+    done
+
+    if [ -z "${health_summary}" ]; then
+        die "El servicio Comfy Studio en ${health_url} no respondió saludable tras ${wait_timeout}s. Verifica con 'comfy studio report ${resolved_id}'."
+    fi
+
+    echo "[OK] Portal del pod: ${portal_url}"
+    echo "[OK] Salud de Comfy Studio verificada (${health_summary})"
+    echo "Abriendo ${studio_url} ..."
+    open_browser "${studio_url}"
 }
 
 cmd_watch() {
@@ -440,7 +730,7 @@ cmd_watch() {
         local json_payload
         if json_payload="$(curl_auth "${COMFY_USER}" "${pass}" -fsSL --max-time 5 "${api_url}" 2>/dev/null)"; then
             clear
-            API_JSON="${json_payload}" python3 - << 'PYEOF'
+            API_JSON="${json_payload}" "${PYTHON_BIN}" - << 'PYEOF'
 import json, os
 
 d = json.loads(os.environ["API_JSON"])
@@ -474,7 +764,7 @@ if triage:
     for t in triage[:5]:
         print(f"  - [{t.get('severity','').upper()}] {t.get('pattern_id')}: {t.get('summary')}")
 PYEOF
-            if API_JSON="${json_payload}" python3 -c 'import json, os, sys; sys.exit(0 if (json.loads(os.environ["API_JSON"]).get("strict") or {}).get("result") == "fatal" else 1)' 2>/dev/null; then
+            if API_JSON="${json_payload}" "${PYTHON_BIN}" -c 'import json, os, sys; sys.exit(0 if (json.loads(os.environ["API_JSON"]).get("strict") or {}).get("result") == "fatal" else 1)' 2>/dev/null; then
                 echo ""
                 echo "[FATAL] La instancia ${inst_id} falló el arranque estricto y se cerrará tras la ventana de gracia." >&2
                 echo "        Ejecuta ahora: comfy destroy ${inst_id}" >&2
@@ -511,9 +801,68 @@ search_offers() {
     printf '%s' "${out}"
 }
 
+# Filtra y ordena ofertas en cliente (además del filtro servidor de vastai)
+# para garantizar que las restricciones de disco, red, GPU, VRAM y fiabilidad
+# se cumplan estrictamente también frente a fixtures o respuestas sin filtrar.
+filter_offers_json() {
+    local raw_offers="$1"
+    local target_gpu="$2"
+    local min_vram_gb="$3"
+    local min_disk_gb="$4"
+    local min_inet_down="$5"
+
+    OFFERS_JSON="${raw_offers}" "${PYTHON_BIN}" - "${target_gpu}" "${min_vram_gb}" "${min_disk_gb}" "${min_inet_down}" << 'PYEOF'
+import json, os, sys
+
+target_gpu = sys.argv[1].strip().replace(" ", "_").upper()
+min_vram_gb = float(sys.argv[2])
+min_disk_gb = float(sys.argv[3])
+min_inet_down = float(sys.argv[4])
+
+data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
+rows = data.get("offers", data) if isinstance(data, dict) else data
+if not isinstance(rows, list):
+    rows = []
+
+filtered = []
+for r in rows:
+    if not isinstance(r, dict):
+        continue
+    gpu_norm = str(r.get("gpu_name") or "").strip().replace(" ", "_").upper()
+    if target_gpu and gpu_norm and gpu_norm != target_gpu:
+        continue
+    vram_raw = float(r.get("gpu_ram") or 0)
+    vram_gb = vram_raw / 1024.0 if vram_raw > 256 else vram_raw
+    if vram_gb and vram_gb + 0.5 < min_vram_gb:
+        continue
+    cram_raw = float(r.get("cpu_ram") or 0)
+    cram_gb = cram_raw / 1024.0 if cram_raw > 512 else cram_raw
+    if cram_gb and cram_gb + 0.5 < 32.0:
+        continue
+    cuda_v = float(r.get("cuda_vers") or 12.8)
+    if cuda_v < 12.8:
+        continue
+    disk = float(r.get("disk_space") or 0)
+    if disk and disk < min_disk_gb:
+        continue
+    inet = float(r.get("inet_down") or 0)
+    if inet and inet < min_inet_down:
+        continue
+    rel = float(r.get("reliability") or r.get("reliability2") or 1.0)
+    if rel < 0.98:
+        continue
+    if r.get("verified") is False or r.get("rentable") is False:
+        continue
+    filtered.append(r)
+
+filtered.sort(key=lambda item: float(item.get("dph_total") or item.get("dph_base") or 999999.0))
+print(json.dumps(filtered))
+PYEOF
+}
+
 cmd_rent() {
     require_cmd vastai
-    require_cmd python3
+    require_cmd "${PYTHON_BIN}"
 
     local profile="all"
     local dry_run="0"
@@ -526,11 +875,11 @@ cmd_rent() {
             -y|--yes)
                 assume_yes="1"
                 ;;
-            all|general|realistic|anime|minimal)
+            all|general|realistic|anime|minimal|studio)
                 profile="$1"
                 ;;
             *)
-                die "Argumento no reconocido en 'comfy rent': '$1'. Uso: comfy rent [all|general|realistic|anime|minimal] [--dry-run] [--yes]"
+                die "Argumento no reconocido en 'comfy rent': '$1'. Uso: comfy rent [all|general|realistic|anime|minimal|studio] [--dry-run] [--yes]"
                 ;;
         esac
         shift
@@ -539,51 +888,90 @@ cmd_rent() {
     # O-12: Exigir COMFY_IMAGE explícitamente en lugar de asumir un GHCR ajeno por defecto
     [ -n "${COMFY_IMAGE}" ] || die "La variable COMFY_IMAGE no está definida. Exporta tu imagen antes de alquilar (ej.: export COMFY_IMAGE=ghcr.io/<tu-usuario>/comfyuipod:latest)."
 
+    # Capturar secretos en variables locales y retirarlos del entorno exportado
+    # para que ningún proceso hijo (vastai search offers, python3) los herede.
     local pass="${COMFY_PASS:-}"
+    local hf_token="${HF_TOKEN:-}"
+    local studio_llm_key="${STUDIO_LLM_KEY:-}"
+    unset COMFY_PASS HF_TOKEN STUDIO_LLM_KEY
+
     check_pass_safe "${pass}"
+    check_secret_safe "${hf_token}" "HF_TOKEN"
+
+    local disk_gb="120"
+    local min_vram_gb="24"
+    local min_inet_down="500"
+    if [ "${profile}" = "studio" ]; then
+        min_vram_gb="32"
+        min_inet_down="5000"
+        # Decisión del manifiesto Fase 3: el perfil studio requiere >= 200 GB de disco
+        # (~163.16 GiB en 77 modelos + espacio de trabajo), y >= 250 GB si se activa el
+        # opt-in STUDIO_INCLUDE_ANIMATE=1 (+13.6 GiB de wan2.2_animate_14B_int8_convrot).
+        if [ "${STUDIO_INCLUDE_ANIMATE:-0}" = "1" ]; then
+            disk_gb="${COMFY_DISK_GB:-250}"
+        else
+            disk_gb="${COMFY_DISK_GB:-200}"
+        fi
+
+        # VAL-SERVER-005: Lectura oculta (read -r -s) de STUDIO_LLM_KEY sin eco en terminal,
+        # sin escritura a disco y sin historial del shell.
+        if [ -z "${studio_llm_key}" ] && [ "${STUDIO_STUB_LLM:-0}" != "1" ]; then
+            read -r -s -p "Introduce STUDIO_LLM_KEY (lectura oculta, sin eco ni persistencia en disco): " studio_llm_key >&2 || die "Entrada cerrada (EOF) al leer STUDIO_LLM_KEY."
+            echo "" >&2
+        fi
+        studio_llm_key="${studio_llm_key%$'\r'}"
+        check_secret_safe "${studio_llm_key}" "STUDIO_LLM_KEY"
+        if [ -z "${studio_llm_key}" ] && [ "${STUDIO_STUB_LLM:-0}" != "1" ]; then
+            die "STUDIO_LLM_KEY no puede estar vacía para 'comfy rent studio' (o define STUDIO_STUB_LLM=1 para modo stub)."
+        fi
+    else
+        disk_gb="${COMFY_DISK_GB:-120}"
+    fi
+
     # O-01b: Filtros alineados con la guía de despliegue (cpu_ram>=32, cuda_vers>=12.8).
     # V27: cuda_vers es el campo documentado en vastai search offers ("machine max
     # supported cuda version"); cuda_max_good no existe en el esquema documentado.
     # Sin --direct no se exige direct_port_count: los puertos van proxy-mapeados.
-    local base_filters="gpu_ram>=24 cpu_ram>=32 cuda_vers>=12.8 inet_down>=500 disk_space>=120 reliability>=0.98 verified=true rentable=true"
+    local base_filters="gpu_ram>=${min_vram_gb} cpu_ram>=32 cuda_vers>=12.8 inet_down>=${min_inet_down} disk_space>=${disk_gb} reliability>=0.98 verified=true rentable=true"
     local query="gpu_name=RTX_5090 ${base_filters}"
 
-    echo "Buscando ofertas RTX 5090 en Vast.ai (perfil=${profile})..."
-    local offers_json
-    offers_json="$(search_offers "${query}")"
+    echo "Buscando ofertas RTX 5090 en Vast.ai (perfil=${profile}, disco>=${disk_gb} GB, red>=${min_inet_down} Mbps)..."
+    local raw_offers offers_json
+    raw_offers="$(search_offers "${query}")"
+    offers_json="$(filter_offers_json "${raw_offers}" "RTX_5090" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}")"
 
     local offer_id
-    offer_id="$(OFFERS_JSON="${offers_json}" python3 -c '
+    offer_id="$(OFFERS_JSON="${offers_json}" "${PYTHON_BIN}" -c '
 import json, os
-data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
-rows = data.get("offers", data) if isinstance(data, dict) else data
+rows = json.loads(os.environ.get("OFFERS_JSON", "[]"))
 print(rows[0]["id"] if rows else "")
 ' 2>/dev/null || true)"
 
-    if [ -z "${offer_id}" ]; then
+    if [ -z "${offer_id}" ] && [ "${profile}" != "studio" ]; then
         echo "No se encontraron RTX 5090 disponibles; buscando fallback RTX 4090..."
         query="gpu_name=RTX_4090 ${base_filters}"
-        offers_json="$(search_offers "${query}")"
-        offer_id="$(OFFERS_JSON="${offers_json}" python3 -c '
+        raw_offers="$(search_offers "${query}")"
+        offers_json="$(filter_offers_json "${raw_offers}" "RTX_4090" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}")"
+        offer_id="$(OFFERS_JSON="${offers_json}" "${PYTHON_BIN}" -c '
 import json, os
-data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
-rows = data.get("offers", data) if isinstance(data, dict) else data
+rows = json.loads(os.environ.get("OFFERS_JSON", "[]"))
 print(rows[0]["id"] if rows else "")
 ' 2>/dev/null || true)"
     fi
 
-    [ -n "${offer_id}" ] || die "No se encontraron ofertas disponibles que cumplan los filtros (${base_filters})."
+    [ -n "${offer_id}" ] || die "No se encontraron ofertas disponibles que cumplan los filtros (${query})."
 
-    # O-01a: Mostrar tabla de las 5 ofertas más baratas con coste total estimado (GPU + 120 GB disco)
-    OFFERS_JSON="${offers_json}" python3 - << 'PYEOF'
+    # O-01a: Mostrar tabla de las 5 ofertas más baratas con coste total estimado (GPU + disco solicitado)
+    OFFERS_JSON="${offers_json}" DISK_GB="${disk_gb}" "${PYTHON_BIN}" - << 'PYEOF'
 import json, os
 
 data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
 rows = data.get("offers", data) if isinstance(data, dict) else data
+disk_gb = float(os.environ.get("DISK_GB", "120"))
 top5 = rows[:5]
 
-print("\nTop 5 ofertas más económicas encontradas (disco solicitado: 120 GB):")
-hdr = f"{'#':<3} {'OFFER_ID':<10} {'GPU':<12} {'VRAM':<7} {'HOST_RAM':<9} {'CUDA':<6} {'DOWN_Mbps':<10} {'$/GB·mes':<9} {'GPU_$/h':<8} {'TOTAL_EST_$/h'}"
+print(f"\nTop 5 ofertas más económicas encontradas (disco solicitado: {disk_gb:.0f} GB):")
+hdr = f"{'#':<3} {'OFFER_ID':<10} {'GPU':<12} {'VRAM':<7} {'HOST_RAM':<9} {'CUDA':<6} {'DISK_GB':<8} {'DOWN_Mbps':<10} {'$/GB·mes':<9} {'GPU_$/h':<8} {'TOTAL_EST_$/h'}"
 print(hdr)
 print("-" * len(hdr))
 for idx, r in enumerate(top5, 1):
@@ -594,13 +982,14 @@ for idx, r in enumerate(top5, 1):
     cram_raw = float(r.get("cpu_ram") or 0)
     cram_gb = cram_raw / 1024.0 if cram_raw > 512 else cram_raw
     cuda = str(r.get("cuda_vers") or "?")
+    avail_disk = float(r.get("disk_space") or disk_gb)
     down = float(r.get("inet_down") or 0)
     storage_cost = float(r.get("storage_cost") or 0.15)
     dph = float(r.get("dph_total") or r.get("dph_base") or 0.0)
-    disk_dph = (120.0 * storage_cost) / 730.0
+    disk_dph = (disk_gb * storage_cost) / 730.0
     total_dph = dph + disk_dph if not r.get("dph_total") else dph
     mark = "*" if idx == 1 else " "
-    print(f"{idx}{mark:<2} {oid:<10} {gpu:<12} {vram_gb:>4.0f}GB {cram_gb:>6.0f}GB {cuda:<6} {down:>8.0f} {storage_cost:>8.3f} {dph:>7.3f} ${total_dph:>7.3f}/h")
+    print(f"{idx}{mark:<2} {oid:<10} {gpu:<12} {vram_gb:>4.0f}GB {cram_gb:>6.0f}GB {cuda:<6} {avail_disk:>6.0f}GB {down:>8.0f} {storage_cost:>8.3f} {dph:>7.3f} ${total_dph:>7.3f}/h")
 print("")
 PYEOF
 
@@ -613,32 +1002,68 @@ PYEOF
     if [ -n "${pass}" ]; then
         env_flags="${env_flags} -e COMFY_PASS=\"${pass}\""
     fi
-    if [ -n "${HF_TOKEN:-}" ]; then
-        env_flags="${env_flags} -e HF_TOKEN=\"${HF_TOKEN}\""
+    if [ -n "${hf_token}" ]; then
+        env_flags="${env_flags} -e HF_TOKEN=\"${hf_token}\""
     fi
     # O-01d / R-14: Reenviar variables opcionales (valor entrecomillado) si están definidas en la Mac
     if [ -n "${COMFYUI_EXTRA_ARGS:-}" ]; then
+        check_secret_safe "${COMFYUI_EXTRA_ARGS}" "COMFYUI_EXTRA_ARGS"
         env_flags="${env_flags} -e COMFYUI_EXTRA_ARGS=\"${COMFYUI_EXTRA_ARGS}\""
     fi
     if [ -n "${HF_HUB_DISABLE_XET:-}" ]; then
+        check_secret_safe "${HF_HUB_DISABLE_XET}" "HF_HUB_DISABLE_XET"
         env_flags="${env_flags} -e HF_HUB_DISABLE_XET=\"${HF_HUB_DISABLE_XET}\""
     fi
     if [ -n "${ENABLE_WEB_TERMINAL:-}" ]; then
+        check_secret_safe "${ENABLE_WEB_TERMINAL}" "ENABLE_WEB_TERMINAL"
         env_flags="${env_flags} -e ENABLE_WEB_TERMINAL=\"${ENABLE_WEB_TERMINAL}\""
+    fi
+
+    if [ "${profile}" = "studio" ]; then
+        if [ -n "${studio_llm_key}" ]; then
+            env_flags="${env_flags} -e STUDIO_LLM_KEY=\"${studio_llm_key}\""
+        fi
+        if [ -n "${STUDIO_LLM_BASE_URL:-}" ]; then
+            check_secret_safe "${STUDIO_LLM_BASE_URL}" "STUDIO_LLM_BASE_URL"
+            env_flags="${env_flags} -e STUDIO_LLM_BASE_URL=\"${STUDIO_LLM_BASE_URL}\""
+        fi
+        if [ -n "${STUDIO_LLM_MODEL:-}" ]; then
+            check_secret_safe "${STUDIO_LLM_MODEL}" "STUDIO_LLM_MODEL"
+            env_flags="${env_flags} -e STUDIO_LLM_MODEL=\"${STUDIO_LLM_MODEL}\""
+        fi
+        if [ -n "${STUDIO_LLM_FALLBACK_BASE_URL:-}" ]; then
+            check_secret_safe "${STUDIO_LLM_FALLBACK_BASE_URL}" "STUDIO_LLM_FALLBACK_BASE_URL"
+            env_flags="${env_flags} -e STUDIO_LLM_FALLBACK_BASE_URL=\"${STUDIO_LLM_FALLBACK_BASE_URL}\""
+        fi
+        if [ -n "${STUDIO_LLM_FALLBACK_MODEL:-}" ]; then
+            check_secret_safe "${STUDIO_LLM_FALLBACK_MODEL}" "STUDIO_LLM_FALLBACK_MODEL"
+            env_flags="${env_flags} -e STUDIO_LLM_FALLBACK_MODEL=\"${STUDIO_LLM_FALLBACK_MODEL}\""
+        fi
+        if [ -n "${STUDIO_INCLUDE_ANIMATE:-}" ]; then
+            check_secret_safe "${STUDIO_INCLUDE_ANIMATE}" "STUDIO_INCLUDE_ANIMATE"
+            env_flags="${env_flags} -e STUDIO_INCLUDE_ANIMATE=\"${STUDIO_INCLUDE_ANIMATE}\""
+        fi
+        if [ -n "${STUDIO_STUB_LLM:-}" ]; then
+            check_secret_safe "${STUDIO_STUB_LLM}" "STUDIO_STUB_LLM"
+            env_flags="${env_flags} -e STUDIO_STUB_LLM=\"${STUDIO_STUB_LLM}\""
+        fi
     fi
 
     if [ "${dry_run}" = "1" ]; then
         local pass_state="autogenerada"
         [ -z "${pass}" ] || pass_state="definida (COMFY_PASS)"
         local hf_state="no definida"
-        [ -z "${HF_TOKEN:-}" ] || hf_state="definida"
-        echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, --args)."
-        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
+        [ -z "${hf_token}" ] || hf_state="definida"
+        local llm_key_state="<no definida>"
+        [ -z "${studio_llm_key}" ] || llm_key_state="<definida>"
+        echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, disco=${disk_gb} GB, --args)."
+        echo "[DRY-RUN] Filtros aplicados: ${query}"
+        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
         return 0
     fi
 
     if [ "${assume_yes}" != "1" ]; then
-        read -r -p "¿Confirmas alquilar la oferta #1 (ID ${offer_id}) con imagen '${COMFY_IMAGE}'? [y/N]: " confirm_ans || die "Entrada cerrada (EOF)."
+        read -r -p "¿Confirmas alquilar la oferta #1 (ID ${offer_id}, disco=${disk_gb} GB) con imagen '${COMFY_IMAGE}'? [y/N]: " confirm_ans || die "Entrada cerrada (EOF)."
         case "${confirm_ans}" in
             y|Y|yes|YES) ;;
             *)
@@ -652,10 +1077,10 @@ PYEOF
     # sobreescribirlo. Los puertos van proxy-mapeados por vast.ai (el helper lee
     # ports["8188/tcp"][0].HostPort); el flag --direct de vast-cli solo aplica a
     # runtype jupyter/ssh y es inerte en este modo, así que no se pasa.
-    echo "Alquilando oferta ID ${offer_id} con imagen ${COMFY_IMAGE}..."
+    echo "Alquilando oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, disco=${disk_gb} GB)..."
     vastai create instance "${offer_id}" \
         --image "${COMFY_IMAGE}" \
-        --disk 120 \
+        --disk "${disk_gb}" \
         --label "comfy-${profile}" \
         --env "${env_flags}" \
         --args
@@ -686,6 +1111,9 @@ case "${subcmd}" in
     home|comfy|status|terminal)
         cmd_open "${subcmd}"
         ;;
+    studio)
+        cmd_studio "$@"
+        ;;
     url)
         cmd_url "${1:-}"
         ;;
@@ -711,7 +1139,7 @@ case "${subcmd}" in
         cmd_destroy "${1:-}"
         ;;
     -h|--help|help)
-        sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
         ;;
     *)
         # Si el primer argumento es un ID numérico, asumir `comfy open <id> [vista]`
