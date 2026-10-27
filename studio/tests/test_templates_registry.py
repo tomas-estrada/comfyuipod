@@ -227,14 +227,17 @@ def test_structural_validator_rejects_corrupted_templates(tmp_path: Path) -> Non
         for nid, n in corrupt_vace_alpha["workflow"].items()
         if n["class_type"] == "LoadImage"
     )
-    # Eliminar nodos ImageToMask para no dejarlos huérfanos y conectar slot 1 de LoadImage directo
+    # Eliminar nodos ImageToMask y RepeatImageBatch para no dejarlos huérfanos
+    # y conectar slot 1 de LoadImage directo
     corrupt_vace_alpha["workflow"] = {
         nid: n
         for nid, n in corrupt_vace_alpha["workflow"].items()
-        if n["class_type"] != "ImageToMask"
+        if n["class_type"] not in ("ImageToMask", "RepeatImageBatch")
     }
     corrupt_vace_alpha["required_nodes"] = [
-        rc for rc in corrupt_vace_alpha.get("required_nodes", []) if rc != "ImageToMask"
+        rc
+        for rc in corrupt_vace_alpha.get("required_nodes", [])
+        if rc not in ("ImageToMask", "RepeatImageBatch")
     ]
     for node in corrupt_vace_alpha["workflow"].values():
         if node["class_type"] == "WanVaceToVideo":
@@ -256,6 +259,37 @@ def test_structural_validator_rejects_corrupted_templates(tmp_path: Path) -> Non
         match="clip_vision_output|inexistente|no soportad",
     ):
         validate_template_definition(corrupt_vace_clip)
+
+    # 13. (M2-SCR-018) Máscara única LoadImage -> ImageToMask -> WanVaceToVideo sin
+    # RepeatImageBatch falla validación estructural (evita padding blanco 1.0 en frames 1..N-1)
+    corrupt_vace_single_mask = copy.deepcopy(vace_inpaint_def)
+    corrupt_vace_single_mask["workflow"] = {
+        nid: n
+        for nid, n in corrupt_vace_single_mask["workflow"].items()
+        if n["class_type"] != "RepeatImageBatch"
+    }
+    corrupt_vace_single_mask["required_nodes"] = [
+        rc for rc in corrupt_vace_single_mask.get("required_nodes", []) if rc != "RepeatImageBatch"
+    ]
+    for node in corrupt_vace_single_mask["workflow"].values():
+        if node["class_type"] == "ImageToMask":
+            node["inputs"]["image"] = [load_img_id, 0]
+    with pytest.raises(
+        TemplateValidationError,
+        match="RepeatImageBatch|repetición temporal|1\\.0|blanco",
+    ):
+        validate_template_definition(corrupt_vace_single_mask)
+
+    # 14. (M2-SCR-018) RepeatImageBatch con amount distinto de WanVaceToVideo.length falla
+    corrupt_vace_bad_amount = copy.deepcopy(vace_inpaint_def)
+    for node in corrupt_vace_bad_amount["workflow"].values():
+        if node["class_type"] == "RepeatImageBatch":
+            node["inputs"]["amount"] = 1
+    with pytest.raises(
+        TemplateValidationError,
+        match="RepeatImageBatch|amount|length",
+    ):
+        validate_template_definition(corrupt_vace_bad_amount)
 
 
 def test_video_templates_adhere_to_pinned_node_contracts() -> None:
@@ -299,8 +333,11 @@ def test_video_templates_adhere_to_pinned_node_contracts() -> None:
                     f"{tpl_id}: KSamplerAdvanced no acepta 'offload' en ComfyUI pinneado"
                 )
 
-    # M2-SCR-009: vace_inpaint conecta control_masks (plural) leyendo canal RGB vía ImageToMask
-    inpaint_wf = registry.get_raw_definition("vace_inpaint")["workflow"]
+    # M2-SCR-009 + M2-SCR-018: vace_inpaint repite la máscara espacial a {{frames}} con
+    # RepeatImageBatch antes de extraer el canal RGB con ImageToMask hacia control_masks
+    inpaint_def = registry.get_raw_definition("vace_inpaint")
+    assert "RepeatImageBatch" in inpaint_def.get("required_nodes", [])
+    inpaint_wf = inpaint_def["workflow"]
     vace_inpaint_nodes = [
         n for n in inpaint_wf.values() if n["class_type"] == "WanVaceToVideo"
     ]
@@ -314,7 +351,12 @@ def test_video_templates_adhere_to_pinned_node_contracts() -> None:
     assert mask_src_node["class_type"] == "ImageToMask"
     assert mask_link[1] == 0
     assert mask_src_node["inputs"]["channel"] in ("red", "green", "blue")
-    img_link = mask_src_node["inputs"]["image"]
+    repeat_link = mask_src_node["inputs"]["image"]
+    assert isinstance(repeat_link, list) and repeat_link[1] == 0
+    repeat_node = inpaint_wf[repeat_link[0]]
+    assert repeat_node["class_type"] == "RepeatImageBatch"
+    assert repeat_node["inputs"]["amount"] == inpaint_inputs["length"] == "{{frames}}"
+    img_link = repeat_node["inputs"]["image"]
     assert isinstance(img_link, list) and img_link[1] == 0
     assert inpaint_wf[img_link[0]]["class_type"] == "LoadImage"
 
@@ -580,8 +622,85 @@ def test_submit_template_history_succeeds_view_fails_marks_job_error_and_emits_s
     assert any(p.get("status") == "error" for p in job_events_for_id)
     assert not any(p.get("status") == "done" for p in job_events_for_id)
 
-    # La galería del proyecto no debe tener salidas huérfanas ni silenciosas
+    # Verificar que la galería del proyecto no debe tener salidas huérfanas ni silenciosas
     gallery_resp = client.get(f"/studio/api/projects/{project_id}/gallery")
     assert gallery_resp.status_code == 200
     assert gallery_resp.json()["assets"] == []
+
+
+def test_vace_inpaint_temporal_mask_broadcast_data_path() -> None:
+    """Regresión M2-SCR-018: el workflow renderizado de vace_inpaint propaga la máscara espacial
+    a los N fotogramas solicitados mediante RepeatImageBatch -> ImageToMask -> WanVaceToVideo,
+    preservando las regiones negras protegidas (0.0) en todos los frames sin caer en el padding
+    blanco (1.0) de WanVaceToVideo.
+    """
+    for target_frames in (81, 49):
+        graph = render_template_workflow(
+            "vace_inpaint",
+            {
+                "prompt": "Reemplazar cartel luminoso por ventana gótica",
+                "frames": target_frames,
+                "mask_input": "mascara_ventana.png",
+            },
+            project_id="proj_vace_temporal",
+        )
+
+        by_class = {node["class_type"]: (nid, node) for nid, node in graph.items()}
+        assert "LoadImage" in by_class
+        assert "RepeatImageBatch" in by_class
+        assert "ImageToMask" in by_class
+        assert "WanVaceToVideo" in by_class
+
+        load_id, load_node = by_class["LoadImage"]
+        repeat_id, repeat_node = by_class["RepeatImageBatch"]
+        mask_id, mask_node = by_class["ImageToMask"]
+        _, vace_node = by_class["WanVaceToVideo"]
+
+        assert load_node["inputs"]["image"] == "mascara_ventana.png"
+        assert repeat_node["inputs"]["image"] == [load_id, 0]
+        assert repeat_node["inputs"]["amount"] == target_frames
+        assert mask_node["inputs"]["image"] == [repeat_id, 0]
+        assert mask_node["inputs"]["channel"] == "red"
+        assert vace_node["inputs"]["control_masks"] == [mask_id, 0]
+        assert vace_node["inputs"]["length"] == target_frames
+
+        # Simular la semántica exacta de los nodos pinneados en ComfyUI bdc63e7:
+        # 1) LoadImage entrega 1 fotograma RGB (B=1, H=2, W=2, C=3) con mitad izquierda negra
+        #    protegida (0.0) y mitad derecha blanca editable (1.0).
+        single_rgb_image = [
+            [
+                [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+                [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]],
+            ]
+        ]
+        # 2) RepeatImageBatch.execute: image.repeat((amount, 1, 1, 1))
+        amount = int(repeat_node["inputs"]["amount"])
+        repeated_images = [copy.deepcopy(single_rgb_image[0]) for _ in range(amount)]
+        assert len(repeated_images) == target_frames
+
+        # 3) ImageToMask.execute: image[:, :, :, channels.index(channel)] -> (B, H, W)
+        channels = ["red", "green", "blue", "alpha"]
+        ch_idx = channels.index(mask_node["inputs"]["channel"])
+        control_masks = [
+            [[pixel[ch_idx] for pixel in row] for row in frame]
+            for frame in repeated_images
+        ]
+        assert len(control_masks) == target_frames
+
+        # 4) WanVaceToVideo.execute: si control_masks.shape[0] < length, rellena con 1.0
+        vace_length = int(vace_node["inputs"]["length"])
+        vace_masks = list(control_masks[:vace_length])
+        if len(vace_masks) < vace_length:
+            white_frame = [[1.0, 1.0], [1.0, 1.0]]
+            vace_masks.extend(
+                copy.deepcopy(white_frame) for _ in range(vace_length - len(vace_masks))
+            )
+
+        assert len(vace_masks) == target_frames
+        # Todos los fotogramas 0..target_frames-1 conservan 0.0 en la región protegida
+        for frame_idx, mask_frame in enumerate(vace_masks):
+            assert mask_frame == [[0.0, 1.0], [0.0, 1.0]], (
+                f"Frame {frame_idx} perdió la máscara espacial protegida: {mask_frame}"
+            )
+
 

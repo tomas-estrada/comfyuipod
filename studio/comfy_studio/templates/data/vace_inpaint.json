@@ -29,6 +29,7 @@
     "VAELoader",
     "VHS_LoadVideo",
     "LoadImage",
+    "RepeatImageBatch",
     "ImageToMask",
     "CLIPTextEncode",
     "WanVaceToVideo",
@@ -222,16 +223,26 @@
       }
     },
     "7": {
-      "class_type": "ImageToMask",
+      "class_type": "RepeatImageBatch",
       "inputs": {
         "image": ["6", 0],
+        "amount": "{{frames}}"
+      },
+      "_meta": {
+        "title": "Repetir Máscara Espacial a Longitud Temporal"
+      }
+    },
+    "8": {
+      "class_type": "ImageToMask",
+      "inputs": {
+        "image": ["7", 0],
         "channel": "red"
       },
       "_meta": {
         "title": "Convertir Canal RGB de Máscara Blanco/Negro"
       }
     },
-    "8": {
+    "9": {
       "class_type": "CLIPTextEncode",
       "inputs": {
         "text": "{{prompt}}",
@@ -241,7 +252,7 @@
         "title": "Prompt Positivo"
       }
     },
-    "9": {
+    "10": {
       "class_type": "CLIPTextEncode",
       "inputs": {
         "text": "{{negative_prompt}}",
@@ -251,14 +262,14 @@
         "title": "Prompt Negativo"
       }
     },
-    "10": {
+    "11": {
       "class_type": "WanVaceToVideo",
       "inputs": {
-        "positive": ["8", 0],
-        "negative": ["9", 0],
+        "positive": ["9", 0],
+        "negative": ["10", 0],
         "vae": ["4", 0],
         "control_video": ["5", 0],
-        "control_masks": ["7", 0],
+        "control_masks": ["8", 0],
         "width": "{{width}}",
         "height": "{{height}}",
         "length": "{{frames}}",
@@ -269,7 +280,7 @@
         "title": "Codificación VACE Inpaint (480p)"
       }
     },
-    "11": {
+    "12": {
       "class_type": "KSamplerAdvanced",
       "inputs": {
         "add_noise": "enable",
@@ -282,15 +293,15 @@
         "end_at_step": 2,
         "return_with_leftover_noise": "enable",
         "model": ["1", 0],
-        "positive": ["10", 0],
-        "negative": ["10", 1],
-        "latent_image": ["10", 2]
+        "positive": ["11", 0],
+        "negative": ["11", 1],
+        "latent_image": ["11", 2]
       },
       "_meta": {
         "title": "Muestreo Experto High-Noise (Offload)"
       }
     },
-    "12": {
+    "13": {
       "class_type": "KSamplerAdvanced",
       "inputs": {
         "add_noise": "disable",
@@ -303,28 +314,28 @@
         "end_at_step": "{{steps}}",
         "return_with_leftover_noise": "disable",
         "model": ["2", 0],
-        "positive": ["10", 0],
-        "negative": ["10", 1],
-        "latent_image": ["11", 0]
+        "positive": ["11", 0],
+        "negative": ["11", 1],
+        "latent_image": ["12", 0]
       },
       "_meta": {
         "title": "Muestreo Experto Low-Noise (Offload)"
       }
     },
-    "13": {
+    "14": {
       "class_type": "VAEDecode",
       "inputs": {
-        "samples": ["12", 0],
+        "samples": ["13", 0],
         "vae": ["4", 0]
       },
       "_meta": {
         "title": "Decodificar Latente a Fotogramas"
       }
     },
-    "14": {
+    "15": {
       "class_type": "VHS_VideoCombine",
       "inputs": {
-        "images": ["13", 0],
+        "images": ["14", 0],
         "frame_rate": 16,
         "loop_count": 0,
         "filename_prefix": "{{output_prefix}}",

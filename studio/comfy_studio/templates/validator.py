@@ -63,6 +63,11 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": (),
         "outputs": 1,  # MASK
     },
+    "RepeatImageBatch": {
+        "required_inputs": ("image", "amount"),
+        "optional_inputs": (),
+        "outputs": 1,  # IMAGE (batch repetido temporalmente)
+    },
     "ImageToMask": {
         "required_inputs": ("image", "channel"),
         "optional_inputs": (),
@@ -529,17 +534,70 @@ def validate_template_definition(raw_def: dict[str, Any]) -> dict[str, Any]:
                 )
         if class_type == "WanVaceToVideo" and "control_masks" in inputs:
             mask_ref = inputs["control_masks"]
-            if (
-                isinstance(mask_ref, list)
-                and len(mask_ref) == 2
-                and workflow.get(mask_ref[0], {}).get("class_type") == "LoadImage"
-                and mask_ref[1] == 1
-            ):
+            if not isinstance(mask_ref, list) or len(mask_ref) != 2:
+                raise TemplateValidationError(
+                    f"Plantilla {template_id!r}: el nodo {node_id!r} (WanVaceToVideo) "
+                    "debe conectar 'control_masks' mediante un enlace [node_id, slot_idx]."
+                )
+            mask_src_id, mask_src_slot = mask_ref[0], mask_ref[1]
+            mask_src_node = workflow.get(mask_src_id, {})
+            mask_src_class = mask_src_node.get("class_type")
+            if mask_src_class == "LoadImage" and mask_src_slot == 1:
                 raise TemplateValidationError(
                     f"Plantilla {template_id!r}: el nodo {node_id!r} (WanVaceToVideo) "
                     "conecta 'control_masks' al slot 1 (canal alfa) de LoadImage; "
                     "para máscaras RGB blanco/negro debe convertir el canal mediante "
-                    "ImageToMask o LoadImageMask."
+                    "ImageToMask tras repetir temporalmente con RepeatImageBatch."
+                )
+            if mask_src_class != "ImageToMask" or mask_src_slot != 0:
+                raise TemplateValidationError(
+                    f"Plantilla {template_id!r}: el nodo {node_id!r} (WanVaceToVideo) "
+                    "debe recibir 'control_masks' desde 'ImageToMask' (slot 0) precedido por "
+                    "'RepeatImageBatch'; una máscara única se rellena con 1.0 (blanco/editable) "
+                    "en los fotogramas posteriores."
+                )
+            mask_channel = mask_src_node.get("inputs", {}).get("channel")
+            if mask_channel not in ("red", "green", "blue"):
+                raise TemplateValidationError(
+                    f"Plantilla {template_id!r}: el nodo {mask_src_id!r} (ImageToMask) "
+                    f"debe extraer un canal RGB ('red', 'green' o 'blue') en lugar de "
+                    f"{mask_channel!r}."
+                )
+            img_ref = mask_src_node.get("inputs", {}).get("image")
+            if not isinstance(img_ref, list) or len(img_ref) != 2:
+                raise TemplateValidationError(
+                    f"Plantilla {template_id!r}: el nodo {mask_src_id!r} (ImageToMask) "
+                    "debe recibir 'image' desde un nodo 'RepeatImageBatch'."
+                )
+            repeat_id, repeat_slot = img_ref[0], img_ref[1]
+            repeat_node = workflow.get(repeat_id, {})
+            repeat_class = repeat_node.get("class_type")
+            if repeat_class != "RepeatImageBatch" or repeat_slot != 0:
+                raise TemplateValidationError(
+                    f"Plantilla {template_id!r}: la máscara hacia {node_id!r} (WanVaceToVideo) "
+                    f"proviene de {repeat_class!r} sin repetición temporal 'RepeatImageBatch'; "
+                    "una máscara espacial única se rellena con 1.0 (blanco/editable) en el "
+                    "resto de frames."
+                )
+            vace_length = inputs.get("length")
+            repeat_amount = repeat_node.get("inputs", {}).get("amount")
+            if repeat_amount != vace_length:
+                raise TemplateValidationError(
+                    f"Plantilla {template_id!r}: el nodo {repeat_id!r} (RepeatImageBatch) "
+                    f"tiene amount={repeat_amount!r} distinto de length={vace_length!r} en "
+                    f"WanVaceToVideo ({node_id!r}); deben coincidir para cubrir todos los frames "
+                    "sin padding blanco."
+                )
+            repeat_img_ref = repeat_node.get("inputs", {}).get("image")
+            if (
+                not isinstance(repeat_img_ref, list)
+                or len(repeat_img_ref) != 2
+                or workflow.get(repeat_img_ref[0], {}).get("class_type") != "LoadImage"
+                or repeat_img_ref[1] != 0
+            ):
+                raise TemplateValidationError(
+                    f"Plantilla {template_id!r}: el nodo {repeat_id!r} (RepeatImageBatch) "
+                    "debe recibir 'image' desde el slot 0 (IMAGE) de 'LoadImage'."
                 )
 
     # Verificar que ningún nodo no-terminal esté desconectado del resto del grafo

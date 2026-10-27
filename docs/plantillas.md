@@ -32,7 +32,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 - **Entradas principales (`inputs`)**:
   - `prompt` (*string*, obligatorio): descripción visual del objeto o cambio a introducir en la zona enmascarada.
   - `video_asset_id` / `video_input` (*string*): asset de vídeo base del proyecto (`VHS_LoadVideo`).
-  - `mask_asset_id` / `mask_input` (*string*): asset de máscara en blanco y negro (`LoadImage` + `ImageToMask` leyendo el canal RGB `"red"` hacia `control_masks` de `WanVaceToVideo`).
+  - `mask_asset_id` / `mask_input` (*string*): asset de máscara en blanco y negro (`LoadImage` → `RepeatImageBatch` con `amount={{frames}}` → `ImageToMask` leyendo el canal RGB `"red"` hacia `control_masks` de `WanVaceToVideo`, garantizando la cobertura temporal de todos los fotogramas sin caer en el padding blanco `1.0`).
   - `strength` (*number*, `0.0–1.0`): intensidad del condicionamiento VACE (`WanVaceToVideo`).
 - **Defaults de rendimiento**: `832x480` (`480p`), `81` frames (`16` fps), `steps=4` (`2+2`), `cfg=1.0`, `strength=0.85`, `offload=true`, `fp8_scaled`.
 
@@ -133,7 +133,7 @@ python -m comfy_studio.templates
    - `sdxl_image`: `width == 1024`, `height == 1024`, `steps == 25`.
 3. **Integridad del grafo ComfyUI API-format y contratos pinneados**:
    - Todos los `class_type` pertenecen al catálogo `KNOWN_NODE_SPECS`, declaran todas sus entradas obligatorias (`required_inputs`, incluyendo `pingpong` en `VHS_VideoCombine`) sin valores `null` desconectados y rechazan cualquier entrada no declarada en `required_inputs ∪ optional_inputs` del nodo pinneado (p. ej. `clip_vision_output` o `control_mask` singular en `WanVaceToVideo`, u `offload` en `KSamplerAdvanced`).
-   - En `WanVaceToVideo`, `control_masks` no puede alimentarse directamente del slot 1 (canal alfa) de `LoadImage`; debe convertirse el canal RGB mediante `ImageToMask` o `LoadImageMask`.
+   - En `WanVaceToVideo`, `control_masks` no puede alimentarse directamente del slot 1 (canal alfa) de `LoadImage` ni de una máscara espacial única; la imagen cargada por `LoadImage` debe repetirse a la longitud temporal solicitada mediante `RepeatImageBatch` (`amount == length`) antes de extraer el canal RGB con `ImageToMask` (evitando que `WanVaceToVideo` rellene los frames restantes con `1.0` blanco/editable).
    - Todo enlace `["node_id", slot_idx]` apunta a un nodo existente en el mismo workflow con índice de salida entero `>= 0`.
    - Ausencia de ciclos dirigidos (DAG válido).
    - Existencia de al menos un nodo terminal de salida (`VHS_VideoCombine` o `SaveImage`) cuyo `filename_prefix` contiene `{{output_prefix}}` o `{{project_id}}`.
