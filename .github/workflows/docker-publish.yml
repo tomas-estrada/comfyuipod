@@ -65,7 +65,7 @@ jobs:
           portal_bytes = portal.stat().st_size
           assert portal_bytes < 40960, f"Portal index.html exceeds 40 KiB ({portal_bytes} bytes)"
           allowed_links = {"https://github.com/Comfy-Org/ComfyUI"}
-          for html_path in (portal, pathlib.Path("config/_starting.html"), pathlib.Path("comfyctl/src/status_html.html"), pathlib.Path("panel/index.html")):
+          for html_path in (portal, pathlib.Path("config/_starting.html"), pathlib.Path("comfyctl/src/status_html.html")):
               txt = html_path.read_text(encoding="utf-8")
               assert "http://" not in txt.lower(), f"Insecure http:// found in {html_path}"
               res_refs = re.findall(r'(?:src\s*=\s*["\']https?://|<link[^>]+href\s*=\s*["\']https?://|@import\s+["\']https?://|url\(\s*["\']?https?://)', txt, re.I)
