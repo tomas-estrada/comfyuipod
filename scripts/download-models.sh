@@ -379,7 +379,6 @@ run_phase3() {
     log "Manifiesto: ${STUDIO_MANIFEST} (146.05 GB base; +18.41 GB con Animate opt-in)."
     log "======================================================================"
 
-    local data_dir_prefix='${COMFY_DATA_DIR}/'
     while IFS=$'\t' read -r repo_id remote_path target_dir filename _expected_bytes; do
         [ -z "${repo_id}" ] && continue
         local resolved_dir
@@ -390,8 +389,8 @@ run_phase3() {
             models)
                 resolved_dir="${MODELS_DIR}"
                 ;;
-            "${data_dir_prefix}"*)
-                resolved_dir="${COMFY_DATA_DIR}/${target_dir#"${data_dir_prefix}"}"
+            \$\{COMFY_DATA_DIR\}/*)
+                resolved_dir="${COMFY_DATA_DIR}/${target_dir#*/}"
                 ;;
             custom_nodes/*)
                 resolved_dir="${COMFY_APP_DIR}/${target_dir}"
