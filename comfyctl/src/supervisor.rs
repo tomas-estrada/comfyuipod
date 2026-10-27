@@ -315,7 +315,7 @@ pub fn build_studio_server_command(cfg: &RuntimeConfig) -> Command {
 try:
     sys.argv = ["comfy_studio.server"] + sys.argv[1:]
     runpy.run_module("comfy_studio.server", run_name="__main__")
-except ModuleNotFoundError:
+except ImportError:
     port = int(os.environ.get("STUDIO_SERVER_PORT", "18190"))
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -331,7 +331,7 @@ except ModuleNotFoundError:
                 self.end_headers()
         def log_message(self, fmt, *args):
             pass
-    http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
+    http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
 "#;
         cmd.args(["-c", STUDIO_BOOTSTRAP_PY]);
     }
