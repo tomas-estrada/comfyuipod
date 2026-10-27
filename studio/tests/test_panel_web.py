@@ -745,6 +745,14 @@ const pendingStreamStarted = new Promise((res) => {
 const pendingStreamGate = new Promise((res) => {
   pendingGateResolve = res;
 });
+let pendingBDetailGateResolve = null;
+let bDetailHeldOnce = false;
+const pendingBDetailStarted = new Promise((res) => {
+  global.__notifyBDetailStarted = res;
+});
+const pendingBDetailGate = new Promise((res) => {
+  pendingBDetailGateResolve = res;
+});
 
 function makeJsonResponse(status, obj) {
   const text = JSON.stringify(obj);
@@ -801,6 +809,11 @@ async function fetchImpl(url, options = {}) {
   const projMatch = path.match(/^\/studio\/api\/projects\/([^/]+)$/);
   if (method === "GET" && projMatch) {
     const pid = decodeURIComponent(projMatch[1]);
+    if (payload.holdProjectBDetailGet && pid === payload.projectBId && !bDetailHeldOnce) {
+      bDetailHeldOnce = true;
+      global.__notifyBDetailStarted();
+      await pendingBDetailGate;
+    }
     return makeJsonResponse(200, projectsById[pid]);
   }
   const chatMatch = path.match(/^\/studio\/api\/projects\/([^/]+)\/chat$/);
@@ -874,14 +887,18 @@ async function flushAsync(ticks = 25) {
   }
 }
 
-async function selectProjectInDom(projectId) {
+async function selectProjectInDomNoWait(projectId) {
   const listRoot = document.getElementById("projects-list");
   const btns = listRoot.querySelectorAll('[data-action="select-project"]');
   const targetBtn = btns.find((b) => b.getAttribute("data-project-id") === projectId);
   if (!targetBtn) {
     throw new Error(`No select-project button found for ${projectId}`);
   }
-  await targetBtn.dispatchAsync("click", { target: targetBtn });
+  return targetBtn.dispatchAsync("click", { target: targetBtn });
+}
+
+async function selectProjectInDom(projectId) {
+  await selectProjectInDomNoWait(projectId);
   await flushAsync();
 }
 
@@ -911,6 +928,63 @@ async function submitChatMessageInDom(text) {
   await pendingStreamStarted;
   await flushAsync(5);
   const duringPendingInASnap = snapshotDom();
+
+  if (payload.holdProjectBDetailGet) {
+    const selectBPromise = selectProjectInDomNoWait(payload.projectBId);
+    await pendingBDetailStarted;
+    await flushAsync(5);
+    const whileBLoadingSnap = snapshotDom();
+
+    let bSubmitPromise = null;
+    let afterSubmitWhileBLoadingSnap = null;
+    if (payload.messageWhileBLoading) {
+      bSubmitPromise = submitChatMessageInDom(payload.messageWhileBLoading);
+      await flushAsync(5);
+      afterSubmitWhileBLoadingSnap = snapshotDom();
+    }
+    const postsBeforeReleaseBDetail = JSON.parse(JSON.stringify(chatPostLog));
+
+    let afterReturningToASnap = null;
+    if (payload.returnToAWhileBLoading) {
+      await selectProjectInDom(payload.projectAId);
+      afterReturningToASnap = snapshotDom();
+    }
+
+    pendingBDetailGateResolve();
+    await selectBPromise;
+    if (bSubmitPromise) {
+      await bSubmitPromise;
+    }
+    await flushAsync();
+    const afterBSubmissionResumesSnap = snapshotDom();
+
+    pendingGateResolve();
+    await firstTurnPromise;
+    await flushAsync();
+    const afterAFinishedSnap = snapshotDom();
+
+    let afterFinalSelectBSnap = null;
+    if (payload.selectBAfterAll) {
+      await selectProjectInDom(payload.projectBId);
+      afterFinalSelectBSnap = snapshotDom();
+    }
+
+    process.stdout.write(JSON.stringify({
+      initialSnap,
+      duringPendingInASnap,
+      whileBLoadingSnap,
+      afterSubmitWhileBLoadingSnap,
+      postsBeforeReleaseBDetail,
+      afterReturningToASnap,
+      afterBSubmissionResumesSnap,
+      afterAFinishedSnap,
+      afterFinalSelectBSnap,
+      chatPostLog,
+      chatGetLog,
+      chatsByProject,
+    }));
+    return;
+  }
 
   // Navegar a proyecto B mientras el turno de A sigue pendiente
   await selectProjectInDom(payload.projectBId);
@@ -1075,5 +1149,150 @@ def test_panel_chat_pending_turn_roundtrip_a_b_a_reloads_completed_history_of_a(
         f"Respuesta diferida para {proj_a['id']}: Turno de A tras ida y vuelta" in m
         for m in result["afterAFinishedSnap"]["visibleMessages"]
     )
+
+
+def test_panel_chat_delayed_b_selection_submission_never_routes_or_renders_in_a(
+    client: TestClient,
+) -> None:
+    """Regresión M2-SCR-020: turno de A pendiente -> seleccionar B mientras su GET de detalle
+    está demorado -> enviar mensaje mientras B posee el DOM del chat (send habilitado) ->
+    volver a A antes de que el GET de detalle de B se libere -> liberar el GET de B ->
+    el mensaje enviado desde la conversación de B DEBE publicarse en B (JAMÁS en A) y
+    NUNCA aparecer en el DOM de A."""
+    proj_b = client.post("/studio/api/projects", json={"name": "Project B"}).json()
+    proj_a = client.post("/studio/api/projects", json={"name": "Project A"}).json()
+
+    result = _run_panel_dom_harness(
+        {
+            "appJsPath": str(PANEL_DIR / "app.js"),
+            "projects": [proj_a, proj_b],
+            "initialChats": {
+                proj_a["id"]: [],
+                proj_b["id"]: [],
+            },
+            "projectAId": proj_a["id"],
+            "projectBId": proj_b["id"],
+            "holdFirstTurn": True,
+            "firstMessageInA": "Initial pending A turn",
+            "holdProjectBDetailGet": True,
+            "messageWhileBLoading": "Message submitted while B conversation is displayed",
+            "returnToAWhileBLoading": True,
+            "selectBAfterAll": True,
+        }
+    )
+
+    # 1. Mientras el GET de detalle de B sigue retenido, B posee el DOM del chat
+    #    y el botón de envío está habilitado.
+    assert result["whileBLoadingSnap"]["chatDomProjectIdAttr"] == proj_b["id"]
+    assert result["whileBLoadingSnap"]["sendBtnDisabled"] is False
+    assert "Project B" in result["whileBLoadingSnap"]["activeBadgeText"]
+
+    # 2. Al enviar el mensaje mientras B posee el DOM del chat, el envío de B queda
+    #    pendiente (botón deshabilitado en B).
+    assert result["afterSubmitWhileBLoadingSnap"]["chatDomProjectIdAttr"] == proj_b["id"]
+    assert result["afterSubmitWhileBLoadingSnap"]["sendBtnDisabled"] is True
+
+    # 3. Al regresar a A antes de liberar el GET de B, A vuelve a ser el proyecto activo en el DOM
+    assert result["afterReturningToASnap"]["activeProjectIdCode"] == proj_a["id"]
+    assert result["afterReturningToASnap"]["chatDomProjectIdAttr"] == proj_a["id"]
+    assert all(
+        "Message submitted while B conversation is displayed" not in m
+        for m in result["afterReturningToASnap"]["visibleMessages"]
+    )
+
+    # 4. Al liberar el GET de detalle de B y reanudarse el envío encolado de B:
+    #    - el POST debe dirigirse a B (JAMÁS a A)
+    #    - el mensaje de B NUNCA aparece en el DOM de A
+    assert len(result["chatPostLog"]) == 2
+    assert result["chatPostLog"][0] == {
+        "project_id": proj_a["id"],
+        "message": "Initial pending A turn",
+    }
+    assert result["chatPostLog"][1] == {
+        "project_id": proj_b["id"],
+        "message": "Message submitted while B conversation is displayed",
+    }
+    assert result["afterBSubmissionResumesSnap"]["activeProjectIdCode"] == proj_a["id"]
+    assert result["afterBSubmissionResumesSnap"]["chatDomProjectIdAttr"] == proj_a["id"]
+    assert all(
+        "Message submitted while B conversation is displayed" not in m
+        for m in result["afterBSubmissionResumesSnap"]["visibleMessages"]
+    )
+
+    # 5. Al finalizar también el turno original de A, A contiene solo su turno y B contiene el suyo
+    assert result["afterAFinishedSnap"]["activeProjectIdCode"] == proj_a["id"]
+    assert result["afterAFinishedSnap"]["chatDomProjectIdAttr"] == proj_a["id"]
+    assert any(
+        "Initial pending A turn" in m
+        for m in result["afterAFinishedSnap"]["visibleMessages"]
+    )
+    assert all(
+        "Message submitted while B conversation is displayed" not in m
+        for m in result["afterAFinishedSnap"]["visibleMessages"]
+    )
+    assert result["afterFinalSelectBSnap"]["activeProjectIdCode"] == proj_b["id"]
+    assert result["afterFinalSelectBSnap"]["chatDomProjectIdAttr"] == proj_b["id"]
+    assert any(
+        "Message submitted while B conversation is displayed" in m
+        for m in result["afterFinalSelectBSnap"]["visibleMessages"]
+    )
+    expected_b_reply = (
+        f"Respuesta inmediata para {proj_b['id']}: "
+        "Message submitted while B conversation is displayed"
+    )
+    assert any(
+        expected_b_reply in m
+        for m in result["afterFinalSelectBSnap"]["visibleMessages"]
+    )
+
+
+def test_panel_chat_delayed_b_selection_submission_staying_on_b_preserves_history_and_new_turn(
+    client: TestClient,
+) -> None:
+    """Regresión M2-SCR-020: si el usuario envía un mensaje en B mientras el GET de detalle
+    de B está demorado y permanece en B cuando el GET se libera, el envío va a B y el DOM
+    de B conserva tanto el historial previo de B como el nuevo turno completado."""
+    proj_b = client.post("/studio/api/projects", json={"name": "Project B Stay"}).json()
+    proj_a = client.post("/studio/api/projects", json={"name": "Project A Orig"}).json()
+
+    result = _run_panel_dom_harness(
+        {
+            "appJsPath": str(PANEL_DIR / "app.js"),
+            "projects": [proj_a, proj_b],
+            "initialChats": {
+                proj_a["id"]: [],
+                proj_b["id"]: [{"role": "user", "content": "Historial previo de B"}],
+            },
+            "projectAId": proj_a["id"],
+            "projectBId": proj_b["id"],
+            "holdFirstTurn": True,
+            "firstMessageInA": "Turno inicial de A",
+            "holdProjectBDetailGet": True,
+            "messageWhileBLoading": "Nuevo turno enviado en B durante carga",
+            "returnToAWhileBLoading": False,
+            "selectBAfterAll": False,
+        }
+    )
+
+    assert len(result["chatPostLog"]) == 2
+    assert result["chatPostLog"][1] == {
+        "project_id": proj_b["id"],
+        "message": "Nuevo turno enviado en B durante carga",
+    }
+    assert result["afterBSubmissionResumesSnap"]["activeProjectIdCode"] == proj_b["id"]
+    assert result["afterBSubmissionResumesSnap"]["chatDomProjectIdAttr"] == proj_b["id"]
+    assert any(
+        "Historial previo de B" in m
+        for m in result["afterBSubmissionResumesSnap"]["visibleMessages"]
+    )
+    assert any(
+        "Nuevo turno enviado en B durante carga" in m
+        for m in result["afterBSubmissionResumesSnap"]["visibleMessages"]
+    )
+    assert any(
+        f"Respuesta inmediata para {proj_b['id']}: Nuevo turno enviado en B durante carga" in m
+        for m in result["afterBSubmissionResumesSnap"]["visibleMessages"]
+    )
+
 
 

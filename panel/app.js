@@ -757,13 +757,19 @@
         const cleanMsg = String(messageText || "").trim();
         if (!cleanMsg) return;
 
-        if (state.pendingSelectProjectPromise) {
-            await state.pendingSelectProjectPromise;
-        }
-        const projectId = await ensureActiveProject();
+        let projectId = state.chatDomProjectId || state.activeProjectId;
+        const capturedKeyframeIds = Array.from(state.selectedKeyframeIds);
+        const pendingSelectAtSubmit = state.pendingSelectProjectPromise;
+
         if (!projectId) {
-            setToast("Crea un proyecto antes de enviar un mensaje al agente.", "error");
-            return;
+            if (pendingSelectAtSubmit) {
+                await pendingSelectAtSubmit;
+            }
+            projectId = await ensureActiveProject();
+            if (!projectId) {
+                setToast("Crea un proyecto antes de enviar un mensaje al agente.", "error");
+                return;
+            }
         }
 
         const listEl = document.getElementById("chat-messages-list");
@@ -771,29 +777,13 @@
         const streamCheckbox = document.getElementById("chat-stream-checkbox");
         const useStream = streamCheckbox ? streamCheckbox.checked : true;
 
-        if (state.chatDomProjectId !== projectId) {
-            await refreshChatHistory(projectId);
-        }
-
-        state.chatDomEpoch += 1;
-        const turnDomEpoch = state.chatDomEpoch;
-        state.chatDomProjectId = projectId;
-
-        if (listEl) {
-            listEl.setAttribute("data-chat-project-id", projectId);
-            const sysPlaceholder = listEl.querySelector(".chat-msg-system");
-            if (sysPlaceholder) {
-                sysPlaceholder.remove();
-            }
-            const userBubble = document.createElement("div");
-            userBubble.className = "chat-msg chat-msg-user";
-            userBubble.setAttribute("data-project-id", projectId);
-            userBubble.innerHTML = `
-                <span class="chat-msg-role">Tú (Director)</span>
-                <div class="chat-msg-text">${escapeHtml(cleanMsg)}</div>
-            `;
-            listEl.appendChild(userBubble);
-        }
+        const userBubble = document.createElement("div");
+        userBubble.className = "chat-msg chat-msg-user";
+        userBubble.setAttribute("data-project-id", projectId);
+        userBubble.innerHTML = `
+            <span class="chat-msg-role">Tú (Director)</span>
+            <div class="chat-msg-text">${escapeHtml(cleanMsg)}</div>
+        `;
 
         const assistantBubble = document.createElement("div");
         assistantBubble.className = "chat-msg chat-msg-assistant";
@@ -803,11 +793,32 @@
             <span class="chat-msg-role">Agente Studio (Streaming SSE)</span>
             <div class="chat-msg-text" data-stream-tokens="">Pensando…</div>
         `;
-        if (listEl) {
-            listEl.appendChild(assistantBubble);
+        const tokenContainer = assistantBubble.querySelector("[data-stream-tokens]");
+
+        let turnDomEpoch = state.chatDomEpoch;
+
+        function mountTurnBubblesInDom(advanceEpoch) {
+            if (!listEl || state.activeProjectId !== projectId) {
+                return;
+            }
+            if (advanceEpoch) {
+                state.chatDomEpoch += 1;
+                turnDomEpoch = state.chatDomEpoch;
+            }
+            state.chatDomProjectId = projectId;
+            listEl.setAttribute("data-chat-project-id", projectId);
+            const sysPlaceholder = listEl.querySelector(".chat-msg-system");
+            if (sysPlaceholder) {
+                sysPlaceholder.remove();
+            }
+            if (!listEl.contains(userBubble)) {
+                listEl.appendChild(userBubble);
+            }
+            if (!listEl.contains(assistantBubble)) {
+                listEl.appendChild(assistantBubble);
+            }
             listEl.scrollTop = listEl.scrollHeight;
         }
-        const tokenContainer = assistantBubble.querySelector("[data-stream-tokens]");
 
         function isOriginConversationDisplayed() {
             return Boolean(
@@ -820,20 +831,49 @@
             );
         }
 
-        if (statusEl && isOriginConversationDisplayed()) {
-            statusEl.textContent = "Transmitiendo turno SSE con el agente…";
-        }
         state.pendingChatByProject[projectId] = getPendingChatCount(projectId) + 1;
         syncChatControlsState();
 
-        const validProjectImageIds = new Set(
-            state.assets.filter((a) => a.kind === "image").map((a) => a.id)
-        );
-        const assetIds = Array.from(state.selectedKeyframeIds).filter((id) =>
-            validProjectImageIds.has(id)
-        );
+        if (state.activeProjectId === projectId && state.chatDomProjectId === projectId) {
+            mountTurnBubblesInDom(!pendingSelectAtSubmit);
+            if (statusEl) {
+                statusEl.textContent = "Transmitiendo turno SSE con el agente…";
+            }
+        }
 
         try {
+            if (pendingSelectAtSubmit) {
+                await pendingSelectAtSubmit;
+            }
+            while (state.activeProjectId === projectId && state.pendingSelectProjectPromise) {
+                await state.pendingSelectProjectPromise;
+            }
+
+            if (state.activeProjectId === projectId) {
+                if (state.chatDomProjectId !== projectId) {
+                    await refreshChatHistory(projectId);
+                }
+                if (state.activeProjectId === projectId) {
+                    if (!listEl || !listEl.contains(assistantBubble) || pendingSelectAtSubmit) {
+                        mountTurnBubblesInDom(true);
+                    }
+                    if (statusEl && isOriginConversationDisplayed()) {
+                        statusEl.textContent = "Transmitiendo turno SSE con el agente…";
+                    }
+                }
+            }
+
+            const projectAssets =
+                state.activeProjectDetail && state.activeProjectDetail.id === projectId
+                    ? state.assets
+                    : [];
+            const validProjectImageIds = new Set(
+                projectAssets.filter((a) => a.kind === "image").map((a) => a.id)
+            );
+            const assetIds = capturedKeyframeIds.filter((id) =>
+                validProjectImageIds.has(id)
+            );
+
             const resp = await apiFetch(
                 `/studio/api/projects/${encodeURIComponent(projectId)}/chat`,
                 {
