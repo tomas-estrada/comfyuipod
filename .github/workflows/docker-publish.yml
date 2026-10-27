@@ -171,7 +171,7 @@ jobs:
           grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_studio.log"
           grep -q "FASE 3 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors" ]
-          [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_vace_high_noise_14B_fp8_scaled.safetensors" ]
+          [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors" ]
           [ -s "$tmp_root/studio_data/models/liveportrait/appearance_feature_extractor.safetensors" ]
           [ -s "$tmp_root/studio_data/models/whisper/faster-whisper-large-v3/model.bin" ]
           [ -s "$tmp_root/studio_data/models/whisper/aligners/wav2vec2-large-xlsr-53-spanish/pytorch_model.bin" ]
