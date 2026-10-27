@@ -8,8 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from comfy_studio.agent.tools import (
+    RenderTemplateParams,
     ToolContext,
     ToolExecutionError,
+    build_template_workflow,
     create_default_tool_belt,
 )
 from comfy_studio.comfyui_client import ComfyUIClient
@@ -345,4 +347,249 @@ async def test_enqueue_render_history_succeeds_view_fails_marks_job_error_and_em
 
     outputs = tool_context.store.list_assets(tool_context.project_id, category="outputs")
     assert outputs == []
+
+
+@pytest.mark.anyio
+async def test_enqueue_render_wan_i2v_resolves_project_asset_uploads_and_registers_gallery_scr005(
+    tool_context: ToolContext,
+    stub_comfyui_state: ComfyUIStubState,
+    studio_data_dir: Path,
+) -> None:
+    """Regresión M2-SCR-005: enqueue_render con wan_i2v (y VACE/FLF2V) resuelve el asset del
+    proyecto, lo sube a ComfyUI, inyecta el filename real subido en LoadImage/VHS_LoadVideo
+    (jamás el asset_id crudo), usa el prefijo del proyecto/job en filename_prefix y registra
+    la salida en la galería del proyecto.
+    """
+    pid = tool_context.project_id
+    store = tool_context.store
+    belt = create_default_tool_belt()
+
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0"
+        b"\x00\x00\x03\x01\x01\x00\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    vid_bytes = (
+        b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+        b"\x00\x00\x00\x08free\x00\x00\x00\x20mdatFAKEVIDEOFRAME"
+    )
+
+    img_asset = store.save_upload(
+        pid,
+        filename="retrato_marco_inicial.png",
+        content_type="image/png",
+        data=png_bytes,
+        max_upload_bytes=1024 * 1024,
+        category="uploads",
+    )
+    vid_asset = store.save_upload(
+        pid,
+        filename="toma_base_estudio.mp4",
+        content_type="video/mp4",
+        data=vid_bytes,
+        max_upload_bytes=1024 * 1024,
+        category="uploads",
+    )
+
+    # 1. wan_i2v con imagen subida al proyecto
+    res_i2v = await belt.execute(
+        "enqueue_render",
+        {
+            "template_id": "wan_i2v",
+            "params": {
+                "prompt": "Marco gira hacia la cámara bajo luces de neón",
+                "image_asset_id": img_asset["id"],
+            },
+        },
+        tool_context,
+    )
+
+    assert res_i2v["status"] == "done"
+    assert res_i2v["project_id"] == pid
+    assert res_i2v["template_id"] == "wan_i2v"
+    job_id = res_i2v["job_id"]
+
+    expected_uploaded_rel = f"{pid}/{img_asset['filename']}"
+    assert f"input/{expected_uploaded_rel}" in stub_comfyui_state.uploads
+    assert stub_comfyui_state.uploads[f"input/{expected_uploaded_rel}"] == png_bytes
+
+    assert len(stub_comfyui_state.prompts) == 1
+    i2v_graph = stub_comfyui_state.prompts[0]["prompt"]
+    load_image_nodes = [
+        n for n in i2v_graph.values() if n["class_type"] == "LoadImage"
+    ]
+    assert len(load_image_nodes) == 1
+    assert load_image_nodes[0]["inputs"]["image"] == expected_uploaded_rel
+    assert load_image_nodes[0]["inputs"]["image"] != img_asset["id"]
+
+    vhs_combine_nodes = [
+        n for n in i2v_graph.values() if n["class_type"] == "VHS_VideoCombine"
+    ]
+    assert len(vhs_combine_nodes) == 1
+    expected_prefix = f"projects/{pid}/outputs/wan_i2v_{job_id}"
+    assert vhs_combine_nodes[0]["inputs"]["filename_prefix"] == expected_prefix
+    assert "projects/default/" not in vhs_combine_nodes[0]["inputs"]["filename_prefix"]
+    assert not vhs_combine_nodes[0]["inputs"]["filename_prefix"].endswith("_render")
+
+    # Job en el proyecto correcto y salida registrada en galería del proyecto
+    stored_job = store.get_job(job_id)
+    assert stored_job is not None
+    assert stored_job["project_id"] == pid
+    assert stored_job["status"] == "done"
+    assert stored_job["params"]["image_input"] == expected_uploaded_rel
+
+    assert len(res_i2v["gallery_assets"]) >= 1
+    gallery_outputs = store.list_assets(pid, category="outputs")
+    assert any(a["job_id"] == job_id for a in gallery_outputs)
+    for out_asset in res_i2v["gallery_assets"]:
+        assert out_asset["project_id"] == pid
+        assert out_asset["category"] == "outputs"
+        assert (studio_data_dir / out_asset["rel_path"]).is_file()
+
+    # 2. vace_inpaint con vídeo + máscara subidos
+    res_vace = await belt.execute(
+        "enqueue_render",
+        {
+            "template_id": "vace_inpaint",
+            "params": {
+                "prompt": "Reemplazar fondo por estudio futurista",
+                "video_asset_id": vid_asset["id"],
+                "mask_asset_id": img_asset["id"],
+            },
+        },
+        tool_context,
+    )
+    assert res_vace["status"] == "done"
+    vace_graph = stub_comfyui_state.prompts[1]["prompt"]
+    vhs_load_nodes = [
+        n for n in vace_graph.values() if n["class_type"] == "VHS_LoadVideo"
+    ]
+    vace_mask_nodes = [
+        n for n in vace_graph.values() if n["class_type"] == "LoadImage"
+    ]
+    expected_vid_rel = f"{pid}/{vid_asset['filename']}"
+    assert vhs_load_nodes[0]["inputs"]["video"] == expected_vid_rel
+    assert vhs_load_nodes[0]["inputs"]["video"] != vid_asset["id"]
+    assert vace_mask_nodes[0]["inputs"]["image"] == expected_uploaded_rel
+    assert vace_mask_nodes[0]["inputs"]["image"] != img_asset["id"]
+
+    # 3. Asset inexistente o de tipo incorrecto falla con ToolExecutionError sin enviar a ComfyUI
+    prompts_before = len(stub_comfyui_state.prompts)
+    with pytest.raises(ToolExecutionError, match="no existe"):
+        await belt.execute(
+            "enqueue_render",
+            {
+                "template_id": "wan_i2v",
+                "params": {
+                    "prompt": "Intento con asset inexistente",
+                    "image_asset_id": "asset_inexistente_999",
+                },
+            },
+            tool_context,
+        )
+    assert len(stub_comfyui_state.prompts) == prompts_before
+
+    with pytest.raises(ToolExecutionError, match="video|image"):
+        await belt.execute(
+            "enqueue_render",
+            {
+                "template_id": "wan_i2v",
+                "params": {
+                    "prompt": "Intento pasando vídeo donde se requiere imagen",
+                    "image_asset_id": vid_asset["id"],
+                },
+            },
+            tool_context,
+        )
+    assert len(stub_comfyui_state.prompts) == prompts_before
+
+
+@pytest.mark.anyio
+async def test_enqueue_render_sdxl_image_prompt_only_uses_template_defaults_scr011(
+    tool_context: ToolContext,
+    stub_comfyui_state: ComfyUIStubState,
+) -> None:
+    """Regresión M2-SCR-011: una llamada prompt-only a sdxl_image preserva solo los params
+    explícitamente suministrados y resuelve los defaults propios de sdxl_image (1024x1024,
+    steps=25, cfg=6.0) sin contaminar con defaults de vídeo (832x480, steps=4, cfg=1.0,
+    frames=81, strength=0.85).
+    """
+    pid = tool_context.project_id
+    belt = create_default_tool_belt()
+
+    res = await belt.execute(
+        "enqueue_render",
+        {
+            "template_id": "sdxl_image",
+            "params": {
+                "prompt": "Retrato editorial en blanco y negro con iluminación Rembrandt",
+            },
+        },
+        tool_context,
+    )
+
+    assert res["status"] == "done"
+    assert res["project_id"] == pid
+    assert res["template_id"] == "sdxl_image"
+    assert res["params"]["width"] == 1024
+    assert res["params"]["height"] == 1024
+    assert res["params"]["steps"] == 25
+    assert res["params"]["cfg"] == pytest.approx(6.0)
+    assert res["params"]["seed"] == 42
+    assert "frames" not in res["params"]
+    assert "strength" not in res["params"]
+
+    assert len(stub_comfyui_state.prompts) == 1
+    sdxl_graph = stub_comfyui_state.prompts[0]["prompt"]
+    latent_nodes = [
+        n for n in sdxl_graph.values() if n["class_type"] == "EmptyLatentImage"
+    ]
+    sampler_nodes = [
+        n for n in sdxl_graph.values() if n["class_type"] == "KSampler"
+    ]
+    save_nodes = [
+        n for n in sdxl_graph.values() if n["class_type"] == "SaveImage"
+    ]
+    assert latent_nodes[0]["inputs"]["width"] == 1024
+    assert latent_nodes[0]["inputs"]["height"] == 1024
+    assert sampler_nodes[0]["inputs"]["steps"] == 25
+    assert sampler_nodes[0]["inputs"]["cfg"] == pytest.approx(6.0)
+    assert (
+        save_nodes[0]["inputs"]["filename_prefix"]
+        == f"projects/{pid}/outputs/sdxl_image_{res['job_id']}"
+    )
+
+    # Verificar también el helper build_template_workflow con project_id y job_id explícitos
+    helper_wf = build_template_workflow(
+        "sdxl_image",
+        RenderTemplateParams(prompt="Concept art de estación espacial"),
+        project_id=pid,
+        job_id="job_manual_01",
+    )
+    helper_save = [n for n in helper_wf.values() if n["class_type"] == "SaveImage"][0]
+    helper_latent = [
+        n for n in helper_wf.values() if n["class_type"] == "EmptyLatentImage"
+    ][0]
+    assert helper_latent["inputs"]["width"] == 1024
+    assert helper_latent["inputs"]["height"] == 1024
+    assert (
+        helper_save["inputs"]["filename_prefix"]
+        == f"projects/{pid}/outputs/sdxl_image_job_manual_01"
+    )
+
+    # Si el llamador pasa explícitamente height=480 (<512 min de SDXL), el validador lo rechaza
+    with pytest.raises(ToolExecutionError, match="height|512"):
+        await belt.execute(
+            "enqueue_render",
+            {
+                "template_id": "sdxl_image",
+                "params": {
+                    "prompt": "Retrato con altura inválida para SDXL",
+                    "height": 480,
+                },
+            },
+            tool_context,
+        )
+    assert len(stub_comfyui_state.prompts) == 1
+
 

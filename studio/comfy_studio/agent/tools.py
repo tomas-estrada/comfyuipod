@@ -13,6 +13,12 @@ from ..comfyui_client import ComfyUIClient
 from ..config import StudioConfig
 from ..progress import ProgressBroker
 from ..projects import ProjectStore
+from ..templates import (
+    TemplateNotFoundError,
+    TemplateParamError,
+    get_default_registry,
+    render_template_workflow,
+)
 
 TemplateIdLiteral = Literal[
     "vace_inpaint",
@@ -54,7 +60,14 @@ class ToolContext:
 
 
 class RenderTemplateParams(BaseModel):
-    """Parámetros validados para las plantillas de render en ComfyUI."""
+    """Parámetros validados para las plantillas de render en ComfyUI.
+
+    Solo `prompt` es obligatorio a nivel de esquema del tool-belt; el resto de
+    parámetros son opcionales (`default=None`) para preservar únicamente los
+    valores suministrados explícitamente por el LLM o usuario y dejar que cada
+    plantilla del registro (`sdxl_image`, `wan_*`, `vace_*`) resuelva sus propios
+    defaults y mínimos sin contaminación cruzada (M2-SCR-011).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -63,50 +76,60 @@ class RenderTemplateParams(BaseModel):
         min_length=1,
         description="Descripción visual principal del plano o imagen a generar.",
     )
-    negative_prompt: str = Field(
-        default="borroso, baja calidad, artefactos, deformado",
-        description="Elementos a evitar en la generación.",
+    negative_prompt: str | None = Field(
+        default=None,
+        description=(
+            "Elementos a evitar en la generación (si se omite, usa el default de la plantilla)."
+        ),
     )
-    width: int = Field(
-        default=832,
+    width: int | None = Field(
+        default=None,
         ge=256,
         le=2048,
         description="Ancho en píxeles (832 por defecto para vídeo 480p 16:9; 1024 para SDXL).",
     )
-    height: int = Field(
-        default=480,
+    height: int | None = Field(
+        default=None,
         ge=256,
         le=2048,
-        description="Alto en píxeles (480 por defecto para VACE/Wan en 480p + offload).",
+        description=(
+            "Alto en píxeles (480 por defecto para VACE/Wan en 480p + offload; 1024 para SDXL)."
+        ),
     )
-    frames: int = Field(
-        default=81,
+    frames: int | None = Field(
+        default=None,
         ge=1,
         le=241,
         description="Número de fotogramas para vídeo (81 frames ≈ 5 s a 16 fps).",
     )
-    steps: int = Field(
-        default=4,
+    steps: int | None = Field(
+        default=None,
         ge=1,
         le=100,
         description="Pasos de muestreo (4 con LoRA Lightning para Wan; 25 para SDXL).",
     )
-    cfg: float = Field(
-        default=1.0,
+    cfg: float | None = Field(
+        default=None,
         ge=1.0,
         le=20.0,
-        description="Escala CFG del sampler.",
+        description="Escala CFG del sampler (1.0 para Wan/VACE; 6.0 para SDXL).",
     )
-    seed: int = Field(
-        default=42,
+    seed: int | None = Field(
+        default=None,
         ge=0,
-        description="Semilla determinista de muestreo.",
+        description="Semilla determinista de muestreo (42 por defecto).",
     )
-    strength: float = Field(
-        default=0.85,
+    strength: float | None = Field(
+        default=None,
         ge=0.0,
         le=1.0,
         description="Intensidad de restyle o inpainting VACE (0.0 a 1.0).",
+    )
+    offload: bool | None = Field(
+        default=None,
+        description=(
+            "Activar offload de pesos en plantillas de vídeo Wan 2.2 / VACE (true por defecto)."
+        ),
     )
     video_asset_id: str | None = Field(
         default=None,
@@ -275,122 +298,31 @@ class ProposeEdlArgs(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _extract_explicit_render_params(
+    params: RenderTemplateParams | dict[str, Any],
+) -> dict[str, Any]:
+    """Extrae únicamente los parámetros suministrados explícitamente por el llamador."""
+    if isinstance(params, BaseModel):
+        return params.model_dump(exclude_unset=True, exclude_none=True)
+    return {k: v for k, v in dict(params).items() if v is not None}
+
+
 def build_template_workflow(
     template_id: str,
-    params: RenderTemplateParams,
+    params: RenderTemplateParams | dict[str, Any],
+    *,
+    project_id: str | None = None,
+    job_id: str | None = None,
 ) -> dict[str, Any]:
-    """Construye el grafo API-format de ComfyUI para la plantilla y parámetros indicados."""
-    # Si el registro de plantillas dedicado está disponible, delegamos en él
-    try:
-        from ..templates import render_template_workflow  # type: ignore[import-not-found]
-
-        return render_template_workflow(template_id, params.model_dump(exclude_none=True))
-    except ImportError:
-        pass
-
-    if template_id == "sdxl_image":
-        return {
-            "1": {
-                "class_type": "CheckpointLoaderSimple",
-                "inputs": {
-                    "ckpt_name": "Juggernaut-XI-byRunDiffusion.safetensors",
-                },
-            },
-            "2": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {"text": params.prompt, "clip": ["1", 1]},
-            },
-            "3": {
-                "class_type": "CLIPTextEncode",
-                "inputs": {"text": params.negative_prompt, "clip": ["1", 1]},
-            },
-            "4": {
-                "class_type": "EmptyLatentImage",
-                "inputs": {
-                    "width": params.width,
-                    "height": params.height,
-                    "batch_size": 1,
-                },
-            },
-            "5": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "seed": params.seed,
-                    "steps": params.steps,
-                    "cfg": params.cfg,
-                    "sampler_name": "dpmpp_2m_sde",
-                    "scheduler": "karras",
-                    "denoise": 1.0,
-                    "model": ["1", 0],
-                    "positive": ["2", 0],
-                    "negative": ["3", 0],
-                    "latent_image": ["4", 0],
-                },
-            },
-            "6": {
-                "class_type": "VAEDecode",
-                "inputs": {"samples": ["5", 0], "vae": ["1", 2]},
-            },
-            "7": {
-                "class_type": "SaveImage",
-                "inputs": {
-                    "filename_prefix": f"studio_{template_id}",
-                    "images": ["6", 0],
-                },
-            },
-        }
-
-    # Plantillas de vídeo Wan 2.2 / VACE (480p por defecto con offload)
-    unet_name = (
-        "wan2.2_vace_14B_fp8_scaled.safetensors"
-        if template_id.startswith("vace_")
-        else "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
-        if template_id in ("wan_i2v", "wan_flf2v")
-        else "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors"
+    """Construye el grafo API-format de ComfyUI delegando en el registro de plantillas."""
+    explicit_params = _extract_explicit_render_params(params)
+    return render_template_workflow(
+        template_id,
+        explicit_params,
+        project_id=project_id,
+        job_id=job_id,
+        strict=True,
     )
-    return {
-        "1": {
-            "class_type": "UNETLoader",
-            "inputs": {
-                "unet_name": unet_name,
-                "weight_dtype": "fp8_e4m3fn",
-            },
-        },
-        "2": {
-            "class_type": "CLIPLoader",
-            "inputs": {
-                "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-                "type": "wan",
-            },
-        },
-        "3": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": params.prompt, "clip": ["2", 0]},
-        },
-        "4": {
-            "class_type": "KSampler",
-            "inputs": {
-                "seed": params.seed,
-                "steps": params.steps,
-                "cfg": params.cfg,
-                "width": params.width,
-                "height": params.height,
-                "frames": params.frames,
-                "strength": params.strength,
-                "template_id": template_id,
-                "offload": True,
-            },
-        },
-        "5": {
-            "class_type": "VHS_VideoCombine",
-            "inputs": {
-                "filename_prefix": f"studio_{template_id}",
-                "frame_rate": 16,
-                "format": "video/h264-mp4",
-                "images": ["4", 0],
-            },
-        },
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -402,33 +334,30 @@ async def _handle_enqueue_render(
     args: EnqueueRenderArgs,
     context: ToolContext,
 ) -> dict[str, Any]:
-    params_dict = args.params.model_dump(exclude_none=True)
-    workflow = build_template_workflow(args.template_id, args.params)
+    explicit_params = _extract_explicit_render_params(args.params)
+    registry = get_default_registry()
+    try:
+        submission = await registry.submit_render(
+            args.template_id,
+            explicit_params,
+            project_id=context.project_id,
+            store=context.store,
+            comfyui_client=context.comfyui_client,
+            broker=context.broker,
+            strict=True,
+        )
+    except (TemplateNotFoundError, TemplateParamError, LookupError) as exc:
+        raise ToolExecutionError(str(exc)) from exc
 
-    job = context.store.create_job(
-        kind="render",
-        project_id=context.project_id,
-        template_id=args.template_id,
-        params=params_dict,
-    )
-    exec_result = await context.comfyui_client.execute_prompt_job(
-        workflow,
-        job_id=job["id"],
-        project_id=context.project_id,
-        template_id=args.template_id,
-    )
-    updated_job = context.store.get_job(job["id"]) or job
-    outputs_list = [
-        o.model_dump() if hasattr(o, "model_dump") else dict(o)
-        for o in exec_result.outputs
-    ]
     return {
-        "status": updated_job["status"],
-        "job_id": job["id"],
-        "prompt_id": exec_result.prompt_id,
-        "template_id": args.template_id,
-        "params": params_dict,
-        "outputs": outputs_list,
+        "status": submission["status"],
+        "job_id": submission["job_id"],
+        "prompt_id": submission["prompt_id"],
+        "project_id": submission["project_id"],
+        "template_id": submission["template_id"],
+        "params": submission["params"],
+        "outputs": submission["outputs"],
+        "gallery_assets": submission["gallery_assets"],
     }
 
 

@@ -335,15 +335,6 @@ class TemplateRegistry:
             strict=strict,
         )
 
-        # Si se suministró un *_asset_id pero aún no se subió a ComfyUI, usar su valor
-        # como fallback de *_input cuando el usuario no haya especificado *_input explícito
-        for asset_key, (input_key, _) in ASSET_PARAM_TO_INPUT_PARAM.items():
-            asset_val = validated_params.get(asset_key)
-            if asset_val and input_key in validated_params:
-                default_in = tpl["parameters"].get(input_key, {}).get("default")
-                if validated_params.get(input_key) == default_in:
-                    validated_params[input_key] = str(asset_val)
-
         eff_project = (project_id or "default").strip() or "default"
         eff_job = (job_id or "render").strip() or "render"
         output_prefix = f"projects/{eff_project}/outputs/{template_id}_{eff_job}"

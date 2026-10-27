@@ -804,3 +804,131 @@ def test_chat_history_redacts_persisted_content_and_tool_calls_scr007(
     assert primary_key not in serialized_tool_calls
     assert SECRET_PLACEHOLDER in serialized_tool_calls
 
+
+@pytest.mark.anyio
+async def test_agent_loop_wan_i2v_and_sdxl_image_registry_integration_scr005_scr011(
+    studio_config: StudioConfig,
+    studio_data_dir: Path,
+    stub_comfyui_transport: httpx.ASGITransport,
+    stub_comfyui_state: ComfyUIStubState,
+) -> None:
+    """Regresión M2-SCR-005 + M2-SCR-011 en StudioAgent:
+    1) wan_i2v desde el agente con imagen subida sube el archivo real a ComfyUI, inyecta su
+       ruta relativa en LoadImage (jamás el asset_id), crea el job en el proyecto correcto y
+       registra la salida con prefijo del proyecto en galería.
+    2) sdxl_image prompt-only desde el agente usa los defaults de la plantilla (1024x1024,
+       steps=25, cfg=6.0) sin fallar por los defaults de vídeo (480p).
+    """
+    store = ProjectStore(studio_data_dir)
+    broker = ProgressBroker()
+    project = store.create_project(name="Proyecto Integración Agent Registry")
+    pid = project["id"]
+
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0"
+        b"\x00\x00\x03\x01\x01\x00\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    uploaded_img = store.save_upload(
+        pid,
+        filename="keyframe_protagonista.png",
+        content_type="image/png",
+        data=png_bytes,
+        max_upload_bytes=1024 * 1024,
+        category="uploads",
+    )
+
+    stub_llm = StubLLMClient(model=studio_config.studio_llm_model)
+    stub_llm.enqueue_step(
+        StubLLMstep(
+            content="Plan: animar la imagen subida con wan_i2v y generar un póster con sdxl_image.",
+            tool_calls=[
+                StubToolCallSpec(
+                    name="enqueue_render",
+                    arguments={
+                        "template_id": "wan_i2v",
+                        "params": {
+                            "prompt": "El protagonista avanza lentamente hacia cámara",
+                            "image_asset_id": uploaded_img["id"],
+                        },
+                    },
+                ),
+                StubToolCallSpec(
+                    name="enqueue_render",
+                    arguments={
+                        "template_id": "sdxl_image",
+                        "params": {
+                            "prompt": "Póster cinematográfico del protagonista bajo lluvia neón",
+                        },
+                    },
+                ),
+            ],
+        )
+    )
+    stub_llm.enqueue_step(
+        StubLLMstep(
+            content="Renders wan_i2v y sdxl_image completados y añadidos a la galería.",
+            tool_calls=[],
+        )
+    )
+
+    comfy_client = ComfyUIClient(
+        base_url=studio_config.studio_comfyui_url,
+        transport=stub_comfyui_transport,
+        store=store,
+        broker=broker,
+        redactor=studio_config.redactor(),
+    )
+    agent = StudioAgent(
+        config=studio_config,
+        store=store,
+        comfyui_client=comfy_client,
+        broker=broker,
+        llm_client=OpenAICompatibleLLMClient(config=studio_config, stub_client=stub_llm),
+    )
+
+    turn = await agent.run_turn(
+        project_id=pid,
+        user_message="Anima la imagen con wan_i2v y genera un póster con sdxl_image",
+    )
+    assert turn.stop_reason == "completed"
+    assert len(turn.tool_results) == 2
+    assert all(tr.get("is_error") is False for tr in turn.tool_results), turn.tool_results
+
+    i2v_res = turn.tool_results[0]["result"]
+    sdxl_res = turn.tool_results[1]["result"]
+    assert i2v_res["project_id"] == pid
+    assert sdxl_res["project_id"] == pid
+    assert sdxl_res["params"]["width"] == 1024
+    assert sdxl_res["params"]["height"] == 1024
+    assert sdxl_res["params"]["steps"] == 25
+    assert sdxl_res["params"]["cfg"] == pytest.approx(6.0)
+
+    # Verificar los 2 grafos enviados a ComfyUI
+    assert len(stub_comfyui_state.prompts) == 2
+    i2v_prompt = stub_comfyui_state.prompts[0]["prompt"]
+    sdxl_prompt = stub_comfyui_state.prompts[1]["prompt"]
+
+    expected_rel = f"{pid}/{uploaded_img['filename']}"
+    load_img = [n for n in i2v_prompt.values() if n["class_type"] == "LoadImage"][0]
+    assert load_img["inputs"]["image"] == expected_rel
+    assert load_img["inputs"]["image"] != uploaded_img["id"]
+
+    vhs_out = [n for n in i2v_prompt.values() if n["class_type"] == "VHS_VideoCombine"][0]
+    assert (
+        vhs_out["inputs"]["filename_prefix"]
+        == f"projects/{pid}/outputs/wan_i2v_{i2v_res['job_id']}"
+    )
+
+    sdxl_save = [n for n in sdxl_prompt.values() if n["class_type"] == "SaveImage"][0]
+    assert (
+        sdxl_save["inputs"]["filename_prefix"]
+        == f"projects/{pid}/outputs/sdxl_image_{sdxl_res['job_id']}"
+    )
+
+    gallery = store.list_assets(pid, category="outputs")
+    gallery_job_ids = {a["job_id"] for a in gallery}
+    assert i2v_res["job_id"] in gallery_job_ids
+    assert sdxl_res["job_id"] in gallery_job_ids
+
+
