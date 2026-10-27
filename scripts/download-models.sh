@@ -35,7 +35,7 @@
 #   - anime     : Fase 1 (2.79 GiB) + Fase 2 (29.43 GiB) = 32.22 GiB total
 #   - minimal   : Solo Fase 1 (2.79 GiB; omite Fase 2)
 #   - studio    : Fase 1 (2.79 GiB) + Fase 2 SDXL/ControlNet (13.22 GiB) +
-#                 Fase 3 (136.02 GiB / 146.05 GB) ≈ 152.03 GiB (≈157 GB en disco)
+#                 Fase 3 (136.02 GiB / 146.05 GB) ≈ 152.03 GiB (≈163.24 GB en disco)
 #
 # Variables de entorno adicionales de control de descarga (§11):
 #   - HF_FETCH_TIMEOUT       : Timeout en segundos por archivo e intento (default: 3600).
@@ -71,6 +71,9 @@ if [ -z "${STUDIO_MANIFEST}" ]; then
 fi
 # STAGE_DIR en el mismo filesystem que MODELS_DIR para que mv sea rename() atómico
 STAGE_DIR="${MODELS_DIR}/.hf_stage"
+# STAGE_DIR_PHASE3 aislado para que la limpieza de Fase 2 en el arranque normal (--phase2)
+# no destruya el estado parcial/caché HF de una descarga de Fase 3 interrumpida
+STAGE_DIR_PHASE3="${MODELS_DIR}/.hf_stage_phase3"
 MODEL_PROFILE="${MODEL_PROFILE:-all}"
 HF_FETCH_TIMEOUT="${HF_FETCH_TIMEOUT:-3600}"
 
@@ -356,6 +359,7 @@ run_phase2() {
 # ------------------------------------------------------------------------------
 run_phase3() {
     FAILED_MODELS=()
+    local STAGE_DIR="${STAGE_DIR_PHASE3}"
     if [ "${MODEL_PROFILE}" != "studio" ]; then
         log "PLAN FASE 3: 0 archivos (${MODEL_PROFILE})"
         log "MODEL_PROFILE=${MODEL_PROFILE} activo: omitiendo Fase 3 (exclusiva del perfil 'studio')."

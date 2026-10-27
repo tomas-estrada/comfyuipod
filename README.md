@@ -28,7 +28,7 @@ Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5
 7. **Descarga automática resiliente en hasta 3 fases (medidas vía `x-linked-size` en HuggingFace con `hf` + `hf-xet`)**:
    - **Fase 1 (Síncrona antes de abrir ComfyUI, 2.79 GiB)**: Descarga InsightFace `buffalo_l`, `inswapper_128.onnx`, `CodeFormer`, `GFPGANv1.4`, `facexlib` detectors, `YOLO face`, `SAM`, `SDXL VAE fp16-fix`, `SD1.5 VAE`, `4x-UltraSharp` y `4x-AnimeSharp`. Empieza tras el autodiagnóstico `comfyctl diag` (≤ 90 s en el peor caso, suma de timeouts de sonda; normalmente < 15 s) y, mientras dura (1-3 min según red, tope 10 min), Nginx muestra una pantalla de espera con enlaces a `/home` y `/status`.
    - **Fase 2 (Segundo plano, 60.56 GiB en perfil `all`; 13.22 GiB en `studio`)**: Descarga todos los checkpoints populares, ControlNet Union ProMax e IP-Adapter con timeout por intento (`HF_FETCH_TIMEOUT=3600`), 3 reintentos automáticos y `rename()` atómico en el mismo filesystem mientras ya usas ComfyUI. Pulsa **`R`** en el navegador para refrescar los desplegables.
-   - **Fase 3 (Segundo plano en `MODEL_PROFILE=studio`, 146.05 GB / 136.02 GiB base en 77 archivos)**: Lee [`config/models-studio.json`](config/models-studio.json) y descarga de forma idempotente y reanudable el inventario completo del estudio de vídeo y voz: Wan 2.2 (`Comfy-Org/Wan_2.2_ComfyUI_Repackaged` + LoRAs Lightning/Turbo/Relight + VACE 14B fp8_scaled + `clip_vision_h`), LatentSync 1.6 (`custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/`), LivePortrait (`models/liveportrait/`), IndexTTS-2 (`${COMFY_DATA_DIR}/indextts/checkpoints/`), `faster-whisper-large-v3` + aligners `wav2vec2` ES/EN, `funasr/campplus`, `CLIP ViT-L/14` e `IP-Adapter SDXL` (`h94/IP-Adapter`, sin pesos FaceID no comerciales). El modelo base de Wan 2.2 Animate (`wan2.2_animate_14B_int8_convrot.safetensors`, +18.41 GB / +17.15 GiB) es opt-in vía `STUDIO_INCLUDE_ANIMATE=1`.
+   - **Fase 3 (Segundo plano en `MODEL_PROFILE=studio`, 146.05 GB / 136.02 GiB base en 77 archivos)**: Lee [`config/models-studio.json`](config/models-studio.json) y descarga de forma idempotente y reanudable (con directorio de staging propio `${MODELS_DIR}/.hf_stage_phase3` aislado de la limpieza de Fase 2) el inventario completo del estudio de vídeo y voz: Wan 2.2 (`Comfy-Org/Wan-2.2` + `Comfy-Org/Wan-2.1` para `clip_vision_h` + LoRAs Lightning/Turbo/Relight + VACE 14B fp8_scaled), LatentSync 1.6 (`custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/`), LivePortrait (`models/liveportrait/`), IndexTTS-2.5 (`${COMFY_DATA_DIR}/indextts/checkpoints/`), `faster-whisper-large-v3` + aligners `wav2vec2` ES/EN, `funasr/campplus`, `CLIP ViT-L/14` e `IP-Adapter SDXL` (`h94/IP-Adapter`, sin pesos FaceID no comerciales). El modelo base de Wan 2.2 Animate (`wan2.2_animate_14B_int8_convrot.safetensors`, +18.41 GB / +17.15 GiB) es opt-in vía `STUDIO_INCLUDE_ANIMATE=1`.
 
 ---
 
@@ -74,12 +74,12 @@ Todos los tamaños han sido verificados contra la cabecera `x-linked-size` de Hu
 
 | Categoría | Archivos | Tamaño exacto (bytes) | Tamaño (GB / GiB) | Licencia | Destino |
 |---|---:|---:|---:|---|---|
-| **`wan_core`** (Wan 2.2 `umt5-xxl fp8`, VAEs 2.1/2.2, `ti2v_5B_fp16`, pares `t2v`/`i2v` 14B fp8 high/low, LoRAs Lightning 4-step, Relight LoRA, `clip_vision_h`) | 14 | `83,184,917,475` | 83.18 GB / 77.47 GiB | Apache-2.0 | `models/{text_encoders,vae,diffusion_models,loras,clip_vision}/` |
-| **`vace_fp8`** (Wan 2.2 Fun VACE 14B `high_noise` + `low_noise` fp8_scaled, `Kijai/WanVideo_comfy_fp8_scaled`) | 2 | `34,692,112,208` | 34.69 GB / 32.31 GiB | Apache-2.0 | `models/diffusion_models/` |
-| **`lora_turbo_5b`** (`Wan2.2-TI2V-5B-Turbo-lora.safetensors`, `typesoder/Wan2.2-TI2V-5B-Turbo-LoRA`) | 1 | `332,348,584` | 0.33 GB / 0.31 GiB | Apache-2.0 | `models/loras/` |
+| **`wan_core`** (Wan 2.2 `umt5-xxl fp8`, VAEs 2.1/2.2, `ti2v_5B_fp16`, pares `t2v`/`i2v` 14B fp8 high/low, LoRAs Lightning 4-step, Relight LoRA, `clip_vision_h`, `Comfy-Org/Wan-2.2` y `Comfy-Org/Wan-2.1`) | 14 | `83,184,917,475` | 83.18 GB / 77.47 GiB | Apache-2.0 | `models/{text_encoders,vae,diffusion_models,loras,clip_vision}/` |
+| **`vace_fp8`** (Wan 2.2 Fun VACE 14B `high_noise` + `low_noise` fp8_scaled, `Comfy-Org/Wan-2.2`) | 2 | `34,692,112,208` | 34.69 GB / 32.31 GiB | Apache-2.0 | `models/diffusion_models/` |
+| **`lora_turbo_5b`** (`Wan2.2-TI2V-5B-Turbo-lora.safetensors`, `Kijai/WanVideo_comfy`) | 1 | `332,348,584` | 0.33 GB / 0.31 GiB | Apache-2.0 | `models/loras/` |
 | **`latentsync`** (LatentSync 1.6 UNet + SyncNet + Whisper tiny + `sfd_face` + VAE SD-FT-MSE, `ByteDance/LatentSync-1.6`) | 12 | `9,970,426,719` | 9.97 GB / 9.29 GiB | `openrail++` / MIT | `custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/` |
 | **`liveportrait`** (`Kijai/LivePortrait_safetensors`: appearance, motion, warping, spade, stitching, landmark) | 6 | `635,366,851` | 0.64 GB / 0.59 GiB | MIT | `models/liveportrait/` |
-| **`indextts`** (IndexTTS-2: `gpt.pth`, `s2mel.pth`, `qwen0.6bemo4-merge`, `feat1.pt`, `feat2.pt`, `wav2vec2bert_stats.pt`, BPE/configs, `IndexTeam/IndexTTS-2`) | 22 | `5,491,182,363` | 5.49 GB / 5.11 GiB | ULA bilibili (avisar en usos comerciales) | `${COMFY_DATA_DIR}/indextts/checkpoints/` |
+| **`indextts`** (IndexTTS-2.5: `gpt.pth`, `s2mel.pth`, `qwen0.6bemo4-merge`, `feat1.pt`, `feat2.pt`, `wav2vec2bert_stats.pt`, BPE/configs, `IndexTeam/IndexTTS-2.5`) | 22 | `5,491,182,363` | 5.49 GB / 5.11 GiB | ULA bilibili (avisar en usos comerciales) | `${COMFY_DATA_DIR}/indextts/checkpoints/` |
 | **`faster_whisper`** (`Systran/faster-whisper-large-v3`: `model.bin` + tokenizador) | 5 | `3,090,835,702` | 3.09 GB / 2.88 GiB | MIT | `models/whisper/faster-whisper-large-v3/` |
 | **`wav2vec2_aligners`** (`jonatasgrosman/wav2vec2-large-xlsr-53-{english,spanish}`) | 2 | `2,524,171,054` | 2.52 GB / 2.35 GiB | Apache-2.0 | `models/whisper/aligners/` |
 | **`clip_vit_l14`** (`openai/clip-vit-large-patch14`: `pytorch_model.bin` + tokenizador/configs) | 7 | `1,712,163,490` | 1.71 GB / 1.59 GiB | MIT (con caveats de model card) | `models/clip/clip-vit-large-patch14/` |
@@ -99,7 +99,7 @@ Todos los tamaños han sido verificados contra la cabecera `x-linked-size` de Hu
 | **`realistic`** | 2.79 GiB | 24.95 GiB | 0.00 GiB | **27.74 GiB** | ~8 min | ~4 min |
 | **`anime`** | 2.79 GiB | 29.43 GiB | 0.00 GiB | **32.22 GiB** | ~9.5 min | ~4.7 min |
 | **`minimal`** | 2.79 GiB | 0.00 GiB | 0.00 GiB | **2.79 GiB** | 0 s | 0 s |
-| **`studio`** | 2.79 GiB | 13.22 GiB | 136.02 GiB *(146.05 GB)* | **≈ 148.0 GiB** *(~157 GB en disco)* | ~44 min | ~22 min |
+| **`studio`** | 2.79 GiB | 13.22 GiB | 136.02 GiB *(146.05 GB)* | **≈ 152.03 GiB** *(≈163.24 GB en disco)* | ~44 min | ~22 min |
 
 ### Custom Nodes Preinstalados (12 Nodos Fijados por Commit SHA en [`config/nodes.lock`](config/nodes.lock))
 
@@ -132,7 +132,7 @@ Todos los tamaños han sido verificados contra la cabecera `x-linked-size` de Hu
 | `STRICT_FATAL_GRACE` | `600` | Segundos de gracia tras un `FATAL` con `STRICT_START=1` durante los que se mantienen vivos Nginx, `/home`, `/status` y `/report.md` antes de salir con código `20`. |
 | `STRICT_REQUIRE_GPU` | `1` (auto: `0` si `COMFYUI_EXTRA_ARGS` incluye `--cpu`) | Fuerza (`1`) u omite (`0`) la sonda `S10` `cuda_torch` de `strict-check`. |
 | `STRICT_REQUIRE_HTPASSWD` | `1` en `comfyctl supervise` (`0` en subcomandos aislados) | Controla si `S7` exige `.htpasswd` ya presente (`fatal` si falta) o lo degrada a `warn`. |
-| `MODEL_PROFILE` | `all` | Perfil de modelos: `all` (63.35 GiB), `general` (27.75 GiB), `realistic` (27.74 GiB), `anime` (32.22 GiB), `minimal` (2.79 GiB) o `studio` (Fase 1 2.79 GiB + Fase 2 SDXL/ControlNet 13.22 GiB + Fase 3 136.02 GiB / 146.05 GB ≈ 157 GB en disco). Si se introduce un valor desconocido, usa `all` con advertencia. |
+| `MODEL_PROFILE` | `all` | Perfil de modelos: `all` (63.35 GiB), `general` (27.75 GiB), `realistic` (27.74 GiB), `anime` (32.22 GiB), `minimal` (2.79 GiB) o `studio` (Fase 1 2.79 GiB + Fase 2 SDXL/ControlNet 13.22 GiB + Fase 3 136.02 GiB / 146.05 GB ≈ 152.03 GiB / 163.24 GB en disco). Si se introduce un valor desconocido, usa `all` con advertencia. |
 | `STUDIO_INCLUDE_ANIMATE` | `0` | En `MODEL_PROFILE=studio`, pon `1` para incluir el modelo base de Wan 2.2 Animate (`wan2.2_animate_14B_int8_convrot.safetensors`, +18.41 GB / +17.15 GiB, total Fase 3 = 78 archivos / 164.46 GB). Requiere alquilar al menos 250 GB de disco en Vast.ai. |
 | `SKIP_MODEL_DOWNLOAD` | `0` | Pon `1` para omitir por completo la descarga automática de modelos al arrancar. |
 | `HF_TOKEN` | *(Vacío)* | Token opcional de HuggingFace (leído automáticamente del entorno por `hf` sin exponerse en argumentos de proceso ni en `/report.md`). |

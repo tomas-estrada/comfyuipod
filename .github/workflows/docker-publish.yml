@@ -124,12 +124,20 @@ jobs:
           done
           [ -n "${stage_dir}" ] || { echo "fake-hf: falta --local-dir" >&2; exit 1; }
           mkdir -p "$(dirname "${stage_dir}/${repo_path}")"
+          incomplete_file="${stage_dir}/.cache/huggingface/download/${repo_path}.incomplete"
+          if [ ! -s "${incomplete_file}" ] && [ -s "${stage_dir}/${repo_path}.incomplete" ]; then
+            incomplete_file="${stage_dir}/${repo_path}.incomplete"
+          fi
           if [[ "$repo_path" == *.zip ]]; then
             python3 - "${stage_dir}/${repo_path}" << 'PY'
           import sys, zipfile
           with zipfile.ZipFile(sys.argv[1], "w") as zf:
               zf.writestr("buffalo_l/det_10g.onnx", b"fake-onnx-bytes")
           PY
+          elif [ -s "${incomplete_file}" ]; then
+            cat "${incomplete_file}" > "${stage_dir}/${repo_path}"
+            printf '+resumed-tail' >> "${stage_dir}/${repo_path}"
+            rm -f "${incomplete_file}"
           else
             printf 'fake-model-bytes' > "${stage_dir}/${repo_path}"
           fi
@@ -181,13 +189,37 @@ jobs:
           [ -s "$tmp_root/studio_data/indextts/checkpoints/gpt.pth" ]
           [ -s "$tmp_root/studio_app/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/latentsync_unet.pt" ]
           [ ! -e "$tmp_root/studio_data/models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors" ]
+          [ ! -d "$tmp_root/studio_data/models/.hf_stage" ]
+          [ ! -d "$tmp_root/studio_data/models/.hf_stage_phase3" ]
+
+          # Regresión de reanudación de Fase 3 tras reinicio normal (--phase2):
+          # Sembrar un parcial de Fase 3 en .hf_stage_phase3 y un marcador residual en .hf_stage,
+          # borrar el destino de ese modelo de Fase 3 y ejecutar el arranque normal (--phase2).
+          # El cleanup de Fase 2 debe limpiar .hf_stage pero conservar intacto .hf_stage_phase3
+          # para que Fase 3 reanude desde el parcial en vez de reiniciar desde cero.
+          rm -f "$tmp_root/studio_data/models/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors"
+          mkdir -p "$tmp_root/studio_data/models/.hf_stage"
+          printf 'stale-phase2-stage' > "$tmp_root/studio_data/models/.hf_stage/stale.tmp"
+          partial_rel="split_files/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors"
+          mkdir -p "$tmp_root/studio_data/models/.hf_stage_phase3/.cache/huggingface/download/$(dirname "$partial_rel")"
+          printf 'seeded-phase3-partial' > "$tmp_root/studio_data/models/.hf_stage_phase3/.cache/huggingface/download/${partial_rel}.incomplete"
+          COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio \
+            bash scripts/download-models.sh --phase2 > "$tmp_root/dl_studio_resume.log" 2>"$tmp_root/dl_studio_resume.err" || { cat "$tmp_root/dl_studio_resume.log"; cat "$tmp_root/dl_studio_resume.err"; exit 1; }
+          [ ! -d "$tmp_root/studio_data/models/.hf_stage" ]
+          [ ! -d "$tmp_root/studio_data/models/.hf_stage_phase3" ]
+          grep -q "SKIP (ya existe): wan2.2_ti2v_5B_fp16.safetensors" "$tmp_root/dl_studio_resume.log"
+          grep -q "INICIO: wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors" "$tmp_root/dl_studio_resume.log"
+          grep -q "OK: .*wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors" "$tmp_root/dl_studio_resume.log"
+          [ "$(cat "$tmp_root/studio_data/models/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors")" = "seeded-phase3-partial+resumed-tail" ]
+          [ "$(cat "$tmp_root/studio_data/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors")" = "fake-model-bytes" ]
+
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_ANIMATE=1 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_anim.log" 2>"$tmp_root/dl_studio_anim.err" || { cat "$tmp_root/dl_studio_anim.log"; cat "$tmp_root/dl_studio_anim.err"; exit 1; }
           grep -q "PLAN FASE 3: 78 archivos (studio, STUDIO_INCLUDE_ANIMATE=1)" "$tmp_root/dl_studio_anim.log"
           grep -q "SKIP (ya existe): wan2.2_ti2v_5B_fp16.safetensors" "$tmp_root/dl_studio_anim.log"
           grep -q "INICIO: wan2.2_animate_14B_int8_convrot.safetensors" "$tmp_root/dl_studio_anim.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors" ]
-          echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio, 77 base + 1 opt-in Animate) verificado en seco (S-01 / VAL-PROFILE-002)"
+          echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio, 77 base + 1 opt-in Animate + reanudación tras --phase2) verificado en seco (S-01 / VAL-PROFILE-002)"
 
       - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01 - SHA v3.5.0 verificado)
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
