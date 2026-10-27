@@ -761,6 +761,30 @@
         const capturedKeyframeIds = Array.from(state.selectedKeyframeIds);
         const pendingSelectAtSubmit = state.pendingSelectProjectPromise;
 
+        if (projectId && !state.projects.some((p) => p.id === projectId)) {
+            // Origen huérfano (proyecto eliminado): invalidar la propiedad de la
+            // conversación para no publicar en un proyecto inexistente (404 silencioso)
+            // y restaurar la recuperación de sin-proyecto.
+            if (state.chatDomProjectId === projectId) {
+                state.chatDomProjectId = null;
+                state.chatDomEpoch += 1;
+                const orphanListEl = document.getElementById("chat-messages-list");
+                if (
+                    orphanListEl &&
+                    orphanListEl.getAttribute("data-chat-project-id") === projectId
+                ) {
+                    orphanListEl.removeAttribute("data-chat-project-id");
+                    orphanListEl.innerHTML =
+                        '<p class="empty-hint">Sin proyecto activo. Crea o selecciona un proyecto para chatear con el agente.</p>';
+                }
+            }
+            if (state.activeProjectId === projectId) {
+                state.activeProjectId = null;
+                state.activeProjectDetail = null;
+            }
+            projectId = null;
+        }
+
         if (!projectId) {
             if (pendingSelectAtSubmit) {
                 await pendingSelectAtSubmit;
@@ -1687,6 +1711,20 @@
                         if (state.activeProjectId === pid) {
                             state.activeProjectId = null;
                             state.activeProjectDetail = null;
+                        }
+                        if (state.chatDomProjectId === pid) {
+                            state.chatDomProjectId = null;
+                            state.chatDomEpoch += 1;
+                            const chatListEl =
+                                document.getElementById("chat-messages-list");
+                            if (
+                                chatListEl &&
+                                chatListEl.getAttribute("data-chat-project-id") === pid
+                            ) {
+                                chatListEl.removeAttribute("data-chat-project-id");
+                                chatListEl.innerHTML =
+                                    '<p class="empty-hint">Sin proyecto activo. Crea o selecciona un proyecto para chatear con el agente.</p>';
+                            }
                         }
                         setToast(`Proyecto ${pid} eliminado.`, "success");
                         await refreshProjects();

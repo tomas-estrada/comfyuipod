@@ -719,6 +719,7 @@ const elementSpecs = [
   ["div", "gallery-grid"],
   ["select", "gallery-category-filter", { value: "all" }],
   ["div", "toast-container"],
+  ["div", "studio-toast"],
 ];
 for (const [tag, id, extra] of elementSpecs) {
   const el = document.createElement(tag);
@@ -738,6 +739,7 @@ for (const [pid, msgs] of Object.entries(payload.initialChats)) {
 
 const chatPostLog = [];
 const chatGetLog = [];
+const projectCreateLog = [];
 let pendingGateResolve = null;
 const pendingStreamStarted = new Promise((res) => {
   global.__notifyStreamStarted = res;
@@ -806,7 +808,31 @@ async function fetchImpl(url, options = {}) {
   if (method === "GET" && path === "/studio/api/projects") {
     return makeJsonResponse(200, { projects: Object.values(projectsById) });
   }
+  if (method === "POST" && path === "/studio/api/projects") {
+    const body = JSON.parse(options.body || "{}");
+    const newId = `proj-auto-${projectCreateLog.length + 1}`;
+    const created = {
+      id: newId,
+      name: body.name || "Proyecto",
+      aspect_ratio: body.aspect_ratio || "16:9",
+      description: body.description || "",
+      assets: [],
+      jobs: [],
+    };
+    projectsById[newId] = created;
+    projectCreateLog.push(JSON.parse(JSON.stringify(created)));
+    return makeJsonResponse(200, created);
+  }
   const projMatch = path.match(/^\/studio\/api\/projects\/([^/]+)$/);
+  if (method === "DELETE" && projMatch) {
+    const pid = decodeURIComponent(projMatch[1]);
+    if (!projectsById[pid]) {
+      return makeJsonResponse(404, { detail: "Proyecto no encontrado" });
+    }
+    delete projectsById[pid];
+    delete chatsByProject[pid];
+    return makeJsonResponse(200, { deleted: pid });
+  }
   if (method === "GET" && projMatch) {
     const pid = decodeURIComponent(projMatch[1]);
     if (payload.holdProjectBDetailGet && pid === payload.projectBId && !bDetailHeldOnce) {
@@ -826,6 +852,9 @@ async function fetchImpl(url, options = {}) {
     if (method === "POST") {
       const body = JSON.parse(options.body || "{}");
       chatPostLog.push({ project_id: pid, message: body.message });
+      if (!projectsById[pid]) {
+        return makeJsonResponse(404, { detail: "Proyecto no encontrado" });
+      }
       if (chatPostLog.length === 1 && payload.holdFirstTurn) {
         global.__notifyStreamStarted();
         return makeSseResponse(async () => {
@@ -878,6 +907,8 @@ function snapshotDom() {
     chatDomProjectIdAttr: listEl.getAttribute("data-chat-project-id"),
     visibleMessages: getVisibleMessages(),
     sendBtnDisabled: Boolean(document.getElementById("chat-send-btn").disabled),
+    toastText: (document.getElementById("studio-toast").textContent || "").trim(),
+    toastClass: document.getElementById("studio-toast").className,
   };
 }
 
@@ -922,6 +953,34 @@ async function submitChatMessageInDom(text) {
   await flushAsync();
 
   const initialSnap = snapshotDom();
+
+  if (payload.scenario === "delete-last-project") {
+    const listRoot = document.getElementById("projects-list");
+    const delBtn = listRoot
+      .querySelectorAll('[data-action="delete-project"]')
+      .find((b) => b.getAttribute("data-project-id") === payload.projectAId);
+    if (!delBtn) {
+      throw new Error(`No delete-project button found for ${payload.projectAId}`);
+    }
+    await delBtn.dispatchAsync("click", { target: delBtn });
+    await flushAsync();
+    const afterDeleteSnap = snapshotDom();
+
+    await submitChatMessageInDom(payload.messageAfterDelete);
+    await flushAsync();
+    const afterChatSnap = snapshotDom();
+
+    process.stdout.write(JSON.stringify({
+      afterInitSnap: initialSnap,
+      afterDeleteSnap,
+      afterChatSnap,
+      chatPostLog,
+      chatGetLog,
+      projectCreateLog,
+      projectsById,
+    }));
+    return;
+  }
 
   // Iniciar turno pendiente en proyecto A (sin await aún para simular vuelo asíncrono)
   const firstTurnPromise = submitChatMessageInDom(payload.firstMessageInA);
@@ -1293,6 +1352,81 @@ def test_panel_chat_delayed_b_selection_submission_staying_on_b_preserves_histor
         f"Respuesta inmediata para {proj_b['id']}: Nuevo turno enviado en B durante carga" in m
         for m in result["afterBSubmissionResumesSnap"]["visibleMessages"]
     )
+
+def test_panel_chat_after_deleting_only_project_recovers_and_never_posts_to_deleted(
+    client: TestClient,
+) -> None:
+    """Regresión M2-SCR-021: borrar el ÚNICO proyecto deja la propiedad de conversación
+    (chatDomProjectId) huérfana; el siguiente envío NO debe publicarse en el proyecto
+    borrado (404 silencioso con el input ya descartado) — el panel debe restaurar la
+    recuperación de sin-proyecto (crea uno nuevo vía ensureActiveProject), entregar el
+    mensaje allí y mostrar feedback visible en cada paso."""
+    proj = client.post("/studio/api/projects", json={"name": "Proyecto Unico"}).json()
+
+    result = _run_panel_dom_harness(
+        {
+            "appJsPath": str(PANEL_DIR / "app.js"),
+            "projects": [proj],
+            "initialChats": {
+                proj["id"]: [
+                    {"role": "user", "content": "Historial del unico proyecto"},
+                ],
+            },
+            "projectAId": proj["id"],
+            "projectBId": "",
+            "scenario": "delete-last-project",
+            "messageAfterDelete": "Mensaje tras borrar el unico proyecto",
+            "holdFirstTurn": False,
+            "firstMessageInA": "",
+        }
+    )
+
+    # 1. Tras init, el proyecto único posee el DOM del chat con su historial visible
+    assert result["afterInitSnap"]["chatDomProjectIdAttr"] == proj["id"]
+    assert any(
+        "Historial del unico proyecto" in m
+        for m in result["afterInitSnap"]["visibleMessages"]
+    )
+
+    # 2. Tras borrarlo: propiedad de conversación limpiada (sin dueño huérfano),
+    #    historial del proyecto borrado fuera del DOM, feedback visible del borrado
+    #    y el botón de envío sigue habilitado (recuperación disponible).
+    after_delete = result["afterDeleteSnap"]
+    assert after_delete["chatDomProjectIdAttr"] is None
+    assert after_delete["activeProjectIdCode"] == "Sin proyecto"
+    assert "Proyecto: Ninguno" in after_delete["activeBadgeText"]
+    assert "eliminado" in after_delete["toastText"]
+    assert "toast-success" in after_delete["toastClass"]
+    assert all(
+        "Historial del unico proyecto" not in m
+        for m in after_delete["visibleMessages"]
+    )
+    assert after_delete["sendBtnDisabled"] is False
+
+    # 3. El envío posterior JAMÁS se publica en el proyecto borrado: el panel crea
+    #    un proyecto nuevo (recuperación de sin-proyecto) y entrega el mensaje allí.
+    assert len(result["projectCreateLog"]) == 1
+    created_id = result["projectCreateLog"][0]["id"]
+    assert created_id != proj["id"]
+    assert result["chatPostLog"] == [
+        {"project_id": created_id, "message": "Mensaje tras borrar el unico proyecto"}
+    ]
+
+    # 4. El mensaje NO se pierde: visible en el DOM del nuevo proyecto con feedback
+    #    de éxito; el DOM del chat queda emparejado al nuevo proyecto activo.
+    after_chat = result["afterChatSnap"]
+    assert after_chat["chatDomProjectIdAttr"] == created_id
+    assert after_chat["activeProjectIdCode"] == created_id
+    assert any(
+        "Mensaje tras borrar el unico proyecto" in m
+        for m in after_chat["visibleMessages"]
+    )
+    assert any(
+        f"Respuesta inmediata para {created_id}" in m
+        for m in after_chat["visibleMessages"]
+    )
+    assert "completada" in after_chat["toastText"]
+    assert "toast-success" in after_chat["toastClass"]
 
 
 
