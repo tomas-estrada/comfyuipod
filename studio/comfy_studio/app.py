@@ -7,11 +7,13 @@ import binascii
 import logging
 import os
 import secrets
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from comfy_studio.agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
@@ -792,10 +794,12 @@ def create_app(
         active_store: ProjectStore = request.app.state.store
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        latest = active_store.get_latest_edl(project_id)
         return {
             "project_id": project_id,
             "versions": active_store.list_edl_versions(project_id),
-            "latest": active_store.get_latest_edl(project_id),
+            "latest": latest,
+            "edl": latest,
         }
 
     @app.get("/studio/api/progress")
@@ -826,7 +830,60 @@ def create_app(
             },
         )
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        return Response(status_code=204)
+
+    @app.api_route(
+        "/studio/api/{unknown_path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
+    async def unknown_api_route(unknown_path: str) -> JSONResponse:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ruta de API no encontrada: /studio/api/{unknown_path}",
+        )
+
+    panel_dir = _resolve_panel_dir()
+    if panel_dir is not None:
+        index_file = panel_dir / "index.html"
+
+        @app.get("/studio", include_in_schema=False)
+        async def serve_studio_root_no_slash() -> FileResponse:
+            return FileResponse(index_file, media_type="text/html; charset=utf-8")
+
+        @app.get("/studio/", include_in_schema=False)
+        async def serve_studio_root_slash() -> FileResponse:
+            return FileResponse(index_file, media_type="text/html; charset=utf-8")
+
+        app.mount(
+            "/studio",
+            StaticFiles(directory=str(panel_dir), html=True),
+            name="studio-panel",
+        )
+
     return app
+
+
+def _resolve_panel_dir() -> Path | None:
+    """Localiza el directorio estático panel/ en entorno local o contenedor."""
+    candidates: list[Path] = []
+    env_dir = os.environ.get("STUDIO_PANEL_DIR", "").strip()
+    if env_dir:
+        candidates.append(Path(env_dir))
+    candidates.extend(
+        [
+            Path(__file__).resolve().parents[2] / "panel",
+            Path("/etc/comfyui/panel"),
+            Path("/opt/studio/panel"),
+            Path.cwd() / "panel",
+        ]
+    )
+    for candidate in candidates:
+        if candidate.is_dir() and (candidate / "index.html").is_file():
+            return candidate
+    return None
 
 
 app = create_app()

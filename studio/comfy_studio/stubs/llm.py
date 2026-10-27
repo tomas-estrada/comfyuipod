@@ -104,6 +104,22 @@ class StubLLMClient:
             }
 
         last_user = _extract_last_user_text(msg_list)
+        auto_calls, plan_text = self._build_auto_tool_calls(
+            msg_list,
+            tools=tools,
+            last_user=last_user,
+            active_model=active_model,
+        )
+        if auto_calls:
+            return {
+                "role": "assistant",
+                "model": active_model,
+                "stub": True,
+                "content": plan_text,
+                "tool_calls": [tc.to_openai_dict() for tc in auto_calls],
+                "tools_available": len(tools) if tools else 0,
+            }
+
         return {
             "role": "assistant",
             "model": active_model,
@@ -112,6 +128,125 @@ class StubLLMClient:
             "tool_calls": [],
             "tools_available": len(tools) if tools else 0,
         }
+
+    def _build_auto_tool_calls(
+        self,
+        msg_list: Sequence[dict[str, Any]],
+        *,
+        tools: Sequence[dict[str, Any]] | None,
+        last_user: str,
+        active_model: str,
+    ) -> tuple[list[StubToolCallSpec], str]:
+        if not tools or not msg_list or msg_list[-1].get("role") != "user":
+            return [], ""
+
+        available_tools = {
+            str(t.get("function", {}).get("name") or "")
+            for t in tools
+            if isinstance(t, dict)
+        }
+        lower = last_user.lower()
+
+        render_keywords = (
+            "wan_t2v",
+            "wan_i2v",
+            "wan_flf2v",
+            "vace_inpaint",
+            "vace_restyle",
+            "sdxl_image",
+            "render",
+            "genera un vídeo",
+            "genera un video",
+            "genera un clip",
+            "generar vídeo",
+            "generar video",
+        )
+        if "enqueue_render" in available_tools and any(k in lower for k in render_keywords):
+            if "vace_inpaint" in lower or "inpaint" in lower:
+                template_id = "vace_inpaint"
+            elif "vace_restyle" in lower or "restyle" in lower:
+                template_id = "vace_restyle"
+            elif "wan_flf2v" in lower or "flf2v" in lower:
+                template_id = "wan_flf2v"
+            elif "wan_i2v" in lower or "i2v" in lower:
+                template_id = "wan_i2v"
+            elif "sdxl_image" in lower or "sdxl" in lower:
+                template_id = "sdxl_image"
+            else:
+                template_id = "wan_t2v"
+
+            calls: list[StubToolCallSpec] = []
+            if "search_assets" in available_tools:
+                calls.append(
+                    StubToolCallSpec(
+                        name="search_assets",
+                        arguments={"query": ""},
+                    )
+                )
+            calls.append(
+                StubToolCallSpec(
+                    name="enqueue_render",
+                    arguments={
+                        "template_id": template_id,
+                        "params": {"prompt": last_user[:200] or "Escena de estudio"},
+                    },
+                )
+            )
+            plan = (
+                f"[stub-llm:{active_model}] Plan: consultando medios del proyecto "
+                f"y encolando render con plantilla {template_id}."
+            )
+            return calls, plan
+
+        edl_keywords = ("edl", "highlights", "muletilla", "línea de tiempo", "timeline")
+        if "propose_edl" in available_tools and any(k in lower for k in edl_keywords):
+            calls = [
+                StubToolCallSpec(
+                    name="propose_edl",
+                    arguments={
+                        "title": "EDL Highlights Automático",
+                        "aspect_ratio": "16:9",
+                        "notes": f"Propuesta generada para: {last_user[:80]}",
+                        "cuts": [
+                            {
+                                "in_sec": 0.0,
+                                "out_sec": 4.5,
+                                "reason": "Apertura limpia sin silencios ni muletillas",
+                                "speaker": "Locutor",
+                            },
+                            {
+                                "in_sec": 6.0,
+                                "out_sec": 12.0,
+                                "reason": "Highlight principal y cierre",
+                                "speaker": "Locutor",
+                            },
+                        ],
+                    },
+                )
+            ]
+            plan = f"[stub-llm:{active_model}] Plan: proponiendo EDL para «{last_user[:60]}»."
+            return calls, plan
+
+        search_keywords = (
+            "busca",
+            "buscar",
+            "listar medios",
+            "lista los medios",
+            "qué medios",
+            "que medios",
+            "assets del proyecto",
+        )
+        if "search_assets" in available_tools and any(k in lower for k in search_keywords):
+            calls = [
+                StubToolCallSpec(
+                    name="search_assets",
+                    arguments={"query": ""},
+                )
+            ]
+            plan = f"[stub-llm:{active_model}] Plan: buscando assets del proyecto."
+            return calls, plan
+
+        return [], ""
 
     async def stream_tokens(self, text: str) -> AsyncIterator[str]:
         """Divide un texto en fragmentos deterministas para simular SSE de tokens."""

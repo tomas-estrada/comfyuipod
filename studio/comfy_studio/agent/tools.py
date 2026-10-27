@@ -415,6 +415,7 @@ async def _handle_enqueue_render(
         workflow,
         job_id=job["id"],
         project_id=context.project_id,
+        template_id=args.template_id,
     )
     updated_job = context.store.get_job(job["id"]) or job
     outputs_list = [

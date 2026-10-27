@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ComfyUIPod Studio — Estudio Audiovisual Agéntico</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231e293b'/%3E%3Cpath d='M10 9l14 7-14 7V9z' fill='%2338bdf8'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/studio/style.css">
+    <script src="/studio/app.js" defer></script>
+</head>
+<body>
+    <header class="studio-header">
+        <div class="brand-row">
+            <div class="brand-identity">
+                <span class="brand-badge">M2 STUDIO</span>
+                <div>
+                    <h1 class="brand-title">ComfyUIPod Studio</h1>
+                    <p class="brand-subtitle">Estudio audiovisual agéntico en español sobre ComfyUI</p>
+                </div>
+            </div>
+            <div class="status-strip" aria-label="Estado del sistema">
+                <span id="health-server-badge" class="status-pill status-ok">Servidor: Conectando…</span>
+                <span id="health-comfyui-badge" class="status-pill status-neutral">ComfyUI: Verificando…</span>
+                <span id="health-llm-badge" class="status-pill status-neutral">Agente LLM: —</span>
+                <span id="sse-status-badge" class="status-pill status-neutral">SSE: Iniciando…</span>
+                <span id="active-project-badge" class="status-pill status-accent">Proyecto: Ninguno</span>
+            </div>
+        </div>
+
+        <nav class="studio-nav" aria-label="Navegación principal del estudio">
+            <button type="button" id="nav-projects" class="nav-tab active" data-view="projects" aria-selected="true">
+                1. Proyectos y Medios
+            </button>
+            <button type="button" id="nav-chat" class="nav-tab" data-view="chat" aria-selected="false">
+                2. Chat del Agente
+            </button>
+            <button type="button" id="nav-jobs" class="nav-tab" data-view="jobs" aria-selected="false">
+                3. Jobs y Render
+            </button>
+            <button type="button" id="nav-gallery" class="nav-tab" data-view="gallery" aria-selected="false">
+                4. Galería y Descargas
+            </button>
+            <button type="button" id="nav-edl" class="nav-tab" data-view="edl" aria-selected="false">
+                5. Timeline EDL
+            </button>
+            <button type="button" id="nav-login" class="nav-tab" data-view="login" aria-selected="false">
+                Acceso / Login
+            </button>
+        </nav>
+    </header>
+
+    <div id="studio-toast" class="studio-toast" role="status" aria-live="polite">
+        Bienvenido a ComfyUIPod Studio. Selecciona o crea un proyecto para comenzar.
+    </div>
+
+    <main class="studio-main">
+        <!-- VISTA 1: PROYECTOS Y MEDIOS -->
+        <section id="view-projects" class="studio-view active" data-view-panel="projects" aria-labelledby="heading-projects">
+            <div class="two-col-grid">
+                <div class="panel-card">
+                    <div class="card-header">
+                        <h2 id="heading-projects">Proyectos del Estudio</h2>
+                        <button type="button" id="refresh-projects-btn" class="btn btn-secondary btn-sm">
+                            Actualizar lista
+                        </button>
+                    </div>
+
+                    <form id="create-project-form" class="studio-form">
+                        <div class="form-row">
+                            <div class="form-group flex-2">
+                                <label for="project-name-input">Nombre del proyecto</label>
+                                <input
+                                    type="text"
+                                    id="project-name-input"
+                                    name="name"
+                                    required
+                                    maxlength="200"
+                                    placeholder="Ej. Spot Astronauta 480p"
+                                >
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="project-aspect-select">Relación de aspecto</label>
+                                <select id="project-aspect-select" name="aspect_ratio">
+                                    <option value="16:9">16:9 Horizontal</option>
+                                    <option value="9:16">9:16 Vertical (Reels/Shorts)</option>
+                                    <option value="1:1">1:1 Cuadrado</option>
+                                    <option value="4:5">4:5 Retrato</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="project-desc-input">Descripción / Notas de dirección</label>
+                            <input
+                                type="text"
+                                id="project-desc-input"
+                                name="description"
+                                maxlength="500"
+                                placeholder="Opcional: estilo visual, guion breve o notas de edición"
+                            >
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" id="create-project-btn" class="btn btn-primary">
+                                Crear proyecto
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="divider"></div>
+                    <h3 class="section-subtitle">Proyectos disponibles</h3>
+                    <div id="projects-list" class="items-list" aria-live="polite">
+                        <p class="empty-hint">Cargando proyectos…</p>
+                    </div>
+                </div>
+
+                <div class="panel-card" id="project-detail-panel">
+                    <div class="card-header">
+                        <h2 id="active-project-title">Detalle del Proyecto Activo</h2>
+                        <span id="active-project-id-code" class="code-badge">Sin proyecto</span>
+                    </div>
+
+                    <div id="active-project-summary" class="project-summary-box">
+                        <p>Crea o selecciona un proyecto en la columna izquierda para gestionar sus medios, abrir el chat del agente o lanzar renders.</p>
+                    </div>
+
+                    <div class="quick-nav-row" aria-label="Acciones del proyecto activo">
+                        <button type="button" id="goto-chat-btn" class="btn btn-accent" data-goto-view="chat">
+                            Ir al Chat del Agente →
+                        </button>
+                        <button type="button" id="goto-jobs-btn" class="btn btn-secondary" data-goto-view="jobs">
+                            Ir a Jobs y Render →
+                        </button>
+                        <button type="button" id="goto-gallery-btn" class="btn btn-secondary" data-goto-view="gallery">
+                            Ir a Galería y Descargas →
+                        </button>
+                        <button type="button" id="goto-edl-btn" class="btn btn-secondary" data-goto-view="edl">
+                            Ver Timeline EDL →
+                        </button>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <h3 class="section-subtitle">Subir medios al proyecto (Vídeo, Imagen o Audio)</h3>
+                    <form id="upload-media-form" class="studio-form">
+                        <div class="form-row">
+                            <div class="form-group flex-2">
+                                <label for="media-file-input">Archivo de medio (vídeo, imagen o audio)</label>
+                                <input
+                                    type="file"
+                                    id="media-file-input"
+                                    name="file"
+                                    accept="video/*,image/*,audio/*,.mp4,.mov,.webm,.mkv,.png,.jpg,.jpeg,.webp,.wav,.mp3,.flac,.ogg,.m4a"
+                                >
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="media-category-select">Categoría de medio</label>
+                                <select id="media-category-select" name="category">
+                                    <option value="uploads">Subidas (uploads)</option>
+                                    <option value="keyframes">Keyframes de referencia</option>
+                                    <option value="voice">Locución / Voz (voice)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" id="upload-media-btn" class="btn btn-primary">
+                                Subir medio al proyecto
+                            </button>
+                            <span id="upload-status-msg" class="inline-status" aria-live="polite"></span>
+                        </div>
+                    </form>
+
+                    <div class="divider"></div>
+                    <div class="card-header">
+                        <h3 class="section-subtitle">Medios en el proyecto (<span id="project-assets-count">0</span>)</h3>
+                    </div>
+                    <div id="project-assets-list" class="items-list" aria-live="polite">
+                        <p class="empty-hint">Aún no hay medios subidos en este proyecto.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VISTA 2: CHAT DEL AGENTE -->
+        <section id="view-chat" class="studio-view" data-view-panel="chat" aria-labelledby="heading-chat" hidden>
+            <div class="two-col-grid chat-layout">
+                <div class="panel-card chat-main-card">
+                    <div class="card-header">
+                        <div>
+                            <h2 id="heading-chat">Chat del Agente Creativo</h2>
+                            <p class="card-subtitle">Planifica secuencias, ejecuta herramientas sobre ComfyUI y propone cortes EDL en español.</p>
+                        </div>
+                        <div class="header-actions">
+                            <button type="button" id="clear-chat-btn" class="btn btn-secondary btn-sm">
+                                Limpiar conversación
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="quick-prompts-bar" aria-label="Instrucciones de ejemplo">
+                        <span class="bar-label">Prompts rápidos:</span>
+                        <button
+                            type="button"
+                            id="quick-prompt-render"
+                            class="btn btn-chip"
+                            data-prompt="Genera un vídeo corto con wan_t2v de un astronauta caminando en Marte"
+                        >
+                            Render vídeo (wan_t2v)
+                        </button>
+                        <button
+                            type="button"
+                            id="quick-prompt-inpaint"
+                            class="btn btn-chip"
+                            data-prompt="Aplica vace_inpaint para cambiar el traje por uno de astronauta retro"
+                        >
+                            Inpaint vídeo (vace_inpaint)
+                        </button>
+                        <button
+                            type="button"
+                            id="quick-prompt-edl"
+                            class="btn btn-chip"
+                            data-prompt="Propón un EDL de highlights para el clip inicial sin muletillas"
+                        >
+                            Proponer EDL highlights
+                        </button>
+                        <button
+                            type="button"
+                            id="quick-prompt-search"
+                            class="btn btn-chip"
+                            data-prompt="Busca los assets del proyecto y resume qué medios están disponibles"
+                        >
+                            Buscar medios del proyecto
+                        </button>
+                    </div>
+
+                    <div id="chat-keyframes-bar" class="keyframes-bar">
+                        <span class="bar-label">Adjuntar keyframes (base64 inline):</span>
+                        <div id="chat-keyframes-list" class="keyframes-chips">
+                            <span class="muted-text">Sube una imagen al proyecto para adjuntarla al turno.</span>
+                        </div>
+                    </div>
+
+                    <div id="chat-messages-list" class="chat-messages" aria-live="polite">
+                        <div class="chat-msg chat-msg-system">
+                            <strong>Agente listo.</strong> Escribe una instrucción o pulsa uno de los botones rápidos para transmitir tokens SSE y llamadas a herramientas en vivo.
+                        </div>
+                    </div>
+
+                    <div id="chat-stream-status" class="stream-status-bar" aria-live="polite">
+                        Estado del turno: En espera de instrucción.
+                    </div>
+
+                    <form id="chat-form" class="chat-composer">
+                        <div class="form-group">
+                            <label for="chat-message-input">Instrucción para el agente</label>
+                            <textarea
+                                id="chat-message-input"
+                                name="message"
+                                rows="2"
+                                required
+                                placeholder="Ej. Genera un vídeo corto con wan_t2v de un faro en tormenta o propón un EDL de highlights…"
+                            ></textarea>
+                        </div>
+                        <div class="composer-footer">
+                            <label class="checkbox-label" for="chat-stream-checkbox">
+                                <input type="checkbox" id="chat-stream-checkbox" checked>
+                                Streaming SSE en tiempo real
+                            </label>
+                            <div class="composer-buttons">
+                                <button type="submit" id="chat-send-btn" class="btn btn-primary">
+                                    Enviar al agente
+                                </button>
+                                <button type="button" id="chat-goto-jobs-btn" class="btn btn-secondary" data-goto-view="jobs">
+                                    Ver Jobs →
+                                </button>
+                                <button type="button" id="chat-goto-gallery-btn" class="btn btn-secondary" data-goto-view="gallery">
+                                    Ver Galería →
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="panel-card chat-tools-card">
+                    <div class="card-header">
+                        <h3>Eventos de Tools en Vivo</h3>
+                        <span id="tool-events-count" class="code-badge">0 eventos</span>
+                    </div>
+                    <p class="card-subtitle">Llamadas <code>tool_call</code> y resultados <code>tool_result</code> emitidos durante el bucle del agente.</p>
+                    <div id="chat-tool-events" class="items-list tool-events-list" aria-live="polite">
+                        <p class="empty-hint">Aún no se han ejecutado herramientas en esta sesión.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VISTA 3: JOBS Y RENDER -->
+        <section id="view-jobs" class="studio-view" data-view-panel="jobs" aria-labelledby="heading-jobs" hidden>
+            <div class="two-col-grid">
+                <div class="panel-card">
+                    <div class="card-header">
+                        <h2 id="heading-jobs">Lanzador de Plantillas Curadas (M2)</h2>
+                        <span class="code-badge">6 plantillas parametrizadas</span>
+                    </div>
+
+                    <form id="template-submit-form" class="studio-form">
+                        <div class="form-group">
+                            <label for="template-select">Plantilla de flujo ComfyUI</label>
+                            <select id="template-select" name="template_id">
+                                <option value="wan_t2v">wan_t2v — Wan 2.2 Texto a Vídeo (480p Lightning)</option>
+                                <option value="wan_i2v">wan_i2v — Wan 2.2 Imagen a Vídeo (480p Lightning)</option>
+                                <option value="wan_flf2v">wan_flf2v — Wan 2.2 Primer/Último Fotograma a Vídeo</option>
+                                <option value="vace_inpaint">vace_inpaint — Wan 2.1 VACE Inpainting de Vídeo</option>
+                                <option value="vace_restyle">vace_restyle — Wan 2.1 VACE Restyle / Transferencia</option>
+                                <option value="sdxl_image">sdxl_image — SDXL Imagen de Referencia / Keyframe</option>
+                            </select>
+                        </div>
+
+                        <div id="template-doc-card" class="template-doc-box">
+                            <strong>Uso:</strong> Generación rápida de clips de vídeo o keyframes listos para revisión en 480p con LoRA Lightning de 4 pasos.
+                        </div>
+
+                        <div class="form-group">
+                            <label for="template-prompt-input">Prompt positivo</label>
+                            <input
+                                type="text"
+                                id="template-prompt-input"
+                                name="prompt"
+                                required
+                                value="Astronauta explorando un cañón marciano al atardecer, luz cinematográfica"
+                                placeholder="Describe el plano o la modificación deseada"
+                            >
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="template-steps-input">Pasos (steps)</label>
+                                <input type="number" id="template-steps-input" name="steps" min="1" max="100" value="4">
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="template-asset-select">Medio de entrada (opcional)</label>
+                                <select id="template-asset-select" name="asset_id">
+                                    <option value="">— Sin asset de entrada (por defecto) —</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="submit" id="submit-template-btn" class="btn btn-primary">
+                                Lanzar render con plantilla
+                            </button>
+                            <button type="button" id="jobs-goto-gallery-btn" class="btn btn-accent" data-goto-view="gallery">
+                                Ir a Galería de Salidas →
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="panel-card">
+                    <div class="card-header">
+                        <h2>Cola de Jobs y Progreso en Vivo</h2>
+                        <button type="button" id="refresh-jobs-btn" class="btn btn-secondary btn-sm">
+                            Actualizar jobs
+                        </button>
+                    </div>
+
+                    <div id="sse-live-banner" class="sse-banner" aria-live="polite">
+                        Canal SSE <code>/studio/api/progress</code> activo. Esperando eventos de ejecución…
+                    </div>
+
+                    <div id="jobs-list" class="items-list" aria-live="polite">
+                        <p class="empty-hint">No hay jobs registrados todavía.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VISTA 4: GALERÍA Y DESCARGAS -->
+        <section id="view-gallery" class="studio-view" data-view-panel="gallery" aria-labelledby="heading-gallery" hidden>
+            <div class="panel-card">
+                <div class="card-header">
+                    <div>
+                        <h2 id="heading-gallery">Galería del Proyecto y Descargas</h2>
+                        <p class="card-subtitle">Previsualiza salidas generadas por ComfyUI y medios del proyecto, o descárgalos directamente.</p>
+                    </div>
+                    <div class="filter-controls">
+                        <label for="gallery-category-filter" class="sr-only">Categoría</label>
+                        <select id="gallery-category-filter" aria-label="Filtrar por categoría">
+                            <option value="all">Todas las categorías (outputs + uploads)</option>
+                            <option value="outputs">Solo Salidas de Render (outputs)</option>
+                            <option value="uploads">Solo Subidas (uploads)</option>
+                            <option value="keyframes">Solo Keyframes</option>
+                        </select>
+                        <button type="button" id="refresh-gallery-btn" class="btn btn-secondary btn-sm">
+                            Actualizar galería
+                        </button>
+                    </div>
+                </div>
+
+                <div id="download-status-banner" class="download-banner" role="status" aria-live="polite">
+                    Selecciona «Previsualizar» o «Descargar archivo» en cualquier elemento de la galería.
+                </div>
+
+                <div id="gallery-preview-stage" class="preview-stage">
+                    <div class="preview-placeholder">
+                        <p>Ningún elemento seleccionado para vista previa. Haz clic en <strong>Previsualizar</strong> en una tarjeta inferior.</p>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+                <h3 class="section-subtitle">Elementos en Galería (<span id="gallery-items-count">0</span>)</h3>
+                <div id="gallery-grid" class="gallery-grid" aria-live="polite">
+                    <p class="empty-hint">No hay elementos en la galería del proyecto activo.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- VISTA 5: TIMELINE EDL (PLACEHOLDER M2 -> M3) -->
+        <section id="view-edl" class="studio-view" data-view-panel="edl" aria-labelledby="heading-edl" hidden>
+            <div class="panel-card">
+                <div class="card-header">
+                    <div>
+                        <h2 id="heading-edl">Timeline EDL (Edit Decision List) y Transcripción</h2>
+                        <p class="card-subtitle">Visor de versiones EDL propuestas por el agente y placeholder de línea de tiempo multipista (M2/M3).</p>
+                    </div>
+                    <div class="header-actions">
+                        <span id="edl-version-badge" class="code-badge">Sin versión EDL</span>
+                        <button type="button" id="edl-propose-btn" class="btn btn-primary btn-sm">
+                            Generar EDL de Highlights con Agente
+                        </button>
+                        <button type="button" id="refresh-edl-btn" class="btn btn-secondary btn-sm">
+                            Actualizar EDL
+                        </button>
+                    </div>
+                </div>
+
+                <div id="edl-summary-box" class="project-summary-box">
+                    <p>El Timeline EDL muestra los cortes de entrada/salida (<code>in_sec</code> / <code>out_sec</code>) propuestos mediante la herramienta <code>propose_edl</code> del agente.</p>
+                </div>
+
+                <div class="edl-timeline-container" aria-label="Representación visual del timeline EDL">
+                    <div class="timeline-track-row">
+                        <span class="track-label">V1 · Vídeo Principal</span>
+                        <div id="edl-timeline-track" class="timeline-track">
+                            <span class="track-empty">Sin cortes definidos aún. Pulsa «Generar EDL de Highlights con Agente».</span>
+                        </div>
+                    </div>
+                    <div class="timeline-track-row">
+                        <span class="track-label">A1 · Voz / Subtítulos</span>
+                        <div class="timeline-track timeline-track-secondary">
+                            <span class="track-segment track-segment-audio">Sincronización de transcripción y locución (preparado para M3 Faster-Whisper / F5-TTS)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+                <h3 class="section-subtitle">Lista de Decisiones de Corte (Cuts)</h3>
+                <div id="edl-cuts-list" class="items-list" aria-live="polite">
+                    <p class="empty-hint">No hay cortes registrados en el proyecto activo.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- VISTA 6: ACCESO / LOGIN (EDGE BASIC-AUTH DEL POD) -->
+        <section id="view-login" class="studio-view" data-view-panel="login" aria-labelledby="heading-login" hidden>
+            <div class="two-col-grid">
+                <div class="panel-card">
+                    <div class="card-header">
+                        <h2 id="heading-login">Acceso al Estudio (Edge Basic-Auth del Pod)</h2>
+                        <span id="auth-mode-badge" class="code-badge">Sesión activa</span>
+                    </div>
+                    <p class="card-subtitle">
+                        En el pod de producción, <code>nginx</code> protege <code>/studio/</code> y <code>/studio/api/*</code> con Basic-Auth (<code>COMFY_USER</code> / <code>COMFY_PASS</code>). Si tu navegador o entorno local requiere cabecera <code>Authorization: Basic</code> explícita, puedes configurarla aquí.
+                    </p>
+
+                    <form id="login-form" class="studio-form">
+                        <div class="form-group">
+                            <label for="login-user-input">Usuario del Pod (COMFY_USER)</label>
+                            <input
+                                type="text"
+                                id="login-user-input"
+                                name="username"
+                                autocomplete="username"
+                                value="admin"
+                                required
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label for="login-pass-input">Contraseña del Pod (COMFY_PASS)</label>
+                            <input
+                                type="password"
+                                id="login-pass-input"
+                                name="password"
+                                autocomplete="current-password"
+                                placeholder="Introduce COMFY_PASS para enviar Authorization: Basic"
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label" for="login-simulate-edge-checkbox">
+                                <input type="checkbox" id="login-simulate-edge-checkbox">
+                                Simular validación de edge en desarrollo (<code>X-Studio-Simulate-Edge: 1</code>)
+                            </label>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" id="login-save-btn" class="btn btn-primary">
+                                Guardar y verificar acceso
+                            </button>
+                            <button type="button" id="login-clear-btn" class="btn btn-secondary">
+                                Limpiar credenciales
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="panel-card">
+                    <div class="card-header">
+                        <h2>Diagnóstico de Conexión y Servicios</h2>
+                        <button type="button" id="refresh-health-btn" class="btn btn-secondary btn-sm">
+                            Comprobar ahora
+                        </button>
+                    </div>
+                    <div id="auth-status-card" class="project-summary-box" aria-live="polite">
+                        <p>Verificando estado de <code>/studio/api/health</code> y <code>/studio/api/status</code>…</p>
+                    </div>
+                    <div class="divider"></div>
+                    <h3 class="section-subtitle">Accesos del Pod</h3>
+                    <div class="quick-nav-row">
+                        <button type="button" class="btn btn-primary" data-goto-view="projects">
+                            Volver a Proyectos y Medios
+                        </button>
+                        <a href="/home" class="btn btn-secondary">Portal /home del Pod</a>
+                        <a href="/status" class="btn btn-secondary">Estado JSON (/status)</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
