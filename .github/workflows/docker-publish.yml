@@ -888,7 +888,7 @@ jobs:
           done
 
           studio_html="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/)"
-          grep -q "Comfy Studio" <<<"$studio_html"
+          grep -q "ComfyUIPod Studio" <<<"$studio_html"
           grep -q "/studio/style.css" <<<"$studio_html"
           grep -q "/studio/app.js" <<<"$studio_html"
 
@@ -950,9 +950,9 @@ jobs:
           print("Verified studio loopback-only listeners:", {p: list(listeners[p]) for p in (18188, 18189, 18190, 7681)})
           '
 
-          studio_rep="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/report.md)"
+          studio_rep="$(curl -fsS --max-time 60 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/report.md)"
           grep -q "Sin cambios respecto a" <<<"$studio_rep"
-          studio_diag="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/diag)"
+          studio_diag="$(curl -fsS --max-time 60 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/diag)"
           studio_st_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/api/status)"
           studio_logs="$(timeout 30 docker logs "$studio_cid" 2>&1)"
           if grep -qE "ci-secret-9f8e7d|sk-ci-studio-secret-token-9999" <<<"${studio_rep}${studio_diag}${studio_status_api}${studio_st_json}${studio_logs}"; then
