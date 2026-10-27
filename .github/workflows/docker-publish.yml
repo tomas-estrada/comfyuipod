@@ -460,7 +460,6 @@ jobs:
           timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/image.json
           timeout 300 docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
             "import torch, onnxruntime as ort, insightface, cv2, huggingface_hub, hf_xet; print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'CV2:', cv2.__version__, 'HF:', huggingface_hub.__version__, 'ORT:', ort.get_available_providers())"
-          timeout 300 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" -m comfy_studio.templates
           timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
 
           echo "=== Iniciando Smoke Test Full-Stack del contenedor (§9.2) ==="
@@ -490,13 +489,9 @@ jobs:
             exit 1
           fi
           echo "Contenedor smoke arrancado (cid=${cid})"
-          studio_cid=""
-          mock_hook_dir=""
           cleanup() {
             if [ -n "$cid" ]; then timeout 60 docker rm -f "$cid" >/dev/null 2>&1 || true; fi
-            if [ -n "$studio_cid" ]; then timeout 60 docker rm -f "$studio_cid" >/dev/null 2>&1 || true; fi
-            if [ -n "$mock_hook_dir" ]; then rm -rf "$mock_hook_dir" >/dev/null 2>&1 || true; fi
-            timeout 60 docker rm -f smoke smoke-studio >/dev/null 2>&1 || true
+            timeout 60 docker rm -f smoke >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
 
@@ -786,9 +781,20 @@ jobs:
           timeout 300 docker run --rm --entrypoint /usr/local/bin/comfyctl "${CANDIDATE_TAG}" diag | grep -q "\[DIAG\] resumen:"
           echo "[OK] Paso 14: Paridad de esquemas congelados, 11 cabeceras de /report.md y comfyctl diag verificada"
 
-          # 15. Smoke Test E2E con MODEL_PROFILE=studio y ComfyUI simulado (VAL-PROFILE-001 / VAL-PROFILE-005 / VAL-SERVER-002 / VAL-CROSS-003)
+      - name: Smoke Test E2E con MODEL_PROFILE=studio y ComfyUI simulado (VAL-PROFILE-001 / VAL-PROFILE-005 / VAL-SERVER-002 / VAL-CROSS-003)
+        run: |
+          set -euo pipefail
+          CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
+          timeout 300 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" -m comfy_studio.templates
           echo "=== Paso 15: Iniciando Smoke Test E2E con MODEL_PROFILE=studio ==="
+          studio_cid=""
           mock_hook_dir="$(mktemp -d)"
+          cleanup_studio() {
+            if [ -n "$studio_cid" ]; then timeout 60 docker rm -f "$studio_cid" >/dev/null 2>&1 || true; fi
+            if [ -n "$mock_hook_dir" ]; then rm -rf "$mock_hook_dir" >/dev/null 2>&1 || true; fi
+            timeout 60 docker rm -f smoke-studio >/dev/null 2>&1 || true
+          }
+          trap cleanup_studio EXIT
           chmod 755 "$mock_hook_dir"
           cat > "${mock_hook_dir}/sitecustomize.py" << 'EOF'
           import json

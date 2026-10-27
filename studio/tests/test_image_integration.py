@@ -143,3 +143,16 @@ def test_dockerignore_and_ci_workflow_studio_smoke_and_ghcr_intact() -> None:
     assert "http://127.0.0.1:18188/studio/api/health" in workflow
     assert "http://127.0.0.1:18188/studio/api/progress?max_events=1" in workflow
     assert "docker buildx imagetools create" in workflow
+
+    # Ningún bloque run: debe superar el límite de 21 000 caracteres de GitHub Actions
+    for step_block in re.split(r"\n      - name: ", workflow)[1:]:
+        if "run: |\n" in step_block:
+            step_name = step_block.splitlines()[0]
+            run_body = step_block.split("run: |\n", 1)[1]
+            unindented = "\n".join(
+                ln[10:] if ln.startswith("          ") else ln for ln in run_body.splitlines()
+            )
+            assert len(unindented) < 21000, (
+                f"Step '{step_name}' supera el límite de 21000 chars ({len(unindented)})"
+            )
+
