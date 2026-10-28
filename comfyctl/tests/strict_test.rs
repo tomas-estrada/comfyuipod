@@ -36,6 +36,11 @@ fn base_healthy_snapshot() -> SystemSnapshot {
         studio_health_ok: true,
         studio_health_detail:
             "studio-server healthy en 127.0.0.1:18190 (/studio/api/health HTTP 200)".to_string(),
+        studio_perception_ok: true,
+        studio_perception_detail:
+            "percepción disponible (backend en SIMULACIÓN: `simulated: true`)".to_string(),
+        studio_perception_backend: "sim".to_string(),
+        studio_perception_stale: false,
         mcp_health_ok: true,
         mcp_health_detail: "MCP healthy en 127.0.0.1:18190/studio/api/mcp/health (HTTP 200)"
             .to_string(),
@@ -407,14 +412,16 @@ fn strict_studio_health_s11_and_live_http_probe() {
     vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
     let cfg_studio = RuntimeConfig::from_map(&vars, None);
 
-    // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añaden S11 (studio_health) y S12 (mcp_health)
+    // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añaden S11 (studio_health),
+    //    S12 (mcp_health) y S13 (studio_perception, warn nunca fatal)
     let mut snap = base_healthy_snapshot();
     snap.disk_free_gb = 200.0;
     let rep_ok = evaluate_strict_checks(&cfg_studio, &snap);
     assert_eq!(rep_ok.result, "ok");
-    assert_eq!(rep_ok.checks.len(), 12);
+    assert_eq!(rep_ok.checks.len(), 15);
     for expected_id in [
-        "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12",
+        "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S13b",
+        "S13c",
     ] {
         assert!(
             rep_ok

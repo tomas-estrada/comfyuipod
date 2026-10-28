@@ -7,8 +7,8 @@ Diseño:
 - `BrokerWebhookDispatcher`: suscriptor del `ProgressBroker` que traduce eventos
    internos (`job` done/failed/error/cancelled/interrupted, `done` de turno de
    agente) a
-  eventos webhook (`job_finished`, `job_failed`, `job_interrupted`,
-  `agent_turn_done`).
+  eventos webhook (`job_finished`, `job_failed`, `job_cancelled`,
+  `job_interrupted`, `agent_turn_done`).
 - La URL la aporta el operador vía `STUDIO_WEBHOOK_URL` (no es input de usuario);
   el secreto vía `STUDIO_WEBHOOK_SECRET` y se redacta en todas las salidas.
 """
@@ -41,7 +41,9 @@ _TERMINAL_JOB_STATUS_TO_EVENT = {
     "done": "job_finished",
     "failed": "job_failed",
     "error": "job_failed",
-    "cancelled": "job_failed",
+    # M1.4: una cancelación NO es un fallo; los consumidores necesitan distinguirlas
+    # para no disparar reintentos/alertas sobre un job que el usuario paró a propósito.
+    "cancelled": "job_cancelled",
     "interrupted": "job_interrupted",
 }
 
@@ -143,6 +145,62 @@ def map_broker_event(
                 if data.get(key) is not None
             },
         )
+    # M2 (`M3-IDEA-034`): eventos de percepción y montaje que hasta ahora solo
+    # llegaban al SSE del panel. Un consumidor externo no podía saber cuándo una
+    # transcripción estaba lista ni cuándo el EDL se había renderizado.
+    if event_type == "transcription":
+        return (
+            "transcription_done",
+            {
+                key: data[key]
+                for key in (
+                    "project_id",
+                    "transcription_id",
+                    "asset_id",
+                    "language",
+                    "segments_count",
+                    "words_count",
+                    "diarized",
+                    "backend",
+                    "simulated",
+                )
+                if data.get(key) is not None
+            },
+        )
+    if event_type == "edl":
+        status = str(data.get("status") or "")
+        if status == "built":
+            return (
+                "edl_rendered",
+                {
+                    key: data[key]
+                    for key in (
+                        "project_id",
+                        "edl_id",
+                        "version",
+                        "aspect_ratio",
+                        "output_asset_id",
+                    )
+                    if data.get(key) is not None
+                },
+            )
+        if status == "proposed":
+            return (
+                "edl_proposed",
+                {
+                    key: data[key]
+                    for key in (
+                        "project_id",
+                        "edl_id",
+                        "version",
+                        "aspect_ratio",
+                        "total_duration_sec",
+                        "cuts_count",
+                    )
+                    if data.get(key) is not None
+                },
+            )
+        return None
     return None
 
 

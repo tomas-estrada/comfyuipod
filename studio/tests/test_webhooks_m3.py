@@ -99,7 +99,8 @@ def test_map_broker_event_terminal_jobs_and_agent_done() -> None:
 
     cancelled = map_broker_event("job", {"status": "cancelled", "job_id": "j3"})
     assert cancelled is not None
-    assert cancelled[0] == "job_failed"
+    # M1.4: una cancelación es un evento propio, no un fallo.
+    assert cancelled[0] == "job_cancelled"
     assert cancelled[1]["status"] == "cancelled"
 
     interrupted = map_broker_event(

@@ -1,0 +1,244 @@
+"""Worker de ML ejecutable como subprocesso (M3.1).
+
+Uso:
+    python3 worker.py <subcomando> < payload.json > respuesta.json
+
+Un JSON request en stdin, un JSON response en stdout. Todo el ruido de
+diagnóstico va a stderr. El entorno del proceso hijo se construye con
+allowlist (nunca `os.environ.copy()`): ningún secreto llega al worker.
+
+Subcommandos:
+  probe               -> detección de capacidades (intérprete, torch, etc.)
+  clip_embed_text     -> embedding CLIP de texto (768-d)
+  clip_embed_image    -> embedding CLIP de imagen (768-d)
+  faces_detect        -> detección + embeddings faciales (512-d)
+  asr_transcribe      -> transcripción ASR (faster-whisper)
+  diarize             -> diarización cam++ + fusión con transcripción
+
+Cada respuesta incluye `ok`, `subcommand`, y o bien `payload` (éxito) o
+`error` + `stderr_tail` (fallo). Todo el contenido sensible se redacta.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from typing import Any
+
+# Asegurar que el paquete comfy_studio sea importable cuando el worker se
+# lanza con el intérprete del sistema (comfyui) que puede no tener el cwd
+# en sys.path.
+_HERE = os.path.dirname(os.path.abspath(__file__))           # .../comfy_studio/ml
+_STUDIO_DIR = os.path.dirname(os.path.dirname(_HERE))         # .../studio
+for _p in (_HERE, _STUDIO_DIR):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from comfy_studio import SIMULATED_ML_NOTICE  # noqa: E402
+from comfy_studio.config import SecretRedactor  # noqa: E402
+from comfy_studio.ml import (  # noqa: E402
+    ML_ENV_ALLOWLIST,
+    probe_capabilities,
+)
+
+REDACTOR = SecretRedactor()
+
+
+def _read_stdin() -> dict[str, Any]:
+    raw = sys.stdin.read()
+    if not raw.strip():
+        return {}
+    return json.loads(raw)
+
+
+def _write_stdout(obj: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+def _stderr(msg: str) -> None:
+    sys.stderr.write(msg + "\n")
+    sys.stderr.flush()
+
+
+def _allowlist_env() -> dict[str, str]:
+    env: dict[str, str] = {}
+    for key in sorted(ML_ENV_ALLOWLIST):
+        val = os.environ.get(key)
+        if val is not None:
+            env[key] = val
+    return env
+
+
+def _redact(value: Any) -> Any:
+    return REDACTOR.redact_value(value)
+
+
+def cmd_probe(_payload: dict[str, Any]) -> dict[str, Any]:
+    caps = probe_capabilities()
+    return {
+        "ok": caps.probe_ok,
+        "subcommand": "probe",
+        "payload": caps.to_public_dict(),
+        "error": caps.reason or None,
+        "stderr_tail": None,
+    }
+
+
+def cmd_clip_embed_text(payload: dict[str, Any]) -> dict[str, Any]:
+    _ = payload.get("text", "")
+    return {
+        "ok": True,
+        "subcommand": "clip_embed_text",
+        "payload": {
+            "embedding": _redact([0.0] * 768),
+            "dim": 768,
+            "model": "openai/clip-vit-large-patch14",
+            "simulated": True,
+            "simulation_notice": SIMULATED_ML_NOTICE,
+        },
+        "error": None,
+        "stderr_tail": None,
+    }
+
+
+def cmd_clip_embed_image(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "subcommand": "clip_embed_image",
+        "payload": {
+            "embedding": _redact([0.0] * 768),
+            "dim": 768,
+            "model": "openai/clip-vit-large-patch14",
+            "simulated": True,
+            "simulation_notice": SIMULATED_ML_NOTICE,
+        },
+        "error": None,
+        "stderr_tail": None,
+    }
+
+
+def cmd_faces_detect(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "subcommand": "faces_detect",
+        "payload": {
+            "faces": [],
+            "model_pack": "buffalo_l",
+            "dim": 512,
+            "simulated": True,
+            "simulation_notice": SIMULATED_ML_NOTICE,
+        },
+        "error": None,
+        "stderr_tail": None,
+    }
+
+
+def cmd_asr_transcribe(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "subcommand": "asr_transcribe",
+        "payload": {
+            "text": "",
+            "segments": [],
+            "words": [],
+            "language": "es",
+            "backend": "faster-whisper",
+            "model": "large-v3",
+            "simulated": True,
+            "simulation_notice": SIMULATED_ML_NOTICE,
+        },
+        "error": None,
+        "stderr_tail": None,
+    }
+
+
+def cmd_diarize(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "subcommand": "diarize",
+        "payload": {
+            "speakers": [],
+            "turns": [],
+            "by_speaker": {},
+            "backend": "funasr_campplus",
+            "simulated": True,
+            "simulation_notice": SIMULATED_ML_NOTICE,
+        },
+        "error": None,
+        "stderr_tail": None,
+    }
+
+
+_CMD_MAP: dict[str, callable] = {
+    "probe": cmd_probe,
+    "clip_embed_text": cmd_clip_embed_text,
+    "clip_embed_image": cmd_clip_embed_image,
+    "faces_detect": cmd_faces_detect,
+    "asr_transcribe": cmd_asr_transcribe,
+    "diarize": cmd_diarize,
+}
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        _stderr("uso: worker.py <subcomando>")
+        _write_stdout(
+            {
+                "ok": False,
+                "subcommand": None,
+                "error": "subcomando requerido",
+                "stderr_tail": None,
+            }
+        )
+        return 2
+
+    subcommand = sys.argv[1]
+    if subcommand not in _CMD_MAP:
+        _stderr(f"subcomando desconocido: {subcommand}")
+        _write_stdout(
+            {
+                "ok": False,
+                "subcommand": subcommand,
+                "error": f"subcomando desconocido: {subcommand}",
+                "stderr_tail": None,
+            }
+        )
+        return 2
+
+    try:
+        payload = _read_stdin()
+    except Exception as exc:  # noqa: BLE001
+        _stderr(f"stdin no es JSON válido: {exc}")
+        _write_stdout(
+            {
+                "ok": False,
+                "subcommand": subcommand,
+                "error": f"stdin no es JSON válido: {exc}",
+                "stderr_tail": None,
+            }
+        )
+        return 2
+
+    try:
+        result = _CMD_MAP[subcommand](payload)
+    except Exception as exc:  # noqa: BLE001
+        _stderr(f"error en worker {subcommand}: {type(exc).__name__}: {exc}")
+        _write_stdout(
+            {
+                "ok": False,
+                "subcommand": subcommand,
+                "error": f"{type(exc).__name__}: {exc}",
+                "stderr_tail": _redact(str(exc)),
+            }
+        )
+        return 1
+
+    _write_stdout(result)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

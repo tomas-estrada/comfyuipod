@@ -190,9 +190,25 @@ async def recover_interrupted_jobs(
                 return "failed"
 
     if pending_executions:
-        outcomes = await asyncio.gather(
-            *(_resume_one(spec) for spec in pending_executions)
-        )
+        try:
+            outcomes = await asyncio.gather(
+                *(_resume_one(spec) for spec in pending_executions)
+            )
+        except asyncio.CancelledError:
+            # M1.6: un shutdown a mitad de reanudación dejaría jobs en estado en vuelo sin
+            # ejecutor. Se marcan `interrupted` explícitamente antes de propagar la
+            # cancelación para que la reconciliación sea determinista.
+            for spec in pending_executions:
+                store.update_job(
+                    spec["job_id"],
+                    status="interrupted",
+                    error="Reanudación interrumpida por el apagado del servidor.",
+                )
+            logger.warning(
+                "Recuperación cancelada durante el apagado: %d job(s) marcados interrupted.",
+                len(pending_executions),
+            )
+            raise
         for outcome in outcomes:
             report["done" if outcome == "done" else "failed"] += 1
 

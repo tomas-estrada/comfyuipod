@@ -82,6 +82,11 @@ fn base_healthy_studio_snapshot(studio_ok: bool, studio_detail: &str) -> SystemS
             .to_string(),
         studio_health_ok: studio_ok,
         studio_health_detail: studio_detail.to_string(),
+        studio_perception_ok: true,
+        studio_perception_detail:
+            "percepción disponible (backend en SIMULACIÓN: `simulated: true`)".to_string(),
+        studio_perception_backend: "sim".to_string(),
+        studio_perception_stale: false,
         mcp_health_ok: true,
         mcp_health_detail: "MCP healthy en 127.0.0.1:18190/studio/api/mcp/health (HTTP 200)"
             .to_string(),
