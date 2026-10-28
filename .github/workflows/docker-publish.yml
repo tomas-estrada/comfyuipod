@@ -102,7 +102,7 @@ jobs:
           print(f"Validated {len(patterns)} triage patterns, {len(expected_files)} expected models, frozen schemas (incl. strict), and portal ({portal_bytes} bytes, 0 external CDN refs).")
           EOF
 
-      - name: Ejecutar download-models.sh en seco con HF_CLI simulado y contrastar formato con parser (R-01 / R-08 / S-01 / S-02 / VAL-PROFILE-002)
+      - name: Ejecutar download-models.sh en seco con HF_CLI simulado y contrastar formato con parser (R-01 / R-08 / S-01 / S-02 / VAL-PROFILE-002 / VAL-UNREAL-003)
         run: |
           set -euo pipefail
           tmp_root="$(mktemp -d)"
@@ -168,6 +168,7 @@ jobs:
 
           # S-01 Fase 3 (MODEL_PROFILE=studio, VAL-PROFILE-002): verificar conteo planeado (77 base / 78 con STUDIO_INCLUDE_ANIMATE=1),
           # rutas de destino (models/*, custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/*, indextts/checkpoints/*) e idempotencia.
+          # Desde M3-D la línea PLAN FASE 3 también informa STUDIO_INCLUDE_3D (Hunyuan3D 2.1, opt-in; 0 en perfil 'studio' sin opt-in).
           mkdir -p "$tmp_root/studio_data" "$tmp_root/studio_app/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints"
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio \
             bash scripts/download-models.sh --phase2 > "$tmp_root/dl_studio.log" 2>"$tmp_root/dl_studio.err" || { cat "$tmp_root/dl_studio.log"; cat "$tmp_root/dl_studio.err"; exit 1; }
@@ -175,7 +176,7 @@ jobs:
           grep -q "PLAN FASE 2: 8 archivos (studio)" "$tmp_root/dl_studio.log"
           grep -q "FASE 2 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
           grep -q "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: studio)" "$tmp_root/dl_studio.log"
-          grep -q "PLAN FASE 3: 77 archivos (studio, STUDIO_INCLUDE_ANIMATE=0)" "$tmp_root/dl_studio.log"
+          grep -q "PLAN FASE 3: 77 archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0)" "$tmp_root/dl_studio.log"
           grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_studio.log"
           grep -q "FASE 3 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors" ]
@@ -215,11 +216,29 @@ jobs:
 
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_ANIMATE=1 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_anim.log" 2>"$tmp_root/dl_studio_anim.err" || { cat "$tmp_root/dl_studio_anim.log"; cat "$tmp_root/dl_studio_anim.err"; exit 1; }
-          grep -q "PLAN FASE 3: 78 archivos (studio, STUDIO_INCLUDE_ANIMATE=1)" "$tmp_root/dl_studio_anim.log"
+          grep -q "PLAN FASE 3: 78 archivos (studio, STUDIO_INCLUDE_ANIMATE=1, STUDIO_INCLUDE_3D=0)" "$tmp_root/dl_studio_anim.log"
           grep -q "SKIP (ya existe): wan2.2_ti2v_5B_fp16.safetensors" "$tmp_root/dl_studio_anim.log"
           grep -q "INICIO: wan2.2_animate_14B_int8_convrot.safetensors" "$tmp_root/dl_studio_anim.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors" ]
           echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio, 77 base + 1 opt-in Animate + reanudación tras --phase2) verificado en seco (S-01 / VAL-PROFILE-002)"
+
+          # VAL-UNREAL-003 (M3-D): el perfil 'unreal' implica STUDIO_INCLUDE_3D=1 (Hunyuan3D 2.1:
+          # PLAN FASE 3 = 77 base + 1 3D = 78 archivos, destino models/checkpoints/hunyuan_3d_v2.1.safetensors)
+          # y la renuncia explícita STUDIO_INCLUDE_3D=0 devuelve el plan a 77 sin descargar el modelo 3D.
+          mkdir -p "$tmp_root/unreal_data" "$tmp_root/unreal_app"
+          COMFY_DATA_DIR="$tmp_root/unreal_data" COMFY_APP_DIR="$tmp_root/unreal_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=unreal \
+            bash scripts/download-models.sh --phase3 > "$tmp_root/dl_unreal.log" 2>"$tmp_root/dl_unreal.err" || { cat "$tmp_root/dl_unreal.log"; cat "$tmp_root/dl_unreal.err"; exit 1; }
+          grep -q "PLAN FASE 3: 78 archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=1)" "$tmp_root/dl_unreal.log"
+          grep -q "INICIO: hunyuan_3d_v2.1.safetensors" "$tmp_root/dl_unreal.log"
+          grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_unreal.log"
+          grep -q "FASE 3 COMPLETADA (Perfil: unreal)\." "$tmp_root/dl_unreal.log"
+          [ -s "$tmp_root/unreal_data/models/checkpoints/hunyuan_3d_v2.1.safetensors" ]
+          mkdir -p "$tmp_root/unreal_optout_data" "$tmp_root/unreal_optout_app"
+          COMFY_DATA_DIR="$tmp_root/unreal_optout_data" COMFY_APP_DIR="$tmp_root/unreal_optout_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=unreal STUDIO_INCLUDE_3D=0 \
+            bash scripts/download-models.sh --phase3 > "$tmp_root/dl_unreal_optout.log" 2>"$tmp_root/dl_unreal_optout.err" || { cat "$tmp_root/dl_unreal_optout.log"; cat "$tmp_root/dl_unreal_optout.err"; exit 1; }
+          grep -q "PLAN FASE 3: 77 archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0)" "$tmp_root/dl_unreal_optout.log"
+          [ ! -e "$tmp_root/unreal_optout_data/models/checkpoints/hunyuan_3d_v2.1.safetensors" ]
+          echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=unreal: Hunyuan3D 2.1 implícito + renuncia STUDIO_INCLUDE_3D=0) verificado en seco (VAL-UNREAL-003)"
 
       - name: Ejecutar Hadolint sobre Dockerfile (CRIT-01 - SHA v3.5.0 verificado)
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0

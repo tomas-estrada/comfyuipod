@@ -38,6 +38,8 @@
 #   - minimal   : Solo Fase 1 (2.79 GiB; omite Fase 2)
 #   - studio    : Fase 1 (2.79 GiB) + Fase 2 SDXL/ControlNet (13.22 GiB) +
 #                 Fase 3 (136.02 GiB / 146.05 GB) ≈ 152.03 GiB (≈163.24 GB en disco)
+#   - unreal    : 'studio' + Hunyuan3D 2.1 implícito (+7.37 GB; STUDIO_INCLUDE_3D=0
+#                 renuncia) ≈ 158.89 GiB (≈170.61 GB en disco; alquiler ≥ 210 GB)
 #
 # Variables de entorno adicionales de control de descarga (§11):
 #   - HF_FETCH_TIMEOUT       : Timeout en segundos por archivo e intento (default: 3600).
@@ -47,6 +49,9 @@
 #   - STUDIO_INCLUDE_ANIMATE : Si se define a "1" en perfil 'studio', añade el modelo
 #                              base wan2.2_animate_14B_int8_convrot (+18.41 GB; requiere
 #                              alquiler de disco ≥ 250 GB).
+#   - STUDIO_INCLUDE_3D      : Si se define a "1", añade Hunyuan3D 2.1 (+7.37 GB). El
+#                              perfil 'unreal' lo activa implícitamente; definirlo a "0"
+#                              en 'unreal' renuncia explícitamente al grupo 3D (M3-D).
 # ==============================================================================
 
 set -uo pipefail
@@ -87,7 +92,7 @@ log() {
 
 # Validar MODEL_PROFILE (BAJA-04)
 case "${MODEL_PROFILE}" in
-    all|general|realistic|anime|minimal|studio)
+    all|general|realistic|anime|minimal|studio|unreal)
         ;;
     *)
         log "WARN: MODEL_PROFILE='${MODEL_PROFILE}' no reconocido; usando 'all'."
@@ -277,7 +282,7 @@ run_phase2() {
         general|realistic|anime)
             phase2_planned=10
             ;;
-        studio)
+        studio|unreal)
             phase2_planned=8
             ;;
         *)
@@ -292,8 +297,8 @@ run_phase2() {
     log "pulsa 'R' en el navegador para refrescar la lista de modelos."
     log "======================================================================"
 
-    # 1. Checkpoints Fotorrealistas / Multipropósito (perfiles: all, general, realistic, studio)
-    if [[ "${MODEL_PROFILE}" =~ ^(all|general|realistic|studio)$ ]]; then
+    # 1. Checkpoints Fotorrealistas / Multipropósito (perfiles: all, general, realistic, studio, unreal)
+    if [[ "${MODEL_PROFILE}" =~ ^(all|general|realistic|studio|unreal)$ ]]; then
         # Juggernaut XI v11 (6.62 GiB)
         hf_fetch "RunDiffusion/Juggernaut-XI-v11" "Juggernaut-XI-byRunDiffusion.safetensors" \
             "${MODELS_DIR}/checkpoints" "Juggernaut-XI-byRunDiffusion.safetensors" "model" || true
