@@ -1004,9 +1004,15 @@ jobs:
           assert h.get("status") == "ok" and h.get("server") == "ok" and h.get("comfyui") == "ok", f"Unexpected /studio/api/health: {h}"
           assert h.get("comfyui_reachable") is True and h.get("model_profile") == "studio" and h.get("llm_key_status") == "<definida>", h
           t = json.loads(os.environ["ST_TPL"])
-          tpl_ids = {item["id"] for item in t.get("templates", [])}
-          expected_tpls = {"wan_t2v", "wan_i2v", "wan_flf2v", "vace_inpaint", "vace_restyle", "sdxl_image"}
+          tpl_items = t.get("templates", [])
+          tpl_ids = {item["id"] for item in tpl_items}
+          expected_tpls = {
+              "wan_t2v", "wan_i2v", "wan_flf2v", "vace_inpaint", "vace_restyle",
+              "sdxl_image", "hunyuan3d_image_to_3d",
+          }
           assert tpl_ids == expected_tpls, f"Unexpected templates: {tpl_ids}"
+          unavailable = {i["id"] for i in tpl_items if i.get("available") is False}
+          assert unavailable == {"hunyuan3d_image_to_3d"}, f"Unexpected unavailable: {unavailable}"
           api = json.loads(os.environ["ST_API"])
           st_svc = (api.get("services") or {}).get("studio_server") or {}
           assert st_svc == {"enabled": True, "running": True, "port": 18190}, f"Unexpected studio_server service: {st_svc}"
