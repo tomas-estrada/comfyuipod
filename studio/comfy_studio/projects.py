@@ -503,36 +503,42 @@ class ProjectStore:
         rel_path = target_path.relative_to(self.data_dir).as_posix()
         now = _utc_now_iso()
 
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO assets "
-                "(id, project_id, kind, category, filename, original_filename, "
-                "mime_type, size_bytes, rel_path, version, job_id, metadata_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    asset_id,
-                    project_id,
-                    kind,
-                    category,
-                    stored_filename,
-                    safe_name,
-                    normalized_mime,
-                    size_bytes,
-                    rel_path,
-                    1,
-                    job_id,
-                    json.dumps(metadata or {}, ensure_ascii=False),
-                    now,
-                ),
-            )
-            conn.execute(
-                "UPDATE projects SET updated_at = ? WHERE id = ?",
-                (now, project_id),
-            )
-            conn.commit()
-            row = conn.execute(
-                "SELECT * FROM assets WHERE id = ?", (asset_id,)
-            ).fetchone()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO assets "
+                    "(id, project_id, kind, category, filename, original_filename, "
+                    "mime_type, size_bytes, rel_path, version, job_id, metadata_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        asset_id,
+                        project_id,
+                        kind,
+                        category,
+                        stored_filename,
+                        safe_name,
+                        normalized_mime,
+                        size_bytes,
+                        rel_path,
+                        1,
+                        job_id,
+                        json.dumps(metadata or {}, ensure_ascii=False),
+                        now,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE projects SET updated_at = ? WHERE id = ?",
+                    (now, project_id),
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM assets WHERE id = ?", (asset_id,)
+                ).fetchone()
+        except Exception:
+            # No dejar el archivo huérfano en disco si la transacción falla
+            # (p. ej. job_id que no existe viola la FK y aborta el INSERT).
+            target_path.unlink(missing_ok=True)
+            raise
         return self._row_to_asset(row)
 
     def list_assets(

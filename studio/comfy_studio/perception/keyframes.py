@@ -16,6 +16,10 @@ from ..projects import ProjectStore
 
 _PTS_TIME_RE = re.compile(r"pts_time:\s*([0-9]+(?:\.[0-9]+)?)")
 
+# M3-SCR-004: cota DURA del PNG de keyframe. Antes se pasaba max(10 MiB, len+1024) a
+# save_upload, que por construcción nunca rechaza; 32 MiB cubre un PNG 4K fotográfico.
+MAX_KEYFRAME_PNG_BYTES = 32 * 1024 * 1024  # 32 MiB
+
 
 def _make_solid_png(
     width: int = 64, height: int = 36, rgb: tuple[int, int, int] = (40, 80, 160)
@@ -442,12 +446,17 @@ def extract_video_keyframes(
                 "dominant_color": dominant,
                 "caption": caption,
             }
+            if len(png_bytes) > MAX_KEYFRAME_PNG_BYTES:
+                raise ValueError(
+                    f"Keyframe #{idx + 1} ({len(png_bytes)} bytes) supera el límite duro de "
+                    f"{MAX_KEYFRAME_PNG_BYTES} bytes (M3-SCR-004)."
+                )
             saved_asset = store.save_upload(
                 project_id,
                 filename=kf_filename,
                 content_type="image/png",
                 data=png_bytes,
-                max_upload_bytes=max(10 * 1024 * 1024, len(png_bytes) + 1024),
+                max_upload_bytes=MAX_KEYFRAME_PNG_BYTES,
                 category="keyframes",
                 metadata=meta,
             )

@@ -28,6 +28,9 @@ ASPECT_DIMENSIONS: dict[str, tuple[int, int]] = {
 
 # M3-SCR-005: cota defensiva de cortes por EDL (cada corte = 1 subprocess ffmpeg)
 MAX_EDL_CUTS = 200
+# M3-SCR-004: cota DURA del MP4 de salida. No se calcula a partir del propio tamaño
+# (max(N, len+N) nunca rechaza nada): 720p H.264 de un EDL acotado queda muy por debajo.
+MAX_EDL_OUTPUT_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
 
 probe_media_file = probe_media_info
 
@@ -326,6 +329,11 @@ def execute_edl_ffmpeg(
                 raise RuntimeError(f"Error de ffmpeg al concatenar EDL: {err}")
 
         mp4_bytes = out_mp4.read_bytes()
+        if len(mp4_bytes) > MAX_EDL_OUTPUT_BYTES:
+            raise RuntimeError(
+                f"El MP4 renderizado ({len(mp4_bytes)} bytes) supera el límite duro de "
+                f"{MAX_EDL_OUTPUT_BYTES} bytes (M3-SCR-004)."
+            )
         probe_info = probe_media_info(out_mp4)
 
     aspect_slug = resolved_aspect.replace(":", "x")
@@ -337,7 +345,7 @@ def execute_edl_ffmpeg(
         filename=out_filename,
         content_type="video/mp4",
         data=mp4_bytes,
-        max_upload_bytes=max(200 * 1024 * 1024, len(mp4_bytes) + 1024),
+        max_upload_bytes=MAX_EDL_OUTPUT_BYTES,
         category="outputs",
         metadata={
             "edl_render": True,

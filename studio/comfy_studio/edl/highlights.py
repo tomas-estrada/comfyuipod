@@ -52,6 +52,11 @@ def build_edl_cuts_from_transcription(
         s_text = str(seg.get("text") or "").strip()
         words = list(seg.get("words") or [])
 
+        # M3-SCR-019: un segmento descartado por `speaker_filter` no es una pausa; el
+        # informe editorial solo debe contar silencios entre segmentos que sobreviven.
+        if speaker_filter and s_speaker and s_speaker != speaker_filter:
+            continue
+
         if prev_end is not None and (s_start - prev_end) >= min_pause_sec:
             removed_pauses.append(
                 {
@@ -62,9 +67,6 @@ def build_edl_cuts_from_transcription(
                 }
             )
         prev_end = max(prev_end or 0.0, s_end)
-
-        if speaker_filter and s_speaker and s_speaker != speaker_filter:
-            continue
 
         if remove_fillers:
             if bool(seg.get("is_filler_segment")):

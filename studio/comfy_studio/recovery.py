@@ -30,6 +30,7 @@ logger = logging.getLogger("comfy_studio.recovery")
 
 STALE_STATUSES = ("queued", "running", "cancelling", "fetching")
 MAX_INTERRUPT_RETRIES = 1
+MAX_CONCURRENT_RESUMES = 2  # M3-SCR-016: reanudaciones simultáneas en el arranque
 
 
 def find_stale_jobs(store: ProjectStore) -> list[dict[str, Any]]:
@@ -72,6 +73,8 @@ async def recover_interrupted_jobs(
         await asyncio.sleep(start_delay_s)
 
     registry = get_default_registry()
+    resume_semaphore = asyncio.Semaphore(MAX_CONCURRENT_RESUMES)
+    pending_executions: list[dict[str, Any]] = []
     for job in stale:
         job_id = str(job["id"])
         project_id = job.get("project_id")
@@ -150,26 +153,47 @@ async def recover_interrupted_jobs(
                 },
             )
         report["requeued"] += 1
+        pending_executions.append(
+            {
+                "job_id": job_id,
+                "workflow": workflow,
+                "project_id": str(project_id),
+                "template_id": str(template_id),
+            }
+        )
 
-        try:
-            await comfyui_client.execute_prompt_job(
-                workflow,
-                job_id=job_id,
-                project_id=str(project_id),
-                template_id=str(template_id),
-            )
-            report["done"] += 1
-        except ComfyUIError as exc:
-            # execute_prompt_job ya marcó el job como failed vía _fail_job
-            logger.warning("Reanudación del job %s falló: %s", job_id, exc)
-            report["failed"] += 1
-        except Exception as exc:  # noqa: BLE001
-            store.update_job(
-                job_id,
-                status="interrupted",
-                error=f"Reanudación fallida tras reinicio: {exc}",
-            )
-            logger.warning("Reanudación del job %s falló: %s", job_id, exc)
-            report["failed"] += 1
+    # M3-SCR-016: ejecutar las reanudaciones con concurrencia acotada en lugar de
+    # esperar cada render secuencialmente (con N huérfanos, la recuperación total era
+    # la suma de todas las esperas y bloqueaba el arranque de los primeros jobs).
+    async def _resume_one(exec_spec: dict[str, Any]) -> str:
+        async with resume_semaphore:
+            exec_job_id = exec_spec["job_id"]
+            try:
+                await comfyui_client.execute_prompt_job(
+                    exec_spec["workflow"],
+                    job_id=exec_job_id,
+                    project_id=exec_spec["project_id"],
+                    template_id=exec_spec["template_id"],
+                )
+                return "done"
+            except ComfyUIError as exc:
+                # execute_prompt_job ya marcó el job como failed vía _fail_job
+                logger.warning("Reanudación del job %s falló: %s", exec_job_id, exc)
+                return "failed"
+            except Exception as exc:  # noqa: BLE001
+                store.update_job(
+                    exec_job_id,
+                    status="interrupted",
+                    error=f"Reanudación fallida tras reinicio: {exc}",
+                )
+                logger.warning("Reanudación del job %s falló: %s", exec_job_id, exc)
+                return "failed"
+
+    if pending_executions:
+        outcomes = await asyncio.gather(
+            *(_resume_one(spec) for spec in pending_executions)
+        )
+        for outcome in outcomes:
+            report["done" if outcome == "done" else "failed"] += 1
 
     return report
