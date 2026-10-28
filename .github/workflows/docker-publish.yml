@@ -166,9 +166,24 @@ jobs:
             || { echo "::error::El fixture download_models.log ha divergido del formato real; regenéralo con este dry-run"; exit 1; }
           echo "[OK] download-models.sh en seco: formato idéntico al fixture del parser (S-01/S-02)"
 
-          # S-01 Fase 3 (MODEL_PROFILE=studio, VAL-PROFILE-002): verificar conteo planeado (77 base / 78 con STUDIO_INCLUDE_ANIMATE=1),
-          # rutas de destino (models/*, custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/*, indextts/checkpoints/*) e idempotencia.
-          # Desde M3-D la línea PLAN FASE 3 también informa STUDIO_INCLUDE_3D (Hunyuan3D 2.1, opt-in; 0 en perfil 'studio' sin opt-in).
+          # S-01 Fase 3 (MODEL_PROFILE=studio, VAL-PROFILE-002): verificar conteo planeado, rutas de
+          # destino (models/*, custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/*, indextts/checkpoints/*)
+          # e idempotencia. Desde M3-D la línea PLAN FASE 3 también informa STUDIO_INCLUDE_3D
+          # (Hunyuan3D 2.1, opt-in; 0 en perfil 'studio' sin opt-in).
+          # Los recuentos se DERIVAN de config/models-studio.json (origen de verdad del plan) en vez
+          # de duplicar literales: los literales acoplados ya rompieron el build dos veces.
+          plan_counts="$(python3 - <<'PYEOF'
+          import json
+
+          models = json.load(open("config/models-studio.json", encoding="utf-8"))["models"]
+          base = sum(1 for m in models if not m.get("opt_in"))
+          animate = sum(1 for m in models if m.get("opt_in") == "STUDIO_INCLUDE_ANIMATE")
+          three_d = sum(1 for m in models if m.get("opt_in") == "STUDIO_INCLUDE_3D")
+          print(base, base + animate, base + three_d)
+          PYEOF
+          )"
+          read -r plan_base plan_animate plan_3d <<< "${plan_counts//$'\r'/}"
+          echo "[INFO] Recuentos derivados del manifest: base=${plan_base} animate=${plan_animate} 3d=${plan_3d}"
           mkdir -p "$tmp_root/studio_data" "$tmp_root/studio_app/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints"
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio \
             bash scripts/download-models.sh --phase2 > "$tmp_root/dl_studio.log" 2>"$tmp_root/dl_studio.err" || { cat "$tmp_root/dl_studio.log"; cat "$tmp_root/dl_studio.err"; exit 1; }
@@ -176,7 +191,7 @@ jobs:
           grep -q "PLAN FASE 2: 8 archivos (studio)" "$tmp_root/dl_studio.log"
           grep -q "FASE 2 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
           grep -q "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: studio)" "$tmp_root/dl_studio.log"
-          grep -q "PLAN FASE 3: 77 archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0)" "$tmp_root/dl_studio.log"
+          grep -q "PLAN FASE 3: ${plan_base} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0)" "$tmp_root/dl_studio.log"
           grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_studio.log"
           grep -q "FASE 3 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors" ]
@@ -216,19 +231,19 @@ jobs:
 
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_ANIMATE=1 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_anim.log" 2>"$tmp_root/dl_studio_anim.err" || { cat "$tmp_root/dl_studio_anim.log"; cat "$tmp_root/dl_studio_anim.err"; exit 1; }
-          grep -q "PLAN FASE 3: 78 archivos (studio, STUDIO_INCLUDE_ANIMATE=1, STUDIO_INCLUDE_3D=0)" "$tmp_root/dl_studio_anim.log"
+          grep -q "PLAN FASE 3: ${plan_animate} archivos (studio, STUDIO_INCLUDE_ANIMATE=1, STUDIO_INCLUDE_3D=0)" "$tmp_root/dl_studio_anim.log"
           grep -q "SKIP (ya existe): wan2.2_ti2v_5B_fp16.safetensors" "$tmp_root/dl_studio_anim.log"
           grep -q "INICIO: wan2.2_animate_14B_int8_convrot.safetensors" "$tmp_root/dl_studio_anim.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors" ]
-          echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio, 77 base + 1 opt-in Animate + reanudación tras --phase2) verificado en seco (S-01 / VAL-PROFILE-002)"
+          echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio, ${plan_base} base + opt-in Animate + reanudación tras --phase2) verificado en seco (S-01 / VAL-PROFILE-002)"
 
           # VAL-UNREAL-003 (M3-D): el perfil 'unreal' implica STUDIO_INCLUDE_3D=1 (Hunyuan3D 2.1:
-          # PLAN FASE 3 = 77 base + 1 3D = 78 archivos, destino models/checkpoints/hunyuan_3d_v2.1.safetensors)
-          # y la renuncia explícita STUDIO_INCLUDE_3D=0 devuelve el plan a 77 sin descargar el modelo 3D.
+          # PLAN FASE 3 = base + 1 3D archivos, destino models/checkpoints/hunyuan_3d_v2.1.safetensors)
+          # y la renuncia explícita STUDIO_INCLUDE_3D=0 devuelve el plan a la base sin descargar el 3D.
           mkdir -p "$tmp_root/unreal_data" "$tmp_root/unreal_app"
           COMFY_DATA_DIR="$tmp_root/unreal_data" COMFY_APP_DIR="$tmp_root/unreal_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=unreal \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_unreal.log" 2>"$tmp_root/dl_unreal.err" || { cat "$tmp_root/dl_unreal.log"; cat "$tmp_root/dl_unreal.err"; exit 1; }
-          grep -q "PLAN FASE 3: 78 archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=1)" "$tmp_root/dl_unreal.log"
+          grep -q "PLAN FASE 3: ${plan_3d} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=1)" "$tmp_root/dl_unreal.log"
           grep -q "INICIO: hunyuan_3d_v2.1.safetensors" "$tmp_root/dl_unreal.log"
           grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_unreal.log"
           grep -q "FASE 3 COMPLETADA (Perfil: unreal)\." "$tmp_root/dl_unreal.log"
@@ -236,7 +251,7 @@ jobs:
           mkdir -p "$tmp_root/unreal_optout_data" "$tmp_root/unreal_optout_app"
           COMFY_DATA_DIR="$tmp_root/unreal_optout_data" COMFY_APP_DIR="$tmp_root/unreal_optout_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=unreal STUDIO_INCLUDE_3D=0 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_unreal_optout.log" 2>"$tmp_root/dl_unreal_optout.err" || { cat "$tmp_root/dl_unreal_optout.log"; cat "$tmp_root/dl_unreal_optout.err"; exit 1; }
-          grep -q "PLAN FASE 3: 77 archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0)" "$tmp_root/dl_unreal_optout.log"
+          grep -q "PLAN FASE 3: ${plan_base} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0)" "$tmp_root/dl_unreal_optout.log"
           [ ! -e "$tmp_root/unreal_optout_data/models/checkpoints/hunyuan_3d_v2.1.safetensors" ]
           echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=unreal: Hunyuan3D 2.1 implícito + renuncia STUDIO_INCLUDE_3D=0) verificado en seco (VAL-UNREAL-003)"
 
@@ -389,6 +404,86 @@ jobs:
           fi
           [ ! -e "$MOCK_CREATE_ARGS" ] || { echo "::error::create instance se invocó con COMFY_DISK_GB=120"; exit 1; }
           echo "[OK] tools/mac/comfy rent studio verificado en seco (VAL-SERVER-005 / VAL-CROSS-004)"
+
+      - name: Verificar comfy fetch-outputs en seco — extracción, path traversal y reanudación (VAL-MAC-001)
+        run: |
+          set -euo pipefail
+          chmod +x tools/mac/comfy
+          tmp_fetch="$(mktemp -d)"
+          trap 'rm -rf "$tmp_fetch"' EXIT
+          cat > "$tmp_fetch/vastai" << 'EOF'
+          #!/usr/bin/env bash
+          set -u
+          if [ "${1:-}" = "show" ] && [ "${2:-}" = "instances" ]; then
+            echo '{"instances":[{"id":1001,"actual_status":"running","public_ipaddr":"127.0.0.1","gpu_name":"RTX 5090","dph_total":0.65,"label":"comfy-studio","ports":{"8188/tcp":[{"HostPort":"18188"}]}}]}'
+            exit 0
+          fi
+          if [ "${1:-}" = "ssh" ]; then
+            cat "${MOCK_OUTPUTS_B64:?MOCK_OUTPUTS_B64 no definido}"
+            exit 0
+          fi
+          exit 1
+          EOF
+          chmod +x "$tmp_fetch/vastai"
+
+          # tar.gz con dos salidas legítimas, un archivo ya presente (reanudación) y tres intentos de
+          # path traversal (relativo '../', absoluto '/tmp/' y anidado 'output/../../').
+          python3 - "$tmp_fetch/payload.tar.gz" <<'PYEOF'
+          import io
+          import sys
+          import tarfile
+
+          path = sys.argv[1]
+          members = [
+              ("output/a.png", b"png-a"),
+              ("output/sub/b.txt", b"txt-b"),
+              ("output/existing.txt", b"keep"),
+              ("../escape.txt", b"escape-rel"),
+              ("/tmp/evil-abs.txt", b"escape-abs"),
+              ("output/../../escape-nested.txt", b"escape-nested"),
+          ]
+          with tarfile.open(path, "w:gz") as tf:
+              for name, data in members:
+                  info = tarfile.TarInfo(name)
+                  info.size = len(data)
+                  tf.addfile(info, io.BytesIO(data))
+          PYEOF
+          base64 -w0 "$tmp_fetch/payload.tar.gz" > "$tmp_fetch/payload.b64"
+
+          dest_dir="$tmp_fetch/out"
+          PATH="$tmp_fetch:$PATH" MOCK_OUTPUTS_B64="$tmp_fetch/payload.b64" \
+            tools/mac/comfy fetch-outputs 1001 "$dest_dir" > "$tmp_fetch/run1.log" 2>&1
+          grep -q "\[OK\] fetch-outputs: 3 archivo(s) descargados, 0 omitidos" "$tmp_fetch/run1.log"
+          [ "$(cat "$dest_dir/output/a.png")" = "png-a" ]
+          [ "$(cat "$dest_dir/output/sub/b.txt")" = "txt-b" ]
+          grep -q "Ruta fuera del destino omitida: ../escape.txt" "$tmp_fetch/run1.log"
+          [ ! -e "$tmp_fetch/escape.txt" ] || { echo "::error::Path traversal relativo aceptado (../escape.txt)"; exit 1; }
+          [ ! -e /tmp/evil-abs.txt ] || { echo "::error::Path traversal absoluto aceptado (/tmp/evil-abs.txt)"; exit 1; }
+          [ ! -e "$tmp_fetch/escape-nested.txt" ] || { echo "::error::Path traversal anidado aceptado (output/../../escape-nested.txt)"; exit 1; }
+          echo "[OK] VAL-MAC-001: extracción de output/ y rechazo de path traversal en rutas del tar"
+
+          # Reanudación: una segunda ejecución no re-descarga lo ya presente (mismo tamaño)
+          PATH="$tmp_fetch:$PATH" MOCK_OUTPUTS_B64="$tmp_fetch/payload.b64" \
+            tools/mac/comfy fetch-outputs 1001 "$dest_dir" > "$tmp_fetch/run2.log" 2>&1
+          grep -q "\[OK\] fetch-outputs: 0 archivo(s) descargados, 3 omitidos" "$tmp_fetch/run2.log"
+          [ "$(cat "$dest_dir/output/existing.txt")" = "keep" ]
+          echo "[OK] VAL-MAC-001: reanudación idempotente (0 descargados, 3 omitidos)"
+
+          # Path traversal en ARGUMENTOS: destino con '..' e ID no numérico se rechazan antes de tocar disco
+          if PATH="$tmp_fetch:$PATH" MOCK_OUTPUTS_B64="$tmp_fetch/payload.b64" \
+            tools/mac/comfy fetch-outputs 1001 "../escape-out" > "$tmp_fetch/bad_dest.log" 2>&1; then
+            echo "::error::comfy fetch-outputs aceptó un destino con '..' (path traversal en argumentos)"
+            exit 1
+          fi
+          grep -q "path traversal" "$tmp_fetch/bad_dest.log"
+          [ ! -e "$tmp_fetch/escape-out" ] || { echo "::error::Se creó el directorio destino con '..'"; exit 1; }
+          if PATH="$tmp_fetch:$PATH" MOCK_OUTPUTS_B64="$tmp_fetch/payload.b64" \
+            tools/mac/comfy fetch-outputs "1001;id" "$tmp_fetch/out2" > "$tmp_fetch/bad_id.log" 2>&1; then
+            echo "::error::comfy fetch-outputs aceptó un ID de instancia no numérico"
+            exit 1
+          fi
+          grep -q "ID de instancia no válido" "$tmp_fetch/bad_id.log"
+          echo "[OK] VAL-MAC-001: rechazo de path traversal en argumentos (destino '..' e ID no numérico)"
 
   rust:
     name: Rust Lint, Unit Tests & Dependency Audit (comfyctl, §8.1)
@@ -998,7 +1093,10 @@ jobs:
           studio_health_json="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/studio/api/health)"
           studio_tpl_json="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/studio/api/templates)"
           studio_status_api="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/status/api)"
-          ST_HEALTH="$studio_health_json" ST_TPL="$studio_tpl_json" ST_API="$studio_status_api" python3 -c '
+          # El catálogo esperado se DERIVA del registro (EXPECTED_M2_TEMPLATE_IDS) en vez de duplicar
+          # la lista literal en el workflow: un literal acoplado ya rompió el smoke una vez.
+          studio_tpl_expected="$(timeout 60 docker exec "$studio_cid" /opt/venvs/studio/bin/python -c 'from comfy_studio.templates import EXPECTED_M2_TEMPLATE_IDS as ids; print(chr(10).join(ids))')"
+          ST_HEALTH="$studio_health_json" ST_TPL="$studio_tpl_json" ST_API="$studio_status_api" ST_TPL_EXPECTED="$studio_tpl_expected" python3 -c '
           import json, os
           h = json.loads(os.environ["ST_HEALTH"])
           assert h.get("status") == "ok" and h.get("server") == "ok" and h.get("comfyui") == "ok", f"Unexpected /studio/api/health: {h}"
@@ -1006,11 +1104,9 @@ jobs:
           t = json.loads(os.environ["ST_TPL"])
           tpl_items = t.get("templates", [])
           tpl_ids = {item["id"] for item in tpl_items}
-          expected_tpls = {
-              "wan_t2v", "wan_i2v", "wan_flf2v", "vace_inpaint", "vace_restyle",
-              "sdxl_image", "hunyuan3d_image_to_3d",
-          }
-          assert tpl_ids == expected_tpls, f"Unexpected templates: {tpl_ids}"
+          expected_tpls = {row.strip() for row in os.environ["ST_TPL_EXPECTED"].splitlines() if row.strip()}
+          assert expected_tpls, "EXPECTED_M2_TEMPLATE_IDS llegó vacío desde el contenedor"
+          assert tpl_ids == expected_tpls, f"Unexpected templates: {tpl_ids} != {expected_tpls}"
           unavailable = {i["id"] for i in tpl_items if i.get("available") is False}
           assert unavailable == {"hunyuan3d_image_to_3d"}, f"Unexpected unavailable: {unavailable}"
           api = json.loads(os.environ["ST_API"])
@@ -1018,8 +1114,24 @@ jobs:
           assert st_svc == {"enabled": True, "running": True, "port": 18190}, f"Unexpected studio_server service: {st_svc}"
           s11 = [c for c in (api.get("strict") or {}).get("checks", []) if c.get("id") == "S11"]
           assert len(s11) == 1 and s11[0].get("status") == "ok", f"Expected S11 studio_health ok, got {s11}"
+          print(f"[OK] Plantillas verificadas contra EXPECTED_M2_TEMPLATE_IDS: {len(expected_tpls)}")
           '
           echo "[OK] /studio/, /studio/api/health, /studio/api/templates y S11 studio_health verificados"
+
+          # VAL-AUTH-001: si el usuario provee STUDIO_API_TOKEN, el banner de arranque NO lo imprime
+          # (marca [OCULTO]) y comfyctl consume y borra /run/comfyui-api-token al supervisar (R-11).
+          studio_boot_log="$(timeout 30 docker logs "$studio_cid" 2>&1)"
+          grep -q "TOKEN DE API" <<<"$studio_boot_log" || { echo "::error::Falta el banner del token de API en el arranque"; exit 1; }
+          grep -q "OCULTO" <<<"$studio_boot_log" || { echo "::error::Con STUDIO_API_TOKEN provisto, el banner debía marcarlo [OCULTO]"; exit 1; }
+          if grep -qF "${smoke_studio_token}" <<<"$studio_boot_log"; then
+            echo "::error::start.sh imprimió en claro el STUDIO_API_TOKEN provisto por el usuario"
+            exit 1
+          fi
+          if timeout 30 docker exec "$studio_cid" test -e /run/comfyui-api-token; then
+            echo "::error::/run/comfyui-api-token debía consumirse y borrarse al iniciar comfyctl supervise (R-11)"
+            exit 1
+          fi
+          echo "[OK] VAL-AUTH-001: STUDIO_API_TOKEN provisto => marcador [OCULTO] y fichero efímero consumido"
 
           # M3-C: MCP (/mcp) tras Basic Auth + X-Studio-Token, y S12 mcp_health en /status/api
           code="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" http://127.0.0.1:18188/mcp/health)"
@@ -1130,9 +1242,95 @@ jobs:
           [ "$studio_exit_code" = "0" ] || { timeout 30 docker logs "$studio_cid" || true; echo "::error::docker stop smoke-studio devolvió ExitCode=${studio_exit_code}"; exit 1; }
           timeout 60 docker rm -f "$studio_cid" >/dev/null 2>&1 || true
           studio_cid=""
+          echo "[OK] Paso 15: Smoke Test E2E con MODEL_PROFILE=studio superado limpiamente (COMFY_TLS=0: HTTP sin cambios)"
+
+          # ==========================================================================
+          # Paso 15b: VAL-AUTH-001 (token autogenerado) + VAL-AUTH-002 (COMFY_TLS=1 en el MISMO 8188)
+          # Segundo contenedor: sin STUDIO_API_TOKEN (se autogenera con openssl rand -hex 24) y con TLS.
+          # ==========================================================================
+          echo "=== Paso 15b: COMFY_TLS=1 + STUDIO_API_TOKEN autogenerado ==="
+          studio_cid="$(timeout 300 docker run -d --name smoke-studio-tls -p 18188:8188 \
+            -e MODEL_PROFILE=studio \
+            -e SKIP_MODEL_DOWNLOAD=1 \
+            -e STRICT_MIN_RAM_MB=4096 \
+            -e STRICT_MIN_DISK_GB=1 \
+            -e COMFYUI_EXTRA_ARGS="--cpu" \
+            -e COMFY_USER=admin \
+            -e COMFY_PASS=${smoke_comfy_pass} \
+            -e STUDIO_LLM_KEY=${smoke_llm_key} \
+            -e STUDIO_STUB_LLM=1 \
+            -e COMFY_TLS=1 \
+            -e ENABLE_WEB_TERMINAL=1 \
+            -e PYTHONPATH=/tmp/mock_comfy_hook \
+            -e MOCK_COMFYUI_SERVER=1 \
+            -v "${mock_hook_dir}:/tmp/mock_comfy_hook:ro" \
+            "${CANDIDATE_TAG}")"
+
+          studio_deadline=$((SECONDS + 300))
+          while true; do
+            if curl -k -fsSI --max-time 5 https://127.0.0.1:18188/healthz >/dev/null 2>&1; then
+              echo "[OK] VAL-AUTH-002: /healthz respondió 200 por HTTPS en el puerto público 8188"
+              break
+            fi
+            if [ "$SECONDS" -ge "$studio_deadline" ]; then
+              timeout 30 docker logs "$studio_cid" || true
+              echo "::error::smoke-studio-tls no sirvió HTTPS en 8188 en <=300s"
+              exit 1
+            fi
+            sleep 2
+          done
+          timeout 60 docker exec "$studio_cid" nginx -t
+          if curl -s --max-time 5 -o /dev/null http://127.0.0.1:18188/healthz; then
+            echo "::error::Con COMFY_TLS=1 el puerto 8188 no debe seguir sirviendo HTTP en claro"
+            exit 1
+          fi
+
+          # Rutas existentes intactas bajo TLS (mismo puerto, mismo edge nginx)
+          tls_401="$(curl -k -s --max-time 10 -o /dev/null -w "%{http_code}" https://127.0.0.1:18188/studio/)"
+          [ "$tls_401" = "401" ] || { echo "::error::Se esperaba 401 sin auth por HTTPS en /studio/, se obtuvo ${tls_401}"; exit 1; }
+          for tls_route in "/studio/" "/studio/api/health" "/studio/api/templates" "/status/api" "/mcp/health"; do
+            tls_code="$(curl -k -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:${smoke_comfy_pass} "https://127.0.0.1:18188${tls_route}")"
+            [ "$tls_code" = "200" ] || { echo "::error::Se esperaba 200 por HTTPS con auth en ${tls_route}, se obtuvo ${tls_code}"; exit 1; }
+          done
+
+          # VAL-AUTH-001: token autogenerado impreso UNA sola vez en el banner y consumido del fichero efímero
+          auto_log="$(timeout 30 docker logs "$studio_cid" 2>&1)"
+          auto_token="$(sed -n 's/.*Token *: *\([0-9a-f]\{48\}\).*/\1/p' <<<"$auto_log" | head -n 1)"
+          [ "${#auto_token}" -eq 48 ] || { echo "::error::No se encontró el STUDIO_API_TOKEN autogenerado (48 hex) en el banner de arranque"; exit 1; }
+          grep -q "AUTOGENERADO" <<<"$auto_log" || { echo "::error::El banner debía marcar el token como AUTOGENERADO"; exit 1; }
+          auto_occurrences="$(grep -oF "${auto_token}" <<<"$auto_log" | wc -l | tr -d ' ')"
+          [ "$auto_occurrences" = "1" ] || { echo "::error::El token autogenerado aparece ${auto_occurrences} veces en docker logs (debe imprimirse UNA sola vez)"; exit 1; }
+          if timeout 30 docker exec "$studio_cid" test -e /run/comfyui-api-token; then
+            echo "::error::/run/comfyui-api-token debía consumirse y borrarse al iniciar comfyctl supervise (R-11)"
+            exit 1
+          fi
+
+          # El token impreso es el que MCP acepta (prueba de que el banner no es decorativo)
+          mcp_tls="$(curl -k -fsS --max-time 10 -u admin:${smoke_comfy_pass} -X POST -H "Content-Type: application/json" -H "X-Studio-Token: ${auto_token}" -d '{"jsonrpc":"2.0","id":1,"method":"initialize"}' https://127.0.0.1:18188/mcp)"
+          MCP_TLS="$mcp_tls" python3 -c '
+          import json, os
+          r = json.loads(os.environ["MCP_TLS"])["result"]
+          assert r["serverInfo"]["name"] == "comfy-studio-mcp", r
+          '
+
+          # Redacción ampliada en las superficies públicas (VAL-AUTH-001): el token nunca aparece en claro
+          tls_rep="$(curl -k -fsS --max-time 60 -u admin:${smoke_comfy_pass} https://127.0.0.1:18188/report.md)"
+          tls_diag="$(curl -k -fsS --max-time 60 -u admin:${smoke_comfy_pass} https://127.0.0.1:18188/diag)"
+          tls_status="$(curl -k -fsS --max-time 10 -u admin:${smoke_comfy_pass} https://127.0.0.1:18188/status/api)"
+          tls_logs="$(curl -k -fsS --max-time 10 -u admin:${smoke_comfy_pass} https://127.0.0.1:18188/logs/container?n=500 || true)"
+          if grep -qF "${auto_token}" <<<"${tls_rep}${tls_diag}${tls_status}${tls_logs}"; then
+            echo "::error::Fuga del STUDIO_API_TOKEN autogenerado en /report.md, /diag, /status/api o /logs/container"
+            exit 1
+          fi
+          timeout 90 docker stop -t 30 "$studio_cid"
+          tls_exit_code="$(timeout 30 docker inspect "$studio_cid" --format '{{.State.ExitCode}}')"
+          [ "$tls_exit_code" = "0" ] || { timeout 30 docker logs "$studio_cid" || true; echo "::error::docker stop smoke-studio-tls devolvió ExitCode=${tls_exit_code}"; exit 1; }
+          timeout 60 docker rm -f "$studio_cid" >/dev/null 2>&1 || true
+          studio_cid=""
+          echo "[OK] Paso 15b: VAL-AUTH-001 (token autogenerado una sola vez + redacción) y VAL-AUTH-002 (HTTPS en 8188) verificados"
+
           rm -rf "$mock_hook_dir" >/dev/null 2>&1 || true
           mock_hook_dir=""
-          echo "[OK] Paso 15: Smoke Test E2E con MODEL_PROFILE=studio superado limpiamente"
 
       - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

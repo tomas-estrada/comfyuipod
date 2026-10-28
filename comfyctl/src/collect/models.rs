@@ -175,9 +175,14 @@ pub const EXPECTED_MODELS: [ExpectedModel; 26] = [
 
 /// Devuelve el número de modelos esperados en Fase 2 para el perfil activo (O-06).
 pub fn phase2_expected_count(profile: &str) -> u32 {
+    // `unreal` es una extensión de la familia studio: comparte el plan de Fase 2 (M3-D).
+    let effective = match profile {
+        "unreal" => "studio",
+        other => other,
+    };
     let mut count: u32 = 0;
     for item in EXPECTED_MODELS {
-        if item.phase == "phase2" && item.profiles.contains(&profile) {
+        if item.phase == "phase2" && item.profiles.contains(&effective) {
             count = count.saturating_add(1);
         }
     }

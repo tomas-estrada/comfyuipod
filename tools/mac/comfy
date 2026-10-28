@@ -1136,10 +1136,25 @@ cmd_fetch_outputs() {
     require_cmd "${PYTHON_BIN}"
     local inst_id="${1:-}"
     local dest_dir="${2:-}"
+    # VAL-MAC-001: rechazo de path traversal en los ARGUMENTOS (las rutas del tar se validan
+    # aparte, al extraer). El ID de instancia solo admite dígitos y el destino no puede
+    # contener '..'; el directorio remoto se interpola en el comando ssh, así que se exige
+    # una ruta absoluta simple (sin '..', comillas ni metacaracteres de shell).
+    if [ -n "${inst_id}" ] && ! [[ "${inst_id}" =~ ^[0-9]+$ ]]; then
+        die "ID de instancia no válido (solo dígitos): ${inst_id}"
+    fi
+    case "/${dest_dir}/" in
+        */../*)
+            die "Directorio destino no válido (contiene '..', path traversal): ${dest_dir}"
+            ;;
+    esac
     local info
     info="$(resolve_instance "${inst_id}")"
     IFS='|' read -r inst_id _ _ _ _ <<<"${info}"
     local remote_dir="${COMFY_REMOTE_DATA_DIR:-/workspace/comfyui-data}"
+    if [[ "${remote_dir}" != /* ]] || [[ "${remote_dir}" == *..* ]] || [[ ! "${remote_dir}" =~ ^/[A-Za-z0-9._/-]+$ ]]; then
+        die "COMFY_REMOTE_DATA_DIR no válido (ruta absoluta simple esperada): ${remote_dir}"
+    fi
     if [ -z "${dest_dir}" ]; then
         dest_dir="${HOME}/comfy-outputs/${inst_id}"
     fi

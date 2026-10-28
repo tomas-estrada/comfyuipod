@@ -834,7 +834,7 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
             None
         } else {
             Some(
-                "Valores válidos de MODEL_PROFILE: all | general | realistic | anime | minimal | studio."
+                "Valores válidos de MODEL_PROFILE: all | general | realistic | anime | minimal | studio | unreal."
                     .to_string(),
             )
         },

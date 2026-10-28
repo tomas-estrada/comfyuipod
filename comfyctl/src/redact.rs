@@ -51,7 +51,10 @@ impl SecretRedactor {
             literals,
             rx_hf: Regex::new(r"hf_[A-Za-z0-9]{12,}").ok(),
             rx_sk: Regex::new(r"sk-[A-Za-z0-9._\-]{12,}").ok(),
-            rx_studio_env: Regex::new(r"(?i)(STUDIO_LLM_(?:FALLBACK_)?KEY\s*[:=]\s*)(\S+)").ok(),
+            rx_studio_env: Regex::new(
+                r"(?i)((?:STUDIO_LLM_(?:FALLBACK_)?KEY|STUDIO_API_TOKEN|STUDIO_WEBHOOK_SECRET|VAST_API_KEY|COMFY_PASS|STUDIO_AUTH_PASS|HF_TOKEN)\s*[:=]\s*)(\S+)",
+            )
+            .ok(),
             rx_bearer: Regex::new(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{8,}").ok(),
             // `.*` voraz: redacta las credenciales hasta el ÚLTIMO `@` de la línea,
             // de modo que una contraseña que contenga `/` o `@` también queda cubierta

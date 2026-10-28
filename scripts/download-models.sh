@@ -391,7 +391,32 @@ run_phase3() {
     if [ "${MODEL_PROFILE}" = "unreal" ] && [ -z "${STUDIO_INCLUDE_3D:-}" ]; then
         include_3d=1
     fi
-    local phase3_planned=77
+    local phase3_planned
+    # Recuento y tamaños del plan DERIVADOS del manifiesto (STUDIO_MANIFEST es el origen de verdad):
+    # base = entradas sin opt-in; Animate/3D se suman solo con su flag activo. Evita el literal
+    # acoplado que ya obligó a tocar el build al crecer el inventario.
+    local phase3_plan_meta phase3_base phase3_sizes
+    phase3_plan_meta="$(
+        STUDIO_MANIFEST_PATH="${STUDIO_MANIFEST}" python3 -c '
+import json, os
+data = json.load(open(os.environ["STUDIO_MANIFEST_PATH"], encoding="utf-8"))
+models = data.get("models") or []
+meta = data.get("meta") or {}
+cats = meta.get("categories") or {}
+anim = (cats.get("animate_opt_in") or {}).get("bytes", 0)
+three_d = (cats.get("three_d_opt_in") or {}).get("bytes", 0)
+base_bytes = meta.get("default_bytes", 0)
+print(sum(1 for m in models if not m.get("opt_in")))
+print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in" % (base_bytes / 1e9, anim / 1e9, three_d / 1e9))
+' | tr -d '\r'
+    )"
+    phase3_base="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '1p')"
+    phase3_sizes="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '2p')"
+    if ! [[ "${phase3_base}" =~ ^[0-9]+$ ]]; then
+        log "ERROR: No se pudo derivar el plan de Fase 3 de ${STUDIO_MANIFEST}"
+        return 1
+    fi
+    phase3_planned="${phase3_base}"
     if [ "${include_animate}" = "1" ]; then
         phase3_planned=$((phase3_planned + 1))
     fi
@@ -402,7 +427,7 @@ run_phase3() {
     log "======================================================================"
     log "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: ${MODEL_PROFILE})"
     log "PLAN FASE 3: ${phase3_planned} archivos (${MODEL_PROFILE}, STUDIO_INCLUDE_ANIMATE=${include_animate}, STUDIO_INCLUDE_3D=${include_3d})"
-    log "Manifiesto: ${STUDIO_MANIFEST} (146.05 GB base; +18.41 GB Animate opt-in; +7.37 GB 3D opt-in)."
+    log "Manifiesto: ${STUDIO_MANIFEST} (${phase3_sizes})."
     log "======================================================================"
 
     while IFS=$'\t' read -r repo_id remote_path target_dir filename _expected_bytes; do

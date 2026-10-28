@@ -209,7 +209,7 @@ La guía está dividida en dos partes: **A. Primera vez** (configuración que se
     ```bash
     mkdir -p ~/.local/bin && cp tools/mac/comfy ~/.local/bin/comfy && chmod +x ~/.local/bin/comfy
     ```
-    Con él puedes abrir el portal (`comfy`), abrir Comfy Studio (`comfy studio`), ver el estado (`comfy open status`), extraer la contraseña autogenerada (`comfy pass`), descargar y copiar al portapapeles el informe completo para el agente IA (`comfy report` o `comfy studio report`), monitorizar en vivo (`comfy watch`), alquilar (`comfy rent` / `comfy rent studio`), rescatar tus renders antes de destruir (`comfy fetch-outputs [id] [dest-dir]`, vía `vastai ssh` + `tar`/`base64`, re-ejecutable y con skip de archivos ya descargados) o destruir (`comfy destroy <id>`).
+    Con él puedes abrir el portal (`comfy`), abrir Comfy Studio (`comfy studio`), ver el estado (`comfy open status`), extraer la contraseña autogenerada (`comfy pass`), descargar y copiar al portapapeles el informe completo para el agente IA (`comfy report` o `comfy studio report`), monitorizar en vivo (`comfy watch`), alquilar (`comfy rent` / `comfy rent studio`), rescatar tus renders antes de destruir (`comfy fetch-outputs [id] [dest-dir]`, vía `vastai ssh` + `tar`/`base64`, re-ejecutable y con skip de archivos ya descargados; rechaza cualquier ruta con `..` tanto en el destino como dentro del `tar` recibido) o destruir (`comfy destroy <id>`).
 
 #### A5. Sesión de aceptación (solo la primera instancia real)
 

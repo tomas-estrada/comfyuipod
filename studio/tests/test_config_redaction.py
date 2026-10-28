@@ -225,3 +225,71 @@ def test_stream_redactor_scrubs_secrets_split_across_chunk_boundaries() -> None:
     )
 
 
+def test_redactor_covers_all_sensitive_tokens_and_assignments() -> None:
+    api_token = "PLACEHOLDER_API_TOKEN_NO_REAL"
+    webhook_secret = "PLACEHOLDER_WEBHOOK_SECRET_NO_REAL"
+    vast_key = "PLACEHOLDER_VAST_KEY_NO_REAL"
+    auth_pass = "auth_pass_complex_secret"
+    redactor = SecretRedactor(
+        extra_secrets=[api_token, webhook_secret, vast_key, auth_pass]
+    )
+
+    sample = (
+        f"Tokens literales: {api_token}, {webhook_secret}, {vast_key}, {auth_pass}. "
+        "Y asignaciones: STUDIO_API_TOKEN=tok123 STUDIO_WEBHOOK_SECRET=sec456 "
+        "VAST_API_KEY=vast789 STUDIO_AUTH_PASS=pass000 COMFY_PASS=comfypass123"
+    )
+    redacted = redactor.redact(sample)
+    assert api_token not in redacted
+    assert webhook_secret not in redacted
+    assert vast_key not in redacted
+    assert auth_pass not in redacted
+    assert "tok123" not in redacted
+    assert "sec456" not in redacted
+    assert "vast789" not in redacted
+    assert "pass000" not in redacted
+    assert "comfypass123" not in redacted
+
+
+def test_loopback_host_enforcement(tmp_path: Path) -> None:
+    from comfy_studio.config import sanitize_loopback_host
+
+    assert sanitize_loopback_host("0.0.0.0") == "127.0.0.1"
+    assert sanitize_loopback_host("192.168.1.100") == "127.0.0.1"
+    assert sanitize_loopback_host("example.com") == "127.0.0.1"
+    assert sanitize_loopback_host("127.0.0.1") == "127.0.0.1"
+    assert sanitize_loopback_host("localhost") == "localhost"
+
+    cfg = StudioConfig.from_env({
+        "STUDIO_SERVER_HOST": "0.0.0.0",
+        "STUDIO_DATA_DIR": str(tmp_path),
+    })
+    assert cfg.studio_server_host == "127.0.0.1"
+
+
+def test_broker_redacts_published_events() -> None:
+    from comfy_studio.progress import ProgressBroker
+
+    secret = "SUPER_SECRET_BROKER_VALUE"
+    redactor = SecretRedactor(extra_secrets=[secret])
+    broker = ProgressBroker(redactor=redactor)
+    event = broker.publish("job", {"job_id": "j1", "error": f"Failed with {secret}"})
+    assert secret not in event["error"]
+    assert SECRET_PLACEHOLDER in event["error"]
+
+
+def test_hunyuan3d_template_params_validation() -> None:
+    from comfy_studio.agent.tools import EnqueueRenderArgs, RenderTemplateParams
+
+    # 3D template allows prompt to be None, but requires 3D params if passed
+    p3d = RenderTemplateParams(
+        image_asset_id="aid-123",
+        latent_resolution=4096,
+        octree_resolution=256,
+    )
+    args3d = EnqueueRenderArgs(template_id="hunyuan3d_image_to_3d", params=p3d)
+    assert args3d.template_id == "hunyuan3d_image_to_3d"
+    assert args3d.params.latent_resolution == 4096
+
+
+

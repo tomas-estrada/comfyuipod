@@ -1,8 +1,9 @@
 use comfyctl::config::RuntimeConfig;
 use comfyctl::strict::{evaluate_strict_checks, probe_studio_health, SystemSnapshot};
 use comfyctl::supervisor::{
-    build_studio_server_command, run_supervision_loop, should_start_studio_server,
-    spawn_studio_server_if_enabled, stop_studio_server, write_supervisor_json, SupervisorState,
+    build_studio_server_command, render_crash_diagnostics, run_supervision_loop,
+    should_start_studio_server, spawn_studio_server_if_enabled, stop_studio_server,
+    write_supervisor_json, SupervisorState,
 };
 use comfyctl::sys;
 use std::collections::BTreeMap;
@@ -195,6 +196,16 @@ fn supervisor_starts_studio_server_only_in_studio_profile() {
         "STUDIO_LLM_KEY".to_string(),
         "YOUR_STUDIO_API_KEY_HERE".to_string(),
     );
+    // M3-C/M3-D: token MCP, secret de webhook y toggle MCP se propagan a studio-server.
+    studio_vars.insert(
+        "STUDIO_API_TOKEN".to_string(),
+        "token-placeholder-no-real".to_string(),
+    );
+    studio_vars.insert(
+        "STUDIO_WEBHOOK_SECRET".to_string(),
+        "webhook-placeholder-no-real".to_string(),
+    );
+    studio_vars.insert("STUDIO_ENABLE_MCP".to_string(), "0".to_string());
     let cfg_studio = RuntimeConfig::from_map(&studio_vars, Some("my-comfy-pass".to_string()));
     assert!(should_start_studio_server(&cfg_studio));
     assert_eq!(cfg_studio.studio_server_port, ephemeral_port);
@@ -237,6 +248,46 @@ fn supervisor_starts_studio_server_only_in_studio_profile() {
         envs.get("STUDIO_LLM_FALLBACK_MODEL"),
         Some(&Some("deepseek-chat".to_string()))
     );
+    assert_eq!(
+        envs.get("STUDIO_API_TOKEN"),
+        Some(&Some("token-placeholder-no-real".to_string()))
+    );
+    assert_eq!(
+        envs.get("STUDIO_WEBHOOK_SECRET"),
+        Some(&Some("webhook-placeholder-no-real".to_string()))
+    );
+    assert_eq!(envs.get("STUDIO_ENABLE_MCP"), Some(&Some("0".to_string())));
+
+    // 2b. Sin token/secret configurados, el comando los ELIMINA del entorno heredado
+    //     (nunca heredar valores de un padre que los tuviera definidos).
+    let mut bare_vars = BTreeMap::new();
+    bare_vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    let cfg_bare = RuntimeConfig::from_map(&bare_vars, None);
+    let bare_envs: BTreeMap<String, Option<String>> = build_studio_server_command(&cfg_bare)
+        .get_envs()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().to_string(),
+                v.map(|val| val.to_string_lossy().to_string()),
+            )
+        })
+        .collect();
+    assert_eq!(bare_envs.get("STUDIO_API_TOKEN"), Some(&None));
+    assert_eq!(bare_envs.get("STUDIO_WEBHOOK_SECRET"), Some(&None));
+    // STUDIO_ENABLE_MCP por defecto activo (1)
+    assert_eq!(
+        bare_envs.get("STUDIO_ENABLE_MCP"),
+        Some(&Some("1".to_string()))
+    );
+    assert_eq!(bare_envs.get("COMFY_PASS"), Some(&None));
+
+    // 2c. `unreal` pertenece a la familia studio: también levanta el servidor.
+    let mut unreal_vars = BTreeMap::new();
+    unreal_vars.insert("MODEL_PROFILE".to_string(), "unreal".to_string());
+    assert!(should_start_studio_server(&RuntimeConfig::from_map(
+        &unreal_vars,
+        None
+    )));
 
     // 3. Con opt-in explícito de fixture de test (STUDIO_SERVER_SCRIPT), spawn_studio_server_if_enabled
     //    levanta el listener en 127.0.0.1:{port} y probe_studio_health responde HTTP 200.
@@ -545,4 +596,29 @@ while True:
     );
 
     let _ = fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn crash_diagnostics_dump_is_redacted_before_print_and_log() {
+    // M3-SCR-005: el volcado de crash (stdout + /var/log/supervisor.log) pasa por SecretRedactor.
+    use comfyctl::redact::SecretRedactor;
+
+    let api_token = "token-placeholder-no-real";
+    let comfy_pass = "comfy-pass-placeholder-no-real";
+    let mut vars = BTreeMap::new();
+    vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    vars.insert("STUDIO_API_TOKEN".to_string(), api_token.to_string());
+    vars.insert("COMFY_PASS".to_string(), comfy_pass.to_string());
+    let cfg = RuntimeConfig::from_map(&vars, None);
+    let redactor = SecretRedactor::from_config(&cfg);
+
+    let reason = format!(
+        "token literal {api_token} y asignación STUDIO_API_TOKEN={api_token} / COMFY_PASS={comfy_pass}"
+    );
+    let dump = render_crash_diagnostics(2, -9, 42, &reason, &redactor);
+
+    assert!(!dump.contains(api_token), "fuga del token: {dump}");
+    assert!(!dump.contains(comfy_pass), "fuga de COMFY_PASS: {dump}");
+    assert!(dump.contains("[REDACTED]"), "{dump}");
+    assert!(dump.contains("intento #2"), "cabecera ausente: {dump}");
 }

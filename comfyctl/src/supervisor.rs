@@ -179,7 +179,39 @@ fn truncate_logs_periodic(log_max_mb: u64, last_truncate: &mut Instant) {
     }
 }
 
-fn dump_crash_diagnostics(attempt: u32, rc: i32, run_duration_s: u64, reason: &str) {
+fn dump_crash_diagnostics(
+    attempt: u32,
+    rc: i32,
+    run_duration_s: u64,
+    reason: &str,
+    redactor: &crate::redact::SecretRedactor,
+) {
+    let redacted_dump = render_crash_diagnostics(attempt, rc, run_duration_s, reason, redactor);
+    print!("{redacted_dump}");
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/var/log/supervisor.log")
+    {
+        let _ = f.write_all(redacted_dump.as_bytes());
+    }
+}
+
+/// Construye el volcado de diagnóstico de un crash y lo pasa por el redactor de secretos
+/// (`M3-SCR-005`). El texto devuelto es exactamente lo que se imprime por stdout y lo que
+/// se anexa a `/var/log/supervisor.log`: ninguna de las dos superficies puede ver el volcado
+/// sin redactar.
+pub fn render_crash_diagnostics(
+    attempt: u32,
+    rc: i32,
+    run_duration_s: u64,
+    reason: &str,
+    redactor: &crate::redact::SecretRedactor,
+) -> String {
+    redactor.redact(&crash_diagnostics_text(attempt, rc, run_duration_s, reason))
+}
+
+fn crash_diagnostics_text(attempt: u32, rc: i32, run_duration_s: u64, reason: &str) -> String {
     let ts = sys::format_utc_log_ts(sys::now_unix_secs());
     let mut dump = String::new();
     dump.push_str("======================================================================\n");
@@ -218,14 +250,7 @@ fn dump_crash_diagnostics(attempt: u32, rc: i32, run_duration_s: u64, reason: &s
     }
     dump.push_str("======================================================================\n");
 
-    print!("{dump}");
-    if let Ok(mut f) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/var/log/supervisor.log")
-    {
-        let _ = f.write_all(dump.as_bytes());
-    }
+    dump
 }
 
 fn run_model_downloads_if_enabled(cfg: &RuntimeConfig) {
@@ -379,6 +404,20 @@ pub fn build_studio_server_command(cfg: &RuntimeConfig) -> Command {
     } else {
         cmd.env_remove("STUDIO_LLM_FALLBACK_KEY");
     }
+    if let Some(ref token) = cfg.studio_api_token {
+        cmd.env("STUDIO_API_TOKEN", token);
+    } else {
+        cmd.env_remove("STUDIO_API_TOKEN");
+    }
+    if let Some(ref wh) = cfg.studio_webhook_secret {
+        cmd.env("STUDIO_WEBHOOK_SECRET", wh);
+    } else {
+        cmd.env_remove("STUDIO_WEBHOOK_SECRET");
+    }
+    cmd.env(
+        "STUDIO_ENABLE_MCP",
+        if cfg.studio_enable_mcp { "1" } else { "0" },
+    );
     cmd
 }
 
@@ -646,7 +685,14 @@ pub fn run_supervision_loop(
             .last_exit
             .as_ref()
             .map_or_else(String::new, |le| le.reason.clone());
-        dump_crash_diagnostics(sup_state.attempt, exit_code, run_duration_s, &reason);
+        let redactor = crate::redact::SecretRedactor::from_config(cfg);
+        dump_crash_diagnostics(
+            sup_state.attempt,
+            exit_code,
+            run_duration_s,
+            &reason,
+            &redactor,
+        );
 
         // M3-SCR-002: mismo criterio que tras el spawn — avisar y seguir supervisando.
         if let Err(e) = write_supervisor_json(&cfg.supervisor_json_path, sup_state) {

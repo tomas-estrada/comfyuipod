@@ -280,6 +280,9 @@ if [ "${COMFY_TLS:-0}" = "1" ]; then
     chmod 600 /etc/nginx/tls/key.pem
     chmod 644 /etc/nginx/tls/cert.pem
     sed -i 's#listen 8188 default_server;#listen 8188 ssl default_server;\n        ssl_certificate /etc/nginx/tls/cert.pem;\n        ssl_certificate_key /etc/nginx/tls/key.pem;\n        ssl_protocols TLSv1.2 TLSv1.3;\n        ssl_ciphers HIGH:!aNULL:!MD5;#' /etc/nginx/nginx.conf
+    # El listen IPv6 (si existe) también pasa a TLS: si se quedara en claro, el mismo puerto
+    # serviría HTTP sin cifrar por IPv6 y el objetivo de COMFY_TLS=1 quedaría a medias.
+    sed -i -E 's#^([[:space:]]*)listen \[::\]:8188 default_server;#\1listen [::]:8188 ssl default_server;#' /etc/nginx/nginx.conf
     echo "[WARN] TLS autofirmado activo: accede por https://<IP_VAST>:<PUERTO> y acepta el aviso."
 fi
 

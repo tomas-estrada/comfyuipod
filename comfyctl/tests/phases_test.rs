@@ -14,6 +14,12 @@ fn phases_parser_and_o06_profile_counts() {
     assert_eq!(phase2_expected_count("anime"), 10);
     assert_eq!(phase2_expected_count("minimal"), 0);
     assert_eq!(phase2_expected_count("studio"), 8);
+    // M3-D: `unreal` es la familia studio + pipeline 3D, así que su Fase 2 es la de studio.
+    assert_eq!(
+        phase2_expected_count("unreal"),
+        phase2_expected_count("studio")
+    );
+    assert_eq!(phase2_expected_count("unreal"), 8);
 
     // 1. Sin log aún (O-06): phase2.total debe reflejar el perfil activo antes de que empiece Fase 2
     let empty_lines: Vec<String> = Vec::new();

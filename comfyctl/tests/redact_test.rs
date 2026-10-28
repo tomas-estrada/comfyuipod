@@ -126,6 +126,39 @@ fn redactor_and_status_env_never_leak_studio_llm_key() {
 }
 
 #[test]
+fn redactor_redacts_env_assignment_forms_without_configured_literals() {
+    // M3-D: el patrón de asignaciones cubre STUDIO_API_TOKEN, STUDIO_WEBHOOK_SECRET,
+    // VAST_API_KEY, COMFY_PASS, STUDIO_AUTH_PASS y HF_TOKEN aunque el redactor se
+    // construya sin literales (p. ej. un dump de entorno o una línea de log suelta).
+    let redactor = SecretRedactor::new(None, None);
+    let sample = "env STUDIO_API_TOKEN=inline-token-1 STUDIO_WEBHOOK_SECRET=inline-secret-2 \
+                  VAST_API_KEY=inline-vast-3 COMFY_PASS=inline-pass-4 \
+                  STUDIO_AUTH_PASS=inline-auth-5 HF_TOKEN=inline-hf-6 PORT=8188";
+    let cleaned = redactor.redact(sample);
+    for leaked in [
+        "inline-token-1",
+        "inline-secret-2",
+        "inline-vast-3",
+        "inline-pass-4",
+        "inline-auth-5",
+        "inline-hf-6",
+    ] {
+        assert!(!cleaned.contains(leaked), "fuga de {leaked}: {cleaned}");
+    }
+    assert!(cleaned.contains("STUDIO_API_TOKEN=[REDACTED]"), "{cleaned}");
+    assert!(
+        cleaned.contains("STUDIO_WEBHOOK_SECRET=[REDACTED]"),
+        "{cleaned}"
+    );
+    assert!(cleaned.contains("VAST_API_KEY=[REDACTED]"), "{cleaned}");
+    assert!(cleaned.contains("COMFY_PASS=[REDACTED]"), "{cleaned}");
+    assert!(cleaned.contains("STUDIO_AUTH_PASS=[REDACTED]"), "{cleaned}");
+    assert!(cleaned.contains("HF_TOKEN=[REDACTED]"), "{cleaned}");
+    // Variables no secretas sobreviven intactas.
+    assert!(cleaned.contains("PORT=8188"), "{cleaned}");
+}
+
+#[test]
 fn redactor_from_config_covers_vast_api_token_and_webhook_secret() {
     // M3-SCR-005: VAST_API_KEY, STUDIO_API_TOKEN y STUDIO_WEBHOOK_SECRET deben
     // formar parte del conjunto de literales del redactor construido desde config.
