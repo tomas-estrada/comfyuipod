@@ -159,10 +159,10 @@ impl RuntimeConfig {
         let pass_file = Path::new("/run/comfyui-pass");
         let file_pass = sys::read_and_unlink_secret(pass_file);
         let mut cfg = Self::from_map(&map, file_pass);
-        if cfg.studio_api_token.is_none() {
-            // M3-C: leer y borrar el token MCP efímero (§9, mismo patrón que COMFY_PASS)
-            cfg.studio_api_token = sys::read_and_unlink_secret(Path::new("/run/comfyui-api-token"));
-        }
+        // M3-C: el token MCP efímero se consume SIEMPRE (R-11), aunque la env ya lo traiga:
+        // dejar en disco un token obsoleto mantendría un secreto persistente tras el arranque.
+        cfg.studio_api_token =
+            take_ephemeral_api_token(Path::new("/run/comfyui-api-token"), cfg.studio_api_token);
         cfg.require_htpasswd = true;
         cfg
     }
@@ -385,4 +385,15 @@ impl RuntimeConfig {
             "<no definida>".to_string()
         }
     }
+}
+
+/// Consume (lee y borra) el token MCP efímero escrito por `start.sh` en `path` (M3-C / `R-11`).
+///
+/// El fichero se elimina **siempre**, incluso cuando la env ya trae `STUDIO_API_TOKEN`: dejar un
+/// token en disco tras el arranque mantendría un secreto persistente que ningún consumidor
+/// necesita. La prioridad es la env (es el valor con el que arrancó el proceso); si no hay env,
+/// se usa el contenido del fichero.
+pub fn take_ephemeral_api_token(path: &Path, env_value: Option<String>) -> Option<String> {
+    let from_file = sys::read_and_unlink_secret(path);
+    env_value.or(from_file)
 }

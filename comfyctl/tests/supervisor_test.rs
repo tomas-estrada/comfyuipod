@@ -164,6 +164,38 @@ fn supervisor_atomic_write_and_secret_unlink() {
 }
 
 #[test]
+fn ephemeral_api_token_file_is_consumed_even_when_env_provides_it() {
+    // M3-C / R-11: /run/comfyui-api-token se borra SIEMPRE al supervisar; con la env definida
+    // gana su valor, pero el fichero no debe sobrevivir al arranque.
+    use comfyctl::config::take_ephemeral_api_token;
+
+    let tmp_dir = std::env::temp_dir().join("comfyctl_ephemeral_token");
+    let _ = fs::remove_dir_all(&tmp_dir);
+    let _ = fs::create_dir_all(&tmp_dir);
+    let token_path = tmp_dir.join("comfyui-api-token");
+
+    let _ = fs::write(&token_path, "from-file-token\n");
+    let from_file = take_ephemeral_api_token(&token_path, None);
+    assert_eq!(from_file.as_deref(), Some("from-file-token"));
+    assert!(
+        !token_path.exists(),
+        "el token efímero debía borrarse al consumirse"
+    );
+
+    let _ = fs::write(&token_path, "from-file-token-2\n");
+    let from_env = take_ephemeral_api_token(&token_path, Some("from-env-token".to_string()));
+    assert_eq!(from_env.as_deref(), Some("from-env-token"));
+    assert!(
+        !token_path.exists(),
+        "el fichero del token debía borrarse aunque la env traiga STUDIO_API_TOKEN"
+    );
+
+    assert_eq!(take_ephemeral_api_token(&token_path, None), None);
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
 fn supervisor_starts_studio_server_only_in_studio_profile() {
     // 1. En cualquier perfil distinto de 'studio', should_start_studio_server es false y spawn devuelve None
     for non_studio in ["all", "general", "realistic", "anime", "minimal"] {
