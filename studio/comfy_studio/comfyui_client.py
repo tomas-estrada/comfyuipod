@@ -25,6 +25,30 @@ logger = logging.getLogger("comfy_studio.comfyui_client")
 
 _DEFAULT_RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
+# Extensión -> MIME para salidas de ComfyUI (coherente con ALLOWED_MEDIA_MIMES
+# de projects.py); extensiones fuera de este mapa no se persisten.
+_OUTPUT_MIME_BY_EXT: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".qt": "video/quicktime",
+    ".mkv": "video/x-matroska",
+    ".mp3": "audio/mpeg",
+    ".mpeg": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".wave": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".flac": "audio/flac",
+    ".m4a": "audio/x-m4a",
+}
+
 
 class ComfyUIError(Exception):
     """Error base del cliente ComfyUI (nunca silencioso)."""
@@ -897,26 +921,20 @@ class ComfyUIClient:
                         },
                     )
             else:
-                # node=None en ComfyUI WS indica fin de ejecución del prompt
-                if job_id and self._store is not None:
-                    existing = self._store.get_job(job_id)
-                    pmax = float((existing or {}).get("progress_max") or 1.0)
-                    self._store.update_job(
-                        job_id,
-                        status="done",
-                        prompt_id=event.prompt_id,
-                        progress_value=pmax,
-                        progress_max=pmax,
-                        current_node=None,
-                    )
+                # node=None en ComfyUI WS indica fin de ejecución del grafo, pero el
+                # job solo pasa a "done" vía _complete_job tras descargar y persistir
+                # las salidas. Marcar done aquí crearía una carrera con
+                # execute_prompt_job y expondría resultados aún no persistidos.
                 if self._broker is not None:
                     self._broker.publish(
-                        "job",
+                        "progress",
                         {
                             "job_id": job_id,
                             "project_id": project_id,
                             "prompt_id": event.prompt_id,
-                            "status": "done",
+                            "status": "running",
+                            "node": None,
+                            "execution_complete": True,
                         },
                     )
 
@@ -1127,11 +1145,16 @@ class ComfyUIClient:
 
             if persist_outputs and project_id and self._store is not None:
                 for out_file, content in downloaded_outputs:
-                    mime = (
-                        "video/mp4"
-                        if out_file.filename.endswith(".mp4")
-                        else "image/png"
-                    )
+                    ext = Path(out_file.filename).suffix.lower()
+                    mime = _OUTPUT_MIME_BY_EXT.get(ext)
+                    if mime is None:
+                        logger.warning(
+                            "Salida de ComfyUI con extensión no soportada (%s) en "
+                            "prompt %s; se omite su guardado.",
+                            out_file.filename,
+                            submission.prompt_id,
+                        )
+                        continue
                     meta: dict[str, Any] = {
                         "prompt_id": submission.prompt_id,
                         "node_id": out_file.node_id,

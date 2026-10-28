@@ -14,7 +14,9 @@ BUILTIN_CONTEXT_PLACEHOLDERS: frozenset[str] = frozenset(
     {"output_prefix", "project_id", "job_id", "template_id"}
 )
 
-TERMINAL_OUTPUT_CLASSES: frozenset[str] = frozenset({"SaveImage", "VHS_VideoCombine"})
+TERMINAL_OUTPUT_CLASSES: frozenset[str] = frozenset(
+    {"SaveImage", "VHS_VideoCombine", "SaveGLB"}
+)
 
 VALID_PARAM_TYPES: frozenset[str] = frozenset(
     {"string", "integer", "number", "boolean"}
@@ -196,6 +198,42 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": (),
         "outputs": 0,
     },
+    # --- M3-D: pipeline Hunyuan3D 2.1 nativo (comfy-core, sin custom nodes) ---
+    "ImageOnlyCheckpointLoader": {
+        "required_inputs": ("ckpt_name",),
+        "optional_inputs": (),
+        "outputs": 3,  # MODEL, CLIP_VISION, VAE
+    },
+    "ModelSamplingAuraFlow": {
+        "required_inputs": ("model", "shift"),
+        "optional_inputs": ("sampling",),
+        "outputs": 1,
+    },
+    "Hunyuan3Dv2Conditioning": {
+        "required_inputs": ("clip_vision_output",),
+        "optional_inputs": (),
+        "outputs": 2,  # positive, negative
+    },
+    "EmptyLatentHunyuan3Dv2": {
+        "required_inputs": ("resolution", "batch_size"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "VAEDecodeHunyuan3D": {
+        "required_inputs": ("samples", "vae"),
+        "optional_inputs": ("num_chunks", "octree_resolution"),
+        "outputs": 1,  # VOXEL
+    },
+    "VoxelToMesh": {
+        "required_inputs": ("voxel", "algorithm", "threshold"),
+        "optional_inputs": (),
+        "outputs": 1,  # MESH
+    },
+    "SaveGLB": {
+        "required_inputs": ("mesh", "filename_prefix"),
+        "optional_inputs": (),
+        "outputs": 0,
+    },
     "VHS_VideoCombine": {
         "required_inputs": (
             "images",
@@ -234,6 +272,8 @@ def extract_placeholders(value: Any) -> set[str]:
 def _validate_parameter_declarations(
     template_id: str,
     parameters: Any,
+    *,
+    require_prompt: bool = True,
 ) -> dict[str, dict[str, Any]]:
     if not isinstance(parameters, dict) or not parameters:
         raise TemplateValidationError(
@@ -304,7 +344,9 @@ def _validate_parameter_declarations(
                         f"({default_val}) > max ({max_v})."
                     )
 
-    if "prompt" not in parameters or not parameters["prompt"].get("required"):
+    if require_prompt and (
+        "prompt" not in parameters or not parameters["prompt"].get("required")
+    ):
         raise TemplateValidationError(
             f"Plantilla {template_id!r}: debe declarar 'prompt' como parámetro obligatorio."
         )
@@ -368,9 +410,9 @@ def validate_template_definition(raw_def: dict[str, Any]) -> dict[str, Any]:
                 f"Plantilla {template_id!r}: falta el campo requerido {req_top!r}."
             )
 
-    if raw_def["output_kind"] not in ("video", "image"):
+    if raw_def["output_kind"] not in ("video", "image", "model3d"):
         raise TemplateValidationError(
-            f"Plantilla {template_id!r}: 'output_kind' debe ser 'video' o 'image'."
+            f"Plantilla {template_id!r}: 'output_kind' debe ser 'video', 'image' o 'model3d'."
         )
 
     docs = raw_def["docs"]
@@ -384,7 +426,13 @@ def validate_template_definition(raw_def: dict[str, Any]) -> dict[str, Any]:
                 f"Plantilla {template_id!r}: falta sección documental {doc_key!r} en 'docs'."
             )
 
-    parameters = _validate_parameter_declarations(template_id, raw_def["parameters"])
+    parameters = _validate_parameter_declarations(
+        template_id,
+        raw_def["parameters"],
+        # M3-D: las plantillas 3D imagen-condicionadas (output_kind=model3d) no usan
+        # prompt de texto; su entrada obligatoria es image_asset_id.
+        require_prompt=(raw_def["output_kind"] != "model3d"),
+    )
 
     workflow = raw_def["workflow"]
     if not isinstance(workflow, dict) or not workflow:

@@ -232,6 +232,8 @@ pub fn collect_model_inventory(comfy_data_dir: &Path, profile: &str) -> (Vec<Str
 
     let valid_profile = match profile {
         "all" | "general" | "realistic" | "anime" | "minimal" | "studio" => profile,
+        // M3-D: 'unreal' extiende 'studio' (mismo inventario Fase 1/2 + opt-in 3D)
+        "unreal" => "studio",
         _ => "all",
     };
 

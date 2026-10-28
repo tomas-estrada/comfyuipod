@@ -33,7 +33,7 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
     body = resp.json()
     assert "templates" in body
     templates = body["templates"]
-    assert len(templates) == 6
+    assert len(templates) == 7
 
     by_id = {tpl["id"]: tpl for tpl in templates}
     assert set(by_id.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
@@ -72,8 +72,13 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
     for tpl_id, tpl in by_id.items():
         schema = tpl["params_schema"]
         assert schema["type"] == "object"
-        assert "prompt" in schema["properties"]
-        assert "prompt" in schema["required"]
+        if tpl_id == "hunyuan3d_image_to_3d":
+            # M3-D: imagen->3D no usa prompt textual; su entrada obligatoria es la imagen
+            assert "image_asset_id" in schema["properties"]
+            assert "image_asset_id" in schema["required"]
+        else:
+            assert "prompt" in schema["properties"]
+            assert "prompt" in schema["required"]
         assert schema.get("additionalProperties") is False
 
         docs = tpl["docs"]
@@ -99,7 +104,7 @@ def test_structural_validator_passes_all_builtin_templates() -> None:
     """Todas las plantillas en comfy_studio/templates/data/ pasan el validador estructural."""
     registry = get_default_registry()
     results = validate_all_templates(registry.data_dir)
-    assert len(results) == 6
+    assert len(results) == 7
     assert set(results.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
 
     # Verificar que todos los modelos referenciados existen en el catálogo del pod
@@ -546,11 +551,15 @@ def test_submit_template_invalid_params_returns_4xx_without_enqueuing(
 
 
 def test_render_template_workflow_helper_for_all_six_templates() -> None:
-    """render_template_workflow renderiza las 6 plantillas con defaults sin dejar placeholders."""
+    """render_template_workflow renderiza las 7 plantillas con defaults sin dejar placeholders."""
     for tpl_id in EXPECTED_M2_TEMPLATE_IDS:
+        params: dict = {"prompt": f"Prueba de render para {tpl_id}"}
+        if tpl_id == "hunyuan3d_image_to_3d":
+            # M3-D: la entrada obligatoria es la imagen de referencia, no un prompt
+            params = {"image_asset_id": "asset_img_01"}
         graph = render_template_workflow(
             tpl_id,
-            {"prompt": f"Prueba de render para {tpl_id}"},
+            params,
             project_id="proj_test_01",
         )
         assert isinstance(graph, dict) and len(graph) >= 4

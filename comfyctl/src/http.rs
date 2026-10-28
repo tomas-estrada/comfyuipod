@@ -275,10 +275,31 @@ pub fn apply_status_server_override(api: &mut StatusApiPayload) {
     api.services.status_server.running = true;
 }
 
+/// Sanea una dirección de escucha: solo se admiten direcciones loopback (`127.x.x.x` / `::1`),
+/// cumpliendo la regla de que únicamente nginx expone puertos (`M3-SCR-003`). Si la dirección
+/// no es loopback o no parsea como `SocketAddr`, avisa por stderr y devuelve el fallback seguro.
+pub fn sanitize_bind_addr(raw: &str, fallback_port: u16) -> String {
+    let fallback = format!("127.0.0.1:{fallback_port}");
+    match raw.trim().parse::<std::net::SocketAddr>() {
+        Ok(addr) if addr.ip().is_loopback() => addr.to_string(),
+        Ok(_) => {
+            eprintln!(
+                "[comfyctl] WARN: bind '{raw}' no es loopback; se usa {fallback} (regla loopback-only)."
+            );
+            fallback
+        }
+        Err(e) => {
+            eprintln!("[comfyctl] WARN: bind '{raw}' inválido ({e}); se usa {fallback}.");
+            fallback
+        }
+    }
+}
+
 pub fn spawn_background_status_server(cfg: RuntimeConfig) -> Result<(), String> {
     // COMFY_STATUS_BIND explícito gana; por defecto, 127.0.0.1:{STATUS_SERVER_PORT} (§5.2).
-    let bind_addr = std::env::var("COMFY_STATUS_BIND")
+    let bind_raw = std::env::var("COMFY_STATUS_BIND")
         .unwrap_or_else(|_| format!("127.0.0.1:{}", cfg.status_server_port));
+    let bind_addr = sanitize_bind_addr(&bind_raw, cfg.status_server_port);
     let log_dir =
         std::env::var("COMFY_LOG_DIR").map_or_else(|_| PathBuf::from("/var/log"), PathBuf::from);
     let server = Server::http(&bind_addr)
@@ -316,9 +337,11 @@ pub fn spawn_background_status_server(cfg: RuntimeConfig) -> Result<(), String> 
 
 pub fn run_serve_cmd(cfg: &RuntimeConfig, bind_addr: &str) -> Result<i32, String> {
     sys::install_signal_handlers();
+    // `serve --bind` tampoco puede saltarse la regla loopback-only (M3-SCR-003).
+    let bind_addr = sanitize_bind_addr(bind_addr, cfg.status_server_port);
     let log_dir =
         std::env::var("COMFY_LOG_DIR").map_or_else(|_| PathBuf::from("/var/log"), PathBuf::from);
-    let server = Server::http(bind_addr)
+    let server = Server::http(&bind_addr)
         .map_err(|e| format!("No se pudo enlazar servidor HTTP en {bind_addr}: {e}"))?;
     let ctx = Arc::new(ServerContext::new(cfg.clone(), log_dir));
 

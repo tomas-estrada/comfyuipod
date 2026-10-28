@@ -1,0 +1,230 @@
+{
+  "id": "hunyuan3d_image_to_3d",
+  "name": "Hunyuan3D 2.1 — Imagen a Malla 3D (GLB)",
+  "category": "three_d",
+  "output_kind": "model3d",
+  "summary": "Genera una malla 3D texturizable (GLB) a partir de una imagen con Hunyuan3D 2.1 nativo de ComfyUI, lista para Blender o Unreal (Datasmith/USD).",
+  "description": "Convierte cualquier imagen del proyecto (render SDXL, keyframe de vídeo o foto subida) en un modelo 3D en formato GLB mediante el pipeline nativo de comfy-core: ImageOnlyCheckpointLoader + ModelSamplingAuraFlow + CLIPVisionEncode + Hunyuan3Dv2Conditioning + KSampler + VAEDecodeHunyuan3D + VoxelToMesh (surface net) + SaveGLB. Usa el checkpoint repaquetizado oficial hunyuan_3d_v2.1.safetensors (Comfy-Org). Sin custom nodes: 100% nodos del núcleo de ComfyUI. El GLB resultante queda en la galería del proyecto y puede exportarse a USD/glTF/FBX con export_for_unreal o renderizarse con render_scene (Blender headless).",
+  "performance_defaults": {
+    "precision": "fp16",
+    "latent_resolution": 4096,
+    "octree_resolution": 256,
+    "steps": 30,
+    "cfg": 5.0,
+    "offload": false
+  },
+  "models": [
+    "hunyuan_3d_v2.1.safetensors"
+  ],
+  "required_nodes": [
+    "LoadImage",
+    "ImageOnlyCheckpointLoader",
+    "ModelSamplingAuraFlow",
+    "CLIPVisionEncode",
+    "Hunyuan3Dv2Conditioning",
+    "EmptyLatentHunyuan3Dv2",
+    "KSampler",
+    "VAEDecodeHunyuan3D",
+    "VoxelToMesh",
+    "SaveGLB"
+  ],
+  "parameters": {
+    "image_asset_id": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "asset_kind": "image",
+      "description": "ID del asset de imagen de partida en el proyecto (render SDXL, keyframe o foto subida). Fondo limpio y sujeto centrado dan mejores mallas."
+    },
+    "image_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_reference.png",
+      "description": "Nombre del archivo de imagen en el input de ComfyUI (se resuelve automáticamente desde image_asset_id)."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 30,
+      "min": 1,
+      "max": 100,
+      "description": "Pasos de muestreo del flujo (30 por defecto; 20 acelera con poca pérdida)."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 5.0,
+      "min": 1.0,
+      "max": 20.0,
+      "description": "Escala CFG del sampler (5.0 por defecto en Hunyuan3D 2.1)."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista de muestreo."
+    },
+    "latent_resolution": {
+      "type": "integer",
+      "required": false,
+      "default": 4096,
+      "min": 512,
+      "max": 8192,
+      "description": "Resolución del latente 3D (4096 por defecto; 8192 duplica VRAM y tiempo)."
+    },
+    "octree_resolution": {
+      "type": "integer",
+      "required": false,
+      "default": 256,
+      "min": 16,
+      "max": 512,
+      "description": "Resolución del octree al decodificar el VAE (256 por defecto; 384-512 para más detalle superficial)."
+    },
+    "mesh_algorithm": {
+      "type": "string",
+      "required": false,
+      "default": "surface net",
+      "description": "Algoritmo de extracción de malla: 'surface net' (suave, por defecto) o 'basic' (voxel expuesto)."
+    },
+    "mesh_threshold": {
+      "type": "number",
+      "required": false,
+      "default": 0.6,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Umbral de ocupación del voxel a malla (0.6 por defecto)."
+    }
+  },
+  "docs": {
+    "uso": "Paso de entrada al pipeline 3D/Unreal: convierte imágenes 2D del proyecto en mallas GLB importables directamente en Blender, o en Unreal Engine vía Datasmith/glTF/USD con export_for_unreal. Úsalo sobre renders SDXL de objeto/ personaje con fondo liso para mejores resultados.",
+    "inputs": [
+      "image_asset_id (obligatorio): imagen de partida del proyecto.",
+      "steps (30) y cfg (5.0): parámetros de muestreo del flujo Hunyuan3D.",
+      "octree_resolution (256): sube a 384-512 para más detalle si hay VRAM.",
+      "mesh_algorithm/mesh_threshold: 'surface net' 0.6 por defecto."
+    ],
+    "defaults": {
+      "latent_resolution": 4096,
+      "octree_resolution": 256,
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler": "euler",
+      "scheduler": "normal"
+    },
+    "notas_rendimiento": "El checkpoint fp16 ocupa ~6.9 GiB en disco y ~8-12 GiB de VRAM durante el muestreo en RTX 5090; una malla a 30 pasos y octree 256 tarda ~1-3 min. Requiere ComfyUI >= 0.3.59 (nodos nativos Hunyuan3D) y el modelo del grupo 'three_d' (STUDIO_INCLUDE_3D=1 o MODEL_PROFILE=unreal)."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "ImageOnlyCheckpointLoader",
+      "inputs": {
+        "ckpt_name": "hunyuan_3d_v2.1.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Checkpoint Hunyuan3D 2.1"
+      }
+    },
+    "2": {
+      "class_type": "ModelSamplingAuraFlow",
+      "inputs": {
+        "model": ["1", 0],
+        "shift": 1.0,
+        "sampling": "flow"
+      },
+      "_meta": {
+        "title": "Muestreo Flow (shift 1.0)"
+      }
+    },
+    "3": {
+      "class_type": "CLIPVisionEncode",
+      "inputs": {
+        "clip_vision": ["1", 1],
+        "image": ["8", 0],
+        "crop": "center"
+      },
+      "_meta": {
+        "title": "Codificar Imagen con CLIP Vision"
+      }
+    },
+    "4": {
+      "class_type": "Hunyuan3Dv2Conditioning",
+      "inputs": {
+        "clip_vision_output": ["3", 0]
+      },
+      "_meta": {
+        "title": "Condicionamiento Hunyuan3D v2"
+      }
+    },
+    "5": {
+      "class_type": "EmptyLatentHunyuan3Dv2",
+      "inputs": {
+        "resolution": "{{latent_resolution}}",
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "Latente 3D Vacío"
+      }
+    },
+    "6": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "denoise": 1.0,
+        "model": ["2", 0],
+        "positive": ["4", 0],
+        "negative": ["4", 1],
+        "latent_image": ["5", 0]
+      },
+      "_meta": {
+        "title": "Muestreador KSampler 3D"
+      }
+    },
+    "7": {
+      "class_type": "VAEDecodeHunyuan3D",
+      "inputs": {
+        "samples": ["6", 0],
+        "vae": ["1", 2],
+        "num_chunks": 8000,
+        "octree_resolution": "{{octree_resolution}}"
+      },
+      "_meta": {
+        "title": "Decodificar VAE a Voxel"
+      }
+    },
+    "8": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "{{image_input}}"
+      },
+      "_meta": {
+        "title": "Cargar Imagen de Referencia"
+      }
+    },
+    "9": {
+      "class_type": "VoxelToMesh",
+      "inputs": {
+        "voxel": ["7", 0],
+        "algorithm": "{{mesh_algorithm}}",
+        "threshold": "{{mesh_threshold}}"
+      },
+      "_meta": {
+        "title": "Voxel a Malla (Surface Net)"
+      }
+    },
+    "10": {
+      "class_type": "SaveGLB",
+      "inputs": {
+        "mesh": ["9", 0],
+        "filename_prefix": "{{output_prefix}}"
+      },
+      "_meta": {
+        "title": "Guardar GLB en Galería del Proyecto"
+      }
+    }
+  }
+}

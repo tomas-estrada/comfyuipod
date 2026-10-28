@@ -13,4 +13,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.kilo/*
+!.kilo/agent/
+!.kilo/skills/
+docs/auditorias/LONG_RUN_AUDIT_TRACKER.md
+docs/auditorias/AUDITORIA_AGENTE_V[1-9][0-9]*.md
 comfyctl/target/

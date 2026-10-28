@@ -13,6 +13,9 @@ pub enum ModelProfile {
     Anime,
     Minimal,
     Studio,
+    /// M3-D: perfil 'unreal' = studio + pipeline 3D open-source (`Hunyuan3D` 2.1, Blender
+    /// headless, export USD/glTF/FBX). Sin binarios de Epic (ver docs/decisiones.md).
+    Unreal,
 }
 
 impl ModelProfile {
@@ -24,6 +27,7 @@ impl ModelProfile {
             "anime" => (Self::Anime, true),
             "minimal" => (Self::Minimal, true),
             "studio" => (Self::Studio, true),
+            "unreal" => (Self::Unreal, true),
             _ => (Self::All, false),
         }
     }
@@ -36,7 +40,13 @@ impl ModelProfile {
             Self::Anime => "anime",
             Self::Minimal => "minimal",
             Self::Studio => "studio",
+            Self::Unreal => "unreal",
         }
+    }
+
+    /// `true` para perfiles con Comfy Studio activo (`studio` y su extensión `unreal`).
+    pub const fn is_studio_family(self) -> bool {
+        matches!(self, Self::Studio | Self::Unreal)
     }
 
     pub const fn default_min_disk_gb(self, skip_download: bool) -> u64 {
@@ -45,6 +55,7 @@ impl ModelProfile {
         }
         match self {
             Self::Studio => 180,
+            Self::Unreal => 210,
             Self::All => 75,
             Self::General | Self::Realistic | Self::Anime => 45,
             Self::Minimal => 10,
@@ -76,6 +87,9 @@ pub struct RuntimeConfig {
     pub studio_server_script: Option<PathBuf>,
     pub studio_pythonpath: Option<PathBuf>,
     pub studio_include_animate: bool,
+    pub studio_enable_mcp: bool,
+    pub studio_api_token: Option<String>,
+    pub studio_webhook_secret: Option<String>,
     pub comfy_app_dir: PathBuf,
     pub comfy_data_dir: PathBuf,
     pub comfy_extra_args: String,
@@ -104,6 +118,9 @@ pub struct RuntimeConfig {
     pub nvidia_smi_bin: PathBuf,
     pub vast_containerlabel: String,
     pub vast_tcp_port_8188: String,
+    /// `VAST_API_KEY` se captura solo para redacción de secretos (`M3-SCR-005`);
+    /// nunca debe imprimirse ni persistirse en claro.
+    pub vast_api_key: Option<String>,
 }
 
 impl RuntimeConfig {
@@ -117,6 +134,11 @@ impl RuntimeConfig {
         let pass_file = Path::new("/run/comfyui-pass");
         let file_pass = sys::read_secret_file(pass_file, false);
         let mut cfg = Self::from_map(&map, file_pass);
+        if cfg.studio_api_token.is_none() {
+            // M3-C: token MCP efímero escrito por start.sh (solo lectura para CLI, R-11)
+            cfg.studio_api_token =
+                sys::read_secret_file(Path::new("/run/comfyui-api-token"), false);
+        }
         if !matches!(
             map.get("STRICT_REQUIRE_HTPASSWD").map(String::as_str),
             Some("1" | "true")
@@ -137,6 +159,10 @@ impl RuntimeConfig {
         let pass_file = Path::new("/run/comfyui-pass");
         let file_pass = sys::read_and_unlink_secret(pass_file);
         let mut cfg = Self::from_map(&map, file_pass);
+        if cfg.studio_api_token.is_none() {
+            // M3-C: leer y borrar el token MCP efímero (§9, mismo patrón que COMFY_PASS)
+            cfg.studio_api_token = sys::read_and_unlink_secret(Path::new("/run/comfyui-api-token"));
+        }
         cfg.require_htpasswd = true;
         cfg
     }
@@ -216,6 +242,15 @@ impl RuntimeConfig {
             .filter(|s| !s.is_empty())
             .map(PathBuf::from);
         let studio_include_animate = get("STUDIO_INCLUDE_ANIMATE").unwrap_or("0") == "1";
+        let studio_enable_mcp = !matches!(get("STUDIO_ENABLE_MCP"), Some("0" | "false"));
+        let studio_api_token = get("STUDIO_API_TOKEN")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let studio_webhook_secret = get("STUDIO_WEBHOOK_SECRET")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
 
         let status_server_port = get("STATUS_SERVER_PORT")
             .and_then(|s| s.trim().parse::<u16>().ok())
@@ -269,6 +304,9 @@ impl RuntimeConfig {
             studio_server_script,
             studio_pythonpath,
             studio_include_animate,
+            studio_enable_mcp,
+            studio_api_token,
+            studio_webhook_secret,
             comfy_app_dir: PathBuf::from(get("COMFY_APP_DIR").unwrap_or("/opt/ComfyUI")),
             comfy_data_dir,
             comfy_extra_args,
@@ -307,6 +345,10 @@ impl RuntimeConfig {
             nvidia_smi_bin: PathBuf::from(get("COMFY_NVIDIA_SMI_BIN").unwrap_or("nvidia-smi")),
             vast_containerlabel: get("VAST_CONTAINERLABEL").unwrap_or("local").to_string(),
             vast_tcp_port_8188: get("VAST_TCP_PORT_8188").unwrap_or("8188").to_string(),
+            vast_api_key: get("VAST_API_KEY")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string),
         }
     }
 

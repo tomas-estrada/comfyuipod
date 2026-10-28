@@ -124,3 +124,35 @@ fn redactor_and_status_env_never_leak_studio_llm_key() {
         Some("<no definida>")
     );
 }
+
+#[test]
+fn redactor_from_config_covers_vast_api_token_and_webhook_secret() {
+    // M3-SCR-005: VAST_API_KEY, STUDIO_API_TOKEN y STUDIO_WEBHOOK_SECRET deben
+    // formar parte del conjunto de literales del redactor construido desde config.
+    use comfyctl::config::RuntimeConfig;
+    use std::collections::BTreeMap;
+
+    let mut vars = BTreeMap::new();
+    vars.insert(
+        "VAST_API_KEY".to_string(),
+        "vast-secret-key-value-123".to_string(),
+    );
+    vars.insert(
+        "STUDIO_API_TOKEN".to_string(),
+        "studio-token-value-456".to_string(),
+    );
+    vars.insert(
+        "STUDIO_WEBHOOK_SECRET".to_string(),
+        "webhook-secret-value-789".to_string(),
+    );
+    let cfg = RuntimeConfig::from_map(&vars, None);
+    let redactor = SecretRedactor::from_config(&cfg);
+
+    let sample = "curl -H 'Authorization: vast-secret-key-value-123' token=studio-token-value-456 \
+                  webhook studio-secret=webhook-secret-value-789";
+    let cleaned = redactor.redact(sample);
+    assert!(!cleaned.contains("vast-secret-key-value-123"), "{cleaned}");
+    assert!(!cleaned.contains("studio-token-value-456"), "{cleaned}");
+    assert!(!cleaned.contains("webhook-secret-value-789"), "{cleaned}");
+    assert!(cleaned.contains("[REDACTED]"));
+}

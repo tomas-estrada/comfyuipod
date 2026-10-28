@@ -19,11 +19,13 @@ Verifica:
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -123,6 +125,14 @@ if len(args) >= 1 and args[0] == "logs":
         sys.stdout.write("")
     sys.exit(0)
 
+if len(args) >= 1 and args[0] == "ssh":
+    ssh_fixture = state_dir / "ssh_outputs_fixture.b64"
+    if ssh_fixture.is_file():
+        sys.stdout.write(ssh_fixture.read_text(encoding="utf-8"))
+        sys.exit(0)
+    sys.stderr.write("mock vastai ssh: sin fixture ssh_outputs_fixture.b64\\n")
+    sys.exit(1)
+
 sys.stderr.write(f"Unsupported mock vastai args: {args}\\n")
 sys.exit(1)
 """,
@@ -185,6 +195,8 @@ def _run_comfy(
     env["COMFY_BROWSER"] = _to_bash_path(bin_dir / "mock-browser")
     env["COMFY_PYTHON"] = _to_bash_path(Path(sys.executable))
     env["HISTFILE"] = str(state_dir / "bash_history")
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     if extra_env:
         env.update(extra_env)
 
@@ -192,6 +204,8 @@ def _run_comfy(
         [bash_bin, _to_bash_path(COMFY_SCRIPT), *args],
         input=stdin_text,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         env=env,
         timeout=30,
@@ -296,6 +310,7 @@ def test_comfy_help_lists_studio_commands(tmp_path: Path) -> None:
     assert "studio" in res.stdout
     assert "comfy studio" in res.stdout
     assert "comfy studio report" in res.stdout
+    assert "fetch-outputs" in res.stdout
 
 
 def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Path) -> None:
@@ -1024,4 +1039,122 @@ def test_rent_non_studio_profile_preserves_legacy_filters(tmp_path: Path) -> Non
     # Para perfil 'all' (disco>=120, inet_down>=500), la oferta 101 es válida y la más barata
     assert "Se alquilaría la oferta ID 101" in res.stdout
     assert "disco=120 GB" in res.stdout
+
+
+def _write_running_instance_fixture(state_dir: Path, inst_id: int = 4242) -> None:
+    (state_dir / "instances_fixture.json").write_text(
+        json.dumps(
+            {
+                "instances": [
+                    {
+                        "id": inst_id,
+                        "actual_status": "running",
+                        "public_ipaddr": "127.0.0.1",
+                        "gpu_name": "RTX 5090",
+                        "dph_total": 0.65,
+                        "label": "comfy-studio",
+                        "ports": {"8188/tcp": [{"HostPort": "38188"}]},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _build_outputs_tar_b64(files: dict[str, bytes]) -> str:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def test_comfy_fetch_outputs_streams_tar_and_skips_existing(tmp_path: Path) -> None:
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    _write_running_instance_fixture(state_dir)
+    (state_dir / "ssh_outputs_fixture.b64").write_text(
+        _build_outputs_tar_b64(
+            {
+                "output/hello.txt": b"hello-outputs",
+                "output/nested/render.mp4": b"\x00\x01\x02binary-payload",
+            }
+        ),
+        encoding="utf-8",
+    )
+    dest = tmp_path / "dest"
+
+    res = _run_comfy(
+        ["fetch-outputs", "4242", dest.as_posix()],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+    )
+    assert res.returncode == 0, f"stderr={res.stderr}\nstdout={res.stdout}"
+    assert (dest / "output" / "hello.txt").read_bytes() == b"hello-outputs"
+    assert (dest / "output" / "nested" / "render.mp4").read_bytes() == b"\x00\x01\x02binary-payload"
+    assert "2 archivo(s) descargados" in res.stdout
+
+    # Segunda ejecución: todo existe ya → 0 descargados, 2 omitidos (resumible).
+    res2 = _run_comfy(
+        ["fetch-outputs", "4242", dest.as_posix()],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+    )
+    assert res2.returncode == 0, f"stderr={res2.stderr}\nstdout={res2.stdout}"
+    assert "0 archivo(s) descargados" in res2.stdout
+    assert "2 omitidos" in res2.stdout
+
+    # El comando remoto usa tar+base64 sobre el data dir del pod.
+    calls = [
+        json.loads(line)
+        for line in (state_dir / "vastai_calls.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    ssh_calls = [c for c in calls if c["args"] and c["args"][0] == "ssh"]
+    assert ssh_calls, "se esperaba una llamada 'vastai ssh'"
+    remote_cmd = ssh_calls[-1]["args"][-1]
+    assert "tar czf - -C '/workspace/comfyui-data' output" in remote_cmd
+    assert "| base64" in remote_cmd
+
+
+def test_comfy_fetch_outputs_rejects_path_traversal(tmp_path: Path) -> None:
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    _write_running_instance_fixture(state_dir)
+    (state_dir / "ssh_outputs_fixture.b64").write_text(
+        _build_outputs_tar_b64(
+            {
+                "output/safe.txt": b"ok",
+                "output/../../escape.txt": b"malicioso",
+            }
+        ),
+        encoding="utf-8",
+    )
+    dest = tmp_path / "dest-traversal"
+
+    res = _run_comfy(
+        ["fetch-outputs", "4242", dest.as_posix()],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+    )
+    assert res.returncode == 0, f"stderr={res.stderr}\nstdout={res.stdout}"
+    assert (dest / "output" / "safe.txt").read_bytes() == b"ok"
+    assert not (tmp_path / "escape.txt").exists()
+    assert "Ruta fuera del destino omitida" in res.stderr
+
+
+def test_comfy_fetch_outputs_warns_on_empty_remote_archive(tmp_path: Path) -> None:
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    _write_running_instance_fixture(state_dir)
+    (state_dir / "ssh_outputs_fixture.b64").write_text("", encoding="utf-8")
+    dest = tmp_path / "dest-empty"
+
+    res = _run_comfy(
+        ["fetch-outputs", "4242", dest.as_posix()],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+    )
+    assert res.returncode != 0
+    assert "vacío" in res.stderr or "válido" in res.stderr
 

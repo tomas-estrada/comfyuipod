@@ -126,3 +126,35 @@ fn http_server_endpoints_404_405_head_and_schema() {
     let _ = handle.join();
     let _ = fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn sanitize_bind_addr_rejects_non_loopback() {
+    use comfyctl::http::sanitize_bind_addr;
+
+    // Loopback válido: se conserva (IPv4 e IPv6).
+    assert_eq!(
+        sanitize_bind_addr("127.0.0.1:18189", 18189),
+        "127.0.0.1:18189"
+    );
+    assert_eq!(
+        sanitize_bind_addr("127.0.0.5:9000", 18189),
+        "127.0.0.5:9000"
+    );
+    assert_eq!(sanitize_bind_addr("[::1]:18189", 18189), "[::1]:18189");
+
+    // No loopback: cae al default 127.0.0.1:{puerto}.
+    assert_eq!(
+        sanitize_bind_addr("0.0.0.0:18189", 18189),
+        "127.0.0.1:18189"
+    );
+    assert_eq!(
+        sanitize_bind_addr("192.168.1.10:8080", 18189),
+        "127.0.0.1:18189"
+    );
+    assert_eq!(sanitize_bind_addr("[::]:18189", 18189), "127.0.0.1:18189");
+
+    // Inválido: también cae al default.
+    assert_eq!(sanitize_bind_addr("no-es-una-ip", 18189), "127.0.0.1:18189");
+    assert_eq!(sanitize_bind_addr("", 18189), "127.0.0.1:18189");
+    assert_eq!(sanitize_bind_addr("127.0.0.1", 18189), "127.0.0.1:18189");
+}

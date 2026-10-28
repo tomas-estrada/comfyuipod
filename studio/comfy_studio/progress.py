@@ -46,6 +46,15 @@ class ProgressBroker:
     def recent_events(self) -> list[tuple[str, dict[str, Any]]]:
         return list(self._history)
 
+    def subscribe(self, maxsize: int = 256) -> asyncio.Queue[tuple[str, dict[str, Any]]]:
+        """Registra una cola suscriptora y la devuelve (M3-B: dispatcher de webhooks)."""
+        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue(maxsize=maxsize)
+        self._subscribers.add(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue[tuple[str, dict[str, Any]]]) -> None:
+        self._subscribers.discard(queue)
+
     async def stream(
         self,
         *,
@@ -54,8 +63,7 @@ class ProgressBroker:
         max_events: int | None = None,
     ) -> AsyncIterator[str]:
         """Genera frames SSE sin buffering, comenzando con un heartbeat inmediato."""
-        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue(maxsize=256)
-        self._subscribers.add(queue)
+        queue = self.subscribe(maxsize=256)
         emitted = 0
         interval = max(0.01, float(heartbeat_interval))
         try:
@@ -92,4 +100,4 @@ class ProgressBroker:
                 if max_events is not None and emitted >= max_events:
                     return
         finally:
-            self._subscribers.discard(queue)
+            self.unsubscribe(queue)

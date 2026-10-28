@@ -422,18 +422,27 @@
             </div>
         </section>
 
-        <!-- VISTA 5: TIMELINE EDL (PLACEHOLDER M2 -> M3) -->
+        <!-- VISTA 5: TIMELINE EDL, PERCEPCIÓN Y TRANSCRIPCIÓN (M3) -->
         <section id="view-edl" class="studio-view" data-view-panel="edl" aria-labelledby="heading-edl" hidden>
             <div class="panel-card">
                 <div class="card-header">
                     <div>
                         <h2 id="heading-edl">Timeline EDL (Edit Decision List) y Transcripción</h2>
-                        <p class="card-subtitle">Visor de versiones EDL propuestas por el agente y placeholder de línea de tiempo multipista (M2/M3).</p>
+                        <p class="card-subtitle">Visor y editor de versiones EDL, transcripción WhisperX con diarización FunASR cam++ y render determinista ffmpeg (16:9 / 9:16).</p>
                     </div>
                     <div class="header-actions">
                         <span id="edl-version-badge" class="code-badge">Sin versión EDL</span>
+                        <button type="button" id="edl-transcribe-btn" class="btn btn-secondary btn-sm">
+                            Transcribir + Diarizar (WhisperX / cam++)
+                        </button>
                         <button type="button" id="edl-propose-btn" class="btn btn-primary btn-sm">
                             Generar EDL de Highlights con Agente
+                        </button>
+                        <button type="button" id="edl-build-16x9-btn" class="btn btn-accent btn-sm">
+                            Renderizar EDL 16:9
+                        </button>
+                        <button type="button" id="edl-build-9x16-btn" class="btn btn-accent btn-sm">
+                            Renderizar EDL 9:16
                         </button>
                         <button type="button" id="refresh-edl-btn" class="btn btn-secondary btn-sm">
                             Actualizar EDL
@@ -445,6 +454,10 @@
                     <p>El Timeline EDL muestra los cortes de entrada/salida (<code>in_sec</code> / <code>out_sec</code>) propuestos mediante la herramienta <code>propose_edl</code> del agente.</p>
                 </div>
 
+                <div id="edl-simulation-notice" class="project-summary-box" role="note">
+                    <p><strong>Modo simulación (M3):</strong> La transcripción, diarización, búsqueda semántica CLIP y detección facial de esta versión son <em>simulaciones deterministas</em> (pipeline completo sin pesos reales de <code>faster-whisper</code>/<code>wav2vec2</code>/<code>cam++</code>/<code>buffalo_l</code>/CLIP cargados). Las respuestas API incluyen <code>simulated: true</code>. No evaluar calidad de modelo con estas salidas.</p>
+                </div>
+
                 <div class="edl-timeline-container" aria-label="Representación visual del timeline EDL">
                     <div class="timeline-track-row">
                         <span class="track-label">V1 · Vídeo Principal</span>
@@ -454,8 +467,8 @@
                     </div>
                     <div class="timeline-track-row">
                         <span class="track-label">A1 · Voz / Subtítulos</span>
-                        <div class="timeline-track timeline-track-secondary">
-                            <span class="track-segment track-segment-audio">Sincronización de transcripción y locución (preparado para M3 Faster-Whisper / F5-TTS)</span>
+                        <div id="edl-audio-track" class="timeline-track timeline-track-secondary">
+                            <span class="track-segment track-segment-audio">Sincronización de transcripción WhisperX (large-v3 + wav2vec2 ES/EN) y diarización cam++</span>
                         </div>
                     </div>
                 </div>
@@ -464,6 +477,17 @@
                 <h3 class="section-subtitle">Lista de Decisiones de Corte (Cuts)</h3>
                 <div id="edl-cuts-list" class="items-list" aria-live="polite">
                     <p class="empty-hint">No hay cortes registrados en el proyecto activo.</p>
+                </div>
+
+                <div class="divider"></div>
+                <h3 class="section-subtitle">Transcripción y Diarización por Hablante (WhisperX + cam++)</h3>
+                <div id="edl-transcription-list" class="items-list" aria-live="polite">
+                    <p class="empty-hint">Sin transcripción aún. Pulsa «Transcribir + Diarizar» o usa la herramienta <code>transcribe</code> / <code>diarize</code> en el chat.</p>
+                </div>
+
+                <div class="divider"></div>
+                <div id="insightface-license-notice" class="project-summary-box" role="note">
+                    <p><strong>Aviso de licencia InsightFace (<code>buffalo_l</code>):</strong> Los pesos de <code>buffalo_l</code> y el dataset de entrenamiento MS1MV2 tienen licencia estrictamente no comercial (solo investigación académica y uso no comercial).</p>
                 </div>
             </div>
         </section>

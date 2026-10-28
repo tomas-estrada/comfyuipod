@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import logging
 import os
 import secrets
 from collections.abc import AsyncGenerator, Callable, Coroutine
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -19,23 +20,42 @@ from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from python_multipart.multipart import parse_options_header
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, Headers
 from starlette.formparsers import FormParser, MultiPartException, MultiPartParser
 
+from comfy_studio import SIMULATED_ML_NOTICE
 from comfy_studio.agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
+from comfy_studio.agent.tools import EdlCutItem
+from comfy_studio.asr import diarize_project_asset, transcribe_project_asset
 from comfy_studio.comfyui_client import ComfyUIClient, ComfyUIError
 from comfy_studio.config import (
     StudioConfig,
     install_log_redaction,
 )
+from comfy_studio.edl import execute_edl_ffmpeg, generate_highlights_edl
+from comfy_studio.mcp_server import McpContext, create_mcp_router
+from comfy_studio.perception import (
+    INSIGHTFACE_NC_LICENSE_NOTICE,
+    ClipVisualIndex,
+    InsightFaceIndex,
+    PerceptionVectorStore,
+    extract_video_keyframes,
+)
 from comfy_studio.progress import ProgressBroker, format_sse_event
-from comfy_studio.projects import MediaValidationError, ProjectStore
+from comfy_studio.projects import MediaValidationError, ProjectStore, sanitize_filename
+from comfy_studio.recovery import recover_interrupted_jobs
 from comfy_studio.stubs.llm import StubLLMClient
 from comfy_studio.templates import (
     TemplateNotFoundError,
     TemplateParamError,
     TemplateRegistry,
     get_default_registry,
+)
+from comfy_studio.webhooks import (
+    BrokerWebhookDispatcher,
+    WebhookNotifier,
+    create_webhook_notifier,
 )
 
 logger = logging.getLogger("comfy_studio.app")
@@ -79,6 +99,87 @@ class ChatTurnRequest(BaseModel):
     keyframe_data_urls: list[str] = Field(default_factory=list)
     stream: bool = Field(default=False)
     max_iterations: int | None = Field(default=None, ge=1, le=25)
+
+
+class KeyframeExtractRequest(BaseModel):
+    asset_id: str | None = None
+    interval_sec: float = Field(default=2.0, ge=0.25, le=60.0)
+    scene_threshold: float = Field(default=0.25, ge=0.05, le=0.95)
+    max_frames: int = Field(default=24, ge=1, le=200)
+
+
+class PerceptionIndexRequest(BaseModel):
+    asset_id: str | None = None
+    interval_sec: float = Field(default=2.0, ge=0.25, le=60.0)
+    detect_faces: bool = True
+
+
+class PerceptionSearchRequest(BaseModel):
+    query: str | None = None
+    text_query: str | None = None
+    asset_id: str | None = None
+    identity_id: str | None = None
+    identity_name: str | None = None
+    person_name: str | None = None
+    reference_asset_id: str | None = None
+    limit: int = Field(default=10, ge=1, le=100)
+
+
+class FaceIndexRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    reference_asset_id: str | None = None
+    keyframe_asset_ids: list[str] | None = None
+
+
+class IdentityCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    reference_asset_id: str | None = None
+
+
+class IdentityRenameRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+
+class TranscribeRequest(BaseModel):
+    asset_id: str | None = None
+    language: str = Field(default="es", min_length=2, max_length=10)
+    script_segments: list[dict[str, Any]] | None = None
+
+
+class DiarizeRequest(BaseModel):
+    asset_id: str | None = None
+    transcription_id: str | None = None
+    expected_speakers: int | None = Field(default=None, ge=1, le=6)
+
+
+class EdlCreateRequest(BaseModel):
+    title: str = Field(default="Propuesta EDL", min_length=1, max_length=200)
+    aspect_ratio: str = Field(default="16:9", pattern=r"^(16:9|9:16|1:1|4:5)$")
+    source_asset_id: str | None = None
+    # M3-SCR-005: cota dura de cortes para no desencadenar cadenas ilimitadas de
+    # subprocess ffmpeg (un corte = 1 recorte + 1 concat)
+    cuts: list[EdlCutItem] = Field(..., min_length=1, max_length=200)
+    notes: str = Field(default="", max_length=2000)
+
+
+class EdlHighlightsRequest(BaseModel):
+    asset_id: str | None = None
+    transcription_id: str | None = None
+    title: str = Field(default="Highlights automáticos", min_length=1, max_length=200)
+    aspect_ratio: str = Field(default="16:9", pattern=r"^(16:9|9:16|1:1|4:5)$")
+    remove_fillers: bool = True
+    min_pause_sec: float = Field(default=0.35, ge=0.05, le=10.0)
+    max_duration_sec: float | None = Field(default=None, gt=0.0)
+    speaker_filter: str | None = None
+
+
+class EdlBuildRequest(BaseModel):
+    edl_id: str | None = None
+    version: int | None = Field(default=None, ge=1)
+    aspect_ratio: str | None = Field(default=None, pattern=r"^(16:9|9:16|1:1|4:5)$")
+    source_asset_id: str | None = None
+    cuts: list[EdlCutItem] | None = Field(default=None, max_length=200)  # M3-SCR-005
+    fps: int = Field(default=24, ge=12, le=60)
 
 
 def _verify_basic_auth(
@@ -196,15 +297,13 @@ class _BoundedMultiPartParser(MultiPartParser):
             _MAX_IN_MEMORY_SPOOL_BYTES,
         )
         self._part_file_bytes: dict[int, int] = {}
-        self._total_file_bytes = 0
 
     def on_part_data(self, data: bytes, start: int, end: int) -> None:
         if self._current_part.file is not None:
             chunk_len = end - start
             part_key = id(self._current_part)
             new_part_size = self._part_file_bytes.get(part_key, 0) + chunk_len
-            self._total_file_bytes += chunk_len
-            if new_part_size > self.max_file_size or self._total_file_bytes > self.max_file_size:
+            if new_part_size > self.max_file_size:
                 raise HTTPException(
                     status_code=413,
                     detail=f"El archivo supera el límite permitido ({self.max_file_size} bytes)",
@@ -304,6 +403,34 @@ class _BoundedUploadAPIRoute(APIRoute):
         return custom_route_handler
 
 
+def _edge_auth_effective_pass(cfg: StudioConfig) -> str | None:
+    """Contraseña exigible por el edge (config o env), o `None` si no hay ninguna."""
+    env_pass = (
+        os.environ.get("COMFY_PASS", "").strip()
+        or os.environ.get("STUDIO_AUTH_PASS", "").strip()
+        or None
+    )
+    return cfg.get_comfy_pass() or env_pass
+
+
+def _edge_auth_user(cfg: StudioConfig) -> str:
+    return (
+        os.environ.get("COMFY_USER", "").strip()
+        or os.environ.get("STUDIO_AUTH_USER", "").strip()
+        or cfg.comfy_user
+    )
+
+
+def _edge_auth_enforced(cfg: StudioConfig) -> bool:
+    """True si el edge exigirá Basic Auth en las rutas /studio y /health."""
+    require_auth = (
+        cfg.require_auth
+        or bool(_edge_auth_effective_pass(cfg))
+        or os.environ.get("STUDIO_REQUIRE_AUTH", "").strip() in {"1", "true", "yes"}
+    )
+    return bool(require_auth and _edge_auth_effective_pass(cfg))
+
+
 async def _probe_comfyui(
     comfyui_url: str,
     transport: httpx.AsyncBaseTransport | None = None,
@@ -333,13 +460,72 @@ def create_app(
     install_log_redaction(redactor)
     install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
 
+    # M3-SEC-002: sin contraseña exigible no hay lockout posible (ver test de
+    # regresión), pero la postura fail-open debe ser VISIBLE: WARN en arranque +
+    # `edge_auth: "open"` en /studio/api/health.
+    if _edge_auth_effective_pass(cfg) is None and (
+        cfg.require_auth
+        or os.environ.get("STUDIO_REQUIRE_AUTH", "").strip() in {"1", "true", "yes"}
+    ):
+        logger.warning(
+            "STUDIO: require_auth activo pero sin COMFY_PASS/STUDIO_AUTH_PASS exigible; "
+            "los endpoints /studio se sirven SIN autenticación (fail-open visible, "
+            "edge_auth=open en /studio/api/health). Define COMFY_PASS para activar Basic Auth."
+        )
+
     store = ProjectStore(cfg.studio_data_dir)
     broker = ProgressBroker()
     stub_llm = StubLLMClient(model=cfg.studio_llm_model) if cfg.studio_stub_llm else None
 
+    webhook_notifier: WebhookNotifier | None = create_webhook_notifier(cfg)
+    webhook_dispatcher: BrokerWebhookDispatcher | None = (
+        BrokerWebhookDispatcher(broker, webhook_notifier)
+        if webhook_notifier is not None
+        else None
+    )
+
+    @asynccontextmanager
+    async def _webhook_lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+        if webhook_notifier is not None:
+            webhook_notifier.start()
+        if webhook_dispatcher is not None:
+            webhook_dispatcher.start()
+
+        async def _run_job_recovery() -> None:
+            try:
+                report = await recover_interrupted_jobs(
+                    store=store,
+                    comfyui_client=_app.state.comfyui_client,
+                    broker=broker,
+                    resume=cfg.studio_resume_jobs,
+                    start_delay_s=(
+                        cfg.studio_resume_delay_s if cfg.studio_resume_jobs else 0.0
+                    ),
+                )
+                if report.get("stale"):
+                    logger.info("Recuperación de jobs tras reinicio: %s", report)
+            except Exception:  # noqa: BLE001
+                logger.exception("Error en la recuperación de jobs interrumpidos")
+
+        recovery_task: asyncio.Task[None] = asyncio.create_task(_run_job_recovery())
+        try:
+            yield
+        finally:
+            if not recovery_task.done():
+                recovery_task.cancel()
+                try:
+                    await recovery_task
+                except asyncio.CancelledError:
+                    pass
+            if webhook_dispatcher is not None:
+                await webhook_dispatcher.stop()
+            if webhook_notifier is not None:
+                await webhook_notifier.stop()
+
     app = FastAPI(
         title="Comfy Studio Server",
         version="0.1.0",
+        lifespan=_webhook_lifespan,
     )
     app.router.route_class = _BoundedUploadAPIRoute
     app.state.config = cfg
@@ -347,6 +533,8 @@ def create_app(
     app.state.store = store
     app.state.broker = broker
     app.state.stub_llm = stub_llm
+    app.state.webhook_notifier = webhook_notifier
+    app.state.webhook_dispatcher = webhook_dispatcher
     app.state.comfyui_transport = comfyui_transport
     app.state.comfyui_client = ComfyUIClient(
         base_url=cfg.studio_comfyui_url,
@@ -355,6 +543,10 @@ def create_app(
         broker=broker,
         redactor=redactor,
     )
+    vector_store = PerceptionVectorStore(cfg.studio_data_dir / "index.db")
+    app.state.vector_store = vector_store
+    app.state.clip_index = ClipVisualIndex(store, vector_store)
+    app.state.face_index = InsightFaceIndex(store, vector_store)
     app.state.template_registry = get_default_registry()
     app.state.tool_belt = create_default_tool_belt()
     app.state.llm_client = OpenAICompatibleLLMClient(
@@ -372,20 +564,22 @@ def create_app(
         redactor=redactor,
     )
 
+    mcp_ctx = McpContext(
+        store=store,
+        comfyui_client=app.state.comfyui_client,
+        broker=broker,
+        config=cfg,
+        tool_belt=app.state.tool_belt,
+        redactor=redactor,
+    )
+    app.state.mcp_context = mcp_ctx
+    app.include_router(create_mcp_router(mcp_ctx))
+
     @app.middleware("http")
     async def edge_auth_and_redaction_middleware(request: Request, call_next):
         active_cfg: StudioConfig = request.app.state.config
-        env_pass = (
-            os.environ.get("COMFY_PASS", "").strip()
-            or os.environ.get("STUDIO_AUTH_PASS", "").strip()
-            or None
-        )
-        env_user = (
-            os.environ.get("COMFY_USER", "").strip()
-            or os.environ.get("STUDIO_AUTH_USER", "").strip()
-            or active_cfg.comfy_user
-        )
-        effective_pass = active_cfg.get_comfy_pass() or env_pass
+        env_user = _edge_auth_user(active_cfg)
+        effective_pass = _edge_auth_effective_pass(active_cfg)
         require_auth = (
             active_cfg.require_auth
             or bool(effective_pass)
@@ -393,9 +587,28 @@ def create_app(
             or request.headers.get("X-Studio-Simulate-Edge") == "1"
         )
 
-        if require_auth and request.url.path.startswith(("/studio", "/health")):
+        # Sin contraseña configurada no hay credencial válida posible: exigir auth
+        # bloquearía todas las peticiones (lockout total). Se omite la exigencia
+        # (fail-open VISIBLE: WARN en arranque + edge_auth=open en health, M3-SEC-002).
+        if require_auth and effective_pass and request.url.path.startswith(("/studio", "/health")):
             auth_header = request.headers.get("Authorization")
-            if not _verify_basic_auth(auth_header, env_user, effective_pass):
+            # M3-C: los clientes máquina del endpoint MCP pueden autenticarse con
+            # `Authorization: Bearer <STUDIO_API_TOKEN>` en lugar de Basic Auth
+            # (nginx sigue exigiendo Basic Auth en el borde público).
+            mcp_bearer_ok = False
+            api_token = active_cfg.get_api_token()
+            if (
+                api_token
+                and request.url.path.startswith("/studio/api/mcp")
+                and auth_header
+            ):
+                parts = auth_header.split()
+                mcp_bearer_ok = (
+                    len(parts) == 2
+                    and parts[0].lower() == "bearer"
+                    and secrets.compare_digest(parts[1].encode("utf-8"), api_token.encode("utf-8"))
+                )
+            if not mcp_bearer_ok and not _verify_basic_auth(auth_header, env_user, effective_pass):
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Credenciales requeridas"},
@@ -414,7 +627,27 @@ def create_app(
                     content={"detail": exc.detail},
                 )
 
-        return await call_next(request)
+        response = await call_next(request)
+
+        # M3-SCR-008 (regla 3 de AGENTS.md): TODA respuesta JSON de /studio pasa
+        # por SecretRedactor de forma centralizada, incluidos `detail=str(exc)`
+        # de HTTPException y dicts crudos de los endpoints M3 (percepción, ASR,
+        # EDL). SSE, archivos y media quedan fuera (no son application/json).
+        if request.url.path.startswith("/studio"):
+            content_type = response.headers.get("content-type", "")
+            if content_type.startswith("application/json"):
+                body = b"".join([chunk async for chunk in response.body_iterator])
+                if body:
+                    redacted = active_cfg.redactor().redact(body.decode("utf-8"))
+                    headers = dict(response.headers)
+                    headers["content-length"] = str(len(redacted.encode("utf-8")))
+                    return Response(
+                        content=redacted,
+                        status_code=response.status_code,
+                        headers=headers,
+                        media_type="application/json",
+                    )
+        return response
 
     @app.get("/studio/api/health")
     @app.get("/health")
@@ -434,6 +667,7 @@ def create_app(
             "comfyui_url": active_cfg.studio_comfyui_url,
             "comfyui_devices": len((stats or {}).get("devices", [])) if stats else 0,
             "model_profile": active_cfg.model_profile,
+            "edge_auth": "basic" if _edge_auth_enforced(active_cfg) else "open",
             "stub_llm": active_cfg.studio_stub_llm,
             "llm_model": active_cfg.studio_llm_model,
             "llm_key_status": active_cfg.masked_llm_key_status(),
@@ -708,13 +942,12 @@ def create_app(
                     detail=exc.message,
                 ) from exc
             media_type = "video/mp4" if filename.lower().endswith(".mp4") else "image/png"
-            safe_name = os.path.basename(filename) or "output.bin"
+            # El nombre viaja a Content-Disposition: sanear (sin comillas ni CR/LF).
+            safe_name = sanitize_filename(os.path.basename(filename), fallback_ext=".bin")
             return Response(
                 content=raw_bytes,
                 media_type=media_type,
-                headers={
-                    "Content-Disposition": f'{disposition}; filename="{safe_name}"'
-                },
+                headers={"Content-Disposition": f'{disposition}; filename="{safe_name}"'},
             )
 
         raise HTTPException(
@@ -730,11 +963,7 @@ def create_app(
         include_workflow: bool = Query(default=False),
     ) -> dict[str, Any]:
         active_registry: TemplateRegistry = request.app.state.template_registry
-        return {
-            "templates": active_registry.list_templates(
-                include_workflow=include_workflow
-            )
-        }
+        return {"templates": active_registry.list_templates(include_workflow=include_workflow)}
 
     @app.get("/studio/api/templates/{template_id}")
     async def get_template_endpoint(
@@ -938,10 +1167,9 @@ def create_app(
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
 
-        wants_stream = body.stream or "text/event-stream" in (
-            request.headers.get("accept") or ""
-        )
+        wants_stream = body.stream or "text/event-stream" in (request.headers.get("accept") or "")
         if wants_stream:
+
             async def _sse_gen():
                 try:
                     async for ev in active_agent.stream_turn(
@@ -952,10 +1180,12 @@ def create_app(
                         max_iterations=body.max_iterations,
                     ):
                         yield format_sse_event(ev["type"], active_redactor.redact_value(ev))
-                except ValueError as exc:
-                    err_ev = active_redactor.redact_value(
-                        {"type": "error", "detail": str(exc)}
+                except Exception as exc:
+                    logger.warning(
+                        "Error no controlado en el stream SSE del turno de chat: %s",
+                        active_redactor.redact(str(exc)),
                     )
+                    err_ev = active_redactor.redact_value({"type": "error", "detail": str(exc)})
                     yield format_sse_event("error", err_ev)
 
             return StreamingResponse(
@@ -1010,6 +1240,468 @@ def create_app(
         removed = active_store.clear_chat_messages(project_id)
         return {"deleted": True, "project_id": project_id, "removed_count": removed}
 
+    @app.get("/studio/api/projects/{project_id}/keyframes")
+    async def list_project_keyframes(
+        project_id: str,
+        request: Request,
+        source_asset_id: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        kf_assets = active_store.list_assets(project_id, category="keyframes")
+        items: list[dict[str, Any]] = []
+        for asset in kf_assets:
+            meta = dict(asset.get("metadata") or {})
+            src_aid = meta.get("source_asset_id") or asset["id"]
+            if source_asset_id and src_aid != source_asset_id:
+                continue
+            items.append(
+                {
+                    **asset,
+                    "source_asset_id": src_aid,
+                    "timestamp_sec": float(meta.get("timestamp_sec") or 0.0),
+                    "frame_index": int(meta.get("frame_index") or 0),
+                }
+            )
+        items.sort(
+            key=lambda x: (str(x.get("source_asset_id")), float(x.get("timestamp_sec") or 0.0))
+        )
+        return {
+            "project_id": project_id,
+            "count": len(items),
+            "keyframes": items,
+        }
+
+    @app.post("/studio/api/projects/{project_id}/keyframes/extract")
+    async def extract_project_keyframes(
+        project_id: str,
+        body: KeyframeExtractRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        target_aid = body.asset_id
+        if not target_aid:
+            videos = active_store.list_assets(project_id, kind="video")
+            if not videos:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El proyecto no contiene ningún vídeo para extraer keyframes.",
+                )
+            target_aid = videos[0]["id"]
+        try:
+            kfs = await run_in_threadpool(
+                extract_video_keyframes,
+                active_store,
+                project_id,
+                target_aid,
+                interval_sec=body.interval_sec,
+                scene_threshold=body.scene_threshold,
+                max_frames=body.max_frames,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "status": "extracted",
+            "project_id": project_id,
+            "source_asset_id": target_aid,
+            "count": len(kfs),
+            "keyframes": kfs,
+        }
+
+    @app.post("/studio/api/projects/{project_id}/perception/index")
+    async def index_project_perception(
+        project_id: str,
+        body: PerceptionIndexRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_clip: ClipVisualIndex = request.app.state.clip_index
+        active_face: InsightFaceIndex = request.app.state.face_index
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+        # Trabajo síncrono pesado (ffmpeg/embeddings/sqlite): fuera del event loop para
+        # no bloquear /health, el SSE de progreso ni el resto de peticiones.
+        def _index_sync() -> dict[str, Any]:
+            if body.asset_id:
+                res = active_clip.index_asset(
+                    project_id,
+                    body.asset_id,
+                    interval_sec=body.interval_sec,
+                )
+                faces_count = 0
+                if body.detect_faces:
+                    faces_count += len(
+                        active_face.detect_and_index_asset(project_id, body.asset_id)
+                    )
+                    for shot in res.get("shots", []):
+                        kf_id = shot.get("keyframe_asset_id")
+                        if kf_id and kf_id != body.asset_id:
+                            faces_count += len(
+                                active_face.detect_and_index_asset(
+                                    project_id,
+                                    kf_id,
+                                    source_asset_id=body.asset_id,
+                                    timestamp_sec=float(shot.get("timestamp_sec") or 0.0),
+                                )
+                            )
+                return {
+                    **res,
+                    "faces_detected": faces_count,
+                    "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+                }
+            res = active_clip.index_project_media(
+                project_id,
+                interval_sec=body.interval_sec,
+            )
+            faces_count = 0
+            if body.detect_faces:
+                for item in res.get("results", []):
+                    src_aid = item["asset_id"]
+                    for shot in item.get("shots", []):
+                        kf_id = shot.get("keyframe_asset_id") or src_aid
+                        faces_count += len(
+                            active_face.detect_and_index_asset(
+                                project_id,
+                                kf_id,
+                                source_asset_id=src_aid,
+                                timestamp_sec=float(shot.get("timestamp_sec") or 0.0),
+                            )
+                        )
+            return {
+                **res,
+                "faces_detected": faces_count,
+                "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+            }
+
+        try:
+            return await run_in_threadpool(_index_sync)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/studio/api/projects/{project_id}/faces/index")
+    async def index_project_faces_endpoint(
+        project_id: str,
+        request: Request,
+        body: FaceIndexRequest | None = None,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_face: InsightFaceIndex = request.app.state.face_index
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        req_body = body or FaceIndexRequest()
+        try:
+            registered_identity = None
+            if req_body.name:
+                registered_identity = active_face.register_identity(
+                    project_id,
+                    name=req_body.name,
+                    reference_asset_id=req_body.reference_asset_id,
+                )
+            res = await run_in_threadpool(
+                active_face.index_project_faces,
+                project_id,
+                keyframe_asset_ids=req_body.keyframe_asset_ids,
+            )
+            return {
+                **res,
+                "identity": registered_identity,
+                "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/studio/api/projects/{project_id}/perception/search")
+    async def search_project_perception_get(
+        project_id: str,
+        request: Request,
+        query: str | None = Query(default=None),
+        asset_id: str | None = Query(default=None),
+        identity_id: str | None = Query(default=None),
+        identity_name: str | None = Query(default=None),
+        reference_asset_id: str | None = Query(default=None),
+        limit: int = Query(default=10, ge=1, le=100),
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_clip: ClipVisualIndex = request.app.state.clip_index
+        active_face: InsightFaceIndex = request.app.state.face_index
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+        if identity_id or identity_name or reference_asset_id:
+            try:
+                shots = active_face.find_shots_face(
+                    project_id,
+                    identity_id=identity_id,
+                    identity_name=identity_name,
+                    reference_asset_id=reference_asset_id,
+                    text_query=query,
+                    limit=limit,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {
+                "project_id": project_id,
+                "mode": "combined" if query else "face",
+                "query": query,
+                "identity_id": identity_id,
+                "identity_name": identity_name,
+                "count": len(shots),
+                "shots": shots,
+                "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+                "simulated": True,
+                "simulation_notice": SIMULATED_ML_NOTICE,
+            }
+
+        shots = active_clip.find_shots_text(
+            project_id,
+            query or "",
+            limit=limit,
+            asset_id=asset_id,
+        )
+        return {
+            "project_id": project_id,
+            "mode": "text",
+            "query": query or "",
+            "count": len(shots),
+            "shots": shots,
+            "simulated": True,
+            "simulation_notice": SIMULATED_ML_NOTICE,
+        }
+
+    @app.post("/studio/api/projects/{project_id}/perception/search")
+    async def search_project_perception_post(
+        project_id: str,
+        body: PerceptionSearchRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        eff_query = body.query if body.query is not None else body.text_query
+        eff_name = body.identity_name or body.person_name
+        return await search_project_perception_get(
+            project_id=project_id,
+            request=request,
+            query=eff_query,
+            asset_id=body.asset_id,
+            identity_id=body.identity_id,
+            identity_name=eff_name,
+            reference_asset_id=body.reference_asset_id,
+            limit=body.limit,
+        )
+
+    @app.post("/studio/api/projects/{project_id}/search/faces")
+    async def search_project_faces_endpoint(
+        project_id: str,
+        body: PerceptionSearchRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_face: InsightFaceIndex = request.app.state.face_index
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        eff_name = body.identity_name or body.person_name
+        try:
+            shots = active_face.find_shots_face(
+                project_id,
+                identity_id=body.identity_id,
+                identity_name=eff_name,
+                reference_asset_id=body.reference_asset_id,
+                limit=body.limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "project_id": project_id,
+            "mode": "face",
+            "identity_id": body.identity_id,
+            "identity_name": eff_name,
+            "count": len(shots),
+            "shots": shots,
+            "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+            "simulated": True,
+            "simulation_notice": SIMULATED_ML_NOTICE,
+        }
+
+    @app.post("/studio/api/projects/{project_id}/search/combined")
+    async def search_project_combined_endpoint(
+        project_id: str,
+        body: PerceptionSearchRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_face: InsightFaceIndex = request.app.state.face_index
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        eff_query = body.query if body.query is not None else body.text_query
+        eff_name = body.identity_name or body.person_name
+        try:
+            shots = active_face.combined_search(
+                project_id,
+                identity_id=body.identity_id,
+                identity_name=eff_name,
+                reference_asset_id=body.reference_asset_id,
+                text_query=eff_query,
+                limit=body.limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "project_id": project_id,
+            "mode": "combined",
+            "query": eff_query,
+            "identity_id": body.identity_id,
+            "identity_name": eff_name,
+            "count": len(shots),
+            "shots": shots,
+            "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+            "simulated": True,
+            "simulation_notice": SIMULATED_ML_NOTICE,
+        }
+
+    @app.get("/studio/api/projects/{project_id}/identities")
+    async def list_project_identities(
+        project_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        items = active_store.list_identities(project_id)
+        return {
+            "project_id": project_id,
+            "count": len(items),
+            "identities": items,
+            "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+        }
+
+    @app.post("/studio/api/projects/{project_id}/identities", status_code=201)
+    async def register_project_identity(
+        project_id: str,
+        body: IdentityCreateRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_face: InsightFaceIndex = request.app.state.face_index
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        try:
+            res = active_face.register_identity(
+                project_id,
+                name=body.name,
+                reference_asset_id=body.reference_asset_id,
+            )
+            return {
+                **res,
+                "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/studio/api/projects/{project_id}/identities/{identity_id}")
+    async def rename_project_identity(
+        project_id: str,
+        identity_id: str,
+        body: IdentityRenameRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_face: InsightFaceIndex = request.app.state.face_index
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        try:
+            updated = active_face.rename_identity(project_id, identity_id, body.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Identidad no encontrada")
+        return updated
+
+    @app.delete("/studio/api/projects/{project_id}/identities/{identity_id}")
+    async def delete_project_identity(
+        project_id: str,
+        identity_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        deleted = active_store.delete_identity(project_id, identity_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Identidad no encontrada")
+        return {"deleted": True, "id": identity_id}
+
+    @app.get("/studio/api/projects/{project_id}/transcriptions")
+    async def list_project_transcriptions(
+        project_id: str,
+        request: Request,
+        asset_id: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        items = active_store.list_transcriptions(project_id, asset_id=asset_id)
+        latest = items[0] if items else None
+        return {
+            "project_id": project_id,
+            "count": len(items),
+            "latest": latest,
+            "transcriptions": items,
+        }
+
+    @app.post("/studio/api/projects/{project_id}/transcribe")
+    async def transcribe_project_endpoint(
+        project_id: str,
+        body: TranscribeRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        try:
+            result = await run_in_threadpool(
+                transcribe_project_asset,
+                active_store,
+                project_id,
+                asset_id=body.asset_id,
+                language=body.language,
+                script_segments=body.script_segments,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "status": "transcribed",
+            "project_id": project_id,
+            "transcription": result,
+        }
+
+    @app.post("/studio/api/projects/{project_id}/diarize")
+    async def diarize_project_endpoint(
+        project_id: str,
+        body: DiarizeRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        try:
+            result = await run_in_threadpool(
+                diarize_project_asset,
+                active_store,
+                project_id,
+                asset_id=body.asset_id,
+                transcription_id=body.transcription_id,
+                expected_speakers=body.expected_speakers,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "status": "diarized",
+            "project_id": project_id,
+            **result,
+        }
+
     @app.get("/studio/api/projects/{project_id}/edl")
     async def list_project_edls(
         project_id: str,
@@ -1025,6 +1717,136 @@ def create_app(
             "latest": latest,
             "edl": latest,
         }
+
+    @app.post("/studio/api/projects/{project_id}/edl", status_code=201)
+    async def save_project_edl_endpoint(
+        project_id: str,
+        body: EdlCreateRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_broker: ProgressBroker = request.app.state.broker
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        cuts_dicts = [c.model_dump(exclude_none=True) for c in body.cuts]
+        total_dur = round(sum(c.out_sec - c.in_sec for c in body.cuts), 3)
+        edl_doc: dict[str, Any] = {
+            "schema": "comfy_studio.edl.v1",
+            "title": body.title,
+            "aspect_ratio": body.aspect_ratio,
+            "source_asset_id": body.source_asset_id,
+            "total_duration_sec": total_dur,
+            "cuts": cuts_dicts,
+            "notes": body.notes,
+        }
+        saved = active_store.save_edl_version(project_id, edl=edl_doc)
+        active_broker.publish(
+            "edl",
+            {
+                "project_id": project_id,
+                "edl_id": saved["id"],
+                "version": saved["version"],
+                "aspect_ratio": body.aspect_ratio,
+                "total_duration_sec": total_dur,
+                "cuts_count": len(cuts_dicts),
+            },
+        )
+        return saved
+
+    @app.post("/studio/api/projects/{project_id}/edl/highlights")
+    async def generate_project_edl_highlights_endpoint(
+        project_id: str,
+        body: EdlHighlightsRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_broker: ProgressBroker = request.app.state.broker
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        try:
+            saved = await run_in_threadpool(
+                generate_highlights_edl,
+                active_store,
+                project_id,
+                asset_id=body.asset_id,
+                transcription_id=body.transcription_id,
+                title=body.title,
+                aspect_ratio=body.aspect_ratio,  # type: ignore[arg-type]
+                remove_fillers=body.remove_fillers,
+                min_pause_sec=body.min_pause_sec,
+                max_duration_sec=body.max_duration_sec,
+                speaker_filter=body.speaker_filter,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        active_broker.publish(
+            "edl",
+            {
+                "project_id": project_id,
+                "edl_id": saved["id"],
+                "version": saved["version"],
+                "aspect_ratio": body.aspect_ratio,
+                "total_duration_sec": saved["edl"].get("total_duration_sec", 0.0),
+                "cuts_count": len(saved["edl"].get("cuts") or []),
+            },
+        )
+        return saved
+
+    @app.post("/studio/api/projects/{project_id}/edl/build")
+    async def build_project_edl_endpoint(
+        project_id: str,
+        body: EdlBuildRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_broker: ProgressBroker = request.app.state.broker
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        cuts_dicts = (
+            [c.model_dump(exclude_none=True) for c in body.cuts] if body.cuts is not None else None
+        )
+        try:
+            result = await run_in_threadpool(
+                execute_edl_ffmpeg,
+                active_store,
+                project_id,
+                edl_id=body.edl_id,
+                version=body.version,
+                aspect_ratio=body.aspect_ratio,
+                source_asset_id=body.source_asset_id,
+                cuts=cuts_dicts,
+                fps=body.fps,
+            )
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        active_broker.publish(
+            "edl",
+            {
+                "project_id": project_id,
+                "edl_id": result["edl_id"],
+                "version": result["version"],
+                "aspect_ratio": result["aspect_ratio"],
+                "output_asset_id": result["output_asset"]["id"],
+                "status": "built",
+            },
+        )
+        return result
+
+    @app.post("/studio/api/projects/{project_id}/edl/{version}/render")
+    async def render_project_edl_version_endpoint(
+        project_id: str,
+        version: int,
+        request: Request,
+        body: EdlBuildRequest | None = None,
+    ) -> dict[str, Any]:
+        req_body = body or EdlBuildRequest()
+        req_body.version = version
+        return await build_project_edl_endpoint(
+            project_id=project_id,
+            body=req_body,
+            request=request,
+        )
 
     @app.get("/studio/api/progress")
     async def sse_progress(

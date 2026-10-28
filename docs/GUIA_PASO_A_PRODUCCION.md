@@ -7,7 +7,7 @@
 
 ## A. Qué tienes ahora
 
-Tienes una imagen Docker lista para producción que convierte cualquier GPU RTX 5090 o RTX 4090 alquilada en Vast.ai en un ComfyUI completo y privado, accesible 100% desde el navegador con usuario y contraseña. La imagen incluye ComfyUI con 10 custom nodes preinstalados, 63.35 GiB de modelos que se descargan automáticamente en dos fases (los ligeros antes de abrir, los pesados en segundo plano mientras trabajas), un portal de bienvenida en `/home`, un panel de estado en vivo en `/status` con métricas de GPU y diagnóstico automático, un supervisor en Rust (`comfyctl`) que verifica la máquina antes de gastar dinero en descargas, y varios perfiles de modelos (`all`, `general`, `realistic`, `anime`, `minimal`) para pagar solo por lo que necesitas. GitHub Actions construye y publica la imagen en GHCR, y el script `comfy` para macOS/Linux te deja alquilar, abrir, monitorizar y destruir instancias con un comando cada uno.
+Tienes una imagen Docker lista para producción que convierte cualquier GPU RTX 5090 o RTX 4090 alquilada en Vast.ai en un ComfyUI completo y privado, accesible 100% desde el navegador con usuario y contraseña. La imagen incluye ComfyUI con 12 custom nodes preinstalados, catálogo de modelos que se descargan automáticamente en hasta tres fases (los ligeros de 2.79 GiB antes de abrir; los checkpoints pesados de 60.56 GiB en segundo plano mientras trabajas; y en el perfil `studio`, 136.02 GiB / 146.05 GB adicionales de modelos de vídeo y voz), un portal de bienvenida en `/home`, **Comfy Studio** en `/studio/` (estudio web con 6 plantillas curadas, percepción visual `CLIP` + `sqlite-vec` + índice facial `InsightFace buffalo_l` [licencia no comercial], transcripción `whisperx` con fallback Blackwell `sm_120`, diarización `FunASR cam++` sin `HF_TOKEN`, agente conversacional multimodal con 18 herramientas, recuperación durable de jobs y webhooks HMAC, galería y ejecutor determinista de EDL `ffmpeg` en `16:9` y `9:16` cuando usas `MODEL_PROFILE=studio`), un panel de estado en vivo en `/status` con métricas de GPU y diagnóstico automático, un supervisor en Rust (`comfyctl`) que verifica la máquina antes de gastar dinero en descargas, y varios perfiles de modelos (`all`, `general`, `realistic`, `anime`, `minimal`, `studio`) para pagar solo por lo que necesitas. GitHub Actions construye y publica la imagen en GHCR, y el script `comfy` para macOS/Linux te deja alquilar, abrir, monitorizar y destruir instancias con un comando cada uno.
 
 ---
 
@@ -107,14 +107,19 @@ El helper te muestra el **Top 5 de ofertas RTX 5090 (o RTX 4090 si no hay 5090)*
 3. **`comfy watch`:** muestra el estado en vivo desde la terminal cada 3 segundos.
 4. **Secretos redactados:** `comfy report --stdout` no muestra tu `COMFY_PASS` ni tokens: `comfyctl` los redacta automáticamente en `/report.md`.
 5. **Variables con espacios (cierra V27 / S-07) — VERIFICADO:** `comfy rent` cita **solo el valor** (`-e COMFYUI_EXTRA_ARGS="--fast --cpu"`), que es el contrato del parser de vast-cli (limpia comillas del valor, nunca de la clave), así que la clave llega intacta y V27 **pasa**. Ciérralo así: alquila con `COMFYUI_EXTRA_ARGS="--fast --cpu"` exportada y comprueba en `/status/api` que `env_masked` muestra `COMFYUI_EXTRA_ARGS` con su valor correcto.
+6. **Runbook S3 en `MODEL_PROFILE=studio` (`comfy rent studio` → `comfy studio`):** en la pestaña **Percepción & EDL** de `/studio/`, sube un clip de vídeo, extrae keyframes e indexa con CLIP (`sqlite-vec`), detecta caras y nombra una identidad (teniendo en cuenta que `InsightFace buffalo_l` tiene **licencia no comercial [NC]**), transcribe con `whisperx` (`faster-whisper-large-v3` + aligners `wav2vec2`) y diariza con `FunASR cam++` (sin `HF_TOKEN`), genera el EDL de highlights y renderiza los entregables MP4 en `16:9` y `9:16` con `ffmpeg`.
 
-### 9. Al terminar: destruir la instancia
+### 9. Al terminar: rescatar outputs y destruir la instancia
 
 ```bash
+# Primero rescata tus renders a tu máquina (re-ejecutable: omite lo ya descargado)
+comfy fetch-outputs <id> ~/Downloads/comfy-renders
+
+# Después destruye la instancia
 comfy destroy <id>
 ```
 
-**Cómo sé que va bien:** `comfy all` ya no la lista, o la muestra destruyéndose. **El disco sigue facturando aunque pares la instancia**: solo `destroy` detiene todos los cargos.
+**Cómo sé que va bien:** `comfy fetch-outputs` imprime `[OK] fetch-outputs: N archivo(s) descargados…` con la estructura `output/…` en el destino local; `comfy all` ya no lista la instancia, o la muestra destruyéndose. **El disco sigue facturando aunque pares la instancia**: solo `destroy` detiene todos los cargos.
 
 ---
 
@@ -136,7 +141,7 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 
 | Síntoma | Qué significa | Qué hacer |
 |---|---|---|
-| Banner rojo **FATAL** en `/home` / `/status` | El arranque estricto (`strict-check` S1–S10) detectó un host incompatible (GPU, VRAM, RAM, disco...) | Ejecuta `comfy destroy <id>` y alquila otra oferta; el banner indica la causa y la remediación. La instancia sale sola con código 20 tras 10 min |
+| Banner rojo **FATAL** en `/home` / `/status` | El arranque estricto (`strict-check` S1–S10, o S1–S11 en `studio`) detectó un host incompatible (GPU, VRAM, RAM, disco...) | Ejecuta `comfy destroy <id>` y alquila otra oferta; el banner indica la causa y la remediación. La instancia sale sola con código 20 tras 10 min |
 | Pantalla de espera eterna | La Fase 1 está descargando o algo la bloqueó | Abre `/status` y mira el progreso de descargas y la pestaña de logs; el motor de triaje (17 patrones) suele nombrar la causa exacta |
 | Error 401 al abrir el portal | Contraseña incorrecta o no definida | `comfy pass <id>` recupera la contraseña autogenerada desde los logs de arranque |
 | ComfyUI no responde pero el portal sí | El supervisor está reiniciando `main.py` (OOM, crash CUDA, etc.) | Mira `/status` (clasifica la salida: 137 OOM, 134/139 crash nativo...) y `/report.md` para el informe completo |
@@ -165,7 +170,7 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 - ☐ 6. `export COMFY_IMAGE=ghcr.io/<tu-usuario>/comfyuipod:latest` (y añadido a `~/.zshrc`)
 - ☐ 7. `comfy rent general` → `comfy open` → pantalla de espera, `/home`, `/status` y ComfyUI OK → `comfy report` (checklist completa en `docs/auditorias/AUDITORIA_AGENTE_V5.md` §3; V1/V6/V7/V12 ya los cierra CI, GHCR Public es el paso 3)
 - ☐ 8. Verificaciones: descargas reales, FATAL simulado con GPU pequeña (creada a mano: el helper filtra `gpu_ram>=24`; código 20), `comfy watch`, secretos redactados en `/report.md`, `COMFYUI_EXTRA_ARGS="--fast --cpu"` visible en `env_masked` de `/status/api` (V27/S-07 verificado)
-- ☐ 9. `comfy destroy <id>` ejecutado — instancia y cargos detenidos
+- ☐ 9. `comfy fetch-outputs <id> <dest>` ejecutado (renders rescatados) y `comfy destroy <id>` ejecutado — instancia y cargos detenidos
 
 ---
 

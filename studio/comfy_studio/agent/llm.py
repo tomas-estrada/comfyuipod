@@ -699,6 +699,17 @@ class OpenAICompatibleLLMClient:
                 on_token=on_token,
             )
 
+        tokens_emitted = False
+        tracked_on_token = on_token
+        if on_token is not None:
+
+            def _tracking_on_token(piece: str, model_name: str) -> Any:
+                nonlocal tokens_emitted
+                tokens_emitted = True
+                return on_token(piece, model_name)
+
+            tracked_on_token = _tracking_on_token
+
         primary_err: Exception | None = None
         try:
             return await self._http_stream_complete(
@@ -708,11 +719,25 @@ class OpenAICompatibleLLMClient:
                 messages=messages,
                 tools=tools,
                 temperature=temperature,
-                on_token=on_token,
+                on_token=tracked_on_token,
             )
         except Exception as exc:
-            primary_err = exc
             safe_reason = self._redactor.redact(str(exc))
+            if tokens_emitted:
+                logger.error(
+                    "Proveedor LLM primario (%s / %s) falló a mitad de stream tras "
+                    "emitir tokens; no se activa el fallback para no duplicar el "
+                    "texto ya entregado (%s).",
+                    self._config.studio_llm_base_url,
+                    self._config.studio_llm_model,
+                    safe_reason,
+                )
+                if isinstance(exc, LLMProviderError):
+                    raise
+                raise LLMProviderError(
+                    f"El proveedor LLM primario falló a mitad de stream: {safe_reason}"
+                ) from None
+            primary_err = exc
             logger.warning(
                 "Proveedor LLM primario (%s / %s) falló en streaming (%s). "
                 "Activando fallback secundario (%s / %s).",

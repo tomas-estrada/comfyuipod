@@ -21,7 +21,7 @@ def main() -> None:
             model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
             model.ir_version = 7
             model_bytes = model.SerializeToString()
-        except Exception:
+        except Exception:  # noqa: BLE001
             det_path = os.path.join(
                 os.environ.get("COMFY_DATA_DIR", "/workspace/comfyui-data"),
                 "models/insightface/models/buffalo_l/det_10g.onnx",
@@ -32,7 +32,8 @@ def main() -> None:
 
         if model_bytes is None:
             print(
-                f"WARN|onnx.helper no disponible y det_10g.onnx aún no descargado; providers declarados={avail}"
+                "WARN|onnx.helper no disponible y det_10g.onnx aún no descargado; "
+                f"providers declarados={avail}"
             )
         else:
             sess = ort.InferenceSession(
@@ -41,13 +42,15 @@ def main() -> None:
             active = sess.get_providers()
             if active and active[0] == "CUDAExecutionProvider":
                 print(
-                    f"OK|InferenceSession ({model_source}) activa con CUDAExecutionProvider; ORT providers activos: {active}"
+                    f"OK|InferenceSession ({model_source}) activa con CUDAExecutionProvider; "
+                    f"ORT providers activos: {active}"
                 )
             else:
                 print(
-                    f"WARN|InferenceSession ({model_source}) sin CUDA activa; ORT providers activos: {active}"
+                    f"WARN|InferenceSession ({model_source}) sin CUDA activa; "
+                    f"ORT providers activos: {active}"
                 )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"FAIL|Error en prueba de ONNX Runtime: {exc}")
 
 

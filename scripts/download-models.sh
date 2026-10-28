@@ -11,7 +11,8 @@
 #              Se ejecuta en segundo plano.
 #   --phase3 : Inventario de estudio de vídeo y voz desde config/models-studio.json
 #              (146.05 GB = 136.02 GiB por defecto en 77 archivos; +18.41 GB =
-#              +17.15 GiB opt-in con STUDIO_INCLUDE_ANIMATE=1). Exclusivo 'studio'.
+#              +17.15 GiB opt-in con STUDIO_INCLUDE_ANIMATE=1; +7.37 GB opt-in con
+#              STUDIO_INCLUDE_3D=1 — Hunyuan3D 2.1, M3-D). Perfiles 'studio'/'unreal'.
 #
 # Desglose de Fase 3 por categoría (config/models-studio.json, x-linked-size):
 #   - wan_core          : 14 archivos |  83,184,917,475 B ( 83.18 GB /  77.47 GiB) | Apache-2.0
@@ -27,6 +28,7 @@
 #   - campplus          :  3 archivos |      28,037,453 B (  0.03 GB /   0.03 GiB) | Apache-2.0
 #   - TOTAL FASE 3 BASE : 77 archivos | 146,049,867,640 B (146.05 GB / 136.02 GiB)
 #   - animate_opt_in    : +1 archivo  | +18,413,068,672 B (+18.41 GB / +17.15 GiB) | Apache-2.0 (STUDIO_INCLUDE_ANIMATE=1)
+#   - three_d_opt_in    : +1 archivo  | +7,365,943,290 B (+7.37 GB / +6.86 GiB) | Tencent Hunyuan Community License (STUDIO_INCLUDE_3D=1 o MODEL_PROFILE=unreal)
 #
 # Perfiles soportados vía variable de entorno MODEL_PROFILE (por defecto 'all'):
 #   - all       : Fase 1 (2.79 GiB) + Fase 2 (60.56 GiB) = 63.35 GiB total
@@ -198,14 +200,21 @@ run_phase1() {
         if hf_fetch "Gourieff/ReActor" "models/buffalo_l.zip" "${STAGE_DIR}" "buffalo_l.zip" "dataset"; then
             log "Descomprimiendo buffalo_l.zip en ${buffalo_dir}..."
             mkdir -p "${STAGE_DIR}/buffalo_extract"
-            unzip -q -o "${STAGE_DIR}/buffalo_l.zip" -d "${STAGE_DIR}/buffalo_extract"
-            if [ -d "${STAGE_DIR}/buffalo_extract/buffalo_l" ]; then
-                cp -rf "${STAGE_DIR}/buffalo_extract/buffalo_l/"* "${buffalo_dir}/"
-            else
-                cp -rf "${STAGE_DIR}/buffalo_extract/"* "${buffalo_dir}/"
+            local buffalo_ok=0
+            if unzip -q -o "${STAGE_DIR}/buffalo_l.zip" -d "${STAGE_DIR}/buffalo_extract"; then
+                if [ -d "${STAGE_DIR}/buffalo_extract/buffalo_l" ]; then
+                    cp -rf "${STAGE_DIR}/buffalo_extract/buffalo_l/"* "${buffalo_dir}/" && buffalo_ok=1
+                else
+                    cp -rf "${STAGE_DIR}/buffalo_extract/"* "${buffalo_dir}/" && buffalo_ok=1
+                fi
             fi
             rm -rf "${STAGE_DIR}/buffalo_l.zip" "${STAGE_DIR}/buffalo_extract"
-            log "OK: InsightFace buffalo_l listo en ${buffalo_dir}"
+            if [ "${buffalo_ok}" -eq 1 ]; then
+                log "OK: InsightFace buffalo_l listo en ${buffalo_dir}"
+            else
+                log "ERROR: Falló la descompresión/copia de buffalo_l.zip en ${buffalo_dir}."
+                FAILED_MODELS+=("buffalo_l.zip (Gourieff/ReActor/models/buffalo_l.zip)")
+            fi
         fi
     else
         log "SKIP (ya existe): InsightFace buffalo_l"
@@ -360,9 +369,9 @@ run_phase2() {
 run_phase3() {
     FAILED_MODELS=()
     local STAGE_DIR="${STAGE_DIR_PHASE3}"
-    if [ "${MODEL_PROFILE}" != "studio" ]; then
+    if [ "${MODEL_PROFILE}" != "studio" ] && [ "${MODEL_PROFILE}" != "unreal" ]; then
         log "PLAN FASE 3: 0 archivos (${MODEL_PROFILE})"
-        log "MODEL_PROFILE=${MODEL_PROFILE} activo: omitiendo Fase 3 (exclusiva del perfil 'studio')."
+        log "MODEL_PROFILE=${MODEL_PROFILE} activo: omitiendo Fase 3 (exclusiva de los perfiles 'studio'/'unreal')."
         return 0
     fi
 
@@ -372,15 +381,23 @@ run_phase3() {
     fi
 
     local include_animate="${STUDIO_INCLUDE_ANIMATE:-0}"
+    # M3-D: el perfil 'unreal' implica el grupo 3D (Hunyuan3D 2.1) salvo renuncia explícita
+    local include_3d="${STUDIO_INCLUDE_3D:-0}"
+    if [ "${MODEL_PROFILE}" = "unreal" ] && [ -z "${STUDIO_INCLUDE_3D:-}" ]; then
+        include_3d=1
+    fi
     local phase3_planned=77
     if [ "${include_animate}" = "1" ]; then
-        phase3_planned=78
+        phase3_planned=$((phase3_planned + 1))
+    fi
+    if [ "${include_3d}" = "1" ]; then
+        phase3_planned=$((phase3_planned + 1))
     fi
 
     log "======================================================================"
     log "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: ${MODEL_PROFILE})"
-    log "PLAN FASE 3: ${phase3_planned} archivos (${MODEL_PROFILE}, STUDIO_INCLUDE_ANIMATE=${include_animate})"
-    log "Manifiesto: ${STUDIO_MANIFEST} (146.05 GB base; +18.41 GB con Animate opt-in)."
+    log "PLAN FASE 3: ${phase3_planned} archivos (${MODEL_PROFILE}, STUDIO_INCLUDE_ANIMATE=${include_animate}, STUDIO_INCLUDE_3D=${include_3d})"
+    log "Manifiesto: ${STUDIO_MANIFEST} (146.05 GB base; +18.41 GB Animate opt-in; +7.37 GB 3D opt-in)."
     log "======================================================================"
 
     while IFS=$'\t' read -r repo_id remote_path target_dir filename _expected_bytes; do
@@ -409,14 +426,17 @@ run_phase3() {
 
         hf_fetch "${repo_id}" "${remote_path}" "${resolved_dir}" "${filename}" || true
     done < <(
-        STUDIO_MANIFEST_PATH="${STUDIO_MANIFEST}" STUDIO_INCLUDE_ANIMATE_FLAG="${include_animate}" \
+        STUDIO_MANIFEST_PATH="${STUDIO_MANIFEST}" STUDIO_INCLUDE_ANIMATE_FLAG="${include_animate}" STUDIO_INCLUDE_3D_FLAG="${include_3d}" \
         python3 -c '
 import json, os
 data = json.load(open(os.environ["STUDIO_MANIFEST_PATH"], encoding="utf-8"))
 inc_anim = os.environ.get("STUDIO_INCLUDE_ANIMATE_FLAG", "0") == "1"
+inc_3d = os.environ.get("STUDIO_INCLUDE_3D_FLAG", "0") == "1"
 for m in data["models"]:
     opt = m.get("opt_in")
     if opt == "STUDIO_INCLUDE_ANIMATE" and not inc_anim:
+        continue
+    if opt == "STUDIO_INCLUDE_3D" and not inc_3d:
         continue
     print("\t".join([m["repo_id"], m["remote_path"], m["target_dir"], m["filename"], str(m["bytes"])]))
 '
@@ -441,7 +461,7 @@ case "${1:---all}" in
         # el timeout de 600s en start.sh (idempotente: los archivos ya existentes hacen SKIP en <1ms).
         run_phase1
         run_phase2
-        if [ "${MODEL_PROFILE}" = "studio" ]; then
+        if [ "${MODEL_PROFILE}" = "studio" ] || [ "${MODEL_PROFILE}" = "unreal" ]; then
             run_phase3
         fi
         ;;
@@ -451,7 +471,7 @@ case "${1:---all}" in
     --all|*)
         run_phase1
         run_phase2
-        if [ "${MODEL_PROFILE}" = "studio" ]; then
+        if [ "${MODEL_PROFILE}" = "studio" ] || [ "${MODEL_PROFILE}" = "unreal" ]; then
             run_phase3
         fi
         ;;

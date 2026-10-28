@@ -97,26 +97,16 @@ class StubLLMClient:
         auth_header = f"Bearer {api_key}" if api_key else ""
         self.auth_seen.append((provider, auth_header))
         if provider == "primary":
-            if (
-                self.expected_primary_key is not None
-                and api_key != self.expected_primary_key
-            ):
-                raise RuntimeError(
-                    "HTTP 401: Credencial STUDIO_LLM_KEY inválida en StubLLMClient"
-                )
+            if self.expected_primary_key is not None and api_key != self.expected_primary_key:
+                raise RuntimeError("HTTP 401: Credencial STUDIO_LLM_KEY inválida en StubLLMClient")
         elif provider == "fallback":
             if not api_key:
-                raise RuntimeError(
-                    "HTTP 401: STUDIO_LLM_FALLBACK_KEY ausente (fail-closed)"
-                )
+                raise RuntimeError("HTTP 401: STUDIO_LLM_FALLBACK_KEY ausente (fail-closed)")
             if primary_key and api_key == primary_key:
                 raise RuntimeError(
                     "HTTP 401: La key primaria STUDIO_LLM_KEY jamás debe reenviarse al fallback"
                 )
-            if (
-                self.expected_fallback_key is not None
-                and api_key != self.expected_fallback_key
-            ):
+            if self.expected_fallback_key is not None and api_key != self.expected_fallback_key:
                 raise RuntimeError(
                     "HTTP 401: Credencial STUDIO_LLM_FALLBACK_KEY inválida en StubLLMClient"
                 )
@@ -155,9 +145,7 @@ class StubLLMClient:
             if step.fail_with_status is not None:
                 raise RuntimeError(f"HTTP {step.fail_with_status}: {step.error_message}")
             resolved_content = (
-                step.content
-                if step.content
-                else ("".join(step.chunks) if step.chunks else "")
+                step.content if step.content else ("".join(step.chunks) if step.chunks else "")
             )
             return {
                 "role": "assistant",
@@ -250,9 +238,7 @@ class StubLLMClient:
             return [], ""
 
         available_tools = {
-            str(t.get("function", {}).get("name") or "")
-            for t in tools
-            if isinstance(t, dict)
+            str(t.get("function", {}).get("name") or "") for t in tools if isinstance(t, dict)
         }
         lower = last_user.lower()
 
@@ -306,6 +292,92 @@ class StubLLMClient:
                 f"y encolando render con plantilla {template_id}."
             )
             return calls, plan
+
+        if "extract_keyframes" in available_tools and any(
+            k in lower for k in ("extrae keyframes", "extraer keyframes", "extract_keyframes")
+        ):
+            return (
+                [StubToolCallSpec(name="extract_keyframes", arguments={"interval_sec": 1.0})],
+                f"[stub-llm:{active_model}] Plan: extrayendo keyframes del vídeo del proyecto.",
+            )
+
+        if "index_media" in available_tools and any(
+            k in lower for k in ("indexa los medios", "indexar medios", "index_media")
+        ):
+            return (
+                [StubToolCallSpec(name="index_media", arguments={"interval_sec": 1.0})],
+                (
+                    f"[stub-llm:{active_model}] Plan: indexando visualmente los medios "
+                    "con CLIP e InsightFace."
+                ),
+            )
+
+        if "find_shots_face" in available_tools and any(
+            k in lower
+            for k in ("find_shots_face", "donde aparece ", "dónde aparece ", "rostro de ")
+        ):
+            return (
+                [
+                    StubToolCallSpec(
+                        name="find_shots_face",
+                        arguments={"identity_name": "Ana", "limit": 5},
+                    )
+                ],
+                f"[stub-llm:{active_model}] Plan: buscando planos por identidad facial.",
+            )
+
+        if "find_shots_text" in available_tools and any(
+            k in lower for k in ("find_shots_text", "planos con ", "plano con ")
+        ):
+            return (
+                [
+                    StubToolCallSpec(
+                        name="find_shots_text",
+                        arguments={"query": last_user[:120], "limit": 5},
+                    )
+                ],
+                (
+                    f"[stub-llm:{active_model}] Plan: buscando planos con CLIP "
+                    f"para «{last_user[:60]}»."
+                ),
+            )
+
+        if "diarize" in available_tools and any(
+            k in lower for k in ("diariza", "diarizar", "diarize", "hablantes")
+        ):
+            return (
+                [StubToolCallSpec(name="diarize", arguments={})],
+                f"[stub-llm:{active_model}] Plan: ejecutando diarización FunASR cam++.",
+            )
+
+        if "transcribe" in available_tools and any(
+            k in lower for k in ("transcribe", "transcribir", "transcripción", "transcripcion")
+        ):
+            return (
+                [StubToolCallSpec(name="transcribe", arguments={"language": "es"})],
+                f"[stub-llm:{active_model}] Plan: transcribiendo audio con whisperx.",
+            )
+
+        if "build_edl" in available_tools and any(
+            k in lower
+            for k in (
+                "build_edl",
+                "ejecuta el edl",
+                "ejecutar edl",
+                "renderiza el edl",
+                "construye el edl",
+            )
+        ):
+            aspect = "9:16" if ("9:16" in lower or "vertical" in lower) else "16:9"
+            return (
+                [
+                    StubToolCallSpec(
+                        name="build_edl",
+                        arguments={"aspect_ratio": aspect, "from_transcription": True},
+                    )
+                ],
+                f"[stub-llm:{active_model}] Plan: construyendo montaje EDL con ffmpeg ({aspect}).",
+            )
 
         edl_keywords = ("edl", "highlights", "muletilla", "línea de tiempo", "timeline")
         if "propose_edl" in available_tools and any(k in lower for k in edl_keywords):

@@ -21,9 +21,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 FORBIDDEN_SUBSTRINGS = (
     "faceid",
@@ -52,6 +53,9 @@ REQUIRED_CATEGORIES = {
     "campplus",
     "animate_opt_in",
 }
+
+# M3-D: flags opt-in válidos por entrada del manifiesto
+VALID_OPT_IN_FLAGS = frozenset({"STUDIO_INCLUDE_ANIMATE", "STUDIO_INCLUDE_3D"})
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -189,7 +193,7 @@ def validate_manifest_data(
             if bad in combined_lower:
                 errors.append(f"{prefix}: contiene término prohibido o repo gated/antiguo {bad!r}")
 
-        if opt_in is not None and opt_in != "STUDIO_INCLUDE_ANIMATE":
+        if opt_in is not None and opt_in not in VALID_OPT_IN_FLAGS:
             errors.append(f"{prefix}: opt_in inválido {opt_in!r}")
 
         cat_counts[category] = cat_counts.get(category, 0) + 1

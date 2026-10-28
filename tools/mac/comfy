@@ -13,6 +13,7 @@
 #   comfy report [id] [--stdout]
 #   comfy watch [id]
 #   comfy rent [all|general|realistic|anime|minimal|studio] [--dry-run] [--yes]
+#   comfy fetch-outputs [id] [dest-dir]
 #   comfy destroy <id>
 # ==============================================================================
 
@@ -27,6 +28,8 @@ set +o history 2>/dev/null || true
 COMFY_IMAGE="${COMFY_IMAGE:-}"
 COMFY_USER="${COMFY_USER:-admin}"
 PYTHON_BIN="${COMFY_PYTHON:-python3}"
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
 
 die() {
     echo "[ERROR] $*" >&2
@@ -160,6 +163,8 @@ if not candidates:
 
 candidates.sort(key=lambda x: x[0])
 _, iid, ip, port, status, label = candidates[0]
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 print(f"{iid}|{ip}|{port}|{status}|{label}")
 PYEOF
 }
@@ -917,6 +922,7 @@ cmd_rent() {
     unset COMFY_PASS HF_TOKEN STUDIO_LLM_KEY STUDIO_LLM_FALLBACK_KEY
 
     check_pass_safe "${pass}"
+    check_secret_safe "${pass}" "COMFY_PASS"
     check_secret_safe "${hf_token}" "HF_TOKEN"
     studio_llm_fallback_key="${studio_llm_fallback_key%$'\r'}"
     check_secret_safe "${studio_llm_fallback_key}" "STUDIO_LLM_FALLBACK_KEY"
@@ -975,6 +981,7 @@ import json, os
 rows = json.loads(os.environ.get("OFFERS_JSON", "[]"))
 print(rows[0]["id"] if rows else "")
 ' 2>/dev/null || true)"
+    offer_id="${offer_id%$'\r'}"
 
     if [ -z "${offer_id}" ] && [ "${profile}" != "studio" ]; then
         echo "No se encontraron RTX 5090 disponibles; buscando fallback RTX 4090..."
@@ -986,6 +993,7 @@ import json, os
 rows = json.loads(os.environ.get("OFFERS_JSON", "[]"))
 print(rows[0]["id"] if rows else "")
 ' 2>/dev/null || true)"
+        offer_id="${offer_id%$'\r'}"
     fi
 
     [ -n "${offer_id}" ] || die "No se encontraron ofertas disponibles que cumplan los filtros (${query})."
@@ -1120,6 +1128,100 @@ PYEOF
         --args
 }
 
+# M3-E (tarea 31b): rescate de outputs antes de `comfy destroy`.
+# Flujo: `vastai ssh <id> "tar czf - -C <data_dir> output | base64"` → decodificación
+# local → extracción con skip de archivos ya presentes (re-ejecutable/resumible).
+cmd_fetch_outputs() {
+    require_cmd vastai
+    require_cmd "${PYTHON_BIN}"
+    local inst_id="${1:-}"
+    local dest_dir="${2:-}"
+    local info
+    info="$(resolve_instance "${inst_id}")"
+    IFS='|' read -r inst_id _ _ _ _ <<<"${info}"
+    local remote_dir="${COMFY_REMOTE_DATA_DIR:-/workspace/comfyui-data}"
+    if [ -z "${dest_dir}" ]; then
+        dest_dir="${HOME}/comfy-outputs/${inst_id}"
+    fi
+    mkdir -p "${dest_dir}" || die "No se pudo crear el directorio destino: ${dest_dir}"
+    echo "[INFO] Descargando ${remote_dir}/output de la instancia ${inst_id} → ${dest_dir}" >&2
+
+    local tmp_dir
+    tmp_dir="$(mktemp -d)" || die "No se pudo crear el directorio temporal."
+    local b64_file="${tmp_dir}/outputs.b64"
+    # El tar.gz remoto se envuelve en base64 para sobrevivir el transporte ssh sin corrupción binaria.
+    if ! vastai ssh "${inst_id}" \
+        "tar czf - -C '${remote_dir}' output 2>/dev/null | base64" >"${b64_file}"; then
+        rm -rf "${tmp_dir}"
+        die "vastai ssh ${inst_id} falló. ¿La instancia está encendida y tiene SSH activo?"
+    fi
+
+    local rc=0
+    DEST_DIR="${dest_dir}" B64_FILE="${b64_file}" "${PYTHON_BIN}" - <<'PYEOF' || rc=$?
+import base64, io, os, sys, tarfile
+
+dest = os.environ["DEST_DIR"]
+b64_path = os.environ["B64_FILE"]
+
+try:
+    with open(b64_path, "rb") as fh:
+        raw_b64 = fh.read()
+except OSError as exc:
+    sys.stderr.write(f"[ERROR] No se pudo leer el archivo temporal: {exc}\n")
+    sys.exit(1)
+
+try:
+    tar_bytes = base64.b64decode(raw_b64) if raw_b64.strip() else b""
+except Exception:
+    tar_bytes = b""
+
+if not tar_bytes.strip():
+    sys.stderr.write("[WARN] Archivo recibido vacío (output/ vacío o ausente en la instancia).\n")
+    sys.exit(3)
+
+try:
+    tf = tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*")
+except tarfile.TarError:
+    sys.stderr.write("[WARN] El flujo recibido no es un archivo tar.gz válido.\n")
+    sys.exit(3)
+
+dest_root = os.path.realpath(dest)
+written = 0
+skipped = 0
+with tf:
+    for member in tf.getmembers():
+        if not member.isfile():
+            continue
+        target = os.path.realpath(os.path.join(dest_root, member.name))
+        if not target.startswith(dest_root + os.sep):
+            sys.stderr.write(f"[WARN] Ruta fuera del destino omitida: {member.name}\n")
+            continue
+        if os.path.exists(target) and os.path.getsize(target) == member.size:
+            skipped += 1
+            continue
+        parent = os.path.dirname(target)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        src = tf.extractfile(member)
+        if src is None:
+            continue
+        with src, open(target, "wb") as out_fh:
+            while True:
+                chunk = src.read(1 << 20)
+                if not chunk:
+                    break
+                out_fh.write(chunk)
+        written += 1
+
+print(f"[OK] fetch-outputs: {written} archivo(s) descargados, {skipped} omitidos (ya existían) → {dest}")
+PYEOF
+    rm -rf "${tmp_dir}"
+    if [ "${rc}" -ne 0 ]; then
+        return "${rc}"
+    fi
+    echo "[INFO] Recuerda: 'comfy destroy ${inst_id}' solo después de verificar tus outputs locales." >&2
+}
+
 cmd_destroy() {
     require_cmd vastai
     local inst_id="${1:-}"
@@ -1169,11 +1271,14 @@ case "${subcmd}" in
     rent)
         cmd_rent "$@"
         ;;
+    fetch-outputs|fetch)
+        cmd_fetch_outputs "${1:-}" "${2:-}"
+        ;;
     destroy|rm)
         cmd_destroy "${1:-}"
         ;;
     -h|--help|help)
-        sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
         ;;
     *)
         # Si el primer argumento es un ID numérico, asumir `comfy open <id> [vista]`

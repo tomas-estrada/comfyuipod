@@ -104,6 +104,13 @@
             .replace(/'/g, "&#39;");
     }
 
+    function safeUrl(u) {
+        const s = String(u == null ? "" : u);
+        return s.startsWith("/") || s.startsWith("http://") || s.startsWith("https://")
+            ? s
+            : "#";
+    }
+
     function formatBytes(bytes) {
         const num = Number(bytes || 0);
         if (num < 1024) return `${num} B`;
@@ -532,7 +539,7 @@
                             Previsualizar en Galería
                         </button>
                         <a
-                            href="${escapeHtml(asset.download_url)}"
+                            href="${escapeHtml(safeUrl(asset.download_url))}"
                             download="${escapeHtml(displayName)}"
                             class="btn btn-secondary btn-sm"
                             data-action="download-asset"
@@ -562,14 +569,27 @@
             .map((img) => {
                 const checked = state.selectedKeyframeIds.has(img.id) ? "checked" : "";
                 const label = img.original_filename || img.filename;
+                const meta = img.metadata || {};
+                const tsBadge =
+                    typeof meta.timestamp_sec === "number"
+                        ? ` · <strong>${Number(meta.timestamp_sec).toFixed(2)}s</strong>`
+                        : "";
                 return `
-                <label class="checkbox-label">
+                <label class="checkbox-label" data-keyframe-thumb-id="${escapeHtml(img.id)}">
                     <input
                         type="checkbox"
                         data-keyframe-checkbox="${escapeHtml(img.id)}"
                         ${checked}
                     >
-                    <span>${escapeHtml(label)} (<code>${escapeHtml(img.id)}</code>)</span>
+                    <img
+                        src="${escapeHtml(img.view_url)}"
+                        alt="${escapeHtml(label)}"
+                        class="keyframe-thumb"
+                        width="48"
+                        height="30"
+                        loading="lazy"
+                    >
+                    <span>${escapeHtml(label)} (<code>${escapeHtml(img.id)}</code>${tsBadge})</span>
                 </label>
             `;
             })
@@ -1016,9 +1036,7 @@
                                         tokenContainer.textContent || ""
                                     );
                                 }
-                                if (!accumulatedTokens && payload.reply && tokenContainer) {
-                                    tokenContainer.textContent = payload.reply;
-                                } else if (payload.reply && tokenContainer) {
+                                if (payload.reply && tokenContainer) {
                                     tokenContainer.textContent = payload.reply;
                                 }
                                 if (statusEl) {
@@ -1114,10 +1132,10 @@
         const tpl = state.templates.find((t) => t.id === tplId);
         if (!tpl) return;
 
-        const doc = tpl.documentation || {};
-        const defaultsStr = JSON.stringify(doc.defaults || {});
+        const doc = tpl.docs || tpl.documentation || {};
+        const defaultsStr = JSON.stringify(doc.defaults || tpl.performance_defaults || {});
         docCard.innerHTML = `
-            <div><strong>${escapeHtml(tpl.title || tpl.id)}</strong> (<code>${escapeHtml(tpl.category || "video")}</code>)</div>
+            <div><strong>${escapeHtml(tpl.name || tpl.title || tpl.id)}</strong> (<code>${escapeHtml(tpl.category || "video")}</code>)</div>
             <div style="margin-top:0.25rem;"><strong>Uso:</strong> ${escapeHtml(doc.uso || tpl.description || "")}</div>
             <div style="margin-top:0.25rem;"><strong>Defaults 480p/Lightning:</strong> <code>${escapeHtml(defaultsStr)}</code></div>
         `;
@@ -1258,7 +1276,7 @@
             }
             const result = await resp.json();
             setToast(
-                `Render completado: Job ${result.job_id} (${templateId}). Salida registrada en Galería.`,
+                `Job encolado: ${result.job_id} (${templateId}). La salida se registrará en Galería al completarse.`,
                 "success"
             );
             if (state.activeProjectId === projectId) {
@@ -1329,7 +1347,7 @@
                 <div class="gallery-card ${isSelected ? "active-item" : ""}" data-gallery-card="${escapeHtml(asset.id)}">
                     <div>
                         <div style="display:flex;justify-content:space-between;align-items:center;gap:0.4rem;">
-                            <span class="code-badge">${escapeHtml(asset.kind.toUpperCase())}</span>
+                            <span class="code-badge">${escapeHtml(String(asset.kind || "").toUpperCase())}</span>
                             <span class="code-badge">${escapeHtml(asset.category)}</span>
                         </div>
                         <div class="item-title" style="margin-top:0.45rem;">${escapeHtml(displayName)}</div>
@@ -1348,7 +1366,7 @@
                             Previsualizar
                         </button>
                         <a
-                            href="${escapeHtml(asset.download_url)}"
+                            href="${escapeHtml(safeUrl(asset.download_url))}"
                             download="${escapeHtml(displayName)}"
                             class="btn btn-accent btn-sm"
                             data-action="download-asset"
@@ -1433,7 +1451,7 @@
                     <div class="item-actions" style="margin-top:0.6rem;">
                         <a
                             id="stage-download-link"
-                            href="${escapeHtml(asset.download_url)}"
+                            href="${escapeHtml(safeUrl(asset.download_url))}"
                             download="${escapeHtml(displayName)}"
                             class="btn btn-primary"
                             data-action="download-asset"
@@ -1489,7 +1507,7 @@
         }
     }
 
-    /* --- TIMELINE EDL --- */
+    /* --- TIMELINE EDL & TRANSCRIPCIÓN (M3) --- */
     async function refreshEdl() {
         const targetProjectId = state.activeProjectId;
         if (!targetProjectId) {
@@ -1500,11 +1518,24 @@
             const resp = await apiFetch(
                 `/studio/api/projects/${encodeURIComponent(targetProjectId)}/edl`
             );
-            if (!resp.ok || state.activeProjectId !== targetProjectId) return;
-            const edlData = await resp.json();
-            if (state.activeProjectId !== targetProjectId) return;
-            state.edlData = edlData;
-            renderEdlView();
+            if (resp.ok && state.activeProjectId === targetProjectId) {
+                const edlData = await resp.json();
+                if (state.activeProjectId === targetProjectId) {
+                    state.edlData = edlData;
+                }
+            }
+            const trResp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(targetProjectId)}/transcriptions`
+            );
+            if (trResp.ok && state.activeProjectId === targetProjectId) {
+                const trData = await trResp.json();
+                if (state.activeProjectId === targetProjectId) {
+                    state.transcriptionData = trData;
+                }
+            }
+            if (state.activeProjectId === targetProjectId) {
+                renderEdlView();
+            }
         } catch (_err) {
             if (state.activeProjectId === targetProjectId) {
                 renderEdlView();
@@ -1517,6 +1548,36 @@
         const summaryEl = document.getElementById("edl-summary-box");
         const trackEl = document.getElementById("edl-timeline-track");
         const cutsListEl = document.getElementById("edl-cuts-list");
+        const trListEl = document.getElementById("edl-transcription-list");
+
+        const latestTr =
+            state.transcriptionData && state.transcriptionData.latest;
+        if (trListEl) {
+            if (
+                latestTr &&
+                Array.isArray(latestTr.segments) &&
+                latestTr.segments.length > 0
+            ) {
+                trListEl.innerHTML = latestTr.segments
+                    .map((seg) => {
+                        const spk = seg.speaker || "SPEAKER_00";
+                        const start = Number(seg.start || 0).toFixed(2);
+                        const end = Number(seg.end || 0).toFixed(2);
+                        return `
+                        <div class="item-card">
+                            <div class="item-main">
+                                <span class="item-title"><code>${escapeHtml(spk)}</code> · ${start}s – ${end}s</span>
+                                <span class="item-meta">${escapeHtml(seg.text || "")}</span>
+                            </div>
+                        </div>
+                    `;
+                    })
+                    .join("");
+            } else {
+                trListEl.innerHTML =
+                    '<p class="empty-hint">Sin transcripción aún. Pulsa «Transcribir + Diarizar» o usa la herramienta <code>transcribe</code> / <code>diarize</code> en el chat.</p>';
+            }
+        }
 
         const latest = state.edlData && (state.edlData.latest || state.edlData.edl);
         if (!latest) {
@@ -1703,31 +1764,37 @@
             } else if (action === "delete-project") {
                 const pid = actionEl.getAttribute("data-project-id");
                 if (pid) {
-                    const resp = await apiFetch(
-                        `/studio/api/projects/${encodeURIComponent(pid)}`,
-                        { method: "DELETE" }
-                    );
-                    if (resp.ok) {
-                        if (state.activeProjectId === pid) {
-                            state.activeProjectId = null;
-                            state.activeProjectDetail = null;
-                        }
-                        if (state.chatDomProjectId === pid) {
-                            state.chatDomProjectId = null;
-                            state.chatDomEpoch += 1;
-                            const chatListEl =
-                                document.getElementById("chat-messages-list");
-                            if (
-                                chatListEl &&
-                                chatListEl.getAttribute("data-chat-project-id") === pid
-                            ) {
-                                chatListEl.removeAttribute("data-chat-project-id");
-                                chatListEl.innerHTML =
-                                    '<p class="empty-hint">Sin proyecto activo. Crea o selecciona un proyecto para chatear con el agente.</p>';
+                    try {
+                        const resp = await apiFetch(
+                            `/studio/api/projects/${encodeURIComponent(pid)}`,
+                            { method: "DELETE" }
+                        );
+                        if (resp.ok) {
+                            if (state.activeProjectId === pid) {
+                                state.activeProjectId = null;
+                                state.activeProjectDetail = null;
                             }
+                            if (state.chatDomProjectId === pid) {
+                                state.chatDomProjectId = null;
+                                state.chatDomEpoch += 1;
+                                const chatListEl =
+                                    document.getElementById("chat-messages-list");
+                                if (
+                                    chatListEl &&
+                                    chatListEl.getAttribute("data-chat-project-id") === pid
+                                ) {
+                                    chatListEl.removeAttribute("data-chat-project-id");
+                                    chatListEl.innerHTML =
+                                        '<p class="empty-hint">Sin proyecto activo. Crea o selecciona un proyecto para chatear con el agente.</p>';
+                                }
+                            }
+                            setToast(`Proyecto ${pid} eliminado.`, "success");
+                            await refreshProjects();
+                        } else {
+                            setToast(`Error al eliminar proyecto (${resp.status}).`, "error");
                         }
-                        setToast(`Proyecto ${pid} eliminado.`, "success");
-                        await refreshProjects();
+                    } catch (err) {
+                        setToast(`Error al eliminar proyecto: ${err.message}`, "error");
                     }
                 }
             } else if (action === "preview-in-gallery") {
@@ -1782,24 +1849,28 @@
                 const name = nameInput ? nameInput.value.trim() : "";
                 if (!name) return;
 
-                const resp = await apiFetch("/studio/api/projects", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        name,
-                        aspect_ratio: aspectSelect ? aspectSelect.value : "16:9",
-                        description: descInput ? descInput.value.trim() : "",
-                    }),
-                });
-                if (resp.ok) {
-                    const created = await resp.json();
-                    if (nameInput) nameInput.value = "";
-                    if (descInput) descInput.value = "";
-                    state.activeProjectId = created.id;
-                    setToast(`Proyecto creado: «${created.name}» (${created.id}).`, "success");
-                    await refreshProjects();
-                } else {
-                    setToast(`Error al crear proyecto (${resp.status}).`, "error");
+                try {
+                    const resp = await apiFetch("/studio/api/projects", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            name,
+                            aspect_ratio: aspectSelect ? aspectSelect.value : "16:9",
+                            description: descInput ? descInput.value.trim() : "",
+                        }),
+                    });
+                    if (resp.ok) {
+                        const created = await resp.json();
+                        if (nameInput) nameInput.value = "";
+                        if (descInput) descInput.value = "";
+                        state.activeProjectId = created.id;
+                        setToast(`Proyecto creado: «${created.name}» (${created.id}).`, "success");
+                        await refreshProjects();
+                    } else {
+                        setToast(`Error al crear proyecto (${resp.status}).`, "error");
+                    }
+                } catch (err) {
+                    setToast(`Error al crear proyecto: ${err.message}`, "error");
                 }
             });
         }
@@ -1818,36 +1889,41 @@
                     return;
                 }
 
-                const projectId = await ensureActiveProject();
-                if (!projectId) return;
+                try {
+                    const projectId = await ensureActiveProject();
+                    if (!projectId) return;
 
-                const file = fileInput.files[0];
-                const formData = new FormData();
-                formData.append("file", file);
-                formData.append("category", catSelect ? catSelect.value : "uploads");
+                    const file = fileInput.files[0];
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    formData.append("category", catSelect ? catSelect.value : "uploads");
 
-                if (statusMsg) statusMsg.textContent = `Subiendo ${file.name}…`;
+                    if (statusMsg) statusMsg.textContent = `Subiendo ${file.name}…`;
 
-                const resp = await apiFetch(
-                    `/studio/api/projects/${encodeURIComponent(projectId)}/assets`,
-                    {
-                        method: "POST",
-                        body: formData,
+                    const resp = await apiFetch(
+                        `/studio/api/projects/${encodeURIComponent(projectId)}/assets`,
+                        {
+                            method: "POST",
+                            body: formData,
+                        }
+                    );
+                    if (resp.ok) {
+                        const uploaded = await resp.json();
+                        fileInput.value = "";
+                        const msg = `Subida completada: ${uploaded.original_filename} (${uploaded.kind}, ${formatBytes(uploaded.size_bytes)})`;
+                        if (statusMsg) statusMsg.textContent = msg;
+                        setToast(msg, "success");
+                        if (state.activeProjectId === projectId) {
+                            await selectProject(projectId, false);
+                        }
+                    } else {
+                        const errBody = await resp.text();
+                        if (statusMsg) statusMsg.textContent = `Error (${resp.status}): ${errBody}`;
+                        setToast(`Error al subir medio (${resp.status}).`, "error");
                     }
-                );
-                if (resp.ok) {
-                    const uploaded = await resp.json();
-                    fileInput.value = "";
-                    const msg = `Subida completada: ${uploaded.original_filename} (${uploaded.kind}, ${formatBytes(uploaded.size_bytes)})`;
-                    if (statusMsg) statusMsg.textContent = msg;
-                    setToast(msg, "success");
-                    if (state.activeProjectId === projectId) {
-                        await selectProject(projectId, false);
-                    }
-                } else {
-                    const errBody = await resp.text();
-                    if (statusMsg) statusMsg.textContent = `Error (${resp.status}): ${errBody}`;
-                    setToast(`Error al subir medio (${resp.status}).`, "error");
+                } catch (err) {
+                    if (statusMsg) statusMsg.textContent = `Error de red: ${err.message}`;
+                    setToast(`Error al subir medio: ${err.message}`, "error");
                 }
             });
         }
@@ -1872,16 +1948,22 @@
             clearChatBtn.addEventListener("click", async () => {
                 const targetProjectId = state.activeProjectId;
                 if (!targetProjectId) return;
-                const resp = await apiFetch(
-                    `/studio/api/projects/${encodeURIComponent(targetProjectId)}/chat`,
-                    { method: "DELETE" }
-                );
-                if (resp.ok && state.activeProjectId === targetProjectId) {
-                    state.chatDomEpoch += 1;
-                    state.toolEvents = [];
-                    renderToolEvents();
-                    renderChatHistory([], targetProjectId);
-                    setToast("Conversación del proyecto reiniciada.", "success");
+                try {
+                    const resp = await apiFetch(
+                        `/studio/api/projects/${encodeURIComponent(targetProjectId)}/chat`,
+                        { method: "DELETE" }
+                    );
+                    if (resp.ok && state.activeProjectId === targetProjectId) {
+                        state.chatDomEpoch += 1;
+                        state.toolEvents = [];
+                        renderToolEvents();
+                        renderChatHistory([], targetProjectId);
+                        setToast("Conversación del proyecto reiniciada.", "success");
+                    } else if (!resp.ok) {
+                        setToast(`Error al reiniciar la conversación (${resp.status}).`, "error");
+                    }
+                } catch (err) {
+                    setToast(`Error al reiniciar la conversación: ${err.message}`, "error");
                 }
             });
         }
@@ -1913,13 +1995,77 @@
             refreshGalBtn.addEventListener("click", refreshGallery);
         }
 
-        // Timeline EDL
+        // Timeline EDL y Transcripción (M3)
+        const edlTranscribeBtn = document.getElementById("edl-transcribe-btn");
+        if (edlTranscribeBtn) {
+            edlTranscribeBtn.addEventListener("click", async () => {
+                try {
+                    const pid = await ensureActiveProject();
+                    if (!pid) return;
+                    const resp = await apiFetch(
+                        `/studio/api/projects/${encodeURIComponent(pid)}/diarize`,
+                        {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({}),
+                        }
+                    );
+                    if (resp.ok) {
+                        setToast("Transcripción y diarización completadas.", "success");
+                        await refreshEdl();
+                    } else {
+                        setToast("Error al transcribir/diarizar medio.", "error");
+                    }
+                } catch (err) {
+                    setToast(`Error al transcribir/diarizar medio: ${err.message}`, "error");
+                }
+            });
+        }
+
         const edlProposeBtn = document.getElementById("edl-propose-btn");
         if (edlProposeBtn) {
             edlProposeBtn.addEventListener("click", async () => {
-                await sendChatMessage("Propón un EDL de highlights para el clip inicial");
-                await refreshEdl();
+                try {
+                    await sendChatMessage("Propón un EDL de highlights para el clip inicial");
+                    await refreshEdl();
+                } catch (err) {
+                    setToast(`Error al proponer EDL: ${err.message}`, "error");
+                }
             });
+        }
+
+        async function triggerEdlBuild(aspectRatio) {
+            try {
+                const pid = await ensureActiveProject();
+                if (!pid) return;
+                const resp = await apiFetch(
+                    `/studio/api/projects/${encodeURIComponent(pid)}/edl/build`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ aspect_ratio: aspectRatio }),
+                    }
+                );
+                if (resp.ok) {
+                    setToast(`EDL renderizado en formato ${aspectRatio}.`, "success");
+                    await refreshEdl();
+                    await refreshGallery();
+                } else {
+                    setToast(`Error al renderizar EDL (${resp.status}).`, "error");
+                }
+            } catch (err) {
+                setToast(`Error al renderizar EDL: ${err.message}`, "error");
+            }
+        }
+
+        const edlBuild16x9Btn = document.getElementById("edl-build-16x9-btn");
+        if (edlBuild16x9Btn) {
+            edlBuild16x9Btn.addEventListener("click", () => triggerEdlBuild("16:9"));
+        }
+
+        const edlBuild9x16Btn = document.getElementById("edl-build-9x16-btn");
+        if (edlBuild9x16Btn) {
+            edlBuild9x16Btn.addEventListener("click", () => triggerEdlBuild("9:16"));
         }
 
         const refreshEdlBtn = document.getElementById("refresh-edl-btn");

@@ -1,7 +1,7 @@
 use comfyctl::config::{ModelProfile, RuntimeConfig};
 use comfyctl::strict::{
-    evaluate_strict_checks, probe_htpasswd, probe_nvidia_smi, probe_studio_health,
-    write_and_print_strict_report, SystemSnapshot,
+    evaluate_strict_checks, probe_htpasswd, probe_mcp_health, probe_nvidia_smi,
+    probe_studio_health, write_and_print_strict_report, SystemSnapshot,
 };
 use comfyctl::sys;
 use std::collections::BTreeMap;
@@ -36,6 +36,9 @@ fn base_healthy_snapshot() -> SystemSnapshot {
         studio_health_ok: true,
         studio_health_detail:
             "studio-server healthy en 127.0.0.1:18190 (/studio/api/health HTTP 200)".to_string(),
+        mcp_health_ok: true,
+        mcp_health_detail: "MCP healthy en 127.0.0.1:18190/studio/api/mcp/health (HTTP 200)"
+            .to_string(),
     }
 }
 
@@ -341,9 +344,10 @@ fn probe_htpasswd_validates_format_and_rejects_garbage() {
 
 #[test]
 fn strict_studio_s5_disk_180gb_and_other_profiles_unchanged() {
-    // 1. Verificar tabla S5 intacta para todos los perfiles (180 / 75 / 45 / 10 GB)
+    // 1. Verificar tabla S5 intacta para todos los perfiles (180 / 210 / 75 / 45 / 10 GB)
     let profile_thresholds = [
         ("studio", ModelProfile::Studio, 180_u64),
+        ("unreal", ModelProfile::Unreal, 210_u64),
         ("all", ModelProfile::All, 75_u64),
         ("general", ModelProfile::General, 45_u64),
         ("realistic", ModelProfile::Realistic, 45_u64),
@@ -403,14 +407,14 @@ fn strict_studio_health_s11_and_live_http_probe() {
     vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
     let cfg_studio = RuntimeConfig::from_map(&vars, None);
 
-    // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añade S11 (studio_health)
+    // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añaden S11 (studio_health) y S12 (mcp_health)
     let mut snap = base_healthy_snapshot();
     snap.disk_free_gb = 200.0;
     let rep_ok = evaluate_strict_checks(&cfg_studio, &snap);
     assert_eq!(rep_ok.result, "ok");
-    assert_eq!(rep_ok.checks.len(), 11);
+    assert_eq!(rep_ok.checks.len(), 12);
     for expected_id in [
-        "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11",
+        "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12",
     ] {
         assert!(
             rep_ok
@@ -438,6 +442,22 @@ fn strict_studio_health_s11_and_live_http_probe() {
     assert_eq!(rep_warn.result, "warn");
     let s11_warn = rep_warn.checks.iter().find(|c| c.id == "S11");
     assert!(matches!(s11_warn, Some(c) if c.status == "warn"));
+
+    // 2b. S12 (mcp_health) nunca es fatal: con MCP caído y STRICT_START=1 el resultado
+    //     global lo decide S11; aquí S11 está fatal, así que validamos S12 warn con S11 ok.
+    snap.studio_health_ok = true;
+    snap.mcp_health_ok = false;
+    snap.mcp_health_detail = "connection refused".to_string();
+    let rep_s12 = evaluate_strict_checks(&cfg_studio, &snap);
+    assert_eq!(rep_s12.result, "warn");
+    let s12 = rep_s12.checks.iter().find(|c| c.id == "S12");
+    assert!(matches!(
+        s12,
+        Some(c) if c.name == "mcp_health" && c.status == "warn" && c.remediation.is_some()
+    ));
+    snap.mcp_health_ok = true;
+    snap.mcp_health_detail =
+        "MCP healthy en 127.0.0.1:18190/studio/api/mcp/health (HTTP 200)".to_string();
 
     // 3. Probe HTTP real contra un listener local en puerto efímero
     let Ok(listener) = TcpListener::bind("127.0.0.1:0") else {
@@ -467,4 +487,40 @@ fn strict_studio_health_s11_and_live_http_probe() {
     let _ = srv.join();
     assert!(ok, "probe_studio_health debía devolver ok: {detail}");
     assert!(detail.contains("HTTP 200"));
+
+    // 4. probe_mcp_health: deshabilitado por env => ok con detalle explícito
+    let mut mcp_vars = BTreeMap::new();
+    mcp_vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    mcp_vars.insert("STUDIO_ENABLE_MCP".to_string(), "0".to_string());
+    let cfg_mcp_off = RuntimeConfig::from_map(&mcp_vars, None);
+    let (mcp_ok, mcp_detail) = probe_mcp_health(&cfg_mcp_off);
+    assert!(mcp_ok);
+    assert!(mcp_detail.contains("STUDIO_ENABLE_MCP=0"));
+
+    // 5. probe_mcp_health con listener HTTP real en puerto efímero
+    let Ok(mcp_listener) = TcpListener::bind("127.0.0.1:0") else {
+        std::process::abort();
+    };
+    let mcp_port = mcp_listener.local_addr().map_or(18190, |addr| addr.port());
+    let mcp_srv = thread::spawn(move || {
+        if let Ok((mut stream, _)) = mcp_listener.accept() {
+            let mut buf = [0_u8; 512];
+            let _ = stream.read(&mut buf);
+            let body = br#"{"status":"ok","mcp_enabled":true}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.write_all(body);
+            let _ = stream.flush();
+        }
+    });
+    mcp_vars.insert("STUDIO_ENABLE_MCP".to_string(), "1".to_string());
+    mcp_vars.insert("STUDIO_SERVER_PORT".to_string(), mcp_port.to_string());
+    let cfg_mcp_probe = RuntimeConfig::from_map(&mcp_vars, None);
+    let (mcp_ok2, mcp_detail2) = probe_mcp_health(&cfg_mcp_probe);
+    let _ = mcp_srv.join();
+    assert!(mcp_ok2, "probe_mcp_health debía devolver ok: {mcp_detail2}");
+    assert!(mcp_detail2.contains("/studio/api/mcp/health"));
 }

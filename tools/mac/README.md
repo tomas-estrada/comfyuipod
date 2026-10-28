@@ -48,6 +48,7 @@ export COMFY_IMAGE="ghcr.io/<tu-usuario>/comfyuipod:latest"
 | `comfy report [id] [--stdout]` | Descarga `/report.md` (con redacción defensiva de secretos), lo guarda en `/tmp/comfy-report-<id>.md` (`0600`) y en macOS lo copia automáticamente al portapapeles (`pbcopy`). Con `--stdout` lo imprime en la salida estándar. |
 | `comfy watch [id]` | Monitoriza `/status/api` en la terminal refrescando cada 3 segundos (GPU, VRAM, RAM, disco, progreso de Fases 1/2 y alertas de triaje). Si `strict.result == "fatal"`, muestra los checks fallidos con su remediación y sale con código `20` (`R-04`). |
 | `comfy rent [all\|general\|realistic\|anime\|minimal\|studio] [--dry-run] [--yes]` | Busca ofertas en Vast.ai ordenadas por `$/h`, muestra una tabla comparativa con las **5 ofertas más económicas** (incluyendo VRAM, RAM del host, disco disponible, `inet_down`, `$/GB·mes` de disco y coste total estimado por hora), solicita confirmación interactiva `[y/N]` (omitible con `--yes`) y crea la instancia con `--args`. Con `--dry-run` muestra la oferta elegida y las variables que se reenviarían (con `STUDIO_LLM_KEY` y `COMFY_PASS` enmascaradas) sin crear la instancia. |
+| `comfy fetch-outputs [id] [dest-dir]` | Rescata los renders de la instancia **antes** de destruirla (`M3-E`, tarea 31b): ejecuta `vastai ssh <id> "tar czf - -C /workspace/comfyui-data output \| base64"`, decodifica y extrae localmente en `dest-dir` (por defecto `~/comfy-outputs/<id>`) conservando la estructura `output/…`. Es re-ejecutable: los archivos ya presentes con el mismo tamaño se omiten (descarga resumible), y las rutas del tar que escapen del destino (`../`) se rechazan. Data dir remoto configurable con `COMFY_REMOTE_DATA_DIR`. |
 | `comfy destroy <id>` | Solicita confirmación y destruye la instancia indicada (`vastai destroy instance <id>`). |
 
 ---
@@ -90,7 +91,10 @@ comfy studio report
 # O imprimirlo directamente en stdout:
 comfy studio report --stdout
 
-# 5. Al finalizar la sesión, destruir la instancia para detener el cobro de GPU y disco:
+# 5. Rescatar tus renders/outputs a tu Mac antes de destruir (re-ejecutable, omite ya descargados):
+comfy fetch-outputs <id> ~/Downloads/comfy-renders
+
+# 6. Al finalizar la sesión, destruir la instancia para detener el cobro de GPU y disco:
 comfy destroy <id>
 ```
 

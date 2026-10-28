@@ -753,17 +753,29 @@ async def test_history_window_loads_most_recent_exchanges_in_chronological_order
 
     sent_messages = stub_llm.calls[-1]
     history_only = sent_messages[1:-1]  # excluye system inicial y user actual
-    assert len(history_only) == 60
+
+    # M3-B (tarea 11): con >40 mensajes persistidos, el historial antiguo se comprime
+    # en `chat_summary` y la ventana textual conserva solo los 20 más recientes.
+    # El invariante M2-SCR-006 se mantiene: mensajes MÁS RECIENTES en orden cronológico.
+    assert len(history_only) == 20
 
     history_contents = [m["content"] for m in history_only]
-    # Los primeros 5 turnos (10 mensajes) quedaron fuera de la ventana de 60
+    # Los turnos antiguos quedaron fuera de la ventana textual (están en el resumen)
     assert "Mensaje usuario turno 01" not in history_contents
-    assert "Respuesta asistente turno 05" not in history_contents
-    # La ventana empieza en el turno 06 y termina en el turno 35 (el más reciente) en orden ASC
-    assert history_contents[0] == "Mensaje usuario turno 06"
-    assert history_contents[1] == "Respuesta asistente turno 06"
+    assert "Respuesta asistente turno 25" not in history_contents
+    # La ventana empieza en el turno 26 y termina en el turno 35 (el más reciente) en orden ASC
+    assert history_contents[0] == "Mensaje usuario turno 26"
+    assert history_contents[1] == "Respuesta asistente turno 26"
     assert history_contents[-2] == "Mensaje usuario turno 35"
     assert history_contents[-1] == "Respuesta asistente turno 35"
+
+    # El resumen comprimido queda persistido y se inyecta en el mensaje de sistema
+    summary = store.get_meta(pid, "chat_summary")
+    assert isinstance(summary, dict)
+    assert str(summary.get("text") or "").strip()
+    assert str(summary.get("upto") or "")
+    system_content = str(sent_messages[0].get("content") or "")
+    assert "Resumen de la conversación previa" in system_content
 
 
 def test_chat_history_redacts_persisted_content_and_tool_calls_scr007(

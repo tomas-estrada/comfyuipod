@@ -263,14 +263,20 @@ def test_ws_events_parsed_and_mapped_to_studio_sse(
         p.get("value") == 4 and p.get("max") == 4 and p.get("job_id") == job["id"]
         for p in progress_payloads
     )
+    # executing node=None señala fin de ejecución, pero el job NO debe marcarse
+    # done desde el WS: done solo llega vía _complete_job tras persistir salidas.
     assert any(
+        p.get("execution_complete") is True and p.get("job_id") == job["id"]
+        for p in progress_payloads
+    )
+    assert not any(
         p.get("status") == "done" and p.get("job_id") == job["id"]
         for p in job_payloads
     )
 
     final_job = store.get_job(job["id"])
     assert final_job is not None
-    assert final_job["status"] == "done"
+    assert final_job["status"] == "running"
     assert final_job["progress_value"] == 4
     assert final_job["progress_max"] == 4
 

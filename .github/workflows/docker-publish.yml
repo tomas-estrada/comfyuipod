@@ -494,6 +494,8 @@ jobs:
         timeout-minutes: 120
         run: |
           set -euo pipefail
+          # Credenciales de humo generadas en el runner: ningun valor con forma de secreto queda escrito en el repo publico.
+          smoke_comfy_pass="$(openssl rand -hex 8)"
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           echo "Ejecutando smoke test sobre: ${CANDIDATE_TAG}"
           # Pull explícito, visible y acotado: el paso M-02 purga la caché local y la imagen pesa ~15-16 GB.
@@ -527,7 +529,7 @@ jobs:
             -e STRICT_MIN_DISK_GB=1 \
             -e COMFYUI_EXTRA_ARGS="--cpu" \
             -e COMFY_USER=admin \
-            -e COMFY_PASS=ci-secret-9f8e7d \
+            -e COMFY_PASS=${smoke_comfy_pass} \
             -e HF_TOKEN=hf_fake_token_for_ci_only \
             -e ENABLE_WEB_TERMINAL=1 \
             -e COMFY_MAX_RESTARTS=3 \
@@ -604,19 +606,19 @@ jobs:
 
           # 3. Con auth -> 200 en /, /home, /status, /status/api, /report.md, /diag, /download-status, /terminal/
           for ep in / /home /status /status/api /report.md /diag /download-status /terminal/; do
-            code_auth="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:ci-secret-9f8e7d "http://127.0.0.1:18188${ep}")"
+            code_auth="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:${smoke_comfy_pass} "http://127.0.0.1:18188${ep}")"
             [ "$code_auth" = "200" ] || { echo "::error::Se esperaba 200 con auth en ${ep}, se obtuvo ${code_auth}"; exit 1; }
           done
           echo "[OK] Todas las rutas protegidas devuelven 200 con credenciales"
 
           # 4. /home contiene "ComfyUI" y no contiene "http://"; /status/api y /run/comfyui-supervisor.json cumplen los esquemas congelados
-          home_html="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/home)"
+          home_html="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/home)"
           grep -q "ComfyUI" <<<"$home_html"
           if grep -qi "http://" <<<"$home_html"; then
             echo "::error::/home contiene enlaces http:// inseguros"
             exit 1
           fi
-          api_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api)"
+          api_json="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/status/api)"
           sup_json="$(timeout 60 docker exec "$cid" cat /run/comfyui-supervisor.json)"
           comfy_pid="$(API_JSON="$api_json" SUP_JSON="$sup_json" python3 -c '
           import json, os, pathlib, re
@@ -673,16 +675,16 @@ jobs:
           echo "[OK] /home, /status/api y /run/comfyui-supervisor.json verificados contra esquemas congelados (pid=${comfy_pid})"
 
           # 5. /report.md contiene "## 0. Triage" y "## 8. Drift" y NO contiene secretos
-          report_md="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/report.md)"
+          report_md="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/report.md)"
           grep -q "## 0. Triage" <<<"$report_md"
           grep -q "## 8. Drift" <<<"$report_md"
-          if grep -qE "ci-secret-9f8e7d|hf_fake_token" <<<"$report_md"; then
+          if grep -qE "${smoke_comfy_pass}|hf_fake_token" <<<"$report_md"; then
             echo "::error::Fuga de secretos en /report.md"
             exit 1
           fi
-          diag_txt="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/diag)"
+          diag_txt="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/diag)"
           grep -q "\[DIAG\] resumen:" <<<"$diag_txt"
-          if grep -qE "ci-secret-9f8e7d|hf_fake_token" <<<"$diag_txt"; then
+          if grep -qE "${smoke_comfy_pass}|hf_fake_token" <<<"$diag_txt"; then
             echo "::error::Fuga de secretos en /diag"
             exit 1
           fi
@@ -690,7 +692,7 @@ jobs:
 
           # 6. docker logs NO contiene secretos definidos por el usuario + /proc/<pid>/environ sin COMFY_PASS (O-05)
           smoke_logs="$(timeout 30 docker logs "$cid" 2>&1)"
-          if grep -qE "ci-secret-9f8e7d|hf_fake_token" <<<"$smoke_logs"; then
+          if grep -qE "${smoke_comfy_pass}|hf_fake_token" <<<"$smoke_logs"; then
             echo "::error::Fuga de secretos en docker logs"
             exit 1
           fi
@@ -703,9 +705,9 @@ jobs:
 
           # 7. Workers de Nginx corriendo como www-data + 404/405 en status-server
           timeout 60 docker exec "$cid" ps -o user= -C nginx | grep -q www-data
-          code_404="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/logs/etc-passwd)"
+          code_404="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/logs/etc-passwd)"
           [ "$code_404" = "404" ] || { echo "::error::Se esperaba 404 en /logs/etc-passwd, se obtuvo ${code_404}"; exit 1; }
-          code_405="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -X POST -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api)"
+          code_405="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -X POST -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/status/api)"
           [ "$code_405" = "405" ] || { echo "::error::Se esperaba 405 en POST /status/api, se obtuvo ${code_405}"; exit 1; }
           echo "[OK] Nginx corre bajo www-data y /logs/etc-passwd -> 404, POST -> 405"
 
@@ -732,7 +734,7 @@ jobs:
             # -I (HEAD): la respuesta de /healthz no trae cuerpo (proxy_method HEAD); un GET
             # colgaría hasta --max-time pese al 200 real (run 39416778494).
             if curl -fsSI --max-time 30 http://127.0.0.1:18188/healthz >/dev/null 2>&1; then
-              api_json="$(curl -fsS --max-time 30 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api || true)"
+              api_json="$(curl -fsS --max-time 30 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/status/api || true)"
               sup_ok="$(API_JSON="$api_json" python3 -c 'import json, os; d = json.loads(os.environ["API_JSON"]); c = d.get("comfyui") or {}; le = c.get("last_exit") or {}; print("OK" if c.get("state") == "running" and int(c.get("restarts", 0)) == 1 and (le.get("code") == 137 or le.get("rc") == 137) else "")' 2>/dev/null || true)"
               if [ "$sup_ok" = "OK" ]; then
                 echo "[OK] Supervisor relanzó ComfyUI tras SIGKILL (restarts=1, last_exit=137)"
@@ -839,6 +841,10 @@ jobs:
       - name: Smoke Test E2E con MODEL_PROFILE=studio y ComfyUI simulado (VAL-PROFILE-001 / VAL-PROFILE-005 / VAL-SERVER-002 / VAL-CROSS-003)
         run: |
           set -euo pipefail
+          # Credenciales de humo generadas en el runner: ningun valor con forma de secreto queda escrito en el repo publico.
+          smoke_comfy_pass="$(openssl rand -hex 8)"
+          smoke_llm_key="sk-ci-$(openssl rand -hex 8)"
+          smoke_studio_token="$(openssl rand -hex 16)"
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           timeout 300 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" -m comfy_studio.templates
           echo "=== Paso 15: Iniciando Smoke Test E2E con MODEL_PROFILE=studio ==="
@@ -906,9 +912,10 @@ jobs:
             -e STRICT_MIN_DISK_GB=1 \
             -e COMFYUI_EXTRA_ARGS="--cpu" \
             -e COMFY_USER=admin \
-            -e COMFY_PASS=ci-secret-9f8e7d \
-            -e STUDIO_LLM_KEY=sk-ci-studio-secret-token-9999 \
+            -e COMFY_PASS=${smoke_comfy_pass} \
+            -e STUDIO_LLM_KEY=${smoke_llm_key} \
             -e STUDIO_STUB_LLM=1 \
+            -e STUDIO_API_TOKEN=${smoke_studio_token} \
             -e ENABLE_WEB_TERMINAL=1 \
             -e PYTHONPATH=/tmp/mock_comfy_hook \
             -e MOCK_COMFYUI_SERVER=1 \
@@ -938,18 +945,18 @@ jobs:
           echo "[OK] Rutas /studio/* protegidas con Basic Auth (401 sin credenciales, VAL-SERVER-002)"
 
           for st_ok_route in "/studio/" "/studio/style.css" "/studio/app.js" "/studio/api/health" "/studio/api/status" "/studio/api/templates"; do
-            code="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:ci-secret-9f8e7d "http://127.0.0.1:18188${st_ok_route}")"
+            code="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:${smoke_comfy_pass} "http://127.0.0.1:18188${st_ok_route}")"
             [ "$code" = "200" ] || { echo "::error::Se esperaba 200 con auth en ${st_ok_route}, se obtuvo ${code}"; exit 1; }
           done
 
-          studio_html="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/)"
+          studio_html="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/studio/)"
           grep -q "ComfyUIPod Studio" <<<"$studio_html"
           grep -q "/studio/style.css" <<<"$studio_html"
           grep -q "/studio/app.js" <<<"$studio_html"
 
-          studio_health_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/api/health)"
-          studio_tpl_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/api/templates)"
-          studio_status_api="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/status/api)"
+          studio_health_json="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/studio/api/health)"
+          studio_tpl_json="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/studio/api/templates)"
+          studio_status_api="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/status/api)"
           ST_HEALTH="$studio_health_json" ST_TPL="$studio_tpl_json" ST_API="$studio_status_api" python3 -c '
           import json, os
           h = json.loads(os.environ["ST_HEALTH"])
@@ -967,7 +974,43 @@ jobs:
           '
           echo "[OK] /studio/, /studio/api/health, /studio/api/templates y S11 studio_health verificados"
 
-          python3 - << 'EOF'
+          # M3-C: MCP (/mcp) tras Basic Auth + X-Studio-Token, y S12 mcp_health en /status/api
+          code="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" http://127.0.0.1:18188/mcp/health)"
+          [ "$code" = "401" ] || { echo "::error::Se esperaba 401 sin auth en /mcp/health, se obtuvo ${code}"; exit 1; }
+          mcp_health="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/mcp/health)"
+          MCP_HEALTH="$mcp_health" python3 -c '
+          import json, os
+          h = json.loads(os.environ["MCP_HEALTH"])
+          assert h.get("status") == "ok" and h.get("mcp_enabled") is True, h
+          assert h.get("token_required") is True, h
+          '
+          code="$(curl -s --max-time 10 -o /dev/null -w "%{http_code}" -u admin:${smoke_comfy_pass} -X POST -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}" http://127.0.0.1:18188/mcp)"
+          [ "$code" = "401" ] || { echo "::error::Se esperaba 401 sin X-Studio-Token en /mcp, se obtuvo ${code}"; exit 1; }
+          mcp_init="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} -X POST -H "Content-Type: application/json" -H "X-Studio-Token: ${smoke_studio_token}" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}" http://127.0.0.1:18188/mcp)"
+          MCP_INIT="$mcp_init" python3 -c '
+          import json, os
+          r = json.loads(os.environ["MCP_INIT"])["result"]
+          assert r["serverInfo"]["name"] == "comfy-studio-mcp", r
+          assert "tools" in r["capabilities"], r
+          '
+          mcp_tools="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} -X POST -H "Content-Type: application/json" -H "X-Studio-Token: ${smoke_studio_token}" -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}" http://127.0.0.1:18188/mcp)"
+          MCP_TOOLS="$mcp_tools" python3 -c '
+          import json, os
+          tools = {t["name"] for t in json.loads(os.environ["MCP_TOOLS"])["result"]["tools"]}
+          assert {"list_projects", "list_assets", "list_templates", "enqueue_render", "job_status"} <= tools, tools
+          assert "delegate_role" not in tools, tools
+          '
+          s12_api="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/status/api)"
+          ST_API_S12="$s12_api" python3 -c '
+          import json, os
+          api = json.loads(os.environ["ST_API_S12"])
+          s12 = [c for c in (api.get("strict") or {}).get("checks", []) if c.get("id") == "S12"]
+          assert len(s12) == 1 and s12[0].get("status") == "ok", f"Expected S12 mcp_health ok, got {s12}"
+          '
+          echo "[OK] M3-C: MCP /mcp (401 sin auth/token; initialize y tools/list con X-Studio-Token) y S12 mcp_health verificados"
+
+          SMOKE_BASIC_AUTH="admin:${smoke_comfy_pass}" python3 - << 'EOF'
+          import os
           import subprocess, time
           t0 = time.monotonic()
           out = subprocess.check_output(
@@ -979,7 +1022,7 @@ jobs:
                   "-D",
                   "-",
                   "-u",
-                  "admin:ci-secret-9f8e7d",
+                  os.environ["SMOKE_BASIC_AUTH"],
                   "http://127.0.0.1:18188/studio/api/progress?max_events=1",
               ],
               text=True,
@@ -1005,10 +1048,10 @@ jobs:
           print("Verified studio loopback-only listeners:", {p: list(listeners[p]) for p in (18188, 18189, 18190, 7681)})
           '
 
-          studio_rep="$(curl -fsS --max-time 60 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/report.md)"
+          studio_rep="$(curl -fsS --max-time 60 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/report.md)"
           grep -q "Sin cambios respecto a" <<<"$studio_rep"
-          studio_diag="$(curl -fsS --max-time 60 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/diag)"
-          studio_st_json="$(curl -fsS --max-time 10 -u admin:ci-secret-9f8e7d http://127.0.0.1:18188/studio/api/status)"
+          studio_diag="$(curl -fsS --max-time 60 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/diag)"
+          studio_st_json="$(curl -fsS --max-time 10 -u admin:${smoke_comfy_pass} http://127.0.0.1:18188/studio/api/status)"
           studio_logs="$(timeout 30 docker logs "$studio_cid" 2>&1)"
 
           cat > "${mock_hook_dir}/vastai" << 'EOF'
@@ -1020,10 +1063,9 @@ jobs:
           exit 1
           EOF
           chmod +x "${mock_hook_dir}/vastai" tools/mac/comfy
-          smoke_llm_key="sk""-ci-studio-secret-token-9999"
-          helper_open_out="$(PATH="${mock_hook_dir}:$PATH" COMFY_PASS="ci-secret-9f8e7d" COMFY_BROWSER="echo" tools/mac/comfy studio 1001)"
+          helper_open_out="$(PATH="${mock_hook_dir}:$PATH" COMFY_PASS="${smoke_comfy_pass}" COMFY_BROWSER="echo" tools/mac/comfy studio 1001)"
           grep -q "http://127.0.0.1:18188/studio/" <<<"$helper_open_out"
-          helper_rep_out="$(PATH="${mock_hook_dir}:$PATH" COMFY_PASS="ci-secret-9f8e7d" STUDIO_LLM_KEY="$smoke_llm_key" tools/mac/comfy studio report 1001 --stdout)"
+          helper_rep_out="$(PATH="${mock_hook_dir}:$PATH" COMFY_PASS="${smoke_comfy_pass}" STUDIO_LLM_KEY="$smoke_llm_key" tools/mac/comfy studio report 1001 --stdout)"
           grep -q "## 11. Estado de Comfy Studio" <<<"$helper_rep_out"
           grep -F -q '`STUDIO_LLM_FALLBACK_KEY` = `<no definida>`' <<<"$helper_rep_out"
           if grep -F -q '<definida> definida>' <<<"$helper_rep_out"; then
@@ -1031,8 +1073,8 @@ jobs:
             exit 1
           fi
 
-          if grep -qE "ci-secret-9f8e7d|sk-ci-studio-secret-token-9999" <<<"${studio_rep}${studio_diag}${studio_status_api}${studio_st_json}${studio_logs}${helper_open_out}${helper_rep_out}"; then
-            echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en artefactos, helper o logs de smoke-studio"
+          if grep -qE "${smoke_comfy_pass}|${smoke_llm_key}|${smoke_studio_token}" <<<"${studio_rep}${studio_diag}${studio_status_api}${studio_st_json}${studio_logs}${helper_open_out}${helper_rep_out}"; then
+            echo "::error::Fuga de STUDIO_LLM_KEY, COMFY_PASS o STUDIO_API_TOKEN en artefactos, helper o logs de smoke-studio"
             exit 1
           fi
 

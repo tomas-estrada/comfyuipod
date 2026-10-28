@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator, Sequence
@@ -19,11 +20,63 @@ from .llm import (
     validate_DataUrl_only,
     validate_no_auth_urls_in_messages,
 )
-from .tools import ToolBelt, ToolContext, ToolExecutionError, create_default_tool_belt
+from .tools import (
+    ToolBelt,
+    ToolContext,
+    ToolExecutionError,
+    create_default_tool_belt,
+    create_restricted_belt,
+)
 
 logger = logging.getLogger("comfy_studio.agent.loop")
 
-DEFAULT_MAX_ITERATIONS = 8
+DEFAULT_MAX_ITERATIONS = 12
+DEFAULT_MAX_LLM_CALLS_PER_TURN = 24
+HISTORY_SUMMARY_THRESHOLD = 40
+HISTORY_KEEP_RECENT = 20
+SUB_AGENT_MAX_ITERATIONS = 4
+
+
+class CallBudget:
+    """Contador compartido de llamadas LLM por turno (agente principal + sub-agentes)."""
+
+    __slots__ = ("max_calls", "used")
+
+    def __init__(self, max_calls: int) -> None:
+        self.max_calls = max(1, int(max_calls))
+        self.used = 0
+
+    def consume(self) -> bool:
+        """Consume una llamada; devuelve False si el presupuesto está agotado."""
+        if self.used >= self.max_calls:
+            return False
+        self.used += 1
+        return True
+
+
+ROLE_SYSTEM_PROMPTS: dict[str, str] = {
+    "director": (
+        "Eres el sub-agente DIRECTOR DE RENDER de ComfyUIPod Studio.\n"
+        "Tu única misión es decidir y ejecutar renders con las plantillas curadas, "
+        "elegir parámetros (resolución, pasos, CFG, seeds) adecuados para la VRAM "
+        "disponible y reportar el resultado (job_id, estado y salidas).\n"
+        "Respondes en español, breve y concreto. No delegues a otros roles."
+    ),
+    "editor": (
+        "Eres el sub-agente EDITOR/MONTADOR de ComfyUIPod Studio.\n"
+        "Tu misión es construir y ejecutar EDL: proponer cortes con motivo editorial, "
+        "transcribir y diarizar cuando falte información, generar highlights y "
+        "renderizar entregables 16:9 o 9:16.\n"
+        "Respondes en español, breve y concreto. No delegues a otros roles."
+    ),
+    "artist3d": (
+        "Eres el sub-agente ARTISTA VISUAL/3D de ComfyUIPod Studio.\n"
+        "Tu misión es preparar assets visuales: indexar medios, buscar planos por "
+        "texto o identidad, etiquetar assets y encolar renders de preparación "
+        "(keyframes, imágenes base) para pipelines 3D.\n"
+        "Respondes en español, breve y concreto. No delegues a otros roles."
+    ),
+}
 
 SYSTEM_PROMPT_ES = (
     "Eres el asistente de dirección y posproducción de ComfyUIPod Studio.\n"
@@ -35,9 +88,36 @@ SYSTEM_PROMPT_ES = (
     "Por defecto usa 480p (832x480) para VACE/Wan en 24 GB VRAM.\n"
     "3. `propose_edl`: proponer una lista de decisión de edición (EDL) con cortes "
     "`in_sec`/`out_sec`, motivo editorial y relación de aspecto (`16:9` o `9:16`).\n"
-    "Cuando el usuario pida una tarea que requiera consultar el proyecto o ejecutar un "
-    "render/montaje, traza un breve plan, invoca las herramientas necesarias y resume el "
-    "resultado final."
+    "4. `extract_keyframes`: extraer keyframes de un clip de vídeo mediante detección de "
+    "escenas e intervalo fijo.\n"
+    "5. `index_media`: indexar visualmente vídeos e imágenes con embeddings CLIP y rostros "
+    "InsightFace en sqlite-vec.\n"
+    "6. `find_shots_text`: buscar planos y keyframes por descripción en lenguaje natural "
+    "sobre el índice CLIP.\n"
+    "7. `find_shots_face`: buscar planos donde aparece una identidad registrada o rostro "
+    "de referencia (con filtro opcional de texto CLIP).\n"
+    "8. `transcribe`: transcribir audio/vídeo con whisperx (faster-whisper large-v3 + "
+    "wav2vec2 ES/EN) con timestamps por palabra.\n"
+    "9. `diarize`: ejecutar diarización de hablantes con FunASR cam++ (sin pyannote ni "
+    "HF_TOKEN) y fusionar turnos por hablante.\n"
+    "10. `build_edl`: renderizar de forma determinista una versión EDL con ffmpeg en "
+    "formato `16:9` o `9:16`.\n"
+    "11. `list_templates`: listar las plantillas curadas con sus parámetros y defaults.\n"
+    "12. `job_status`: consultar el estado de un job de render (queued/running/done/failed/"
+    "interrupted) y sus outputs.\n"
+    "13. `job_cancel`: cancelar un job en vuelo.\n"
+    "14. `tag_asset`: añadir etiquetas a un asset del proyecto para futuras búsquedas.\n"
+    "15. `system_status`: consultar salud del pod (GPU, disco, ComfyUI, supervisor).\n"
+    "16. `export_edl`: exportar una versión EDL como JSON descargable.\n"
+    "17. `update_plan`: crear o actualizar el plan persistente de la tarea actual.\n"
+    "18. `delegate_role`: delegar un subobjetivo a un sub-agente especialista "
+    "(`director` — renders/plantillas; `editor` — EDL/tiempos; `artist3d` — 3D).\n"
+    "Cuando el usuario pida una tarea multi-paso (varios renders, indexación + búsqueda + "
+    "montaje, o cualquier trabajo con más de dos herramientas), registra primero un plan "
+    "conciso con `update_plan` y ve marcando su progreso; para tareas simples, traza un "
+    "plan breve interno, invoca las herramientas necesarias (las independientes pueden "
+    "ejecutarse en paralelo) y resume el resultado final. No delegues en `delegate_role` "
+    "salvo que el subobjetivo encaje claramente en un rol especialista."
 )
 
 
@@ -82,6 +162,11 @@ class StudioAgent:
         tool_belt: ToolBelt | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         redactor: SecretRedactor | None = None,
+        system_prompt_override: str | None = None,
+        persist_memory: bool = True,
+        allow_delegation: bool = True,
+        max_llm_calls_per_turn: int = DEFAULT_MAX_LLM_CALLS_PER_TURN,
+        budget: CallBudget | None = None,
     ) -> None:
         self._config = config
         self._store = store
@@ -94,6 +179,11 @@ class StudioAgent:
         )
         self._tool_belt = tool_belt or create_default_tool_belt()
         self._max_iterations = max(1, int(max_iterations))
+        self._system_prompt_override = system_prompt_override
+        self._persist_memory = persist_memory
+        self._allow_delegation = allow_delegation
+        self._max_llm_calls_per_turn = max(1, int(max_llm_calls_per_turn))
+        self._shared_budget = budget
 
         if not any(isinstance(f, RedactingLogFilter) for f in logger.filters):
             logger.addFilter(RedactingLogFilter(self._redactor))
@@ -124,7 +214,35 @@ class StudioAgent:
             else "ninguno"
         )
         assets_str = ", ".join(asset_summaries) if asset_summaries else "sin assets aún"
+
+        summary_block = ""
+        plan_block = ""
+        if self._persist_memory:
+            summary = self._store.get_meta(pid, "chat_summary")
+            if isinstance(summary, dict) and str(summary.get("text") or "").strip():
+                summary_block = (
+                    "\n\nResumen de la conversación previa (memoria de largo plazo):\n"
+                    f"{str(summary['text']).strip()}"
+                )
+            plan = self._store.get_active_plan(pid)
+            if plan is not None:
+                steps_lines = "\n".join(
+                    f"  {idx}. [{str(step.get('status') or 'pending')}] "
+                    f"{str(step.get('text') or '')}"
+                    for idx, step in enumerate(plan.get("steps") or [], start=1)
+                )
+                plan_block = (
+                    f"\n\nPlan activo «{plan.get('title') or 'sin título'}» "
+                    f"(id={plan['id']}):\n{steps_lines or '  (sin pasos)'}"
+                )
+
+        tools_catalog = "\n".join(
+            f"- `{spec.name}`: {spec.description}" for spec in self._tool_belt.list_specs()
+        )
+        base_prompt = self._system_prompt_override or SYSTEM_PROMPT_ES
         context_block = (
+            f"\n\nCatálogo completo de herramientas registradas en el tool-belt:\n"
+            f"{tools_catalog}"
             f"\n\nContexto del proyecto activo:\n"
             f"- ID: {pid}\n"
             f"- Nombre: {project.get('name', '')}\n"
@@ -134,18 +252,76 @@ class StudioAgent:
         )
         return {
             "role": "system",
-            "content": SYSTEM_PROMPT_ES + context_block,
+            "content": base_prompt + summary_block + plan_block + context_block,
         }
 
     def _load_history_messages(self, project_id: str) -> list[dict[str, Any]]:
+        if not self._persist_memory:
+            return []
+        summary = self._store.get_meta(project_id, "chat_summary")
+        upto = str(summary.get("upto") or "") if isinstance(summary, dict) else ""
         stored = self._store.list_chat_messages(project_id, limit=60)
         history: list[dict[str, Any]] = []
         for item in stored:
+            if upto and str(item.get("created_at") or "") <= upto:
+                continue
             role = item.get("role", "user")
             content = str(item.get("content") or "")
             if role in ("user", "assistant"):
                 history.append({"role": role, "content": content})
         return history
+
+    async def _maybe_summarize_history(self, project_id: str, budget: CallBudget) -> None:
+        """Comprime el historial antiguo en `project_meta.chat_summary` (sin pérdida de la
+        ventana reciente). Fallo de LLM ⇒ se conserva el historial textual intacto."""
+        if not self._persist_memory:
+            return
+        stored = self._store.list_chat_messages(project_id, limit=500)
+        if len(stored) <= HISTORY_SUMMARY_THRESHOLD:
+            return
+
+        older = stored[:-HISTORY_KEEP_RECENT]
+        current = self._store.get_meta(project_id, "chat_summary")
+        previous_text = str(current.get("text") or "") if isinstance(current, dict) else ""
+        transcript = "\n".join(
+            f"{item.get('role', '?')}: {str(item.get('content') or '')[:400]}"
+            for item in older[-HISTORY_SUMMARY_THRESHOLD:]
+        )
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Resume en español, en 150 palabras o menos, el estado del proyecto y las "
+                    "decisiones tomadas. Integra el resumen previo si existe. No inventes datos "
+                    "ni incluyas credenciales."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Resumen previo:\n{previous_text or '(ninguno)'}\n\n"
+                    f"Transcripción a resumir:\n{transcript}"
+                ),
+            },
+        ]
+        try:
+            if not budget.consume():
+                return
+            resp = await self._llm_client.complete(messages)
+            text = self._redactor.redact(str(resp.content or "").strip())
+            if text:
+                self._store.set_meta(
+                    project_id,
+                    "chat_summary",
+                    {
+                        "text": text,
+                        "upto": str(older[-1].get("created_at") or ""),
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Resumen de historial omitido (se conserva la ventana textual): %s", exc
+            )
 
     def _build_user_message_content(
         self,
@@ -214,6 +390,9 @@ class StudioAgent:
             else self._max_iterations
         )
 
+        budget = self._shared_budget or CallBudget(self._max_llm_calls_per_turn)
+        await self._maybe_summarize_history(project["id"], budget)
+
         # Construimos historial previo + mensaje actual (con keyframes en base64 si aplica)
         history_messages = self._load_history_messages(project["id"])
         user_content = self._build_user_message_content(
@@ -235,20 +414,62 @@ class StudioAgent:
             {"type": "keyframe_asset", "asset_id": aid}
             for aid in (asset_ids or [])
         ]
-        self._store.add_chat_message(
-            project["id"],
-            role="user",
-            content=self._redactor.redact(user_text),
-            tool_calls=self._redactor.redact_value(attachments_meta),
-        )
+        if self._persist_memory:
+            self._store.add_chat_message(
+                project["id"],
+                role="user",
+                content=self._redactor.redact(user_text),
+                tool_calls=self._redactor.redact_value(attachments_meta),
+            )
 
         openai_tools = self._tool_belt.to_openai_tools()
+
+        async def _delegate_runner(
+            *,
+            role: str,
+            task: str,
+            max_iterations: int = SUB_AGENT_MAX_ITERATIONS,
+        ) -> dict[str, Any]:
+            sub_belt = create_restricted_belt(self._tool_belt, role)
+            if not sub_belt.list_names():
+                raise ValueError(f"El rol {role!r} no tiene herramientas disponibles.")
+            sub_agent = StudioAgent(
+                config=self._config,
+                store=self._store,
+                comfyui_client=self._comfyui_client,
+                broker=self._broker,
+                llm_client=self._llm_client,
+                tool_belt=sub_belt,
+                max_iterations=min(int(max_iterations), SUB_AGENT_MAX_ITERATIONS),
+                redactor=self._redactor,
+                system_prompt_override=ROLE_SYSTEM_PROMPTS.get(role, SYSTEM_PROMPT_ES),
+                persist_memory=False,
+                allow_delegation=False,
+                budget=budget,
+            )
+            sub_result = await sub_agent.run_turn(
+                project_id=project["id"],
+                user_message=task,
+            )
+            return {
+                "reply": sub_result.reply,
+                "iterations": sub_result.iterations,
+                "stop_reason": sub_result.stop_reason,
+                "tool_calls": [
+                    {"name": tc.get("name"), "is_error": False}
+                    for tc in sub_result.tool_calls
+                ],
+                "provider": sub_result.provider,
+                "model": sub_result.model,
+            }
+
         tool_ctx = ToolContext(
             project_id=project["id"],
             store=self._store,
             comfyui_client=self._comfyui_client,
             broker=self._broker,
             config=self._config,
+            delegate_runner=_delegate_runner if self._allow_delegation else None,
         )
 
         all_tool_calls: list[dict[str, Any]] = []
@@ -260,6 +481,14 @@ class StudioAgent:
         iterations_run = 0
 
         for iteration in range(1, effective_max + 1):
+            if not budget.consume():
+                stop_reason = "max_iterations"
+                if not final_reply:
+                    final_reply = (
+                        f"Se alcanzó el presupuesto de llamadas LLM por turno "
+                        f"({budget.max_calls}); se detuvo el ciclo de herramientas."
+                    )
+                break
             iterations_run = iteration
             token_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
 
@@ -303,6 +532,8 @@ class StudioAgent:
             finally:
                 if not llm_task.done():
                     llm_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await llm_task
 
             last_provider = llm_resp.provider
             last_model = llm_resp.model
@@ -326,22 +557,25 @@ class StudioAgent:
                     "tool_calls": assistant_tc_dicts,
                 }
             )
-            self._store.add_chat_message(
-                project["id"],
-                role="assistant",
-                content=redacted_assistant_content,
-                tool_calls=assistant_tc_dicts,
-            )
+            if self._persist_memory:
+                self._store.add_chat_message(
+                    project["id"],
+                    role="assistant",
+                    content=redacted_assistant_content,
+                    tool_calls=assistant_tc_dicts,
+                )
 
+            # 1) Emitir tool_call en orden original y clasificar paralelizables
             for tc in llm_resp.tool_calls:
                 safe_args = self._redactor.redact_value(tc.arguments)
-                tc_record = {
-                    "id": tc.id,
-                    "name": tc.name,
-                    "arguments": safe_args,
-                    "iteration": iteration,
-                }
-                all_tool_calls.append(tc_record)
+                all_tool_calls.append(
+                    {
+                        "id": tc.id,
+                        "name": tc.name,
+                        "arguments": safe_args,
+                        "iteration": iteration,
+                    }
+                )
                 call_ev = await self._emit(
                     "tool_call",
                     {
@@ -354,6 +588,9 @@ class StudioAgent:
                 )
                 yield call_ev
 
+            results_by_call_id: dict[str, tuple[dict[str, Any], bool]] = {}
+
+            async def _execute_one(tc: Any) -> tuple[str, dict[str, Any], bool]:
                 is_error = False
                 try:
                     raw_res = await self._tool_belt.execute(
@@ -374,7 +611,34 @@ class StudioAgent:
                         "error": self._redactor.redact(f"Error ejecutando {tc.name}: {exc}"),
                         "tool": tc.name,
                     }
+                return tc.id, safe_res, is_error
 
+            # 2) Ejecutar: tools marcadas `parallel_safe` en paralelo (asyncio.gather);
+            #    el resto secuencialmente (mutan estado global: interrupt, ffmpeg, plan,
+            #    sub-agentes).
+            parallel_calls = []
+            sequential_calls = []
+            for tc in llm_resp.tool_calls:
+                spec = self._tool_belt.get(tc.name)
+                if spec is not None and spec.parallel_safe:
+                    parallel_calls.append(tc)
+                else:
+                    sequential_calls.append(tc)
+            if parallel_calls:
+                for call_id, safe_res, is_error in await asyncio.gather(
+                    *(_execute_one(tc) for tc in parallel_calls)
+                ):
+                    results_by_call_id[call_id] = (safe_res, is_error)
+            for tc in sequential_calls:
+                call_id, safe_res, is_error = await _execute_one(tc)
+                results_by_call_id[call_id] = (safe_res, is_error)
+
+            # 3) Emitir tool_result y persistir memoria en el orden original de llamadas
+            for tc in llm_resp.tool_calls:
+                safe_res, is_error = results_by_call_id.get(
+                    tc.id,
+                    ({"error": "La herramienta no produjo resultado.", "tool": tc.name}, True),
+                )
                 tr_record = {
                     "tool_call_id": tc.id,
                     "name": tc.name,
@@ -404,12 +668,15 @@ class StudioAgent:
                         "content": json.dumps(safe_res, ensure_ascii=False),
                     }
                 )
-                self._store.add_chat_message(
-                    project["id"],
-                    role="tool",
-                    content=json.dumps(safe_res, ensure_ascii=False),
-                    tool_calls=[{"tool_call_id": tc.id, "name": tc.name, "is_error": is_error}],
-                )
+                if self._persist_memory:
+                    self._store.add_chat_message(
+                        project["id"],
+                        role="tool",
+                        content=json.dumps(safe_res, ensure_ascii=False),
+                        tool_calls=[
+                            {"tool_call_id": tc.id, "name": tc.name, "is_error": is_error}
+                        ],
+                    )
         else:
             stop_reason = "max_iterations"
             if not final_reply:
@@ -418,12 +685,13 @@ class StudioAgent:
                     "ejecutando herramientas."
                 )
 
-        self._store.add_chat_message(
-            project["id"],
-            role="assistant",
-            content=self._redactor.redact(final_reply),
-            tool_calls=[],
-        )
+        if self._persist_memory:
+            self._store.add_chat_message(
+                project["id"],
+                role="assistant",
+                content=self._redactor.redact(final_reply),
+                tool_calls=[],
+            )
 
         done_ev = await self._emit(
             "done",

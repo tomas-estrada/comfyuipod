@@ -4,8 +4,8 @@
   "meta": {
     "default_entries": 77,
     "default_bytes": 146049867640,
-    "opt_in_entries": 1,
-    "opt_in_bytes": 18413068672,
+    "opt_in_entries": 2,
+    "opt_in_bytes": 25779011962,
     "phase2_sdxl_checkpoint": {
       "repo_id": "RunDiffusion/Juggernaut-XI-v11",
       "remote_path": "Juggernaut-XI-byRunDiffusion.safetensors",
@@ -72,6 +72,11 @@
         "entries": 1,
         "bytes": 18413068672,
         "license": "Apache-2.0"
+      },
+      "three_d_opt_in": {
+        "entries": 1,
+        "bytes": 7365943290,
+        "license": "Tencent Hunyuan Community License"
       }
     }
   },
@@ -1011,6 +1016,18 @@
       "dest_path": "models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors",
       "license": "Apache-2.0",
       "opt_in": "STUDIO_INCLUDE_ANIMATE"
+    },
+    {
+      "category": "three_d_opt_in",
+      "repo_id": "Comfy-Org/Hunyuan-3D-2.1",
+      "remote_path": "hunyuan_3d_v2.1.safetensors",
+      "url": "https://huggingface.co/Comfy-Org/Hunyuan-3D-2.1/resolve/main/hunyuan_3d_v2.1.safetensors",
+      "bytes": 7365943290,
+      "target_dir": "models/checkpoints",
+      "filename": "hunyuan_3d_v2.1.safetensors",
+      "dest_path": "models/checkpoints/hunyuan_3d_v2.1.safetensors",
+      "license": "Tencent Hunyuan Community License",
+      "opt_in": "STUDIO_INCLUDE_3D"
     }
   ]
 }

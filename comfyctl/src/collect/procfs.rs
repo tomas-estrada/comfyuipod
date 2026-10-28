@@ -406,7 +406,7 @@ pub fn collect_services_status(cfg: &RuntimeConfig) -> ServicesStatus {
         false
     };
 
-    let studio_enabled = cfg.model_profile == crate::config::ModelProfile::Studio;
+    let studio_enabled = cfg.model_profile.is_studio_family();
     let studio_running = if studio_enabled {
         check_tcp_port(cfg.studio_server_port, 200)
     } else {
@@ -488,6 +488,18 @@ pub fn build_masked_env(cfg: &RuntimeConfig) -> BTreeMap<String, String> {
     map.insert(
         "STUDIO_DATA_DIR".to_string(),
         redactor.redact(&cfg.studio_data_dir.display().to_string()),
+    );
+    map.insert(
+        "STUDIO_ENABLE_MCP".to_string(),
+        if cfg.studio_enable_mcp { "1" } else { "0" }.to_string(),
+    );
+    map.insert(
+        "STUDIO_API_TOKEN".to_string(),
+        if cfg.studio_api_token.is_some() {
+            "<definido>".to_string()
+        } else {
+            "<no definido>".to_string()
+        },
     );
     map
 }

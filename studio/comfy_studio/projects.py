@@ -26,6 +26,7 @@ ALLOWED_MEDIA_MIMES: dict[str, tuple[str, set[str]]] = {
     "image/png": ("image", {".png"}),
     "image/jpeg": ("image", {".jpg", ".jpeg"}),
     "image/webp": ("image", {".webp"}),
+    "image/gif": ("image", {".gif"}),
     # Audio
     "audio/wav": ("audio", {".wav", ".wave"}),
     "audio/x-wav": ("audio", {".wav", ".wave"}),
@@ -184,9 +185,28 @@ CREATE TABLE IF NOT EXISTS edl_versions (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS plans (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT '',
+    steps_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_meta (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_assets_project_id ON assets(project_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_project_id ON jobs(project_id);
 CREATE INDEX IF NOT EXISTS idx_chat_project_id ON chat_messages(project_id);
+CREATE INDEX IF NOT EXISTS idx_plans_project_id ON plans(project_id);
 """
 
 
@@ -443,6 +463,9 @@ class ProjectStore:
     ) -> dict[str, Any]:
         if self.get_project(project_id) is None:
             raise LookupError(f"Proyecto '{project_id}' no encontrado")
+        # `get_project` valida tras `strip()`; usar el id normalizado en INSERT/rutas evita
+        # violaciones de FK (500) con ids con espacios alrededor.
+        project_id = self._validate_project_id(project_id)
 
         if category not in PROJECT_SUBDIRS:
             raise MediaValidationError(
@@ -544,6 +567,38 @@ class ProjectStore:
                 (safe_aid, safe_pid),
             ).fetchone()
         return self._row_to_asset(row) if row is not None else None
+
+    def update_asset_metadata(
+        self,
+        project_id: str,
+        asset_id: str,
+        *,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Fusiona etiquetas y metadatos en el asset (M3 tool-belt `tag_asset`)."""
+        current = self.get_asset(project_id, asset_id)
+        if current is None:
+            return None
+        merged = dict(current.get("metadata") or {})
+        if metadata:
+            for key, value in metadata.items():
+                merged[str(key)] = value
+        if tags is not None:
+            cleaned = [str(t).strip() for t in tags if str(t).strip()]
+            existing = [str(t) for t in (merged.get("tags") or []) if str(t).strip()]
+            merged["tags"] = list(dict.fromkeys([*existing, *cleaned]))
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE assets SET metadata_json = ? WHERE id = ? AND project_id = ?",
+                (
+                    json.dumps(merged, ensure_ascii=False),
+                    current["id"],
+                    current["project_id"],
+                ),
+            )
+            conn.commit()
+        return self.get_asset(project_id, asset_id)
 
     def get_asset_path(self, project_id: str, asset_id: str) -> Path | None:
         asset = self.get_asset(project_id, asset_id)
@@ -661,6 +716,11 @@ class ProjectStore:
         current = self.get_job(job_id)
         if current is None:
             return None
+        # `cancelled` es terminal y "pegajoso": eventos tardíos del WS/poll de ComfyUI
+        # (progreso, done, error tras /interrupt) no deben resucitar ni sobrescribir
+        # un job que el usuario/agente ya canceló.
+        if current["status"] == "cancelled" and status != "cancelled":
+            return current
         new_status = status if status is not None else current["status"]
         new_prompt_id = prompt_id if prompt_id is not None else current["prompt_id"]
         new_val = progress_value if progress_value is not None else current["progress_value"]
@@ -840,4 +900,676 @@ class ProjectStore:
     def get_latest_edl(self, project_id: str) -> dict[str, Any] | None:
         versions = self.list_edl_versions(project_id)
         return versions[0] if versions else None
+
+    def get_edl_version(
+        self,
+        project_id: str,
+        edl_id_or_version: str | int | None = None,
+        *,
+        edl_id: str | None = None,
+        version: int | None = None,
+    ) -> dict[str, Any] | None:
+        pid = self._validate_project_id(project_id)
+        target = edl_id_or_version
+        if target is None:
+            if edl_id is not None:
+                target = edl_id
+            elif version is not None:
+                target = version
+            else:
+                return self.get_latest_edl(pid)
+        with self._connect() as conn:
+            if isinstance(target, int) or (
+                isinstance(target, str) and target.isdigit()
+            ):
+                row = conn.execute(
+                    "SELECT * FROM edl_versions WHERE project_id = ? AND version = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (pid, int(target)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM edl_versions WHERE project_id = ? AND id = ?",
+                    (pid, str(target).strip()),
+                ).fetchone()
+        return self._row_to_edl_version(row) if row is not None else None
+
+    def update_edl_output(
+        self,
+        project_id: str,
+        edl_id: str,
+        output_asset_id: str | None = None,
+        *,
+        edl_updates: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        current = self.get_edl_version(project_id, edl_id)
+        if current is None:
+            return None
+        edl_doc = dict(current["edl"])
+        if edl_updates:
+            edl_doc.update(edl_updates)
+        eff_output_id = (
+            output_asset_id if output_asset_id is not None else current["output_asset_id"]
+        )
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE edl_versions SET edl_json = ?, output_asset_id = ? "
+                "WHERE id = ? AND project_id = ?",
+                (
+                    json.dumps(edl_doc, ensure_ascii=False),
+                    eff_output_id,
+                    current["id"],
+                    current["project_id"],
+                ),
+            )
+            conn.commit()
+        return self.get_edl_version(project_id, current["id"])
+
+    # ------------------------------------------------------------------
+    # Transcriptions (ASR whisperx + diarization FunASR cam++)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_transcription(row: sqlite3.Row) -> dict[str, Any]:
+        raw = row["segments_json"] or "[]"
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = []
+
+        if isinstance(parsed, dict):
+            segments = list(parsed.get("segments") or [])
+            words = list(parsed.get("words") or [])
+            speakers = list(parsed.get("speakers") or [])
+            speaker_ranges = list(parsed.get("speaker_ranges") or [])
+            by_speaker = dict(parsed.get("by_speaker") or {})
+            diarized = bool(parsed.get("diarized", False))
+            backend = str(parsed.get("backend") or "whisperx")
+            diarization_backend = parsed.get("diarization_backend")
+            compute_config = dict(parsed.get("compute_config") or {})
+            full_text = str(parsed.get("text") or "").strip()
+        elif isinstance(parsed, list):
+            segments = parsed
+            words = []
+            for seg in segments:
+                if isinstance(seg, dict) and isinstance(seg.get("words"), list):
+                    words.extend(seg["words"])
+            speakers = sorted(
+                {
+                    str(seg.get("speaker"))
+                    for seg in segments
+                    if isinstance(seg, dict) and seg.get("speaker")
+                }
+            )
+            speaker_ranges = []
+            by_speaker = {}
+            diarized = bool(speakers)
+            backend = "whisperx"
+            diarization_backend = None
+            compute_config = {}
+            full_text = " ".join(
+                str(seg.get("text") or "").strip()
+                for seg in segments
+                if isinstance(seg, dict) and str(seg.get("text") or "").strip()
+            )
+        else:
+            segments = []
+            words = []
+            speakers = []
+            speaker_ranges = []
+            by_speaker = {}
+            diarized = False
+            backend = "whisperx"
+            diarization_backend = None
+            compute_config = {}
+            full_text = ""
+
+        if not full_text and segments:
+            full_text = " ".join(
+                str(seg.get("text") or "").strip()
+                for seg in segments
+                if isinstance(seg, dict) and str(seg.get("text") or "").strip()
+            )
+
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "asset_id": row["asset_id"],
+            "language": row["language"],
+            "text": full_text,
+            "segments": segments,
+            "words": words,
+            "speakers": speakers,
+            "speaker_ranges": speaker_ranges,
+            "by_speaker": by_speaker,
+            "diarized": diarized,
+            "backend": backend,
+            "diarization_backend": diarization_backend,
+            "compute_config": compute_config,
+            "created_at": row["created_at"],
+        }
+
+    def save_transcription(
+        self,
+        project_id: str,
+        *,
+        asset_id: str | None = None,
+        language: str = "es",
+        segments: list[dict[str, Any]],
+        words: list[dict[str, Any]] | None = None,
+        speakers: list[str] | None = None,
+        speaker_ranges: list[dict[str, Any]] | None = None,
+        by_speaker: dict[str, Any] | None = None,
+        diarized: bool = False,
+        backend: str = "whisperx",
+        diarization_backend: str | None = None,
+        compute_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        if project is None:
+            raise ValueError(f"Proyecto no encontrado: {project_id!r}")
+        pid = project["id"]
+        if asset_id is not None and self.get_asset(pid, asset_id) is None:
+            raise ValueError(f"Asset no encontrado en proyecto: {asset_id!r}")
+
+        tr_id = f"tr-{uuid.uuid4().hex[:12]}"
+        now = _utc_now_iso()
+        resolved_words = (
+            list(words)
+            if words is not None
+            else [
+                w
+                for seg in segments
+                if isinstance(seg, dict)
+                for w in (seg.get("words") or [])
+                if isinstance(w, dict)
+            ]
+        )
+        resolved_speakers = (
+            list(speakers)
+            if speakers is not None
+            else sorted(
+                {
+                    str(seg.get("speaker"))
+                    for seg in segments
+                    if isinstance(seg, dict) and seg.get("speaker")
+                }
+            )
+        )
+        full_text = " ".join(
+            str(seg.get("text") or "").strip()
+            for seg in segments
+            if isinstance(seg, dict) and str(seg.get("text") or "").strip()
+        )
+        envelope = {
+            "text": full_text,
+            "segments": segments,
+            "words": resolved_words,
+            "speakers": resolved_speakers,
+            "speaker_ranges": list(speaker_ranges or []),
+            "by_speaker": dict(by_speaker or {}),
+            "diarized": bool(diarized or resolved_speakers),
+            "backend": backend,
+            "diarization_backend": diarization_backend,
+            "compute_config": dict(compute_config or {}),
+        }
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO transcriptions "
+                "(id, project_id, asset_id, language, segments_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    tr_id,
+                    pid,
+                    asset_id,
+                    (language or "es").strip() or "es",
+                    json.dumps(envelope, ensure_ascii=False),
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM transcriptions WHERE id = ?",
+                (tr_id,),
+            ).fetchone()
+        assert row is not None
+        return self._row_to_transcription(row)
+
+    def get_transcription(
+        self,
+        project_id: str,
+        transcription_id: str,
+    ) -> dict[str, Any] | None:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM transcriptions WHERE id = ? AND project_id = ?",
+                (str(transcription_id).strip(), pid),
+            ).fetchone()
+        return self._row_to_transcription(row) if row is not None else None
+
+    def list_transcriptions(
+        self,
+        project_id: str,
+        *,
+        asset_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        pid = self._validate_project_id(project_id)
+        clauses = ["project_id = ?"]
+        params: list[Any] = [pid]
+        if asset_id:
+            clauses.append("asset_id = ?")
+            params.append(asset_id.strip())
+        where_sql = " AND ".join(clauses)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM transcriptions WHERE {where_sql} "
+                "ORDER BY created_at DESC, rowid DESC",
+                params,
+            ).fetchall()
+        return [self._row_to_transcription(r) for r in rows]
+
+    def get_latest_transcription(
+        self,
+        project_id: str,
+        *,
+        asset_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        items = self.list_transcriptions(project_id, asset_id=asset_id)
+        return items[0] if items else None
+
+    def update_transcription(
+        self,
+        project_id: str,
+        transcription_id: str,
+        *,
+        segments: list[dict[str, Any]],
+        words: list[dict[str, Any]] | None = None,
+        speakers: list[str] | None = None,
+        speaker_ranges: list[dict[str, Any]] | None = None,
+        by_speaker: dict[str, Any] | None = None,
+        diarized: bool = True,
+        diarization_backend: str | None = "funasr_campplus",
+        compute_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        current = self.get_transcription(project_id, transcription_id)
+        if current is None:
+            return None
+        resolved_words = (
+            list(words)
+            if words is not None
+            else [
+                w
+                for seg in segments
+                if isinstance(seg, dict)
+                for w in (seg.get("words") or [])
+                if isinstance(w, dict)
+            ]
+        )
+        resolved_speakers = (
+            list(speakers)
+            if speakers is not None
+            else sorted(
+                {
+                    str(seg.get("speaker"))
+                    for seg in segments
+                    if isinstance(seg, dict) and seg.get("speaker")
+                }
+            )
+        )
+        full_text = " ".join(
+            str(seg.get("text") or "").strip()
+            for seg in segments
+            if isinstance(seg, dict) and str(seg.get("text") or "").strip()
+        )
+        eff_compute_cfg = dict(current.get("compute_config") or {})
+        if compute_config:
+            eff_compute_cfg.update(compute_config)
+        diar_meta = (
+            eff_compute_cfg.get("diarization")
+            if isinstance(eff_compute_cfg.get("diarization"), dict)
+            else {}
+        )
+        eff_by_speaker = dict(
+            by_speaker or diar_meta.get("by_speaker") or current.get("by_speaker") or {}
+        )
+        eff_speaker_ranges = list(
+            speaker_ranges or diar_meta.get("turns") or current.get("speaker_ranges") or []
+        )
+        envelope = {
+            "text": full_text,
+            "segments": segments,
+            "words": resolved_words,
+            "speakers": resolved_speakers,
+            "speaker_ranges": eff_speaker_ranges,
+            "by_speaker": eff_by_speaker,
+            "diarized": diarized,
+            "backend": current.get("backend", "whisperx"),
+            "diarization_backend": diarization_backend,
+            "compute_config": eff_compute_cfg,
+        }
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE transcriptions SET segments_json = ? WHERE id = ? AND project_id = ?",
+                (
+                    json.dumps(envelope, ensure_ascii=False),
+                    current["id"],
+                    current["project_id"],
+                ),
+            )
+            conn.commit()
+        return self.get_transcription(project_id, current["id"])
+
+    # ------------------------------------------------------------------
+    # Identities (InsightFace buffalo_l face registry)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_identity(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            meta = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            meta = {}
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "name": row["name"],
+            "reference_asset_id": row["reference_asset_id"],
+            "metadata": meta,
+            "created_at": row["created_at"],
+        }
+
+    def save_identity(
+        self,
+        project_id: str,
+        *,
+        name: str,
+        reference_asset_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        identity_id: str | None = None,
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        if project is None:
+            raise ValueError(f"Proyecto no encontrado: {project_id!r}")
+        pid = project["id"]
+        cleaned_name = (name or "").strip()
+        if not cleaned_name:
+            raise ValueError("El nombre de la identidad no puede estar vacío")
+
+        if reference_asset_id is not None and self.get_asset(pid, reference_asset_id) is None:
+            raise ValueError(f"Asset de referencia no encontrado: {reference_asset_id!r}")
+
+        existing = None
+        if identity_id:
+            existing = self.get_identity(pid, identity_id)
+        if existing is None:
+            existing = self.get_identity_by_name(pid, cleaned_name)
+
+        now = _utc_now_iso()
+        if existing is not None:
+            iid = existing["id"]
+            new_ref = (
+                reference_asset_id
+                if reference_asset_id is not None
+                else existing["reference_asset_id"]
+            )
+            merged_meta = dict(existing.get("metadata") or {})
+            if metadata:
+                merged_meta.update(metadata)
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE identities SET name = ?, reference_asset_id = ?, metadata_json = ? "
+                    "WHERE id = ? AND project_id = ?",
+                    (
+                        cleaned_name,
+                        new_ref,
+                        json.dumps(merged_meta, ensure_ascii=False),
+                        iid,
+                        pid,
+                    ),
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM identities WHERE id = ?",
+                    (iid,),
+                ).fetchone()
+            assert row is not None
+            return self._row_to_identity(row)
+
+        iid = (
+            self._validate_project_id(identity_id)
+            if identity_id
+            else f"id-{uuid.uuid4().hex[:12]}"
+        )
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO identities "
+                "(id, project_id, name, reference_asset_id, metadata_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    iid,
+                    pid,
+                    cleaned_name,
+                    reference_asset_id,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM identities WHERE id = ?",
+                (iid,),
+            ).fetchone()
+        assert row is not None
+        return self._row_to_identity(row)
+
+    def rename_identity(
+        self,
+        project_id: str,
+        identity_id: str,
+        name: str = "",
+    ) -> dict[str, Any] | None:
+        cleaned_name = (name or "").strip()
+        if not cleaned_name:
+            raise ValueError("El nombre de la identidad no puede estar vacío")
+        current = self.get_identity(project_id, identity_id)
+        if current is None:
+            return None
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE identities SET name = ? WHERE id = ? AND project_id = ?",
+                (cleaned_name, current["id"], current["project_id"]),
+            )
+            conn.commit()
+        return self.get_identity(project_id, current["id"])
+
+    def get_identity(self, project_id: str, identity_id: str) -> dict[str, Any] | None:
+        try:
+            pid = self._validate_project_id(project_id)
+            iid = self._validate_project_id(identity_id)
+        except ValueError:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM identities WHERE id = ? AND project_id = ?",
+                (iid, pid),
+            ).fetchone()
+        return self._row_to_identity(row) if row is not None else None
+
+    def get_identity_by_name(self, project_id: str, name: str) -> dict[str, Any] | None:
+        pid = self._validate_project_id(project_id)
+        target = (name or "").strip().lower()
+        if not target:
+            return None
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM identities WHERE project_id = ? ORDER BY created_at ASC",
+                (pid,),
+            ).fetchall()
+        for r in rows:
+            if str(r["name"] or "").strip().lower() == target:
+                return self._row_to_identity(r)
+        return None
+
+    def list_identities(self, project_id: str) -> list[dict[str, Any]]:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM identities WHERE project_id = ? ORDER BY created_at ASC, id ASC",
+                (pid,),
+            ).fetchall()
+        return [self._row_to_identity(r) for r in rows]
+
+    def delete_identity(self, project_id: str, identity_id: str) -> bool:
+        current = self.get_identity(project_id, identity_id)
+        if current is None:
+            return False
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM identities WHERE id = ? AND project_id = ?",
+                (current["id"], current["project_id"]),
+            )
+            conn.commit()
+        return True
+
+    # ------------------------------------------------------------------
+    # Plans (planner del agente, M3-B) y project_meta (resúmenes de memoria)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_plan(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            steps = json.loads(row["steps_json"] or "[]")
+        except json.JSONDecodeError:
+            steps = []
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "title": row["title"],
+            "steps": steps if isinstance(steps, list) else [],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def save_plan(
+        self,
+        project_id: str,
+        *,
+        title: str = "",
+        steps: list[dict[str, Any]] | None = None,
+        status: str = "active",
+        plan_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Crea o actualiza (upsert por `plan_id`) un plan del proyecto."""
+        if self.get_project(project_id) is None:
+            raise LookupError(f"Proyecto '{project_id}' no encontrado")
+        pid = self._validate_project_id(project_id)
+        cleaned_steps = [
+            {
+                "text": str(step.get("text") or "").strip(),
+                "status": str(step.get("status") or "pending").strip() or "pending",
+            }
+            for step in (steps or [])
+            if isinstance(step, dict)
+        ]
+        now = _utc_now_iso()
+        target_id = str(plan_id).strip() if plan_id else f"plan-{uuid.uuid4().hex[:12]}"
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT id FROM plans WHERE id = ? AND project_id = ?",
+                (target_id, pid),
+            ).fetchone()
+            if existing is not None:
+                conn.execute(
+                    "UPDATE plans SET title = ?, steps_json = ?, status = ?, updated_at = ? "
+                    "WHERE id = ? AND project_id = ?",
+                    (
+                        (title or "").strip(),
+                        json.dumps(cleaned_steps, ensure_ascii=False),
+                        status,
+                        now,
+                        target_id,
+                        pid,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO plans "
+                    "(id, project_id, title, steps_json, status, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        target_id,
+                        pid,
+                        (title or "").strip(),
+                        json.dumps(cleaned_steps, ensure_ascii=False),
+                        status,
+                        now,
+                        now,
+                    ),
+                )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM plans WHERE id = ? AND project_id = ?",
+                (target_id, pid),
+            ).fetchone()
+        return self._row_to_plan(row)
+
+    def get_plan(self, project_id: str, plan_id: str) -> dict[str, Any] | None:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM plans WHERE id = ? AND project_id = ?",
+                (str(plan_id).strip(), pid),
+            ).fetchone()
+        return self._row_to_plan(row) if row is not None else None
+
+    def get_active_plan(self, project_id: str) -> dict[str, Any] | None:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM plans WHERE project_id = ? AND status = 'active' "
+                "ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+                (pid,),
+            ).fetchone()
+        return self._row_to_plan(row) if row is not None else None
+
+    def list_plans(self, project_id: str) -> list[dict[str, Any]]:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM plans WHERE project_id = ? ORDER BY updated_at DESC, rowid DESC",
+                (pid,),
+            ).fetchall()
+        return [self._row_to_plan(r) for r in rows]
+
+    def set_meta(self, project_id: str, key: str, value: Any) -> None:
+        """Guarda un valor JSON asociado a una clave del proyecto (upsert)."""
+        pid = self._validate_project_id(project_id)
+        clean_key = str(key).strip()
+        if not clean_key:
+            raise ValueError("La clave de metadato no puede estar vacía")
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO project_meta (project_id, key, value_json, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(project_id, key) DO UPDATE SET "
+                "value_json = excluded.value_json, updated_at = excluded.updated_at",
+                (pid, clean_key, json.dumps(value, ensure_ascii=False), _utc_now_iso()),
+            )
+            conn.commit()
+
+    def get_meta(self, project_id: str, key: str, default: Any = None) -> Any:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value_json FROM project_meta WHERE project_id = ? AND key = ?",
+                (pid, str(key).strip()),
+            ).fetchone()
+        if row is None:
+            return default
+        try:
+            return json.loads(row["value_json"] or "null")
+        except json.JSONDecodeError:
+            return default
 

@@ -418,6 +418,60 @@ def test_upload_exact_limit_with_multipart_envelope_overhead_succeeds_and_above_
     assert rollover_calls == 0
 
 
+def test_upload_multiple_parts_each_under_limit_succeeds_despite_combined_size(
+    tmp_path: Path,
+    stub_comfyui_transport: httpx.ASGITransport,
+) -> None:
+    """Regresión: el límite es POR archivo; varias partes bajo el límite cuyo sumatorio
+    lo supera no deben rechazarse con 413 (el sobre multipart sigue acotando el stream)."""
+    small_limit = 16 * 1024  # 16 KiB
+    data_dir = tmp_path / "studio_multi_part"
+    cfg = StudioConfig(
+        model_profile="studio",
+        studio_llm_key="YOUR_STUDIO_API_KEY_HERE",
+        studio_llm_fallback_key="YOUR_STUDIO_FALLBACK_KEY_HERE",
+        studio_comfyui_url="http://stub-comfyui.local:39172",
+        studio_data_dir=data_dir,
+        studio_stub_llm=True,
+        comfy_user="admin",
+        comfy_pass="changeme-test-pass-42",
+        require_auth=True,
+        max_upload_bytes=small_limit,
+    )
+    custom_app = create_app(config=cfg, comfyui_transport=stub_comfyui_transport)
+    custom_client = TestClient(custom_app)
+    custom_client.auth = ("admin", "changeme-test-pass-42")
+
+    proj = custom_client.post(
+        "/studio/api/projects",
+        json={"name": "Proyecto Multi Parte"},
+    ).json()
+    project_id = proj["id"]
+
+    mp4_header = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+    png_header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    part_a = mp4_header + b"A" * (10 * 1024 - len(mp4_header))  # 10 KiB < límite
+    part_b = png_header + b"B" * (10 * 1024 - len(png_header))  # 10 KiB < límite
+    assert len(part_a) == len(part_b) == 10 * 1024
+    assert len(part_a) + len(part_b) > small_limit  # sumatorio supera el límite
+
+    resp = custom_client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files=[
+            ("file", ("primary.mp4", part_a, "video/mp4")),
+            ("extra", ("secondary.png", part_b, "image/png")),
+        ],
+    )
+    assert resp.status_code == 201, (
+        f"Cada archivo está bajo el límite; el sumatorio no debe provocar 413. "
+        f"Recibido {resp.status_code}: {resp.text}"
+    )
+    asset = resp.json()
+    assert asset["size_bytes"] == len(part_a)
+    saved_path = (data_dir / asset["rel_path"]).resolve()
+    assert saved_path.read_bytes() == part_a
+
+
 def test_upload_rejects_chunked_stream_exceeding_limit_without_unbounded_spool_or_400(
     app,
     client: TestClient,

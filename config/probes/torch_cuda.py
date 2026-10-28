@@ -20,11 +20,12 @@ def main() -> None:
             torch.cuda.synchronize()
             dt_ms = (time.perf_counter() - t0) * 1000.0
             print(
-                f"OK|torch={ver} cuda={cu} cuda.is_available=True device='{dev}' matmul_1024x1024={dt_ms:.2f}ms"
+                f"OK|torch={ver} cuda={cu} cuda.is_available=True "
+                f"device='{dev}' matmul_1024x1024={dt_ms:.2f}ms"
             )
         else:
             print(f"WARN|torch={ver} cuda={cu} cuda.is_available=False (ejecutando en modo CPU)")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"FAIL|Error importando o probando torch: {exc}")
 
 

@@ -22,6 +22,7 @@ DEFAULT_STUDIO_SERVER_HOST = "127.0.0.1"
 DEFAULT_STUDIO_SERVER_PORT = 18190
 DEFAULT_MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 512 MiB
 DEFAULT_SSE_HEARTBEAT_SECONDS = 15.0
+DEFAULT_STUDIO_RESUME_DELAY_S = 30.0
 
 _HF_TOKEN_RE = re.compile(r"hf_[A-Za-z0-9]{12,}")
 _SK_TOKEN_RE = re.compile(r"sk-[A-Za-z0-9._\-]{8,}")
@@ -112,6 +113,14 @@ class SecretRedactor:
             studio_llm_fallback_key=source.get("STUDIO_LLM_FALLBACK_KEY"),
             comfy_pass=source.get("COMFY_PASS") or source.get("STUDIO_AUTH_PASS"),
             hf_token=source.get("HF_TOKEN"),
+            extra_secrets=[
+                s
+                for s in (
+                    source.get("STUDIO_WEBHOOK_SECRET"),
+                    source.get("STUDIO_API_TOKEN"),
+                )
+                if s
+            ],
         )
 
     @classmethod
@@ -120,6 +129,9 @@ class SecretRedactor:
             studio_llm_key=config.get_llm_key(),
             studio_llm_fallback_key=config.get_llm_fallback_key(),
             comfy_pass=config.get_comfy_pass(),
+            extra_secrets=[
+                s for s in (config.get_webhook_secret(), config.get_api_token()) if s
+            ],
         )
 
     @property
@@ -322,6 +334,12 @@ class StudioConfig:
     require_auth: bool = False
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
     sse_heartbeat_seconds: float = DEFAULT_SSE_HEARTBEAT_SECONDS
+    studio_webhook_url: str | None = None
+    studio_webhook_secret: str | None = field(default=None, repr=False)
+    studio_resume_jobs: bool = True
+    studio_resume_delay_s: float = DEFAULT_STUDIO_RESUME_DELAY_S
+    studio_api_token: str | None = field(default=None, repr=False)
+    studio_enable_mcp: bool = True
 
     def __post_init__(self) -> None:
         if isinstance(self.studio_data_dir, str):
@@ -335,6 +353,15 @@ class StudioConfig:
         if self.comfy_pass is not None:
             cleaned_pass = self.comfy_pass.strip()
             self.comfy_pass = cleaned_pass if cleaned_pass else None
+        if self.studio_webhook_url is not None:
+            cleaned_wh_url = self.studio_webhook_url.strip()
+            self.studio_webhook_url = cleaned_wh_url if cleaned_wh_url else None
+        if self.studio_webhook_secret is not None:
+            cleaned_wh_secret = self.studio_webhook_secret.strip()
+            self.studio_webhook_secret = cleaned_wh_secret if cleaned_wh_secret else None
+        if self.studio_api_token is not None:
+            cleaned_token = self.studio_api_token.strip()
+            self.studio_api_token = cleaned_token if cleaned_token else None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> StudioConfig:
@@ -357,6 +384,14 @@ class StudioConfig:
             heartbeat_s = float(raw_hb) if raw_hb else DEFAULT_SSE_HEARTBEAT_SECONDS
         except ValueError:
             heartbeat_s = DEFAULT_SSE_HEARTBEAT_SECONDS
+
+        raw_resume_delay = source.get("STUDIO_RESUME_DELAY_S", "").strip()
+        try:
+            resume_delay_s = (
+                float(raw_resume_delay) if raw_resume_delay else DEFAULT_STUDIO_RESUME_DELAY_S
+            )
+        except ValueError:
+            resume_delay_s = DEFAULT_STUDIO_RESUME_DELAY_S
 
         comfy_pass = (
             source.get("COMFY_PASS", "").strip()
@@ -410,6 +445,12 @@ class StudioConfig:
             require_auth=require_auth,
             max_upload_bytes=max_upload,
             sse_heartbeat_seconds=heartbeat_s,
+            studio_webhook_url=source.get("STUDIO_WEBHOOK_URL", "").strip() or None,
+            studio_webhook_secret=source.get("STUDIO_WEBHOOK_SECRET", "").strip() or None,
+            studio_resume_jobs=_parse_bool(source.get("STUDIO_RESUME_JOBS"), default=True),
+            studio_resume_delay_s=resume_delay_s,
+            studio_api_token=source.get("STUDIO_API_TOKEN", "").strip() or None,
+            studio_enable_mcp=_parse_bool(source.get("STUDIO_ENABLE_MCP"), default=True),
         )
 
     def get_llm_key(self) -> str | None:
@@ -420,6 +461,12 @@ class StudioConfig:
 
     def get_comfy_pass(self) -> str | None:
         return self.comfy_pass
+
+    def get_webhook_secret(self) -> str | None:
+        return self.studio_webhook_secret
+
+    def get_api_token(self) -> str | None:
+        return self.studio_api_token
 
     def masked_llm_key_status(self) -> str:
         return "<definida>" if self.studio_llm_key else "<no definida>"
@@ -449,4 +496,12 @@ class StudioConfig:
             "STUDIO_INCLUDE_ANIMATE": "1" if self.studio_include_animate else "0",
             "COMFY_USER": self.comfy_user,
             "COMFY_PASS": self.masked_comfy_pass_status(),
+            "STUDIO_WEBHOOK_URL": "<definida>" if self.studio_webhook_url else "<no definida>",
+            "STUDIO_WEBHOOK_SECRET": (
+                "<definida>" if self.studio_webhook_secret else "<no definida>"
+            ),
+            "STUDIO_RESUME_JOBS": "1" if self.studio_resume_jobs else "0",
+            "STUDIO_RESUME_DELAY_S": str(self.studio_resume_delay_s),
+            "STUDIO_API_TOKEN": "<definido>" if self.studio_api_token else "<no definido>",
+            "STUDIO_ENABLE_MCP": "1" if self.studio_enable_mcp else "0",
         }

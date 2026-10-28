@@ -30,7 +30,7 @@ pub struct StrictReport {
     pub checks: Vec<StrictCheckItem>,
 }
 
-/// Datos del sistema sondeados para evaluar S1..S10 (+ S11 en perfil `studio`, inyectables en tests).
+/// Datos del sistema sondeados para evaluar S1..S10 (+ S11/S12 en perfil `studio`, inyectables en tests).
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct SystemSnapshot {
@@ -53,6 +53,8 @@ pub struct SystemSnapshot {
     pub cuda_torch_detail: String,
     pub studio_health_ok: bool,
     pub studio_health_detail: String,
+    pub mcp_health_ok: bool,
+    pub mcp_health_detail: String,
 }
 
 impl SystemSnapshot {
@@ -77,6 +79,7 @@ impl SystemSnapshot {
         let (comfy_install_ok, comfy_install_detail) = probe_comfy_install(&cfg.comfy_app_dir);
         let (cuda_torch_ok, cuda_torch_detail) = probe_cuda_torch(cfg.strict_require_gpu);
         let (studio_health_ok, studio_health_detail) = probe_studio_health(cfg);
+        let (mcp_health_ok, mcp_health_detail) = probe_mcp_health(cfg);
 
         Self {
             gpu_query_ok,
@@ -98,6 +101,8 @@ impl SystemSnapshot {
             cuda_torch_detail,
             studio_health_ok,
             studio_health_detail,
+            mcp_health_ok,
+            mcp_health_detail,
         }
     }
 }
@@ -426,7 +431,7 @@ fn http_probe_once(port: u16, path: &str) -> Result<u16, String> {
 
 /// Comprueba la salud de `studio-server` en `127.0.0.1:{studio_server_port}` (`/studio/api/health`).
 pub fn probe_studio_health(cfg: &RuntimeConfig) -> (bool, String) {
-    if cfg.model_profile != ModelProfile::Studio {
+    if !cfg.model_profile.is_studio_family() {
         return (true, "Omitido fuera del perfil studio".to_string());
     }
     let retries = std::env::var("STUDIO_HEALTH_RETRIES")
@@ -468,6 +473,44 @@ pub fn probe_studio_health(cfg: &RuntimeConfig) -> (bool, String) {
     (false, last_err)
 }
 
+/// Comprueba la salud del endpoint MCP (`/studio/api/mcp/health`) en el `studio-server`
+/// (M3-C, S12). No fatal: MCP vive dentro del mismo proceso que S11; un fallo aquí
+/// indica router ausente o `STUDIO_ENABLE_MCP` inconsistente, no host inviable.
+pub fn probe_mcp_health(cfg: &RuntimeConfig) -> (bool, String) {
+    if !cfg.model_profile.is_studio_family() {
+        return (true, "Omitido fuera del perfil studio".to_string());
+    }
+    if !cfg.studio_enable_mcp {
+        return (true, "MCP deshabilitado (STUDIO_ENABLE_MCP=0)".to_string());
+    }
+    let retries = std::env::var("STUDIO_MCP_HEALTH_RETRIES")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(5)
+        .max(1);
+    let port = cfg.studio_server_port;
+    let mut last_err = format!("MCP no accesible en 127.0.0.1:{port}/studio/api/mcp/health");
+    for attempt in 0..retries {
+        match http_probe_once(port, "/studio/api/mcp/health") {
+            Ok(200) => {
+                let msg =
+                    format!("MCP healthy en 127.0.0.1:{port}/studio/api/mcp/health (HTTP 200)");
+                return (true, msg);
+            }
+            Ok(code) => {
+                last_err = format!("HTTP {code} en 127.0.0.1:{port}/studio/api/mcp/health");
+            }
+            Err(e) => {
+                last_err = e;
+            }
+        }
+        if attempt + 1 < retries {
+            thread::sleep(Duration::from_millis(150));
+        }
+    }
+    (false, last_err)
+}
+
 fn parse_driver_major(driver: &str) -> u32 {
     driver
         .split('.')
@@ -478,10 +521,10 @@ fn parse_driver_major(driver: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// Evalúa las comprobaciones S1..S10 (+ S11 en perfil `studio`) sobre un `SystemSnapshot` (§6.2, `R-02`, `R-03`, `R-06`).
+/// Evalúa las comprobaciones S1..S10 (+ S11/S12 en perfil `studio`) sobre un `SystemSnapshot` (§6.2, `R-02`, `R-03`, `R-06`).
 #[allow(clippy::too_many_lines)]
 pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> StrictReport {
-    let mut checks = Vec::with_capacity(11);
+    let mut checks = Vec::with_capacity(12);
 
     let status_for = |passed: bool, is_fatal_when_strict: bool| -> &'static str {
         if passed {
@@ -670,10 +713,10 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
     // S5: Espacio libre en disco >= STRICT_MIN_DISK_GB (180 / 75 / 45 / 10 GB o 5 GB con SKIP_MODEL_DOWNLOAD=1)
     #[allow(clippy::cast_precision_loss)]
     let s5_ok = snap.disk_free_gb >= (cfg.strict_min_disk_gb as f64);
-    let rec_disk_flag = if cfg.model_profile == ModelProfile::Studio {
-        "--disk 220"
-    } else {
-        "--disk 120"
+    let rec_disk_flag = match cfg.model_profile {
+        ModelProfile::Studio => "--disk 220",
+        ModelProfile::Unreal => "--disk 250",
+        _ => "--disk 120",
     };
     checks.push(StrictCheckItem {
         id: "S5".to_string(),
@@ -824,8 +867,8 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
         });
     }
 
-    // S11: Comprobación de salud del servidor de estudio (solo con MODEL_PROFILE=studio)
-    if cfg.model_profile == ModelProfile::Studio {
+    // S11: Comprobación de salud del servidor de estudio (solo con MODEL_PROFILE=studio/unreal)
+    if cfg.model_profile.is_studio_family() {
         let s11_ok = snap.studio_health_ok;
         checks.push(StrictCheckItem {
             id: "S11".to_string(),
@@ -846,6 +889,24 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
                     "El servidor del estudio (studio-server en 127.0.0.1:{}) no respondió a la comprobación de salud. Revisa /var/log/studio-server.log y las variables STUDIO_*.",
                     cfg.studio_server_port
                 ))
+            },
+        });
+
+        // S12: Endpoint MCP dentro del studio-server (M3-C). Warn, no fatal:
+        // un MCP caído no invalida el host (S11 ya cubre la vida del proceso).
+        let s12_ok = snap.mcp_health_ok;
+        checks.push(StrictCheckItem {
+            id: "S12".to_string(),
+            name: "mcp_health".to_string(),
+            status: status_for(s12_ok, false).to_string(),
+            detail: snap.mcp_health_detail.clone(),
+            remediation: if s12_ok {
+                None
+            } else {
+                Some(
+                    "El endpoint MCP (/studio/api/mcp/health) no respondió. Verifica STUDIO_ENABLE_MCP y la versión del studio-server; los agentes externos no podrán dirigir el pod hasta que se restablezca."
+                        .to_string(),
+                )
             },
         });
     }

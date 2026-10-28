@@ -60,6 +60,18 @@ impl SecretRedactor {
         }
     }
 
+    /// Añade literales secretos adicionales (p. ej. `STUDIO_API_TOKEN`, `STUDIO_WEBHOOK_SECRET`).
+    #[must_use]
+    pub fn with_extra_literals(mut self, extra: impl IntoIterator<Item = Option<String>>) -> Self {
+        for candidate in extra.into_iter().flatten() {
+            let trimmed = candidate.trim();
+            if trimmed.len() >= 2 && !self.literals.iter().any(|s| s == trimmed) {
+                self.literals.push(trimmed.to_string());
+            }
+        }
+        self
+    }
+
     pub fn from_config(cfg: &RuntimeConfig) -> Self {
         Self::new_with_studio_keys(
             cfg.comfy_pass.as_deref(),
@@ -67,6 +79,13 @@ impl SecretRedactor {
             cfg.studio_llm_key.as_deref(),
             cfg.studio_llm_fallback_key.as_deref(),
         )
+        // M3-SCR-005: el conjunto de literales también cubre VAST_API_KEY,
+        // STUDIO_API_TOKEN y STUDIO_WEBHOOK_SECRET (valores nunca logueados).
+        .with_extra_literals([
+            cfg.vast_api_key.clone(),
+            cfg.studio_api_token.clone(),
+            cfg.studio_webhook_secret.clone(),
+        ])
     }
 
     pub fn redact(&self, text: &str) -> String {

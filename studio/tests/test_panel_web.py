@@ -1429,4 +1429,25 @@ def test_panel_chat_after_deleting_only_project_recovers_and_never_posts_to_dele
     assert "toast-success" in after_chat["toastClass"]
 
 
+def test_panel_render_template_doc_uses_api_template_schema(
+    client: TestClient,
+) -> None:
+    """renderTemplateDoc lee las claves reales de GET /studio/api/templates."""
+    resp = client.get("/studio/api/templates")
+    assert resp.status_code == 200
+    templates = resp.json()["templates"]
+    assert len(templates) >= 1
+    first_tpl = templates[0]
+    assert "name" in first_tpl
+    assert "docs" in first_tpl
+    assert "uso" in first_tpl["docs"]
+    assert "defaults" in first_tpl["docs"]
+
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+    fn_start = app_js.index("function renderTemplateDoc()")
+    fn_end = app_js.index("async function refreshJobs()", fn_start)
+    fn_body = app_js[fn_start:fn_end]
+    assert "tpl.docs" in fn_body
+    assert "tpl.name" in fn_body
+    assert "tpl.performance_defaults" in fn_body
 

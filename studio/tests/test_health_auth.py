@@ -103,6 +103,69 @@ def test_edge_auth_rejects_invalid_credentials_with_401(app) -> None:
     assert resp4.status_code == 401
 
 
+def test_edge_auth_no_lockout_when_require_auth_true_but_no_password(
+    studio_data_dir,
+    stub_comfyui_transport,
+    monkeypatch,
+) -> None:
+    """Regresión: require_auth=True sin contraseña configurada no debe bloquear todas
+    las peticiones con 401 (lockout total); sin credencial exigible se omite la auth."""
+    for var in ("COMFY_PASS", "STUDIO_AUTH_PASS", "COMFY_USER", "STUDIO_AUTH_USER"):
+        monkeypatch.delenv(var, raising=False)
+
+    cfg = StudioConfig(
+        studio_data_dir=studio_data_dir,
+        studio_comfyui_url="http://stub-comfyui.local:39172",
+        studio_stub_llm=True,
+        comfy_user="admin",
+        comfy_pass=None,
+        require_auth=True,
+    )
+    app = create_app(config=cfg, comfyui_transport=stub_comfyui_transport)
+    with TestClient(app) as c:
+        resp = c.get("/studio/api/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        # M3-SEC-002: el fail-open sin contraseña exigible debe ser VISIBLE
+        assert resp.json()["edge_auth"] == "open"
+
+        resp_edge = c.get(
+            "/studio/api/health",
+            headers={"X-Studio-Simulate-Edge": "1"},
+        )
+        assert resp_edge.status_code == 200
+
+        resp_projects = c.get("/studio/api/projects")
+        assert resp_projects.status_code == 200
+
+
+def test_health_reports_edge_auth_basic_when_password_enforced(
+    client: TestClient,
+) -> None:
+    """M3-SEC-002: con COMFY_PASS exigible, health reporta edge_auth=basic."""
+    resp = client.get("/studio/api/health")
+    assert resp.status_code == 200
+    assert resp.json()["edge_auth"] == "basic"
+
+
+def test_json_responses_redacted_centralally_at_edge(client: TestClient) -> None:
+    """M3-SCR-008: toda respuesta JSON de /studio pasa por SecretRedactor,
+    incluidos dicts crudos persistidos con secretos incrustados."""
+    secret = "changeme-test-pass-42"
+    proj = client.post(
+        "/studio/api/projects",
+        json={"name": "Proyecto Fuga", "description": f"pass visible: {secret}"},
+    ).json()
+    assert secret not in str(proj)
+
+    listed = client.get("/studio/api/projects").json()
+    assert secret not in str(listed)
+    assert "[REDACTED]" in str(listed)
+
+    detail = client.get(f"/studio/api/projects/{proj['id']}").json()
+    assert secret not in str(detail)
+
+
 def test_edge_auth_allows_loopback_when_no_comfy_pass_configured(
     studio_data_dir,
     stub_comfyui_transport,

@@ -3,7 +3,7 @@
 //! `O-04` (`LOG_MAX_MB`), `O-05` (`env_remove("COMFY_PASS")`), escribe `/run/comfyui-supervisor.json`
 //! de forma atómica y propaga `SIGTERM`/`SIGINT` limpiamente (`ExitCode=0`).
 
-use crate::config::{ModelProfile, RuntimeConfig};
+use crate::config::RuntimeConfig;
 use crate::strict::{evaluate_strict_checks, write_and_print_strict_report, SystemSnapshot};
 use crate::sys;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastExitInfo {
@@ -167,6 +167,18 @@ pub fn truncate_logs_if_needed(log_max_mb: u64) {
     }
 }
 
+/// Intervalo mínimo entre truncados periódicos de logs (`O-04`, `M3-SCR-001`).
+const LOG_TRUNCATE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Trunca los logs si han pasado al menos `LOG_TRUNCATE_INTERVAL` desde el último chequeo.
+/// El `Instant` monotónico hace que la comprobación sea barata en cada tick del bucle.
+fn truncate_logs_periodic(log_max_mb: u64, last_truncate: &mut Instant) {
+    if last_truncate.elapsed() >= LOG_TRUNCATE_INTERVAL {
+        truncate_logs_if_needed(log_max_mb);
+        *last_truncate = Instant::now();
+    }
+}
+
 fn dump_crash_diagnostics(attempt: u32, rc: i32, run_duration_s: u64, reason: &str) {
     let ts = sys::format_utc_log_ts(sys::now_unix_secs());
     let mut dump = String::new();
@@ -305,9 +317,9 @@ fn graceful_shutdown_nginx() {
 }
 
 /// Indica si el supervisor debe levantar `studio-server` (`127.0.0.1:18190`),
-/// lo cual ocurre única y exclusivamente con `MODEL_PROFILE=studio`.
+/// lo cual ocurre con los perfiles de la familia studio (`studio`/`unreal`).
 pub const fn should_start_studio_server(cfg: &RuntimeConfig) -> bool {
-    matches!(cfg.model_profile, ModelProfile::Studio)
+    cfg.model_profile.is_studio_family()
 }
 
 /// Construye el `Command` para ejecutar `studio-server` en `127.0.0.1:{studio_server_port}`,
@@ -370,7 +382,8 @@ pub fn build_studio_server_command(cfg: &RuntimeConfig) -> Command {
     cmd
 }
 
-/// Inicia `studio-server` (`127.0.0.1:18190`) solo si `cfg.model_profile == ModelProfile::Studio`.
+/// Inicia `studio-server` (`127.0.0.1:18190`) solo si el perfil es de la familia studio
+/// (`MODEL_PROFILE=studio` o `unreal`).
 /// Si el perfil no es `studio`, devuelve `None` sin efectos secundarios.
 /// Es fail-closed: si el proceso termina prematuramente durante el arranque (p. ej. `ImportError`
 /// o módulo ausente), registra el fallo y devuelve `None`.
@@ -506,8 +519,10 @@ pub fn run_supervision_loop(
     sup_state: &mut SupervisorState,
     studio_child: &mut Option<Child>,
 ) -> Result<(), String> {
+    let mut last_log_truncate = Instant::now();
+    truncate_logs_if_needed(cfg.log_max_mb);
     while !sys::is_shutdown_requested() {
-        truncate_logs_if_needed(cfg.log_max_mb);
+        truncate_logs_periodic(cfg.log_max_mb, &mut last_log_truncate);
         supervise_studio_server_tick(cfg, studio_child);
 
         let started_at = sys::now_unix_secs();
@@ -562,7 +577,14 @@ pub fn run_supervision_loop(
         let child_pid = child.id();
 
         sup_state.on_child_spawned(child_pid, started_at);
-        write_supervisor_json(&cfg.supervisor_json_path, sup_state)?;
+        // M3-SCR-002: un fallo al escribir /run/comfyui-supervisor.json (p. ej. /run con
+        // problemas transitorios) no debe abortar la supervisión ni huérfanar al hijo vivo.
+        if let Err(e) = write_supervisor_json(&cfg.supervisor_json_path, sup_state) {
+            log_sup(&format!(
+                "WARN: no se pudo escribir {}: {e}. Continuando supervisión de ComfyUI (PID {child_pid}).",
+                cfg.supervisor_json_path.display()
+            ));
+        }
 
         let exit_code: i32;
         loop {
@@ -585,6 +607,7 @@ pub fn run_supervision_loop(
             }
 
             supervise_studio_server_tick(cfg, studio_child);
+            truncate_logs_periodic(cfg.log_max_mb, &mut last_log_truncate);
 
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -625,7 +648,13 @@ pub fn run_supervision_loop(
             .map_or_else(String::new, |le| le.reason.clone());
         dump_crash_diagnostics(sup_state.attempt, exit_code, run_duration_s, &reason);
 
-        write_supervisor_json(&cfg.supervisor_json_path, sup_state)?;
+        // M3-SCR-002: mismo criterio que tras el spawn — avisar y seguir supervisando.
+        if let Err(e) = write_supervisor_json(&cfg.supervisor_json_path, sup_state) {
+            log_sup(&format!(
+                "WARN: no se pudo escribir {}: {e}. Continuando supervisión.",
+                cfg.supervisor_json_path.display()
+            ));
+        }
 
         if !should_restart {
             log_sup(&format!(
@@ -634,6 +663,7 @@ pub fn run_supervision_loop(
             ));
             while !sys::is_shutdown_requested() {
                 supervise_studio_server_tick(cfg, studio_child);
+                truncate_logs_periodic(cfg.log_max_mb, &mut last_log_truncate);
                 thread::sleep(Duration::from_millis(200));
             }
             break;

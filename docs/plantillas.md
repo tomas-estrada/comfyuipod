@@ -117,6 +117,22 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
+### 2.7 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
+
+- **Archivo**: [`studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json`](../studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json)
+- **Uso**: Convertir cualquier imagen del proyecto (render `sdxl_image`, keyframe de vídeo o foto subida) en una malla 3D texturizable en formato `GLB`, lista para Blender/Unreal. Pipeline 100% nativo de comfy-core (`ImageOnlyCheckpointLoader` + `ModelSamplingAuraFlow` + `CLIPVisionEncode` + `Hunyuan3Dv2Conditioning` + `KSampler` + `VAEDecodeHunyuan3D` + `VoxelToMesh` + `SaveGLB`), sin custom nodes.
+- **Modelos requeridos**:
+  - `hunyuan_3d_v2.1.safetensors` (repo `Comfy-Org/Hunyuan-3D-2.1`, licencia Tencent Hunyuan Community)
+- **Entradas principales (`inputs`)**:
+  - `image_asset_id` (*string*, obligatorio): asset de imagen de partida en el proyecto. Fondo limpio y sujeto centrado producen mejores mallas.
+  - `steps` (*integer*): pasos de muestreo del flujo (`30` por defecto; `20` acelera con poca pérdida).
+  - `cfg` (*number*): escala CFG (`5.0` por defecto).
+  - `octree_resolution` (*integer*): resolución del voxelado (`256` por defecto).
+- **Defaults de rendimiento**: `precision=fp16`, `latent_resolution=4096`, `octree_resolution=256`, `steps=30`, `cfg=5.0`, `offload=false`.
+- **Salida**: `output_kind=model3d`; el `GLB` queda registrado en la galería del proyecto (`outputs/`).
+
+---
+
 ## 3. Validador Estructural (`comfy_studio.templates.validator`)
 
 El módulo [`studio/comfy_studio/templates/validator.py`](../studio/comfy_studio/templates/validator.py) verifica todas las plantillas al arrancar `TemplateRegistry` y puede ejecutarse desde CLI o CI:
