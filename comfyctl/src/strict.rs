@@ -554,9 +554,8 @@ pub fn probe_studio_perception_backend_and_stale(cfg: &RuntimeConfig) -> (String
         return ("sim".to_string(), false);
     }
     let port = cfg.studio_server_port;
-    let (code, body) = match http_get_body(port, "/studio/api/health") {
-        Ok(pair) => pair,
-        Err(_) => return ("sim".to_string(), false),
+    let Ok((code, body)) = http_get_body(port, "/studio/api/health") else {
+        return ("sim".to_string(), false);
     };
     if code != 200 {
         return ("sim".to_string(), false);
