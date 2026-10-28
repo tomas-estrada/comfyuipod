@@ -1280,10 +1280,10 @@ jobs:
             sleep 2
           done
           timeout 60 docker exec "$studio_cid" nginx -t
-          if curl -s --max-time 5 -o /dev/null http://127.0.0.1:18188/healthz; then
-            echo "::error::Con COMFY_TLS=1 el puerto 8188 no debe seguir sirviendo HTTP en claro"
-            exit 1
-          fi
+          # nginx responde 400 («plain HTTP request was sent to HTTPS port») si el puerto ya es TLS:
+          # lo relevante es que NINGUNA petición HTTP en claro obtenga 200.
+          plain_code="$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:18188/healthz || true)"
+          [ "$plain_code" != "200" ] || { echo "::error::Con COMFY_TLS=1 el puerto 8188 no debe seguir sirviendo HTTP en claro"; exit 1; }
 
           # Rutas existentes intactas bajo TLS (mismo puerto, mismo edge nginx)
           tls_401="$(curl -k -s --max-time 10 -o /dev/null -w "%{http_code}" https://127.0.0.1:18188/studio/)"

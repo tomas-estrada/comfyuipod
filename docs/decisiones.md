@@ -212,6 +212,14 @@
 
 ---
 
+### Hito M3-F — Cierre de cobertura de la superficie estable (recuentos derivados, token/TLS y `fetch-outputs`)
+
+- **Recuentos derivados, nunca literales.** El plan de Fase 3 que anuncia `scripts/download-models.sh` (`PLAN FASE 3: N archivos` y la línea `Manifiesto:`) se calcula a partir de `config/models-studio.json` (entradas sin `opt_in` + grupos `STUDIO_INCLUDE_ANIMATE`/`STUDIO_INCLUDE_3D` y `meta.default_bytes`), el smoke de CI deriva el catálogo de plantillas de `EXPECTED_M2_TEMPLATE_IDS` y el `Dockerfile` valida el manifiesto embebido contra su propia `meta`. Los literales acoplados (77/78 entradas, 6/7 plantillas) rompieron el build dos veces; quedan prohibidos.
+- **`comfy fetch-outputs`** rechaza path traversal también en los **argumentos** (destino con `..`, ID de instancia no numérico, `COMFY_REMOTE_DATA_DIR` no absoluto o con `..`) además de en los miembros del tar, y el CI lo cubre con un `vastai` simulado: extracción de `output/`, traversal relativo/absoluto/anidado, reanudación idempotente y rechazo en argumentos.
+- **`COMFY_TLS=1`** convierte en TLS **ambos** `listen` (`8188` e `[::]:8188`): ningún socket sirve HTTP en claro. El paso 15b del smoke verifica `curl -k https://127.0.0.1:8188/` → 200, que HTTP en claro ya no obtiene 200 y que las rutas existentes (`/studio/`, `/studio/api/*`, `/status/api`, `/mcp/health`) siguen respondiendo 200 con auth. Sin `COMFY_TLS` el paso 15 normal sigue validando HTTP sin cambios.
+- **`STUDIO_API_TOKEN` autogenerado:** el smoke comprueba que el banner lo imprime **una sola vez**, que `/run/comfyui-api-token` se consume y borra al supervisar (`R-11`), que el token impreso autentica de verdad en `/mcp` y que no aparece en claro en `/status/api`, `/report.md`, `/diag` ni `/logs/container`. Si el usuario provee el token, el banner solo muestra `[OCULTO — definido por el usuario en STUDIO_API_TOKEN]`.
+- **Redactor de `comfyctl`:** además de los literales de `VAST_API_KEY`, `STUDIO_API_TOKEN` y `STUDIO_WEBHOOK_SECRET`, el patrón de asignaciones cubre `STUDIO_LLM_(FALLBACK_)KEY`, `COMFY_PASS`, `STUDIO_AUTH_PASS` y `HF_TOKEN`; el volcado de crash imprime y anexa a `/var/log/supervisor.log` **solo** la versión redactada (`render_crash_diagnostics`), y `build_studio_server_command` propaga `STUDIO_API_TOKEN`/`STUDIO_WEBHOOK_SECRET`/`STUDIO_ENABLE_MCP` y los elimina del entorno cuando faltan.
+
 ## 3. Mantenimiento, Coexistencia de Paquetes (`L-04`) y Procedimiento de Bump (`L-06`)
 
 ### 3.1 Coexistencia de `albumentations` y `albumentationsx` (`L-04`)
