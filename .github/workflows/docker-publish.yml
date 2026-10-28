@@ -302,7 +302,29 @@ jobs:
           python3 scripts/check_models_manifest.py --fixture
           python3 scripts/check_models_manifest.py
 
+      - name: Instalar ffmpeg/ffprobe para los tests de percepción M3 (VAL-PERC-001/002/003/006)
+        # La imagen ubuntu-24.04 de GitHub Actions NO trae ffmpeg preinstalado (no aparece en
+        # los apt packages de Ubuntu2404-Readme). Los tests de M3 sintetizan vídeo real con
+        # ffmpeg y extraen firmas RGB de imágenes vía ffmpeg (perception/keyframes.py resuelve
+        # el binario con shutil.which); sin él, las aserciones VAL-PERC-* fallan en el runner
+        # aunque pasen en local. Se instala desde el repo oficial de Ubuntu (ffmpeg 6.x con
+        # libx264/aac/lavfi y ffprobe, suficiente para síntesis, muxing y probe de los tests).
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
       - name: Validar paquete comfy_studio, panel web y plantillas (ruff + pytest + templates)
+        env:
+          # Alinea el entorno del runner con la invocación local de la suite (AGENTS.md):
+          # stubs deterministas de LLM, ComfyUI y Blender para que ningún test dependa de
+          # binarios externos (blender) ni de red (LLM/ComfyUI) en CI.
+          STUDIO_STUB_LLM: "1"
+          STUDIO_STUB_COMFY: "1"
+          STUDIO_STUB_BLENDER: "1"
         run: |
           set -euo pipefail
           python3 -m venv /tmp/studio-ci-venv
