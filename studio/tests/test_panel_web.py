@@ -489,6 +489,10 @@ class DomElement {
     }
   }
 
+  get options() {
+    return this.children.filter((c) => c.tagName === "OPTION");
+  }
+
   contains(node) {
     if (!node) return false;
     if (node === this) return true;
@@ -715,6 +719,8 @@ const elementSpecs = [
   ["span", "tool-events-count"],
   ["button", "clear-chat-btn"],
   ["div", "templates-list"],
+  ["select", "template-select", { value: "wan_t2v" }],
+  ["div", "template-doc-card"],
   ["div", "jobs-list"],
   ["div", "gallery-grid"],
   ["select", "gallery-category-filter", { value: "all" }],
@@ -731,6 +737,15 @@ for (const [tag, id, extra] of elementSpecs) {
 const projectsById = {};
 for (const p of payload.projects) {
   projectsById[p.id] = JSON.parse(JSON.stringify(p));
+}
+if (payload.templateOptions) {
+  const tplSelect = document.getElementById("template-select");
+  for (const tplId of payload.templateOptions) {
+    const opt = document.createElement("option");
+    opt.setAttribute("value", tplId);
+    tplSelect.appendChild(opt);
+  }
+  tplSelect.value = payload.templateOptions[0] || "";
 }
 const chatsByProject = {};
 for (const [pid, msgs] of Object.entries(payload.initialChats)) {
@@ -803,7 +818,7 @@ async function fetchImpl(url, options = {}) {
     return makeJsonResponse(200, { status: "ok", llm_mode: "stub", comfyui_reachable: true });
   }
   if (method === "GET" && path === "/studio/api/templates") {
-    return makeJsonResponse(200, { templates: [] });
+    return makeJsonResponse(200, { templates: payload.templates || [] });
   }
   if (method === "GET" && path === "/studio/api/projects") {
     return makeJsonResponse(200, { projects: Object.values(projectsById) });
@@ -953,6 +968,24 @@ async function submitChatMessageInDom(text) {
   await flushAsync();
 
   const initialSnap = snapshotDom();
+
+  if (payload.scenario === "template-availability") {
+    const tplSelect = document.getElementById("template-select");
+    const docCard = document.getElementById("template-doc-card");
+    const optionsAfter = Array.from(tplSelect.options).map((o) => o.value);
+    // Con la plantilla 3D fuera del selector, el panel no puede ofrecerla.
+    tplSelect.value = optionsAfter[0] || "";
+    if (tplSelect.value) {
+      await tplSelect.dispatchAsync("change", { target: tplSelect });
+      await flushAsync();
+    }
+    process.stdout.write(JSON.stringify({
+      optionsBefore: payload.templateOptions || [],
+      optionsAfter,
+      docCardText: String(docCard.textContent || docCard.innerHTML || ""),
+    }));
+    return;
+  }
 
   if (payload.scenario === "delete-last-project") {
     const listRoot = document.getElementById("projects-list");
@@ -1450,4 +1483,47 @@ def test_panel_render_template_doc_uses_api_template_schema(
     assert "tpl.docs" in fn_body
     assert "tpl.name" in fn_body
     assert "tpl.performance_defaults" in fn_body
+
+
+def test_panel_does_not_offer_templates_without_weights(client: TestClient) -> None:
+    """VAL-UNREAL-004: sin pesos 3D el panel retira Hunyuan3D del selector.
+
+    Ejecuta el `panel/app.js` real en Node: `loadTemplates()`/`pruneUnavailableTemplateOptions()`
+    eliminan del `<select>` la opción cuya plantilla viene con `available: false` y
+    conservan las disponibles.
+    """
+    templates = client.get("/studio/api/templates").json()["templates"]
+    by_id = {tpl["id"]: tpl for tpl in templates}
+    # En el perfil studio del fixture, Hunyuan3D está en el registro pero no disponible.
+    assert by_id["hunyuan3d_image_to_3d"]["available"] is False
+    detail = client.get("/studio/api/templates/hunyuan3d_image_to_3d").json()
+    assert detail["available"] is False
+    assert "STUDIO_INCLUDE_3D" in detail["unavailable_reason"]
+
+    options_before = [
+        "wan_t2v",
+        "wan_i2v",
+        "vace_inpaint",
+        "sdxl_image",
+        "hunyuan3d_image_to_3d",
+    ]
+    templates_payload = templates
+    result = _run_panel_dom_harness(
+        {
+            "appJsPath": str(PANEL_DIR / "app.js"),
+            "scenario": "template-availability",
+            "projects": [],
+            "initialChats": {},
+            "templateOptions": options_before,
+            "templates": templates_payload,
+        }
+    )
+
+    assert result["optionsBefore"] == options_before
+    assert "hunyuan3d_image_to_3d" not in result["optionsAfter"]
+    assert result["optionsAfter"] == [
+        option for option in options_before if option != "hunyuan3d_image_to_3d"
+    ]
+    # La tarjeta de documentación muestra la plantilla seleccionada (disponible).
+    assert "wan_t2v" in result["docCardText"] or "Wan" in result["docCardText"]
 

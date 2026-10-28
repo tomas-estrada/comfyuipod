@@ -22,6 +22,8 @@ from comfy_studio.app import create_app
 from comfy_studio.config import SECRET_PLACEHOLDER, StudioConfig
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.webhooks import (
+    WEBHOOK_BACKLOG,
+    WEBHOOK_RETRIES,
     BrokerWebhookDispatcher,
     WebhookNotifier,
     WebhookUrlError,
@@ -176,7 +178,8 @@ async def test_notifier_gives_up_after_retries() -> None:
     notifier.fire("job_failed", {"job_id": "j9"})
     await notifier.stop()
 
-    assert state.attempts == 2
+    # `retries=2` = 1 intento inicial + 2 reintentos = 3 intentos totales.
+    assert state.attempts == 3
     assert notifier.sent_count == 0
     assert notifier.failed_count == 1
 
@@ -278,7 +281,18 @@ def test_app_wires_notifier_only_when_configured(studio_data_dir, stub_comfyui_t
         "http://10.0.0.5/hook",
         "http://192.168.1.1/hook",
         "http://172.16.0.9/hook",
+        "http://172.31.255.255/hook",
         "http://0.0.0.0/hook",
+        # link-local IPv6 (fe80::/10)
+        "http://[fe80::1]/hook",
+        # CGNAT (100.64.0.0/10), benchmarking (198.18.0.0/15) y documentación
+        "http://100.64.0.1/hook",
+        "http://198.18.0.1/hook",
+        "http://192.0.2.10/hook",
+        "http://203.0.113.9/hook",
+        # reservados (240.0.0.0/4) y IPv4 embebida en IPv6
+        "http://240.0.0.1/hook",
+        "http://[::ffff:127.0.0.1]/hook",
         "ftp://example.com/hook",
         "file:///etc/passwd",
         "   ",
@@ -344,5 +358,214 @@ async def test_notifier_does_not_retry_permanent_4xx() -> None:
     await notifier.stop()
 
     assert attempts["n"] == 1
+    assert notifier.sent_count == 0
+    assert notifier.failed_count == 1
+
+
+# --- VAL-WEBHOOK-001: firma HMAC en los 4 eventos y payload sin secretos -----
+
+WEBHOOK_EVENTS = ("job_finished", "job_failed", "job_interrupted", "agent_turn_done")
+WEBHOOK_TEST_SECRETS = {
+    "wh": "whsec-payload-AAA111",
+    "llm": "llmkey-payload-BBB222",
+    "api": "apitoken-payload-CCC333",
+    "pass": "comfypass-payload-DDD444",
+}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("event", WEBHOOK_EVENTS)
+async def test_each_event_is_signed_and_payload_never_contains_secrets(event: str) -> None:
+    state = ReceiverState()
+    cfg = StudioConfig(
+        studio_data_dir=Path("."),
+        studio_llm_key=WEBHOOK_TEST_SECRETS["llm"],
+        comfy_pass=WEBHOOK_TEST_SECRETS["pass"],
+        studio_api_token=WEBHOOK_TEST_SECRETS["api"],
+        studio_webhook_url="http://webhook.local/hook",
+        studio_webhook_secret=WEBHOOK_TEST_SECRETS["wh"],
+    )
+    notifier = WebhookNotifier(
+        url=cfg.studio_webhook_url or "",
+        secret=cfg.studio_webhook_secret,
+        redactor=cfg.redactor(),
+        transport=httpx.ASGITransport(app=_make_receiver(state)),
+        retry_base_delay_s=0.01,
+    )
+    detail = " ".join(WEBHOOK_TEST_SECRETS.values())
+    notifier.fire(event, {"job_id": "j1", "error": detail, "detail": detail})
+    await notifier.stop()
+
+    assert notifier.sent_count == 1
+    entry = state.received[0]
+    assert entry["body"]["event"] == event
+    expected_sig = hmac.new(
+        WEBHOOK_TEST_SECRETS["wh"].encode("utf-8"),
+        entry["raw"],
+        hashlib.sha256,
+    ).hexdigest()
+    assert entry["signature"] == expected_sig
+    raw_text = entry["raw"].decode("utf-8")
+    for secret in WEBHOOK_TEST_SECRETS.values():
+        assert secret not in raw_text
+    assert SECRET_PLACEHOLDER in raw_text
+
+
+@pytest.mark.anyio
+async def test_no_webhook_url_sends_nothing() -> None:
+    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url=None)
+    assert create_webhook_notifier(cfg) is None
+
+
+# --- VAL-WEBHOOK-003: 3 reintentos con backoff, 408/429 y backlog 128 --------
+
+
+@pytest.mark.anyio
+async def test_notifier_three_retries_with_increasing_backoff(monkeypatch) -> None:
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(503)
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr("comfy_studio.webhooks.asyncio.sleep", fake_sleep)
+
+    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url="http://webhook.local/hook")
+    notifier = WebhookNotifier(
+        url=cfg.studio_webhook_url or "",
+        redactor=cfg.redactor(),
+        transport=httpx.MockTransport(handler),
+        retries=WEBHOOK_RETRIES,
+        retry_base_delay_s=0.5,
+        validate_url=False,
+    )
+    notifier.fire("job_failed", {"job_id": "j1"})
+    await notifier.stop()
+
+    assert WEBHOOK_RETRIES == 3
+    assert attempts["n"] == 4  # intento inicial + 3 reintentos
+    assert sleeps == [0.5, 1.0, 1.5]  # backoff creciente entre intentos
+    assert notifier.failed_count == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("transient_status", [408, 429])
+async def test_notifier_retries_transient_4xx(transient_status: int) -> None:
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return httpx.Response(transient_status)
+        return httpx.Response(200)
+
+    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url="http://webhook.local/hook")
+    notifier = WebhookNotifier(
+        url=cfg.studio_webhook_url or "",
+        redactor=cfg.redactor(),
+        transport=httpx.MockTransport(handler),
+        retries=3,
+        retry_base_delay_s=0.01,
+        validate_url=False,
+    )
+    notifier.fire("job_finished", {"job_id": "j1"})
+    await notifier.stop()
+
+    assert attempts["n"] == 2
+    assert notifier.sent_count == 1
+    assert notifier.failed_count == 0
+
+
+@pytest.mark.anyio
+async def test_notifier_backlog_is_capped_at_128_entries() -> None:
+    assert WEBHOOK_BACKLOG == 128
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url="http://webhook.local/hook")
+    notifier = WebhookNotifier(
+        url=cfg.studio_webhook_url or "",
+        redactor=cfg.redactor(),
+        transport=httpx.MockTransport(handler),
+        validate_url=False,
+    )
+    # Sin ceder el event loop el consumidor no drena: se llena el backlog exacto.
+    accepted = [notifier.fire("job_finished", {"job_id": f"j{i}"}) for i in range(128)]
+    assert all(accepted)
+    assert notifier.fire("job_finished", {"job_id": "overflow"}) is False
+    assert notifier.dropped_count == 1
+    await notifier.stop()
+
+
+# --- VAL-WEBHOOK-002: ninguna petición sale hacia destinos internos ----------
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://127.0.0.1:18190/studio/api/health",
+        "http://10.1.2.3/hook",
+        "http://192.168.0.10/hook",
+        "http://[fe80::1]/hook",
+        "http://100.64.0.1/hook",
+    ],
+)
+async def test_ssrf_guard_emits_no_http_request(bad_url: str) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    cfg = StudioConfig(
+        studio_data_dir=Path("."),
+        studio_webhook_url=bad_url,
+        studio_webhook_secret="whsec-ssrf",
+    )
+    # La fábrica degrada a None (webhooks desactivados) sin tumbar el arranque…
+    assert create_webhook_notifier(cfg) is None
+    # …y el constructor directo rechaza la URL antes de cualquier envío.
+    with pytest.raises(WebhookUrlError):
+        WebhookNotifier(
+            url=bad_url,
+            redactor=cfg.redactor(),
+            transport=httpx.MockTransport(handler),
+        )
+    assert requests == []
+
+
+@pytest.mark.anyio
+async def test_ssrf_guard_revalidates_dns_on_each_send(monkeypatch) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    monkeypatch.setattr(
+        "comfy_studio.webhooks.socket.getaddrinfo",
+        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))],
+    )
+    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url="http://rebind.example.com/hook")
+    notifier = WebhookNotifier(
+        url=cfg.studio_webhook_url or "",
+        redactor=cfg.redactor(),
+        transport=httpx.MockTransport(handler),
+    )
+    # Rebinding: tras el arranque el nombre pasa a resolver a loopback.
+    monkeypatch.setattr(
+        "comfy_studio.webhooks.socket.getaddrinfo",
+        lambda *a, **k: [(2, 1, 6, "", ("127.0.0.1", 0))],
+    )
+    notifier.fire("job_finished", {"job_id": "j1"})
+    await notifier.stop()
+
+    assert requests == []
     assert notifier.sent_count == 0
     assert notifier.failed_count == 1

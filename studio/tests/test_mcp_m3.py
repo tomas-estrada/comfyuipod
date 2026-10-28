@@ -1,6 +1,7 @@
 """Tests del servidor MCP JSON-RPC 2.0 (M3-C, `mcp_server.py`): health, ciclo
-initialize/tools/list/tools/call, resolución de proyecto, autenticación Bearer
-con `STUDIO_API_TOKEN`, desactivación con `STUDIO_ENABLE_MCP=0`, lotes JSON-RPC,
+initialize/tools/list/tools/call, resolución de proyecto, matriz de auth
+(Basic Auth de borde + `X-Studio-Token`), catálogo exacto, `delegate_role` no
+invocable, desactivación con `STUDIO_ENABLE_MCP=0`, lotes JSON-RPC,
 notificaciones (202), errores de protocolo y redacción de secretos."""
 
 from __future__ import annotations
@@ -255,3 +256,150 @@ def test_mcp_redacts_secrets_in_error_messages(client: TestClient) -> None:
     text = resp.json()["result"]["content"][0]["text"]
     assert secret not in text
     assert SECRET_PLACEHOLDER in text
+
+
+# --- VAL-MCP-001: matriz de auth (Basic Auth de borde + X-Studio-Token) ------
+
+
+def test_mcp_auth_matrix_basic_auth_and_studio_token(
+    studio_config: StudioConfig,
+    stub_comfyui_transport,
+) -> None:
+    """(a) sin Basic Auth → 401; (b) Basic sin token → 401; (c) ambos → 200."""
+    cfg = dataclasses.replace(
+        studio_config,
+        studio_api_token="tok-matriz-secreto",
+        comfy_pass="changeme-test-pass-42",
+        require_auth=True,
+    )
+    app = create_app(config=cfg, comfyui_transport=stub_comfyui_transport)
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "initialize"}
+
+    with TestClient(app) as anon:
+        # (a) Sin Basic Auth ni token: el middleware de borde devuelve 401.
+        assert anon.post(MCP_URL, json=payload).status_code == 401
+
+    with TestClient(app) as basic_only:
+        basic_only.auth = ("admin", "changeme-test-pass-42")
+        # (b) Basic Auth válido pero sin X-Studio-Token: 401 del servidor MCP.
+        assert basic_only.post(MCP_URL, json=payload).status_code == 401
+        # El health queda accesible con el Basic Auth del borde (S12 lo sondea
+        # por loopback sin token).
+        assert basic_only.get(f"{MCP_URL}/health").status_code == 200
+
+    with TestClient(app) as both:
+        both.auth = ("admin", "changeme-test-pass-42")
+        ok = both.post(MCP_URL, json=payload, headers={"X-Studio-Token": "tok-matriz-secreto"})
+        assert ok.status_code == 200
+        assert ok.json()["result"]["serverInfo"]["name"] == MCP_SERVER_NAME
+
+        # Token equivocado → 401 aunque el Basic Auth sea válido.
+        wrong = both.post(MCP_URL, json=payload, headers={"X-Studio-Token": "tok-equivocado"})
+        assert wrong.status_code == 401
+
+
+# --- VAL-MCP-002: catálogo exacto de 9 tools y delegate_role fuera -----------
+
+MCP_EXPECTED_TOOL_NAMES = {
+    "list_templates",
+    "search_assets",
+    "enqueue_render",
+    "job_status",
+    "export_edl",
+    "system_status",
+    "tag_asset",
+    "list_projects",
+    "list_assets",
+}
+
+
+def test_mcp_tools_list_is_exactly_the_nine_allowed_tools(client: TestClient) -> None:
+    tools = _rpc(client, "tools/list", {}).json()["result"]["tools"]
+    names = [t["name"] for t in tools]
+    assert len(names) == 9
+    assert set(names) == MCP_EXPECTED_TOOL_NAMES
+    assert "delegate_role" not in names
+    assert "update_plan" not in names
+
+
+def test_mcp_delegate_role_is_not_invocable(client: TestClient) -> None:
+    client.post("/studio/api/projects", json={"name": "Proyecto Delegate Cerrado"})
+    resp = _call_tool(client, "delegate_role", {"role": "director"})
+    result = resp.json()["result"]
+    assert result["isError"] is True
+    assert "no disponible" in result["content"][0]["text"]
+
+
+# --- VAL-MCP-003: redacción de los 5 secretos en resultados MCP --------------
+
+MCP_TEST_SECRETS = {
+    "STUDIO_LLM_KEY": "llmkeyZZZ123",
+    "STUDIO_LLM_FALLBACK_KEY": "fbkeyZZZ456",
+    "COMFY_PASS": "comfypassZZZ789",
+    "STUDIO_API_TOKEN": "apitokenZZZ000",
+    "VAST_API_KEY": "vastkeyZZZ222",
+    "STUDIO_WEBHOOK_SECRET": "whsecretZZZ111",
+}
+
+
+def test_mcp_redacts_every_secret_even_when_underlying_data_contains_them(
+    studio_config: StudioConfig,
+    stub_comfyui_transport,
+) -> None:
+    cfg = dataclasses.replace(
+        studio_config,
+        studio_llm_key=MCP_TEST_SECRETS["STUDIO_LLM_KEY"],
+        studio_llm_fallback_key=MCP_TEST_SECRETS["STUDIO_LLM_FALLBACK_KEY"],
+        comfy_pass=MCP_TEST_SECRETS["COMFY_PASS"],
+        studio_api_token=MCP_TEST_SECRETS["STUDIO_API_TOKEN"],
+        studio_webhook_secret=MCP_TEST_SECRETS["STUDIO_WEBHOOK_SECRET"],
+        vast_api_key=MCP_TEST_SECRETS["VAST_API_KEY"],
+        require_auth=False,
+    )
+    app = create_app(config=cfg, comfyui_transport=stub_comfyui_transport)
+    # El nombre del proyecto es dato de usuario: almacena todos los secretos y se
+    # devuelve en tools/call (list_projects) → debe salir redactado.
+    leaked_name = " ".join(MCP_TEST_SECRETS.values())
+    token_headers = {"X-Studio-Token": MCP_TEST_SECRETS["STUDIO_API_TOKEN"]}
+
+    with TestClient(app) as c:
+        c.auth = ("admin", MCP_TEST_SECRETS["COMFY_PASS"])
+        c.post("/studio/api/projects", json={"name": leaked_name})
+
+        listed = c.post(
+            MCP_URL,
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            headers=token_headers,
+        )
+        tool_list_text = json.dumps(listed.json())
+        projects = c.post(
+            MCP_URL,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "list_projects", "arguments": {}},
+            },
+            headers=token_headers,
+        )
+        projects_text = json.dumps(projects.json())
+
+        # Error de herramienta con el nombre del tool conteniendo los secretos.
+        error = c.post(
+            MCP_URL,
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": leaked_name, "arguments": {}},
+            },
+            headers=token_headers,
+        )
+        error_text = json.dumps(error.json())
+
+    for secret in MCP_TEST_SECRETS.values():
+        assert secret not in tool_list_text
+        assert secret not in projects_text
+        assert secret not in error_text
+    assert SECRET_PLACEHOLDER in projects_text
+    assert SECRET_PLACEHOLDER in error_text

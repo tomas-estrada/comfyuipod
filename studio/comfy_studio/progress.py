@@ -7,7 +7,10 @@ import json
 from collections import deque
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from comfy_studio.config import SecretRedactor
 
 
 def _utc_now_iso() -> str:
@@ -22,10 +25,15 @@ def format_sse_event(event_type: str, data: dict[str, Any]) -> str:
 class ProgressBroker:
     """Broker pub/sub en memoria para el canal SSE /studio/api/progress."""
 
-    def __init__(self, history_limit: int = 100) -> None:
+    def __init__(
+        self,
+        history_limit: int = 100,
+        redactor: SecretRedactor | None = None,
+    ) -> None:
         self._history: deque[tuple[str, dict[str, Any]]] = deque(maxlen=history_limit)
         self._subscribers: set[asyncio.Queue[tuple[str, dict[str, Any]]]] = set()
         self._seq = 0
+        self._redactor = redactor
 
     def publish(self, event_type: str, data: dict[str, Any]) -> dict[str, Any]:
         self._seq += 1
@@ -35,6 +43,8 @@ class ProgressBroker:
             "ts": _utc_now_iso(),
             **data,
         }
+        if self._redactor is not None:
+            enriched = self._redactor.redact_value(enriched)
         self._history.append((event_type, enriched))
         for q in list(self._subscribers):
             try:

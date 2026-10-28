@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from comfy_studio.config import SecretRedactor
+
 logger = logging.getLogger("comfy_studio.blender")
 
 BLENDER_LOG_NAME = "blender.log"
@@ -146,14 +148,14 @@ def classify_blender_failure(exit_code: int, log_tail: str) -> str:
 
 def build_render_script(spec: BlenderRenderSpec) -> str:
     """Genera el script Python que Blender ejecuta en modo `-b`."""
-    scene = str(spec.scene_path).replace("\\", "/")
-    out_dir = str(spec.output_dir).replace("\\", "/")
+    scene_literal = json.dumps(str(spec.scene_path).replace("\\", "/"))
+    out_dir_literal = json.dumps(str(spec.output_dir).replace("\\", "/"))
     engine = "CYCLES" if spec.engine == "cycles" else "BLENDER_EEVEE_NEXT"
     return f'''# Generado por Comfy Studio BlenderRunner (M3-D). No editar a mano.
 import bpy, sys
 
-scene_path = r"{scene}"
-out_dir = r"{out_dir}"
+scene_path = {scene_literal}
+out_dir = {out_dir_literal}
 
 if scene_path.lower().endswith((".glb", ".gltf")):
     bpy.ops.import_scene.gltf(filepath=scene_path)
@@ -207,16 +209,16 @@ print("[BlenderRunner] render completado:", out_dir)
 
 def build_export_script(spec: BlenderExportSpec) -> str:
     """Genera el script Python de exportación USD/glTF/FBX desde una malla/escena."""
-    scene = str(spec.scene_path).replace("\\", "/")
-    out_dir = str(spec.output_dir).replace("\\", "/")
-    stem = spec.scene_path.stem
+    scene_literal = json.dumps(str(spec.scene_path).replace("\\", "/"))
+    out_dir_literal = json.dumps(str(spec.output_dir).replace("\\", "/"))
+    stem_literal = json.dumps(spec.scene_path.stem)
     lines = [
         "# Generado por Comfy Studio BlenderRunner (M3-D). No editar a mano.",
         "import bpy",
         "",
-        f'scene_path = r"{scene}"',
-        f'out_dir = r"{out_dir}"',
-        f'stem = r"{stem}"',
+        f"scene_path = {scene_literal}",
+        f"out_dir = {out_dir_literal}",
+        f"stem = {stem_literal}",
         "",
         'if scene_path.lower().endswith((".glb", ".gltf")):',
         "    bpy.ops.import_scene.gltf(filepath=scene_path)",
@@ -360,7 +362,8 @@ async def run_blender_spec(
         proc.kill()
         stdout, _ = await proc.communicate()
 
-    raw = (stdout or b"").decode("utf-8", errors="replace")
+    redactor = SecretRedactor.from_env()
+    raw = redactor.redact((stdout or b"").decode("utf-8", errors="replace"))
     header = (
         f"\n===== BlenderRunner {'TIMEOUT' if timed_out else 'run'} "
         f"({time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}) =====\n"
@@ -379,12 +382,16 @@ async def run_blender_spec(
 
     exit_code = -1 if timed_out else (proc.returncode if proc.returncode is not None else -1)
     outputs = sorted(p for p in out_dir.iterdir() if p.is_file()) if out_dir.is_dir() else []
-    tail = raw[-LOG_TAIL_BYTES:]
+    tail = redactor.redact(raw[-LOG_TAIL_BYTES:])
     if timed_out:
         tail = f"[TIMEOUT tras {spec.timeout_s:.0f}s]\n" + tail
     return BlenderResult(
         exit_code=exit_code,
-        outputs=[p for p in outputs if p.name != "blender_job.py"],
+        outputs=[
+            p
+            for p in outputs
+            if p.name not in ("blender_job.py", "blender.log", BLENDER_LOG_NAME)
+        ],
         log_tail=tail,
         duration_s=time.monotonic() - started,
     )

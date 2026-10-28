@@ -51,8 +51,17 @@ class WebhookUrlError(ValueError):
 
 
 def _ip_is_forbidden(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # Direcciones IPv4 embebidas en IPv6 (::ffff:a.b.c.d) se clasifican por la IPv4
+    # subyacente: ipaddress no las marca como loopback/privadas por sí solo.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _ip_is_forbidden(mapped)
+    # `is_global` rechaza además espacios reservados que no son `is_private`/
+    # `is_reserved` en todas las versiones de Python (p. ej. CGNAT 100.64.0.0/10,
+    # documentación 198.51.100.0/24 o benchmarking 198.18.0.0/15).
     return (
-        ip.is_loopback
+        not ip.is_global
+        or ip.is_loopback
         or ip.is_private
         or ip.is_link_local
         or ip.is_reserved
@@ -156,10 +165,13 @@ class WebhookNotifier:
         if validate_url:
             url = validate_webhook_url(url)
         self._url = url.strip()
+        self._validate_url = validate_url
         self._secret = (secret or "").strip() or None
         self._redactor = redactor
         self._timeout_s = timeout_s
-        self._retries = max(1, int(retries))
+        # `retries` es el número de REINTENTOS tras el primer intento
+        # (default 3 → hasta 4 intentos totales con backoff 1x/2x/3x).
+        self._retries = max(0, int(retries))
         self._retry_base_delay_s = retry_base_delay_s
         self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=backlog)
         self._task: asyncio.Task[None] | None = None
@@ -209,6 +221,21 @@ class WebhookNotifier:
         return hmac.new(self._secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
 
     async def _deliver(self, body: dict[str, Any]) -> None:
+        # Defensa en profundidad anti-SSRF: revalidar la URL en cada envío para
+        # que un DNS que cambia tras el arranque (rebinding) no alcance loopback
+        # ni redes internas.
+        if self._validate_url:
+            try:
+                validate_webhook_url(self._url)
+            except WebhookUrlError as exc:
+                self.failed_count += 1
+                logger.warning(
+                    "Webhook %s descartado por la guarda anti-SSRF: %s",
+                    body.get("event"),
+                    self._redactor.redact(str(exc)),
+                )
+                return
+
         raw = json.dumps(body, ensure_ascii=False, default=str).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
@@ -219,7 +246,8 @@ class WebhookNotifier:
             headers["X-Studio-Signature"] = signature
 
         last_error = "desconocido"
-        for attempt in range(1, self._retries + 1):
+        total_attempts = self._retries + 1
+        for attempt in range(1, total_attempts + 1):
             try:
                 resp = await self._client.post(self._url, content=raw, headers=headers)
                 if resp.status_code < 400:
@@ -231,14 +259,14 @@ class WebhookNotifier:
                     break
             except httpx.HTTPError as exc:
                 last_error = str(exc)
-            if attempt < self._retries:
+            if attempt < total_attempts:
                 await asyncio.sleep(self._retry_base_delay_s * attempt)
 
         self.failed_count += 1
         logger.warning(
-            "Webhook %s falló tras %d intentos: %s",
+            "Webhook %s falló tras %d intento(s): %s",
             body.get("event"),
-            self._retries,
+            total_attempts,
             self._redactor.redact(last_error),
         )
 

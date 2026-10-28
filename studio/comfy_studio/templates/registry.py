@@ -36,6 +36,24 @@ ASSET_PARAM_TO_INPUT_PARAM: dict[str, tuple[str, str]] = {
 }
 
 
+# Plantillas cuyo grafo exige el grupo de pesos 3D (Hunyuan3D, opt-in vía
+# STUDIO_INCLUDE_3D=1 o MODEL_PROFILE=unreal). Sin esos pesos no se ofrecen ni
+# aceptan submits (VAL-UNREAL-004).
+THREE_D_TEMPLATE_IDS: frozenset[str] = frozenset({"hunyuan3d_image_to_3d"})
+THREE_D_WEIGHTS_UNAVAILABLE = (
+    "La plantilla 'hunyuan3d_image_to_3d' requiere los pesos de Hunyuan3D 2.1, "
+    "que no están presentes en este pod. Descárgalos con STUDIO_INCLUDE_3D=1 "
+    "(o MODEL_PROFILE=unreal) y reinicia el pod."
+)
+
+
+def template_requires_three_d(tpl: dict[str, Any]) -> bool:
+    """¿La plantilla necesita el grupo 3D de pesos (categoría `three_d`)?"""
+    return str(tpl.get("id")) in THREE_D_TEMPLATE_IDS or str(
+        tpl.get("category")
+    ) == "three_d"
+
+
 class TemplateNotFoundError(LookupError):
     """Error cuando se solicita una plantilla inexistente."""
 
@@ -232,8 +250,10 @@ class TemplateRegistry:
         tpl: dict[str, Any],
         *,
         include_workflow: bool = False,
+        three_d_available: bool = True,
     ) -> dict[str, Any]:
         params_schema = build_json_schema_from_parameters(tpl["id"], tpl["parameters"])
+        available = not template_requires_three_d(tpl) or three_d_available
         entry: dict[str, Any] = {
             "id": tpl["id"],
             "name": tpl["name"],
@@ -247,25 +267,45 @@ class TemplateRegistry:
             "parameters": copy.deepcopy(tpl["parameters"]),
             "params_schema": params_schema,
             "docs": copy.deepcopy(tpl["docs"]),
+            "available": available,
+            "unavailable_reason": None if available else THREE_D_WEIGHTS_UNAVAILABLE,
         }
         if include_workflow:
             entry["workflow"] = copy.deepcopy(tpl["workflow"])
         return entry
 
-    def list_templates(self, *, include_workflow: bool = False) -> list[dict[str, Any]]:
-        return [
-            self._format_entry(self._templates[tid], include_workflow=include_workflow)
+    def list_templates(
+        self,
+        *,
+        include_workflow: bool = False,
+        three_d_available: bool = True,
+        include_unavailable: bool = True,
+    ) -> list[dict[str, Any]]:
+        entries = [
+            self._format_entry(
+                self._templates[tid],
+                include_workflow=include_workflow,
+                three_d_available=three_d_available,
+            )
             for tid in self.list_ids()
         ]
+        if include_unavailable:
+            return entries
+        return [entry for entry in entries if entry["available"]]
 
     def get_template(
         self,
         template_id: str,
         *,
         include_workflow: bool = True,
+        three_d_available: bool = True,
     ) -> dict[str, Any]:
         raw = self.get_raw_definition(template_id)
-        return self._format_entry(raw, include_workflow=include_workflow)
+        return self._format_entry(
+            raw,
+            include_workflow=include_workflow,
+            three_d_available=three_d_available,
+        )
 
     def validate_params(
         self,
@@ -361,9 +401,17 @@ class TemplateRegistry:
         comfyui_client: ComfyUIClient,
         broker: ProgressBroker | None = None,
         strict: bool = True,
+        three_d_available: bool = True,
     ) -> dict[str, Any]:
         """Valida params, sube assets de entrada, encola job y registra salidas en galería."""
         tpl = self.get_raw_definition(template_id)
+        if template_requires_three_d(tpl) and not three_d_available:
+            raise TemplateParamError(
+                THREE_D_WEIGHTS_UNAVAILABLE,
+                errors=[
+                    {"field": "template_id", "reason": "value_error.weights_missing"}
+                ],
+            )
         validated_params = self.validate_params(template_id, raw_params, strict=strict)
 
         # Resolver proyecto destino (o crear el proyecto por defecto si no se especificó)

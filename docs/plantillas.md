@@ -130,6 +130,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
   - `octree_resolution` (*integer*): resolución del voxelado (`256` por defecto).
 - **Defaults de rendimiento**: `precision=fp16`, `latent_resolution=4096`, `octree_resolution=256`, `steps=30`, `cfg=5.0`, `offload=false`.
 - **Salida**: `output_kind=model3d`; el `GLB` queda registrado en la galería del proyecto (`outputs/`).
+- **Disponibilidad (gating por pesos)**: solo se descarga con `STUDIO_INCLUDE_3D=1` o `MODEL_PROFILE=unreal`. Sin esos pesos, `GET /studio/api/templates` **no la ofrece**, `GET /studio/api/templates/hunyuan3d_image_to_3d` la devuelve con `available=false` y `unavailable_reason`, y `POST .../submit` responde `422` con el mensaje que indica cómo descargarlos (nunca falla en silencio).
 
 ---
 

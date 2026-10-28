@@ -11,6 +11,8 @@ ejecutor vivo. Este módulo:
    ComfyUI siguen siendo válidas porque `input/` vive en `COMFY_DATA_DIR`).
 3. El contador `interrupt_retries` en `result_json` acota el reintento
    automático a `MAX_INTERRUPT_RETRIES` por job (nunca bucles infinitos).
+4. Con `STUDIO_RESUME_JOBS=0` la recuperación es inerte: no se altera el estado
+   de ningún job (ni marca `interrupted` ni reencola).
 """
 
 from __future__ import annotations
@@ -49,12 +51,21 @@ async def recover_interrupted_jobs(
     """Marca jobs huérfanos como `interrupted` y reencola una vez los elegibles.
 
     Devuelve un informe `{"stale", "interrupted", "requeued", "done", "failed"}`.
+    Con `resume=False` (`STUDIO_RESUME_JOBS=0`) la recuperación es **inerte**: no
+    se altera el estado de ningún job (ni se marca `interrupted` ni se reencola);
+    el operador decidió desactivarla y la reconciliación es manual.
     Los fallos de conexión con ComfyUI no propagan: el job queda en estado
     terminal con la causa en `error` (el arranque del servidor nunca bloquea).
     """
     stale = find_stale_jobs(store)
     report = {"stale": len(stale), "interrupted": 0, "requeued": 0, "done": 0, "failed": 0}
     if not stale:
+        return report
+
+    if not resume:
+        logger.info(
+            "STUDIO_RESUME_JOBS=0: recuperación inerte para %d job(s) en vuelo.", len(stale)
+        )
         return report
 
     if start_delay_s > 0:
@@ -70,8 +81,7 @@ async def recover_interrupted_jobs(
         project_alive = bool(project_id) and store.get_project(str(project_id)) is not None
 
         can_resume = (
-            resume
-            and job.get("kind") == "render"
+            job.get("kind") == "render"
             and bool(template_id)
             and project_alive
             and retries < MAX_INTERRUPT_RETRIES

@@ -28,7 +28,11 @@ _HF_TOKEN_RE = re.compile(r"hf_[A-Za-z0-9]{12,}")
 _SK_TOKEN_RE = re.compile(r"sk-[A-Za-z0-9._\-]{8,}")
 _STUDIO_LLM_KEY_ASSIGN_RE = re.compile(r"(?i)(STUDIO_LLM_(?:FALLBACK_)?KEY\s*[:=]\s*)(\S+)")
 _COMFY_PASS_ASSIGN_RE = re.compile(r"(?i)(COMFY_PASS\s*[:=]\s*)(\S+)")
+_STUDIO_AUTH_PASS_ASSIGN_RE = re.compile(r"(?i)(STUDIO_AUTH_PASS\s*[:=]\s*)(\S+)")
 _HF_TOKEN_ASSIGN_RE = re.compile(r"(?i)(HF_TOKEN\s*[:=]\s*)(\S+)")
+_STUDIO_API_TOKEN_ASSIGN_RE = re.compile(r"(?i)(STUDIO_API_TOKEN\s*[:=]\s*)(\S+)")
+_STUDIO_WEBHOOK_SECRET_ASSIGN_RE = re.compile(r"(?i)(STUDIO_WEBHOOK_SECRET\s*[:=]\s*)(\S+)")
+_VAST_API_KEY_ASSIGN_RE = re.compile(r"(?i)(VAST_API_KEY\s*[:=]\s*)(\S+)")
 _BEARER_RE = re.compile(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{6,}")
 _URL_USERINFO_RE = re.compile(r"(https?://[^/\s:@]+:)(.*)(@)")
 
@@ -43,7 +47,11 @@ _CASE_INSENSITIVE_STREAM_PREFIXES: tuple[str, ...] = (
     "studio_llm_key",
     "studio_llm_fallback_key",
     "comfy_pass",
+    "studio_auth_pass",
     "hf_token",
+    "studio_api_token",
+    "studio_webhook_secret",
+    "vast_api_key",
 )
 _INFLIGHT_STREAM_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"^hf_[A-Za-z0-9]*$"),
@@ -51,7 +59,11 @@ _INFLIGHT_STREAM_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)^Bearer\s+[A-Za-z0-9._\-]*$"),
     re.compile(r"(?i)^STUDIO_LLM_(?:FALLBACK_)?KEY(?:\s*|\s*[:=]\s*\S*)$"),
     re.compile(r"(?i)^COMFY_PASS(?:\s*|\s*[:=]\s*\S*)$"),
+    re.compile(r"(?i)^STUDIO_AUTH_PASS(?:\s*|\s*[:=]\s*\S*)$"),
     re.compile(r"(?i)^HF_TOKEN(?:\s*|\s*[:=]\s*\S*)$"),
+    re.compile(r"(?i)^STUDIO_API_TOKEN(?:\s*|\s*[:=]\s*\S*)$"),
+    re.compile(r"(?i)^STUDIO_WEBHOOK_SECRET(?:\s*|\s*[:=]\s*\S*)$"),
+    re.compile(r"(?i)^VAST_API_KEY(?:\s*|\s*[:=]\s*\S*)$"),
     re.compile(r"^https?://[^/\s@]*$"),
 )
 
@@ -64,6 +76,16 @@ def _parse_bool(raw: str | None, default: bool = False) -> bool:
     if not cleaned:
         return default
     return cleaned in {"1", "true", "yes", "on"}
+
+
+def sanitize_loopback_host(host: str | None) -> str:
+    """Fuerza binding exclusivo a loopback 127.0.0.1 (Regla 2 de AGENTS.md)."""
+    if not host:
+        return DEFAULT_STUDIO_SERVER_HOST
+    cleaned = host.strip()
+    if cleaned in {"127.0.0.1", "localhost"} or cleaned.startswith("127."):
+        return cleaned
+    return DEFAULT_STUDIO_SERVER_HOST
 
 
 def _default_studio_data_dir(env: Mapping[str, str]) -> Path:
@@ -118,6 +140,7 @@ class SecretRedactor:
                 for s in (
                     source.get("STUDIO_WEBHOOK_SECRET"),
                     source.get("STUDIO_API_TOKEN"),
+                    source.get("VAST_API_KEY"),
                 )
                 if s
             ],
@@ -129,8 +152,15 @@ class SecretRedactor:
             studio_llm_key=config.get_llm_key(),
             studio_llm_fallback_key=config.get_llm_fallback_key(),
             comfy_pass=config.get_comfy_pass(),
+            hf_token=os.environ.get("HF_TOKEN"),
             extra_secrets=[
-                s for s in (config.get_webhook_secret(), config.get_api_token()) if s
+                s
+                for s in (
+                    config.get_webhook_secret(),
+                    config.get_api_token(),
+                    config.get_vast_api_key(),
+                )
+                if s
             ],
         )
 
@@ -152,7 +182,11 @@ class SecretRedactor:
         out = _SK_TOKEN_RE.sub(SECRET_PLACEHOLDER, out)
         out = _STUDIO_LLM_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _COMFY_PASS_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
+        out = _STUDIO_AUTH_PASS_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _HF_TOKEN_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
+        out = _STUDIO_API_TOKEN_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
+        out = _STUDIO_WEBHOOK_SECRET_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
+        out = _VAST_API_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _BEARER_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _URL_USERINFO_RE.sub(rf"\1{SECRET_PLACEHOLDER}\3", out)
         return out
@@ -329,8 +363,10 @@ class StudioConfig:
     studio_server_port: int = DEFAULT_STUDIO_SERVER_PORT
     studio_stub_llm: bool = False
     studio_include_animate: bool = False
+    studio_include_3d: bool = False
     comfy_user: str = "admin"
     comfy_pass: str | None = field(default=None, repr=False)
+    vast_api_key: str | None = field(default=None, repr=False)
     require_auth: bool = False
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
     sse_heartbeat_seconds: float = DEFAULT_SSE_HEARTBEAT_SECONDS
@@ -342,6 +378,7 @@ class StudioConfig:
     studio_enable_mcp: bool = True
 
     def __post_init__(self) -> None:
+        self.studio_server_host = sanitize_loopback_host(self.studio_server_host)
         if isinstance(self.studio_data_dir, str):
             self.studio_data_dir = Path(self.studio_data_dir)
         if self.studio_llm_key is not None:
@@ -353,6 +390,9 @@ class StudioConfig:
         if self.comfy_pass is not None:
             cleaned_pass = self.comfy_pass.strip()
             self.comfy_pass = cleaned_pass if cleaned_pass else None
+        if self.vast_api_key is not None:
+            cleaned_vast = self.vast_api_key.strip()
+            self.vast_api_key = cleaned_vast if cleaned_vast else None
         if self.studio_webhook_url is not None:
             cleaned_wh_url = self.studio_webhook_url.strip()
             self.studio_webhook_url = cleaned_wh_url if cleaned_wh_url else None
@@ -401,8 +441,13 @@ class StudioConfig:
         require_auth_env = _parse_bool(source.get("STUDIO_REQUIRE_AUTH"), default=False)
         require_auth = bool(comfy_pass) or require_auth_env
 
+        # `MODEL_PROFILE=unreal` descarga el grupo 3D por defecto; un
+        # STUDIO_INCLUDE_3D=0 explícito puede renunciar a él.
+        profile = source.get("MODEL_PROFILE", "studio").strip() or "studio"
+        include_3d_default = profile.strip().lower() == "unreal"
+
         return cls(
-            model_profile=source.get("MODEL_PROFILE", "studio").strip() or "studio",
+            model_profile=profile,
             studio_llm_base_url=(
                 source.get("STUDIO_LLM_BASE_URL", "").strip()
                 or DEFAULT_STUDIO_LLM_BASE_URL
@@ -427,14 +472,14 @@ class StudioConfig:
                 or DEFAULT_STUDIO_COMFYUI_URL
             ),
             studio_data_dir=_default_studio_data_dir(source),
-            studio_server_host=(
-                source.get("STUDIO_SERVER_HOST", "").strip()
-                or DEFAULT_STUDIO_SERVER_HOST
-            ),
+            studio_server_host=sanitize_loopback_host(source.get("STUDIO_SERVER_HOST")),
             studio_server_port=port,
             studio_stub_llm=_parse_bool(source.get("STUDIO_STUB_LLM"), default=False),
             studio_include_animate=_parse_bool(
                 source.get("STUDIO_INCLUDE_ANIMATE"), default=False
+            ),
+            studio_include_3d=_parse_bool(
+                source.get("STUDIO_INCLUDE_3D"), default=include_3d_default
             ),
             comfy_user=(
                 source.get("COMFY_USER", "").strip()
@@ -451,6 +496,7 @@ class StudioConfig:
             studio_resume_delay_s=resume_delay_s,
             studio_api_token=source.get("STUDIO_API_TOKEN", "").strip() or None,
             studio_enable_mcp=_parse_bool(source.get("STUDIO_ENABLE_MCP"), default=True),
+            vast_api_key=source.get("VAST_API_KEY", "").strip() or None,
         )
 
     def get_llm_key(self) -> str | None:
@@ -468,6 +514,9 @@ class StudioConfig:
     def get_api_token(self) -> str | None:
         return self.studio_api_token
 
+    def get_vast_api_key(self) -> str | None:
+        return self.vast_api_key
+
     def masked_llm_key_status(self) -> str:
         return "<definida>" if self.studio_llm_key else "<no definida>"
 
@@ -476,6 +525,15 @@ class StudioConfig:
 
     def masked_comfy_pass_status(self) -> str:
         return "<definida>" if self.comfy_pass else "<no definida>"
+
+    def three_d_weights_available(self) -> bool:
+        """¿Están previstos los pesos del grupo 3D (Hunyuan3D) en este pod?
+
+        `STUDIO_INCLUDE_3D=1` o `MODEL_PROFILE=unreal` hacen que
+        `download-models.sh` descargue `hunyuan_3d_v2.1.safetensors`; sin ellos la
+        plantilla `hunyuan3d_image_to_3d` no es ofrecida ni acepta submits.
+        """
+        return bool(self.studio_include_3d)
 
     def redactor(self) -> SecretRedactor:
         return SecretRedactor.from_config(self)
@@ -494,8 +552,10 @@ class StudioConfig:
             "STUDIO_SERVER_PORT": str(self.studio_server_port),
             "STUDIO_STUB_LLM": "1" if self.studio_stub_llm else "0",
             "STUDIO_INCLUDE_ANIMATE": "1" if self.studio_include_animate else "0",
+            "STUDIO_INCLUDE_3D": "1" if self.studio_include_3d else "0",
             "COMFY_USER": self.comfy_user,
             "COMFY_PASS": self.masked_comfy_pass_status(),
+            "VAST_API_KEY": "<definida>" if self.vast_api_key else "<no definida>",
             "STUDIO_WEBHOOK_URL": "<definida>" if self.studio_webhook_url else "<no definida>",
             "STUDIO_WEBHOOK_SECRET": (
                 "<definida>" if self.studio_webhook_secret else "<no definida>"

@@ -37,6 +37,10 @@ ALLOWED_MEDIA_MIMES: dict[str, tuple[str, set[str]]] = {
     "audio/flac": ("audio", {".flac"}),
     "audio/mp4": ("audio", {".m4a", ".mp4"}),
     "audio/x-m4a": ("audio", {".m4a"}),
+    # 3D / Malla
+    "model/gltf-binary": ("model3d", {".glb"}),
+    "model/gltf+json": ("model3d", {".gltf"}),
+    "model/obj": ("model3d", {".obj"}),
 }
 
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")

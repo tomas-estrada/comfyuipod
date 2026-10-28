@@ -47,6 +47,9 @@ _OUTPUT_MIME_BY_EXT: dict[str, str] = {
     ".oga": "audio/ogg",
     ".flac": "audio/flac",
     ".m4a": "audio/x-m4a",
+    ".glb": "model/gltf-binary",
+    ".gltf": "model/gltf+json",
+    ".obj": "model/obj",
 }
 
 
@@ -247,7 +250,7 @@ def parse_ws_event(raw_message: str | bytes | dict[str, Any]) -> ComfyUIWsEvent 
 
 
 def extract_outputs(history_entry: dict[str, Any]) -> list[ComfyUIOutputFile]:
-    """Extrae artefactos (images, gifs, video, videos, audio) de una entrada de /history."""
+    """Extrae artefactos (images, gifs, video, videos, audio, 3d) de una entrada de /history."""
     outputs_by_node = history_entry.get("outputs")
     if not isinstance(outputs_by_node, dict):
         return []
@@ -256,7 +259,7 @@ def extract_outputs(history_entry: dict[str, Any]) -> list[ComfyUIOutputFile]:
     for node_id, node_out in outputs_by_node.items():
         if not isinstance(node_out, dict):
             continue
-        for kind in ("gifs", "video", "videos", "images", "audio"):
+        for kind in ("gifs", "video", "videos", "images", "audio", "3d", "mesh", "meshes", "files"):
             items = node_out.get(kind)
             if not isinstance(items, list):
                 continue
@@ -370,6 +373,10 @@ class ComfyUIClient:
         project_id: str | None = None,
         prompt_id: str | None = None,
     ) -> None:
+        if job_id and self._store is not None:
+            existing = self._store.get_job(job_id)
+            if existing and existing.get("status") == "cancelled":
+                return
         redacted_msg = self._redact(error.message)
         error.message = redacted_msg
         error.args = (redacted_msg,)
@@ -408,6 +415,10 @@ class ComfyUIClient:
         project_id: str | None = None,
         progress_max: float | None = None,
     ) -> None:
+        if job_id and self._store is not None:
+            existing = self._store.get_job(job_id)
+            if existing and existing.get("status") == "cancelled":
+                return
         eff_max = float(progress_max) if progress_max is not None else 1.0
         if job_id and self._store is not None:
             if progress_max is None:
@@ -1130,6 +1141,11 @@ class ComfyUIClient:
             project_id=project_id,
             finalize_job=False,
         )
+
+        if job_id and self._store is not None:
+            existing = self._store.get_job(job_id)
+            if existing and existing.get("status") == "cancelled":
+                return result
 
         saved_asset_ids: list[str] = []
         try:

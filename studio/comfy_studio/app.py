@@ -474,7 +474,7 @@ def create_app(
         )
 
     store = ProjectStore(cfg.studio_data_dir)
-    broker = ProgressBroker()
+    broker = ProgressBroker(redactor=redactor)
     stub_llm = StubLLMClient(model=cfg.studio_llm_model) if cfg.studio_stub_llm else None
 
     webhook_notifier: WebhookNotifier | None = create_webhook_notifier(cfg)
@@ -629,11 +629,11 @@ def create_app(
 
         response = await call_next(request)
 
-        # M3-SCR-008 (regla 3 de AGENTS.md): TODA respuesta JSON de /studio pasa
+        # M3-SCR-008 (regla 3 de AGENTS.md): TODA respuesta JSON de /studio y /health pasa
         # por SecretRedactor de forma centralizada, incluidos `detail=str(exc)`
         # de HTTPException y dicts crudos de los endpoints M3 (percepción, ASR,
         # EDL). SSE, archivos y media quedan fuera (no son application/json).
-        if request.url.path.startswith("/studio"):
+        if request.url.path.startswith(("/studio", "/health")):
             content_type = response.headers.get("content-type", "")
             if content_type.startswith("application/json"):
                 body = b"".join([chunk async for chunk in response.body_iterator])
@@ -963,7 +963,16 @@ def create_app(
         include_workflow: bool = Query(default=False),
     ) -> dict[str, Any]:
         active_registry: TemplateRegistry = request.app.state.template_registry
-        return {"templates": active_registry.list_templates(include_workflow=include_workflow)}
+        active_cfg: StudioConfig = request.app.state.config
+        # El registro HTTP expone SIEMPRE las 7 plantillas; cada entrada declara
+        # `available`/`unavailable_reason` (gating por pesos 3D, VAL-UNREAL-004)
+        # y es el panel quien no ofrece las no disponibles.
+        return {
+            "templates": active_registry.list_templates(
+                include_workflow=include_workflow,
+                three_d_available=active_cfg.three_d_weights_available(),
+            )
+        }
 
     @app.get("/studio/api/templates/{template_id}")
     async def get_template_endpoint(
@@ -971,8 +980,13 @@ def create_app(
         request: Request,
     ) -> dict[str, Any]:
         active_registry: TemplateRegistry = request.app.state.template_registry
+        active_cfg: StudioConfig = request.app.state.config
         try:
-            return active_registry.get_template(template_id, include_workflow=True)
+            return active_registry.get_template(
+                template_id,
+                include_workflow=True,
+                three_d_available=active_cfg.three_d_weights_available(),
+            )
         except TemplateNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -987,7 +1001,8 @@ def create_app(
         active_store: ProjectStore = request.app.state.store
         active_comfyui: ComfyUIClient = request.app.state.comfyui_client
         active_broker: ProgressBroker = request.app.state.broker
-        active_redactor = request.app.state.config.redactor()
+        active_cfg: StudioConfig = request.app.state.config
+        active_redactor = active_cfg.redactor()
 
         try:
             payload = await request.json()
@@ -1018,6 +1033,7 @@ def create_app(
                 comfyui_client=active_comfyui,
                 broker=active_broker,
                 strict=True,
+                three_d_available=active_cfg.three_d_weights_available(),
             )
         except TemplateNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

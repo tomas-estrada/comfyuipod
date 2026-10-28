@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from comfy_studio.app import create_app
+from comfy_studio.config import StudioConfig
 from comfy_studio.stubs.comfyui import ComfyUIStubState
 from comfy_studio.templates import (
     EXPECTED_M2_TEMPLATE_IDS,
@@ -27,7 +30,12 @@ MODELS_STUDIO_MANIFEST = REPO_ROOT / "config" / "models-studio.json"
 def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defaults(
     client: TestClient,
 ) -> None:
-    """GET /studio/api/templates lista las 6 plantillas M2 con schemas y docs en español."""
+    """GET /studio/api/templates lista las 7 plantillas del registro con schemas y docs.
+
+    Hunyuan3D figura con `available: false` cuando faltan sus pesos (perfil `studio`
+    sin `STUDIO_INCLUDE_3D`): el panel no la ofrece (VAL-UNREAL-004), pero el
+    registro HTTP sigue teniendo 7 entradas.
+    """
     resp = client.get("/studio/api/templates")
     assert resp.status_code == 200
     body = resp.json()
@@ -37,6 +45,14 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
 
     by_id = {tpl["id"]: tpl for tpl in templates}
     assert set(by_id.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
+
+    # Disponibilidad declarada por entrada: solo la 3D está bloqueada sin pesos.
+    assert by_id["hunyuan3d_image_to_3d"]["available"] is False
+    assert "STUDIO_INCLUDE_3D" in by_id["hunyuan3d_image_to_3d"]["unavailable_reason"]
+    for tpl_id, tpl in by_id.items():
+        if tpl_id != "hunyuan3d_image_to_3d":
+            assert tpl["available"] is True
+            assert tpl["unavailable_reason"] is None
 
     # 1. Verificar defaults de rendimiento VACE: fp8 + 480p (832x480) + offload
     for vace_id in ("vace_inpaint", "vace_restyle"):
@@ -711,5 +727,78 @@ def test_vace_inpaint_temporal_mask_broadcast_data_path() -> None:
             assert mask_frame == [[0.0, 1.0], [0.0, 1.0]], (
                 f"Frame {frame_idx} perdió la máscara espacial protegida: {mask_frame}"
             )
+
+
+# --- VAL-UNREAL-004: gating de la plantilla Hunyuan3D por pesos opt-in -------
+
+
+def test_hunyuan3d_submit_without_weights_fails_with_clear_error(
+    client: TestClient,
+    stub_comfyui_state: ComfyUIStubState,
+) -> None:
+    resp = client.post(
+        "/studio/api/templates/hunyuan3d_image_to_3d/submit",
+        json={"params": {"image_asset_id": "asset_inexistente"}},
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "Hunyuan3D" in detail
+    assert "STUDIO_INCLUDE_3D" in detail
+    # No se encoló nada en ComfyUI ni quedó ningún job silencioso.
+    assert stub_comfyui_state.prompts == []
+
+
+def test_hunyuan3d_is_offered_when_three_d_weights_opt_in(
+    studio_config: StudioConfig,
+    studio_data_dir: Path,
+    stub_comfyui_transport,
+) -> None:
+    cfg = dataclasses.replace(studio_config, studio_include_3d=True)
+    app = create_app(config=cfg, comfyui_transport=stub_comfyui_transport)
+    with TestClient(app) as c:
+        c.auth = ("admin", "changeme-test-pass-42")
+
+        templates = c.get("/studio/api/templates").json()["templates"]
+        assert len(templates) == 7
+        by_id = {tpl["id"]: tpl for tpl in templates}
+        assert by_id["hunyuan3d_image_to_3d"]["available"] is True
+
+        detail = c.get("/studio/api/templates/hunyuan3d_image_to_3d").json()
+        assert detail["available"] is True
+        assert detail["unavailable_reason"] is None
+
+        # Superada la puerta de pesos, el submit valida parámetros normalmente:
+        # sin imagen el error es el de parámetros, no el de pesos.
+        resp = c.post(
+            "/studio/api/templates/hunyuan3d_image_to_3d/submit",
+            json={"params": {}},
+        )
+        assert resp.status_code == 422
+        assert "image_asset_id" in resp.json()["detail"]
+        assert "STUDIO_INCLUDE_3D" not in resp.json()["detail"]
+
+
+def test_config_three_d_weights_follow_opt_in_and_unreal_profile(studio_data_dir: Path) -> None:
+    base = StudioConfig.from_env({"STUDIO_DATA_DIR": str(studio_data_dir)})
+    assert base.three_d_weights_available() is False
+
+    opt_in = StudioConfig.from_env(
+        {"STUDIO_DATA_DIR": str(studio_data_dir), "STUDIO_INCLUDE_3D": "1"}
+    )
+    assert opt_in.three_d_weights_available() is True
+
+    unreal = StudioConfig.from_env(
+        {"STUDIO_DATA_DIR": str(studio_data_dir), "MODEL_PROFILE": "unreal"}
+    )
+    assert unreal.three_d_weights_available() is True
+
+    renounced = StudioConfig.from_env(
+        {
+            "STUDIO_DATA_DIR": str(studio_data_dir),
+            "MODEL_PROFILE": "unreal",
+            "STUDIO_INCLUDE_3D": "0",
+        }
+    )
+    assert renounced.three_d_weights_available() is False
 
 

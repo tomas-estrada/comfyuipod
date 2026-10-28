@@ -1117,9 +1117,23 @@
             if (!resp.ok) return;
             const data = await resp.json();
             state.templates = Array.isArray(data.templates) ? data.templates : [];
+            pruneUnavailableTemplateOptions();
             renderTemplateDoc();
         } catch (_err) {
             // Ignorar error inicial
+        }
+    }
+
+    function pruneUnavailableTemplateOptions() {
+        // No ofrecer plantillas cuyos pesos no están en el pod (p. ej. Hunyuan3D
+        // sin STUDIO_INCLUDE_3D=1 ni MODEL_PROFILE=unreal).
+        const selectEl = document.getElementById("template-select");
+        if (!selectEl) return;
+        for (const option of Array.from(selectEl.options)) {
+            const tpl = state.templates.find((t) => t.id === option.value);
+            if (tpl && tpl.available === false) {
+                option.remove();
+            }
         }
     }
 
@@ -1134,10 +1148,15 @@
 
         const doc = tpl.docs || tpl.documentation || {};
         const defaultsStr = JSON.stringify(doc.defaults || tpl.performance_defaults || {});
+        const availabilityNotice =
+            tpl.available === false
+                ? `<div style="margin-top:0.25rem;color:#b45309;"><strong>No disponible:</strong> ${escapeHtml(tpl.unavailable_reason || "faltan pesos en este pod.")}</div>`
+                : "";
         docCard.innerHTML = `
             <div><strong>${escapeHtml(tpl.name || tpl.title || tpl.id)}</strong> (<code>${escapeHtml(tpl.category || "video")}</code>)</div>
             <div style="margin-top:0.25rem;"><strong>Uso:</strong> ${escapeHtml(doc.uso || tpl.description || "")}</div>
             <div style="margin-top:0.25rem;"><strong>Defaults 480p/Lightning:</strong> <code>${escapeHtml(defaultsStr)}</code></div>
+            ${availabilityNotice}
         `;
     }
 

@@ -138,10 +138,11 @@ async def test_recover_marks_exhausted_job_interrupted(
 
 
 @pytest.mark.anyio
-async def test_recover_with_resume_disabled_marks_interrupted(
+async def test_recover_with_resume_disabled_is_inert(
     recovery_env,
     stub_comfyui_state: ComfyUIStubState,
 ) -> None:
+    """VAL-RECOVERY-001: con STUDIO_RESUME_JOBS=0 no se altera ningún estado."""
     store, broker, project, client = recovery_env
     job = _create_stale_job(store, project["id"])
 
@@ -152,10 +153,46 @@ async def test_recover_with_resume_disabled_marks_interrupted(
         resume=False,
     )
 
-    assert report["interrupted"] == 1
+    assert report["stale"] == 1
+    assert report["interrupted"] == 0
     assert report["requeued"] == 0
     assert len(stub_comfyui_state.prompts) == 0
-    assert store.get_job(job["id"])["status"] == "interrupted"
+    untouched = store.get_job(job["id"])
+    assert untouched is not None
+    assert untouched["status"] == "running"
+    assert untouched["error"] in (None, "")
+
+
+@pytest.mark.anyio
+async def test_second_startup_does_not_requeue_an_already_interrupted_job(
+    recovery_env,
+    stub_comfyui_state: ComfyUIStubState,
+) -> None:
+    """Un job ya `interrupted` no es «stale»: no hay bucle de reencolado."""
+    store, broker, project, client = recovery_env
+    job = _create_stale_job(
+        store,
+        project["id"],
+        status="interrupted",
+        result={"interrupt_retries": 1, "resumed_after_restart": True},
+    )
+
+    for _ in range(2):  # dos arranques consecutivos
+        report = await recover_interrupted_jobs(
+            store=store, comfyui_client=client, broker=broker, resume=True
+        )
+        assert report == {
+            "stale": 0,
+            "interrupted": 0,
+            "requeued": 0,
+            "done": 0,
+            "failed": 0,
+        }
+
+    assert len(stub_comfyui_state.prompts) == 0
+    recovered = store.get_job(job["id"])
+    assert recovered is not None
+    assert recovered["status"] == "interrupted"
 
 
 @pytest.mark.anyio

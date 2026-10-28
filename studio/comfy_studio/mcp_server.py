@@ -29,6 +29,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from .agent.tools import ToolBelt, ToolContext
 from .comfyui_client import ComfyUIClient
@@ -165,21 +166,25 @@ async def _call_mcp_tool(
         if args:
             raise McpToolError(f"Argumentos no soportados por list_projects: {sorted(args)}")
         if requested and str(requested).strip():
-            _resolve_project_id(ctx.store, requested)  # valida existencia
-        return {"projects": ctx.store.list_projects()}
+            await run_in_threadpool(_resolve_project_id, ctx.store, requested)  # valida existencia
+        projects = await run_in_threadpool(ctx.store.list_projects)
+        return {"projects": projects}
 
     belt_available = name in BELT_TOOLS_EXPOSED and ctx.tool_belt.get(name) is not None
     if name != "list_assets" and not belt_available:
         raise McpToolError(f"Herramienta MCP no disponible: {name!r}")
 
-    project_id = _resolve_project_id(ctx.store, args.pop("project_id", None))
+    project_id = await run_in_threadpool(
+        _resolve_project_id, ctx.store, args.pop("project_id", None)
+    )
 
     if name == "list_assets":
         kind = args.pop("kind", None)
         category = args.pop("category", None)
         if args:
             raise McpToolError(f"Argumentos no soportados por list_assets: {sorted(args)}")
-        assets = ctx.store.list_assets(
+        assets = await run_in_threadpool(
+            ctx.store.list_assets,
             project_id,
             kind=str(kind) if kind else None,
             category=str(category) if category else None,

@@ -7,7 +7,7 @@ import argparse
 import uvicorn
 
 from comfy_studio.app import create_app
-from comfy_studio.config import StudioConfig
+from comfy_studio.config import StudioConfig, sanitize_loopback_host
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -26,7 +26,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
     app = create_app(cfg)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    host = sanitize_loopback_host(args.host)
+    uvicorn.run(app, host=host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":

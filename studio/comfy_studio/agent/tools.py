@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from starlette.concurrency import run_in_threadpool
 
 from ..comfyui_client import ComfyUIClient
 from ..config import StudioConfig
@@ -27,6 +28,7 @@ TemplateIdLiteral = Literal[
     "wan_i2v",
     "wan_t2v",
     "sdxl_image",
+    "hunyuan3d_image_to_3d",
 ]
 
 VALID_TEMPLATES: tuple[str, ...] = (
@@ -36,6 +38,7 @@ VALID_TEMPLATES: tuple[str, ...] = (
     "wan_i2v",
     "wan_t2v",
     "sdxl_image",
+    "hunyuan3d_image_to_3d",
 )
 
 
@@ -72,10 +75,12 @@ class RenderTemplateParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    prompt: str = Field(
-        ...,
-        min_length=1,
-        description="Descripción visual principal del plano o imagen a generar.",
+    prompt: str | None = Field(
+        default=None,
+        description=(
+            "Descripción visual principal del plano o imagen a generar "
+            "(obligatorio salvo en plantillas 3D)."
+        ),
     )
     negative_prompt: str | None = Field(
         default=None,
@@ -142,7 +147,10 @@ class RenderTemplateParams(BaseModel):
     )
     image_asset_id: str | None = Field(
         default=None,
-        description="ID del asset de imagen inicial o referencia (para wan_i2v / vace_restyle).",
+        description=(
+            "ID del asset de imagen inicial o referencia "
+            "(para wan_i2v / vace_restyle / hunyuan3d)."
+        ),
     )
     first_frame_asset_id: str | None = Field(
         default=None,
@@ -152,10 +160,34 @@ class RenderTemplateParams(BaseModel):
         default=None,
         description="ID del último fotograma (para wan_flf2v).",
     )
+    latent_resolution: int | None = Field(
+        default=None,
+        ge=512,
+        le=8192,
+        description="Resolución latente del flujo 3D (4096 por defecto).",
+    )
+    octree_resolution: int | None = Field(
+        default=None,
+        ge=64,
+        le=1024,
+        description="Resolución de octree para vóxeles 3D (256 por defecto).",
+    )
+    mesh_algorithm: str | None = Field(
+        default=None,
+        description="Algoritmo de extracción de malla (surface_net por defecto).",
+    )
+    mesh_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Umbral de extracción de superficie para la malla.",
+    )
 
     @field_validator("prompt")
     @classmethod
-    def _prompt_not_blank(cls, value: str) -> str:
+    def _prompt_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("El parámetro `prompt` no puede estar vacío.")
@@ -171,7 +203,8 @@ class EnqueueRenderArgs(BaseModel):
         ...,
         description=(
             "Identificador de la plantilla API-format a ejecutar: "
-            "vace_inpaint, vace_restyle, wan_flf2v, wan_i2v, wan_t2v o sdxl_image."
+            "vace_inpaint, vace_restyle, wan_flf2v, wan_i2v, wan_t2v, "
+            "sdxl_image o hunyuan3d_image_to_3d."
         ),
     )
     params: RenderTemplateParams = Field(
@@ -707,6 +740,12 @@ async def _handle_enqueue_render(
     args: EnqueueRenderArgs,
     context: ToolContext,
 ) -> dict[str, Any]:
+    if args.template_id != "hunyuan3d_image_to_3d" and not (
+        args.params.prompt and args.params.prompt.strip()
+    ):
+        raise ToolExecutionError(
+            f"La plantilla {args.template_id!r} requiere el parámetro 'prompt'."
+        )
     explicit_params = _extract_explicit_render_params(args.params)
     registry = get_default_registry()
     try:
@@ -839,7 +878,8 @@ async def _handle_extract_keyframes(
         target_aid = videos[0]["id"]
 
     try:
-        keyframes = extract_video_keyframes(
+        keyframes = await run_in_threadpool(
+            extract_video_keyframes,
             context.store,
             context.project_id,
             target_aid,
@@ -870,7 +910,7 @@ async def _handle_index_media(
     clip_idx = ClipVisualIndex(context.store, vec_store)
     face_idx = InsightFaceIndex(context.store, vec_store)
 
-    try:
+    def _do_index() -> dict[str, Any]:
         if args.asset_id:
             clip_res = clip_idx.index_asset(
                 context.project_id,
@@ -924,6 +964,9 @@ async def _handle_index_media(
             "shots_indexed": proj_res["shots_indexed"],
             "faces_detected": face_count,
         }
+
+    try:
+        return await run_in_threadpool(_do_index)
     except ValueError as exc:
         raise ToolExecutionError(str(exc)) from exc
 
@@ -987,7 +1030,8 @@ async def _handle_transcribe(
     from ..asr.whisperx import transcribe_project_asset
 
     try:
-        result = transcribe_project_asset(
+        result = await run_in_threadpool(
+            transcribe_project_asset,
             context.store,
             context.project_id,
             asset_id=args.asset_id,
@@ -1015,7 +1059,8 @@ async def _handle_diarize(
     from ..asr.diarize import diarize_project_asset
 
     try:
-        result = diarize_project_asset(
+        result = await run_in_threadpool(
+            diarize_project_asset,
             context.store,
             context.project_id,
             asset_id=args.asset_id,
@@ -1042,7 +1087,7 @@ async def _handle_build_edl(
     from ..edl.ffmpeg_edl import execute_edl_ffmpeg
     from ..edl.highlights import generate_highlights_edl
 
-    try:
+    def _do_build_edl() -> dict[str, Any]:
         edl_id = args.edl_id
         if edl_id is None and args.version is None:
             latest = context.store.get_latest_edl(context.project_id)
@@ -1054,7 +1099,7 @@ async def _handle_build_edl(
                     aspect_ratio=args.aspect_ratio or "16:9",
                 )
                 edl_id = generated["id"]
-        result = execute_edl_ffmpeg(
+        return execute_edl_ffmpeg(
             context.store,
             context.project_id,
             edl_id=edl_id,
@@ -1062,6 +1107,9 @@ async def _handle_build_edl(
             aspect_ratio=args.aspect_ratio,
             source_asset_id=args.source_asset_id,
         )
+
+    try:
+        result = await run_in_threadpool(_do_build_edl)
     except (ValueError, RuntimeError) as exc:
         raise ToolExecutionError(str(exc)) from exc
 
