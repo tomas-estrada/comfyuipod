@@ -232,10 +232,26 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && node --version && npm --version \
     && rm -rf /var/lib/apt/lists/*
 COPY studio/remotion/ /opt/remotion/
-RUN cd /opt/remotion \
-    && npm install --no-audit --no-fund --loglevel=error \
+WORKDIR /opt/remotion
+RUN npm install --no-audit --no-fund --loglevel=error \
     && npx remotion browser ensure \
     && npm cache clean --force
+WORKDIR /
+
+# 5c. Motor upscaler (M5): Real-ESRGAN ncnn-vulkan (binario prebuilt + modelos
+#     incluidos en el release; CPU/Vulkan, no necesita torch). Se baja el zip del
+#     release fijado, el binario va a /usr/local/bin y los modelos a /opt/realesrgan.
+#     Las rutas se exponen en STUDIO_UPSCALER_BIN / STUDIO_UPSCALER_MODEL_DIR
+#     (las lee UpscalerEngine._run_model). Un release/URL equivocado rompe ESTE build.
+ENV STUDIO_UPSCALER_BIN=/usr/local/bin/realesrgan-ncnn-vulkan \
+    STUDIO_UPSCALER_MODEL_DIR=/opt/realesrgan/models
+RUN curl -fsSL -o /tmp/realesrgan.zip \
+        https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip \
+    && mkdir -p /opt/realesrgan \
+    && unzip -o /tmp/realesrgan.zip -d /opt/realesrgan \
+    && install -m 0755 /opt/realesrgan/realesrgan-ncnn-vulkan /usr/local/bin/realesrgan-ncnn-vulkan \
+    && test -d /opt/realesrgan/models \
+    && rm -f /tmp/realesrgan.zip
 
 # 6. Copiar archivos de configuración, portal, estudio, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
 ARG IMAGE_TAG=dev
