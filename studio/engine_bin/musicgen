@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Adaptador CLI `musicgen` para el motor music_gen del estudio.
+
+El motor (`MusicGenEngine._run_model`) invoca un binario llamado `musicgen` con
+la interfaz fija:
+
+    musicgen --model-dir DIR --prompt "..." --duration N --output OUT.wav [--bpm N]
+
+MusicGen vive en `audiocraft` (facebookresearch/audiocraft). Este wrapper
+traduce esa interfaz a la API de audiocraft (`MusicGen.get_pretrained`), de
+forma aislada, con fallo TIPADO si faltan las deps pesadas o el modelo.
+
+ESTRATEGIA (opción A, igual que RVC): el paquete `audiocraft` queda WARM en la
+imagen, pero sus deps pesadas/fragiles (xformers, demucs, spacy, flashy) y los
+pesos del modelo NO se hornean (arrastrarían/clavarían torch 2.1 + numpy<2 y son
+compile-pesadas). Se instalan en runtime a --model-dir (cacheado en el volumen).
+El import de audiocraft.models es perezoso aquí: sin las deps, fallo tipado.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+
+def _fail(msg: str, code: int) -> int:
+    sys.stderr.write(f"musicgen: {msg}\n")
+    return code
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="musicgen", add_help=True)
+    parser.add_argument("--model-dir", required=True)
+    parser.add_argument("--prompt", required=True)
+    parser.add_argument("--duration", type=float, default=15.0)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--bpm", type=int, default=0)
+    args = parser.parse_args()
+
+    # audiocraft.models importa todo el zoo (xformers/demucs/spacy): deps pesadas
+    # no horneadas (opción A). Sin ellas, fallo TIPADO honesto antes de importar.
+    for dep in ("audiocraft", "xformers"):
+        if importlib.util.find_spec(dep) is None:
+            return _fail(
+                f"dependencia '{dep}' ausente: instala las deps pesadas de "
+                "MusicGen en runtime (opción A: no se hornean en la imagen por "
+                "arrastrar torch 2.1/numpy<2 y ser compile-pesadas)",
+                4,
+            )
+
+    model_dir = Path(args.model_dir)
+    if not model_dir.is_dir() or not any(model_dir.iterdir()):
+        return _fail(
+            f"modelo MusicGen ausente en {model_dir} "
+            "(baja el modelo al --model-dir antes de ejecutar)",
+            3,
+        )
+
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    # Import perezoso: solo aquí, cuando ya sabemos que las deps están.
+    try:
+        import torch  # noqa: F401
+        from audiocraft.data.audio import audio_write
+        from audiocraft.models import MusicGen
+    except ImportError as exc:
+        return _fail(f"no se pudo importar audiocraft: {exc}", 4)
+
+    # El modelo se carga desde --model-dir (cache HF apuntado por env).
+    os.environ.setdefault("AUDIOCRAFT_CACHE_DIR", str(model_dir))
+    os.environ.setdefault("HF_HOME", str(model_dir))
+    try:
+        model = MusicGen.get_pretrained(str(model_dir))
+    except (OSError, ValueError, RuntimeError) as exc:
+        return _fail(f"no se pudo cargar el modelo MusicGen: {exc}", 3)
+
+    model.set_generation_params(duration=args.duration)
+    try:
+        wav = model.generate([args.prompt], progress=False)
+    except (RuntimeError, ValueError) as exc:
+        return _fail(f"generación MusicGen falló: {exc}", 1)
+
+    try:
+        # audio_write añade la extensión; escribimos a un base y renombramos.
+        base = out.with_suffix("")
+        audio_write(
+            str(base),
+            wav[0].cpu(),
+            model.sample_rate,
+            strategy="loudness",
+            format=out.suffix.lstrip(".") or "wav",
+        )
+    except (OSError, RuntimeError) as exc:
+        return _fail(f"no se pudo escribir la salida: {exc}", 1)
+
+    if not out.exists():
+        return _fail("MusicGen no produjo la salida esperada", 1)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

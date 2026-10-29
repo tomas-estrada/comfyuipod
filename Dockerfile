@@ -309,6 +309,34 @@ RUN git init /opt/rvc \
     && install -m 0755 /opt/engine_bin/rvc /usr/local/bin/rvc \
     && mkdir -p /workspace/comfyui-data/models/rvc \
     && pip3 freeze > /etc/comfyui/requirements.lock
+
+# 5f. Motor music_gen (M5): MusicGen via audiocraft (facebookresearch/audiocraft)
+#     horneado por SHA fijado. ESTRATEGIA (opción A, igual que RVC): el paquete
+#     `audiocraft` queda WARM en la imagen (--no-deps), pero sus deps pesadas y
+#     fragiles (xformers, demucs, spacy, flashy) + los pesos NO se hornean:
+#     audiocraft pinea torch==2.1/torchvision==0.16/numpy<2/xformers<0.0.23, que
+#     clavarían el torch 2.9.1+cu128 del pod, y son compile-pesadas. Se instalan
+#     en runtime a STUDIO_MUSIC_GEN_MODEL_DIR (cacheado en el volumen). audiocraft.
+#     models importa todo el zoo de forma EAGER (toca xformers), así que el guard
+#     del build NO importa audiocraft: solo verifica que el paquete está presente
+#     y que el shim compila. El adaptador `musicgen` importa MusicGen de forma
+#     perezosa y falla TIPADO sin las deps o el modelo. Un SHA equivocado rompe
+#     ESTE build (el pip --no-deps y el test de presencia).
+ENV STUDIO_MUSIC_GEN_BIN=/usr/local/bin/musicgen \
+    STUDIO_MUSIC_GEN_MODEL_DIR=/workspace/comfyui-data/models/musicgen
+COPY studio/engine_bin/musicgen /opt/engine_bin/musicgen
+RUN git init /opt/audiocraft \
+    && git -C /opt/audiocraft remote add origin https://github.com/facebookresearch/audiocraft \
+    && git -C /opt/audiocraft fetch --depth=1 origin 896ec7c47f5e5d1e5aa1e4b260c4405328bf009d \
+    && git -C /opt/audiocraft checkout -B main FETCH_HEAD \
+    && test -f /opt/audiocraft/audiocraft/models/musicgen.py \
+    && pip3 install --no-cache-dir --no-deps /opt/audiocraft \
+    && pip3 install --no-cache-dir "einops" "julius" "num2words" "sentencepiece" \
+        "encodec" "torchmetrics" "huggingface_hub" \
+    && python3 -c "import importlib.util; assert importlib.util.find_spec('audiocraft'), 'audiocraft no instalado'" \
+    && install -m 0755 /opt/engine_bin/musicgen /usr/local/bin/musicgen \
+    && mkdir -p /workspace/comfyui-data/models/musicgen \
+    && pip3 freeze > /etc/comfyui/requirements.lock
 ARG BUILD_DATE=unknown
 
 COPY --from=builder --chmod=0755 /build/comfyctl/target/release/comfyctl /usr/local/bin/comfyctl
