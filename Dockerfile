@@ -256,6 +256,26 @@ RUN curl -fsSL -o /tmp/realesrgan.zip \
     && test -d /opt/realesrgan/models \
     && rm -f /tmp/realesrgan.zip
 
+# 5d. Motor lipsync (M5): Wav2Lip (Rudrabha) horneado en /opt/wav2lip por SHA fijado.
+#     NO se instala su requirements.txt (pide torch==1.1.0 / numpy 1.17 de 2020, roto
+#     con el stack torch 2.9.1 + Py3.12 del pod): instalamos solo las deps que
+#     inference.py importa, en versiones compatibles, SIN tocar torch. El checkpoint
+#     wav2lip_gan.pth NO se hornea: se baja en runtime a STUDIO_LIPSYNC_MODEL_DIR
+#     (cacheado en el volumen). El adaptador CLI `wav2lip` (studio/engine_bin) traduce
+#     la interfaz del motor a inference.py. Un SHA/dep equivocado rompe ESTE build.
+ENV STUDIO_LIPSYNC_BIN=/usr/local/bin/wav2lip \
+    STUDIO_LIPSYNC_MODEL_DIR=/workspace/comfyui-data/models/wav2lip \
+    WAV2LIP_HOME=/opt/wav2lip
+COPY studio/engine_bin/wav2lip /usr/local/bin/wav2lip
+RUN git init /opt/wav2lip \
+    && git -C /opt/wav2lip remote add origin https://github.com/Rudrabha/Wav2Lip \
+    && git -C /opt/wav2lip fetch --depth=1 origin bac9a81e63ecc153202353372e5724b83d9e6322 \
+    && git -C /opt/wav2lip checkout -B main FETCH_HEAD \
+    && test -f /opt/wav2lip/inference.py \
+    && chmod +x /usr/local/bin/wav2lip \
+    && pip3 install --no-cache-dir "librosa>=0.10,<0.11" "numba>=0.59" \
+    && mkdir -p /workspace/comfyui-data/models/wav2lip
+
 # 6. Copiar archivos de configuración, portal, estudio, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
 ARG IMAGE_TAG=dev
 ARG BUILD_DATE=unknown

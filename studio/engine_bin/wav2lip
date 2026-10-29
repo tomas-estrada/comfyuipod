@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Adaptador CLI `wav2lip` para el motor lipsync del estudio.
+
+El motor (`LipsyncEngine._run_model`) invoca un binario llamado `wav2lip` con
+la interfaz fija:
+
+    wav2lip --model-dir DIR --video IN.mp4 --audio IN.wav --output OUT.mp4
+
+Wav2Lip original no expone esa interfaz: es un repo con `inference.py` y un
+checkpoint. Este wrapper traduce esos flags a la invocación real, de forma
+aislada (subproceso, sin shell) y con fallo TIPADO si falta el checkpoint.
+
+El repo Wav2Lip se hornea en la imagen (ruta fija WAV2LIP_HOME); el checkpoint
+(`wav2lip_gan.pth`) NO se hornea: vive en --model-dir y se baja en runtime
+(se cachea en el volumen). Sin checkpoint, salida tipada no-cero.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+WAV2LIP_HOME = Path("/opt/wav2lip")
+_CHECKPOINT_NAME = "wav2lip_gan.pth"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="wav2lip", add_help=True)
+    parser.add_argument("--model-dir", required=True)
+    parser.add_argument("--video", required=True)
+    parser.add_argument("--audio", required=True)
+    parser.add_argument("--output", required=True)
+    args = parser.parse_args()
+
+    checkpoint = Path(args.model_dir) / _CHECKPOINT_NAME
+    if not checkpoint.is_file():
+        sys.stderr.write(
+            f"wav2lip: checkpoint ausente en {checkpoint} "
+            f"(baja {_CHECKPOINT_NAME} al --model-dir antes de ejecutar)\n"
+        )
+        return 2
+
+    inference = WAV2LIP_HOME / "inference.py"
+    if not inference.is_file():
+        sys.stderr.write(f"wav2lip: repo no horneado en {WAV2LIP_HOME}\n")
+        return 3
+
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable,
+        str(inference),
+        "--checkpoint_path",
+        str(checkpoint),
+        "--face",
+        args.video,
+        "--audio",
+        args.audio,
+        "--outfile",
+        args.output,
+    ]
+    try:
+        res = subprocess.run(  # noqa: S603 - args fijos, sin shell
+            cmd,
+            cwd=str(WAV2LIP_HOME),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except OSError as exc:
+        sys.stderr.write(f"wav2lip: no se pudo lanzar inference.py: {exc}\n")
+        return 1
+
+    if res.stdout:
+        sys.stdout.write(res.stdout[-2000:])
+    if res.returncode != 0 or not out.exists():
+        sys.stderr.write((res.stderr or "wav2lip: inference falló sin salida")[-2000:])
+        return res.returncode or 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
