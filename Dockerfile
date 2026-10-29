@@ -349,12 +349,14 @@ RUN git init /opt/audiocraft \
 #     para cazar una lib compartida ausente antes del smoke. Una URL/versión
 #     equivocada rompe ESTE build (curl -f + el test de versión).
 ENV STUDIO_COMPOSITOR_BIN=/usr/local/bin/NatronRenderer
-RUN curl -fL --retry 3 --retry-delay 5 \
-        -o /tmp/natron.tgz \
-        https://github.com/NatronGitHub/Natron/releases/download/v2.5.0/Natron-2.5.0-Linux-x86_64.tgz \
+# NB: el asset .tgz es un ÚNICO ELF gzip (el launcher GUI), SIN NatronRenderer;
+# el árbol portable real con bin/NatronRenderer es el -no-installer.tar.xz.
+RUN curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
+        -o /tmp/natron.tar.xz \
+        https://github.com/NatronGitHub/Natron/releases/download/v2.5.0/Natron-2.5.0-Linux-x86_64-no-installer.tar.xz \
     && mkdir -p /opt/natron \
-    && tar -xzf /tmp/natron.tgz -C /opt/natron --strip-components=1 \
-    && rm -f /tmp/natron.tgz \
+    && tar -xJf /tmp/natron.tar.xz -C /opt/natron --strip-components=1 \
+    && rm -f /tmp/natron.tar.xz \
     && NATRON_RENDERER="$(find /opt/natron -name NatronRenderer -type f | head -n1)" \
     && test -n "$NATRON_RENDERER" \
     && ln -sf "$NATRON_RENDERER" /usr/local/bin/NatronRenderer \
