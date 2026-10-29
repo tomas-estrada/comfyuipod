@@ -81,11 +81,43 @@ def test_missing_key_blocks_real_call(tmp_path: Path, monkeypatch: pytest.Monkey
     assert "credencial" in (res.error or "")
 
 
-def test_bound_but_unwired_backend_fails_typed(
+def test_real_path_typed_failure_and_no_key_leak(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Backend ahora cableado (Minimax). Con una key presente pero el proveedor
+    # devolviendo error, debe fallar TIPADO y nunca filtrar la key. Se mockea
+    # httpx para no tocar la red.
     monkeypatch.delenv("STUDIO_STUB_HEAVY_VIDEO", raising=False)
-    monkeypatch.setenv("STUDIO_HEAVY_VIDEO_KEY", "k")
+    monkeypatch.setenv("STUDIO_HEAVY_VIDEO_KEY", "super-secret-key-value")
+
+    import httpx
+
+    class _Resp:
+        status_code = 500
+        text = "upstream boom"
+
+        def json(self) -> dict:
+            return {}
+
+    class _Client:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a) -> None:
+            return None
+
+        async def post(self, *a, **k):
+            return _Resp()
+
+        async def get(self, *a, **k):
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
     res = asyncio.run(HeavyVideoEngine().run(EngineRunSpec(job=_job(tmp_path))))
     assert res.ok is False
-    assert "no cableado" in (res.error or "")
+    assert "500" in (res.error or "")
+    # La key nunca aparece en el resultado expuesto.
+    assert "super-secret-key-value" not in str(res.to_public_dict())
