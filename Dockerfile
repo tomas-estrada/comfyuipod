@@ -274,7 +274,8 @@ RUN git init /opt/wav2lip \
     && test -f /opt/wav2lip/inference.py \
     && chmod +x /usr/local/bin/wav2lip \
     && pip3 install --no-cache-dir "librosa>=0.10,<0.11" "numba>=0.59" \
-    && mkdir -p /workspace/comfyui-data/models/wav2lip
+    && mkdir -p /workspace/comfyui-data/models/wav2lip \
+    && pip3 freeze > /etc/comfyui/requirements.lock
 
 # 6. Copiar archivos de configuración, portal, estudio, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
 ARG IMAGE_TAG=dev
