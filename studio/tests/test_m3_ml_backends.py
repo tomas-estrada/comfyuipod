@@ -260,6 +260,7 @@ def test_worker_clip_embed_text_subprocess():
         input=json.dumps({"text": "hola mundo"}),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
         env=env,
     )

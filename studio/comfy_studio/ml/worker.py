@@ -26,6 +26,18 @@ import os
 import sys
 from typing import Any
 
+# El worker intercambia JSON por stdin/stdout con `ensure_ascii=False`, así que
+# los streams DEBEN ser UTF-8 en cualquier SO. En Windows el code page por
+# defecto (cp1252) rompe el intercambio con caracteres acentuados (p.ej. 0xf3);
+# el pod Linux ya es UTF-8. Reconfigurar aquí lo hace correcto en ambos.
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    _reconfig = getattr(_stream, "reconfigure", None)
+    if callable(_reconfig):
+        try:
+            _reconfig(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):  # stream ya cerrado o no reconfigurable
+            pass
+
 # Asegurar que el paquete comfy_studio sea importable cuando el worker se
 # lanza con el intérprete del sistema (comfyui) que puede no tener el cwd
 # en sys.path.
