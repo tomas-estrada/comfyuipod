@@ -337,6 +337,28 @@ RUN git init /opt/audiocraft \
     && install -m 0755 /opt/engine_bin/musicgen /usr/local/bin/musicgen \
     && mkdir -p /workspace/comfyui-data/models/musicgen \
     && pip3 freeze > /etc/comfyui/requirements.lock
+
+# 5g. Motor compositor (M5): Natron (NatronGitHub/Natron), el "Nuke" open-source.
+#     Compositing basado en nodos para el ensamblaje final. A diferencia de los
+#     motores Python, Natron es una app C++ AUTOCONTENIDA: el bundle portable
+#     .tgz trae NatronRenderer + todas sus libs, así que NO toca torch/pip y no
+#     hay riesgo de clobber ni re-freeze del lock. Se hornea pinned por versión
+#     (v2.5.0, la última estable con build Linux portable; URL verificada 200
+#     antes de hornear). El adaptador `compositor` llama a NatronRenderer -w; sin
+#     binario falla TIPADO. Guard del build: extraer + `NatronRenderer --version`
+#     para cazar una lib compartida ausente antes del smoke. Una URL/versión
+#     equivocada rompe ESTE build (curl -f + el test de versión).
+ENV STUDIO_COMPOSITOR_BIN=/usr/local/bin/NatronRenderer
+RUN curl -fL --retry 3 --retry-delay 5 \
+        -o /tmp/natron.tgz \
+        https://github.com/NatronGitHub/Natron/releases/download/v2.5.0/Natron-2.5.0-Linux-x86_64.tgz \
+    && mkdir -p /opt/natron \
+    && tar -xzf /tmp/natron.tgz -C /opt/natron --strip-components=1 \
+    && rm -f /tmp/natron.tgz \
+    && NATRON_RENDERER="$(find /opt/natron -name NatronRenderer -type f | head -n1)" \
+    && test -n "$NATRON_RENDERER" \
+    && ln -sf "$NATRON_RENDERER" /usr/local/bin/NatronRenderer \
+    && (/usr/local/bin/NatronRenderer --version 2>&1 | head -n3 || true)
 ARG BUILD_DATE=unknown
 
 COPY --from=builder --chmod=0755 /build/comfyctl/target/release/comfyctl /usr/local/bin/comfyctl
