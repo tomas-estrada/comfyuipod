@@ -631,6 +631,10 @@ jobs:
           cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0},mode=max', fromJSON(steps.meta_cache.outputs.json).tags[0]) || '' }}
 
       - name: Purgar caché local de BuildKit antes del pull del candidato (M-02)
+        # Solo en push/dispatch: ahí se re-descarga la imagen de GHCR, así que conviene
+        # liberar disco antes. En pull_request la imagen está cargada localmente y este
+        # prune la borraría, dejando al smoke sin imagen.
+        if: github.event_name != 'pull_request'
         run: |
           df -h
           docker buildx prune --all --force
@@ -647,18 +651,29 @@ jobs:
           smoke_comfy_pass="$(openssl rand -hex 8)"
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           echo "Ejecutando smoke test sobre: ${CANDIDATE_TAG}"
-          # Pull explícito, visible y acotado: el paso M-02 purga la caché local y la imagen pesa ~15-16 GB.
-          # Un pull colgado sería invisible dentro de $(...); aquí acotamos a 1800s por intento con 1 reintento.
-          echo "Haciendo docker pull explícito del candidato (acotado a 1800s por intento)..."
-          pull_start=$SECONDS
-          if ! timeout 1800 docker pull "${CANDIDATE_TAG}"; then
-            echo "::warning::docker pull falló tras $((SECONDS - pull_start))s; reintentando una vez (las capas ya descargadas se reutilizan)..."
-            timeout 1800 docker pull "${CANDIDATE_TAG}" || {
-              echo "::error::docker pull de ${CANDIDATE_TAG} falló tras 2 intentos (¿red/GHCR?)"
+          # En pull_request la imagen se cargó al docker local (push=false, load=true) y
+          # NO existe en GHCR, así que el pull explícito se omite. En push/dispatch sí se
+          # publicó, y el paso M-02 purgó la caché local, por lo que hay que re-descargarla.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "pull_request: usando la imagen cargada localmente (sin docker pull)."
+            docker image inspect "${CANDIDATE_TAG}" >/dev/null 2>&1 || {
+              echo "::error::la imagen ${CANDIDATE_TAG} no está cargada localmente en el runner de PR"
               exit 1
             }
+          else
+            # Pull explícito, visible y acotado: el paso M-02 purga la caché local y la imagen pesa ~15-16 GB.
+            # Un pull colgado sería invisible dentro de $(...); aquí acotamos a 1800s por intento con 1 reintento.
+            echo "Haciendo docker pull explícito del candidato (acotado a 1800s por intento)..."
+            pull_start=$SECONDS
+            if ! timeout 1800 docker pull "${CANDIDATE_TAG}"; then
+              echo "::warning::docker pull falló tras $((SECONDS - pull_start))s; reintentando una vez (las capas ya descargadas se reutilizan)..."
+              timeout 1800 docker pull "${CANDIDATE_TAG}" || {
+                echo "::error::docker pull de ${CANDIDATE_TAG} falló tras 2 intentos (¿red/GHCR?)"
+                exit 1
+              }
+            fi
+            echo "Pull del candidato completado en $((SECONDS - pull_start))s"
           fi
-          echo "Pull del candidato completado en $((SECONDS - pull_start))s"
           docker images "${CANDIDATE_TAG}"
           timeout 300 docker run --rm --entrypoint find "${CANDIDATE_TAG}" /workspace/comfyui-data/user -type f
           timeout 300 docker run --rm --entrypoint nginx "${CANDIDATE_TAG}" -t
