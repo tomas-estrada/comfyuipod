@@ -94,8 +94,8 @@ def build_default_registry() -> EngineRegistry:
         EngineEntry(
             "editor",
             EngineTier.WARM,
-            wired=False,
-            note="stub-first; pendiente decisión Remotion vs OTIO+ffmpeg (F1)",
+            wired=True,
+            note="Remotion backend cableado (M4); render vía npx remotion",
         )
     )
     reg.register(
@@ -110,16 +110,64 @@ def build_default_registry() -> EngineRegistry:
         EngineEntry(
             "heavy_video",
             EngineTier.INSTALLABLE,
-            wired=False,
-            note="cliente de vídeo pesado (Minimax/API) pendiente (F5)",
+            wired=True,
+            note="cliente Minimax cableado (M5); env STUDIO_HEAVY_VIDEO_*",
         )
     )
     reg.register(
         EngineEntry(
             "audio",
             EngineTier.WARM,
-            wired=False,
-            note="TTS existe; STT/música/lipsync pendientes (F5)",
+            wired=True,
+            note="STT real vía worker ASR; TTS requiere integrar síntesis",
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "voice_clone",
+            EngineTier.WARM,
+            wired=True,
+            note="RVC: clonar/sintetizar voz; modelo pinned en imagen",
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "music_gen",
+            EngineTier.WARM,
+            wired=True,
+            note="MusicGen/Stable Audio; modelo pinned en imagen",
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "lipsync",
+            EngineTier.WARM,
+            wired=True,
+            note="Wav2Lip-style; modelo pinned en imagen",
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "upscaler",
+            EngineTier.WARM,
+            wired=True,
+            note="Real-ESRGAN super-res; modelo pinned en imagen",
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "capture3d",
+            EngineTier.INSTALLABLE,
+            wired=True,
+            note="Nerfstudio NeRF/Gaussian Splatting; binarios pinned en imagen",
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "compositor",
+            EngineTier.WARM,
+            wired=True,
+            note="Natron compositing node-based; binario pinned en imagen",
         )
     )
     return reg
