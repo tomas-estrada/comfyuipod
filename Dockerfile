@@ -361,6 +361,30 @@ RUN curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
     && test -n "$NATRON_RENDERER" \
     && ln -sf "$NATRON_RENDERER" /usr/local/bin/NatronRenderer \
     && (/usr/local/bin/NatronRenderer --version 2>&1 | head -n3 || true)
+
+# 5h. Motor capture3d (M5): Nerfstudio (nerfstudio-project/nerfstudio), captura 3D
+#     (NeRF / Gaussian Splatting). ESTRATEGIA (opción A, igual que RVC/MusicGen):
+#     el paquete `nerfstudio` + sus binarios (ns-train/ns-export/ns-process-data)
+#     quedan WARM, pero tiny-cuda-nn (tcnn) NO se hornea. Razones verificadas:
+#       - `pip install nerfstudio` resolvería torch a 2.15.0, CLAVANDO el torch
+#         2.9.1+cu128 del pod -> se instala con un CONSTRAINT que fija torch y
+#         torchvision a las versiones ya horneadas, así el resolver no las mueve.
+#       - tcnn es un import GUARDADO (nerfstudio/utils/external.py: try/except ->
+#         TCNN_EXISTS); nerfstudio importa y ns-export corre SIN tcnn. tcnn compila
+#         kernels CUDA contra el arch de la GPU (nvcc), imposible en CI sin GPU; se
+#         instala en runtime en la Blackwell (cacheado en volumen).
+#       - nerfacc==0.5.2 y gsplat==1.4.0 traen wheels py3-none-any: instalan sin
+#         GPU y compilan/JIT sus kernels en runtime.
+#     El adaptador `capture3d` falla TIPADO sin binarios/tcnn. Guard del build:
+#     binarios en PATH + `import nerfstudio` (funciona sin tcnn). Una versión mala
+#     rompe ESTE build. Pinned nerfstudio==1.1.5 (última estable).
+ENV STUDIO_CAPTURE3D_BIN_DIR=/usr/local/bin
+RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/ns-constraints.txt \
+    && PIP_CONSTRAINT=/tmp/ns-constraints.txt pip3 install --no-cache-dir nerfstudio==1.1.5 \
+    && rm -f /tmp/ns-constraints.txt \
+    && python3 -c "import nerfstudio; from nerfstudio.utils.external import TCNN_EXISTS; print('nerfstudio ok, tcnn=', TCNN_EXISTS)" \
+    && command -v ns-train && command -v ns-export && command -v ns-process-data \
+    && pip3 freeze > /etc/comfyui/requirements.lock
 ARG BUILD_DATE=unknown
 
 COPY --from=builder --chmod=0755 /build/comfyctl/target/release/comfyctl /usr/local/bin/comfyctl
