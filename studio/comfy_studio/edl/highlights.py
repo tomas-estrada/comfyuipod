@@ -6,16 +6,35 @@ Analiza una transcripción con timestamps por palabra (`whisperx` + opcional `ca
 - Detecta y suprime pausas largas entre intervenciones (`>= min_pause_sec`).
 - Construye un documento EDL versionado (`schema = "comfy_studio.edl.v1"`) validado con
   cortes `[in_sec, out_sec]`, `reason`, `speaker`, `text` y `aspect_ratio` (`16:9` o `9:16`).
+
+M2 (`M3-IDEA-033`), modo híbrido: cuando se pide `scene_cuts`, el corte de highlights se
+alinea además con la **energía acústica** real del medio (`analyze_wav_acoustic_windows`,
+envolvente RMS por ventanas de 100 ms) y con los **cambios de escena** ya detectados en los
+keyframes. La transcripción puede ser simulada; la señal acústica y los límites de escena son
+mediciones reales del archivo, así que el recorte deja de depender únicamente de palabras.
 """
 
 from __future__ import annotations
 
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any, Literal
 
-from ..asr.whisperx import SPANISH_FILLER_WORDS, transcribe_project_asset
+from ..asr.whisperx import (
+    SPANISH_FILLER_WORDS,
+    analyze_wav_acoustic_windows,
+    extract_16k_mono_wav,
+    transcribe_project_asset,
+)
 from ..projects import ProjectStore
 
 AspectRatioType = Literal["16:9", "9:16", "1:1", "4:5"]
+
+# M2: umbrales del modo híbrido. Deliberadamente conservadores: preferimos no mover un
+# corte antes que recortar habla por una ventana de energía mal medida.
+HYBRID_ENERGY_MIN_RMS = 0.02
+HYBRID_SCENE_SNAP_SEC = 0.35
 
 
 def _is_word_filler(word_obj: dict[str, Any]) -> bool:
@@ -23,6 +42,123 @@ def _is_word_filler(word_obj: dict[str, Any]) -> bool:
         return True
     tok = str(word_obj.get("word") or "").strip(".,;:¡!¿?\"'()[]").lower()
     return tok in SPANISH_FILLER_WORDS
+
+
+def analyze_acoustic_energy(media_path: Path | str) -> dict[str, Any]:
+    """Mide la envolvente RMS real del medio y devuelve los tramos con habla.
+
+    Usa el mismo extractor 16 kHz mono que la transcripción, así que la medida es
+    independiente de que la transcripción sea simulada o real. Ante cualquier fallo
+    devuelve `available: False` y el llamador cae al comportamiento sin señal acústica.
+    """
+    src = Path(media_path)
+    if not src.is_file() or shutil.which("ffmpeg") is None:
+        return {"available": False, "duration_sec": 0.0, "spans": []}
+    with tempfile.TemporaryDirectory(prefix="comfy_hl_ac_") as tmp:
+        wav = Path(tmp) / "audio_16k.wav"
+        if not extract_16k_mono_wav(src, wav):
+            return {"available": False, "duration_sec": 0.0, "spans": []}
+        info = analyze_wav_acoustic_windows(wav)
+    spans = [
+        {"start": round(float(s.get("start", 0.0)), 3), "end": round(float(s.get("end", 0.0)), 3)}
+        for s in (info.get("speech_spans") or [])
+        if float(s.get("end", 0.0)) > float(s.get("start", 0.0))
+    ]
+    return {
+        "available": bool(spans),
+        "duration_sec": float(info.get("duration_sec") or 0.0),
+        "spans": spans,
+    }
+
+
+def _snap_to_active_span(
+    start: float,
+    end: float,
+    spans: list[dict[str, float]],
+) -> tuple[float, float]:
+    """Ajusta un corte al tramo de habla que lo solapa (nunca lo alarga más de lo medido)."""
+    for span in spans:
+        s_start, s_end = span["start"], span["end"]
+        if end <= s_start or start >= s_end:
+            continue
+        return max(start, s_start), min(end, s_end)
+    return start, end
+
+
+def _snap_to_scene_boundary(
+    value: float,
+    boundaries: list[float],
+    tolerance: float = HYBRID_SCENE_SNAP_SEC,
+) -> tuple[float, float | None]:
+    """Alinea un instante con el límite de escena más cercano si está dentro de tolerancia."""
+    best: float | None = None
+    best_delta = tolerance
+    for boundary in boundaries:
+        delta = abs(boundary - value)
+        if delta <= best_delta:
+            best = boundary
+            best_delta = delta
+    if best is None:
+        return value, None
+    return best, best
+
+
+def apply_hybrid_refinements(
+    cuts: list[dict[str, Any]],
+    *,
+    acoustic: dict[str, Any],
+    scene_boundaries: list[float] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Refina los cortes con señal acústica real y límites de escena (M2, `M3-IDEA-033`).
+
+    - Recorta cada corte a la intersección con un tramo de habla medido (si hay señal).
+    - Alinea el borde de cada corte con un cambio de escena cuando está a menos de
+      `HYBRID_SCENE_SNAP_SEC`.
+    - Descarta cortes que quedan por debajo de 0.2 s tras el ajuste.
+
+    Devuelve los cortes refinados y un informe de qué cambió, para que el EDL documente
+    por qué difiere de la propuesta puramente textual.
+    """
+    spans = list(acoustic.get("spans") or []) if acoustic.get("available") else []
+    boundaries = sorted(float(b) for b in (scene_boundaries or []))
+
+    refined: list[dict[str, Any]] = []
+    report = {
+        "acoustic_available": bool(acoustic.get("available")),
+        "acoustic_span_count": len(spans),
+        "scene_boundary_count": len(boundaries),
+        "trimmed_by_acoustic": 0,
+        "snapped_to_scene": 0,
+        "dropped_too_short": 0,
+    }
+
+    for cut in cuts:
+        in_sec = round(float(cut.get("in_sec", 0.0)), 3)
+        out_sec = round(float(cut.get("out_sec", 0.0)), 3)
+        if spans:
+            snapped = _snap_to_active_span(in_sec, out_sec, spans)
+            if snapped != (in_sec, out_sec):
+                report["trimmed_by_acoustic"] += 1
+            in_sec, out_sec = snapped
+        if boundaries:
+            new_in, hit_in = _snap_to_scene_boundary(in_sec, boundaries)
+            if hit_in is not None and new_in < out_sec:
+                in_sec = new_in
+                report["snapped_to_scene"] += 1
+            new_out, hit_out = _snap_to_scene_boundary(out_sec, boundaries)
+            if hit_out is not None and new_out > in_sec:
+                out_sec = new_out
+        in_sec = round(in_sec, 3)
+        out_sec = round(out_sec, 3)
+        if out_sec - in_sec < 0.2:
+            report["dropped_too_short"] += 1
+            continue
+        refined.append({**cut, "in_sec": in_sec, "out_sec": out_sec})
+
+    if not refined:
+        return cuts, report
+    report["refined"] = True
+    return refined, report
 
 
 def build_edl_cuts_from_transcription(
@@ -52,6 +188,11 @@ def build_edl_cuts_from_transcription(
         s_text = str(seg.get("text") or "").strip()
         words = list(seg.get("words") or [])
 
+        # M3-SCR-019: un segmento descartado por `speaker_filter` no es una pausa; el
+        # informe editorial solo debe contar silencios entre segmentos que sobreviven.
+        if speaker_filter and s_speaker and s_speaker != speaker_filter:
+            continue
+
         if prev_end is not None and (s_start - prev_end) >= min_pause_sec:
             removed_pauses.append(
                 {
@@ -62,9 +203,6 @@ def build_edl_cuts_from_transcription(
                 }
             )
         prev_end = max(prev_end or 0.0, s_end)
-
-        if speaker_filter and s_speaker and s_speaker != speaker_filter:
-            continue
 
         if remove_fillers:
             if bool(seg.get("is_filler_segment")):
@@ -191,6 +329,33 @@ def build_edl_cuts_from_transcription(
     }
 
 
+def _collect_scene_boundaries(
+    store: ProjectStore,
+    project_id: str,
+    source_asset_id: str | None,
+) -> list[float]:
+    """Límites de escena ya detectados en los keyframes del asset de origen.
+
+    No re-ejecuta `ffmpeg`: aprovecha los `shot_start_sec` que la extracción de keyframes
+    ya persistió en los metadatos de los assets. Si no hay keyframes, devuelve `[]`.
+    """
+    if not source_asset_id:
+        return []
+    boundaries: list[float] = []
+    for kf in store.list_assets(project_id, category="keyframes"):
+        meta = kf.get("metadata") or {}
+        if str(meta.get("source_asset_id") or "") != str(source_asset_id):
+            continue
+        if meta.get("synthetic"):
+            continue
+        raw = meta.get("shot_start_sec", meta.get("timestamp_sec"))
+        try:
+            boundaries.append(round(float(raw), 3))
+        except (TypeError, ValueError):
+            continue
+    return sorted(set(boundaries))
+
+
 def generate_highlights_edl(
     store: ProjectStore,
     project_id: str,
@@ -203,6 +368,7 @@ def generate_highlights_edl(
     min_pause_sec: float = 0.35,
     max_duration_sec: float | None = None,
     speaker_filter: str | None = None,
+    hybrid: bool = False,
 ) -> dict[str, Any]:
     """Genera y persiste una versión de EDL de highlights desde la transcripción del proyecto."""
     project = store.get_project(project_id)
@@ -239,6 +405,35 @@ def generate_highlights_edl(
         speaker_filter=speaker_filter,
     )
 
+    # M2 (`M3-IDEA-033`): refinamiento híbrido con señal real. Solo se activa si se
+    # pide, y si no hay forma de medir (sin ffmpeg o sin asset) se deja el EDL textual
+    # intacto y se documenta por qué en `editorial_report`.
+    hybrid_report: dict[str, Any] | None = None
+    if hybrid:
+        hybrid_report = {"requested": True, "applied": False}
+        asset_path = store.get_asset_path(project_id, resolved_aid) if resolved_aid else None
+        if asset_path is None:
+            hybrid_report["skipped_reason"] = "El EDL no tiene asset de origen para medir audio."
+        else:
+            acoustic = analyze_acoustic_energy(asset_path)
+            scene_boundaries = _collect_scene_boundaries(store, project_id, resolved_aid)
+            refined_cuts, details = apply_hybrid_refinements(
+                list(built["cuts"]),
+                acoustic=acoustic,
+                scene_boundaries=scene_boundaries,
+            )
+            if details.get("refined"):
+                built["cuts"] = refined_cuts
+                built["total_duration_sec"] = round(
+                    sum(float(c["out_sec"]) - float(c["in_sec"]) for c in refined_cuts), 3
+                )
+                built["notes"] = (
+                    f"{built['notes']} Refinado híbrido: {len(refined_cuts)} cortes "
+                    f"(señal acústica: {'sí' if details['acoustic_available'] else 'no'}, "
+                    f"escenas: {details['scene_boundary_count']})."
+                )
+            hybrid_report = {"requested": True, "applied": bool(details.get("refined")), **details}
+
     edl_doc: dict[str, Any] = {
         "schema": "comfy_studio.edl.v1",
         "title": title,
@@ -251,6 +446,10 @@ def generate_highlights_edl(
         "editorial_report": {
             "removed_fillers": built["removed_fillers"],
             "removed_pauses": built["removed_pauses"],
+            "hybrid": hybrid_report,
+            # Honestidad: la transcripción de origen es simulada mientras el backend
+            # real no esté integrado; el refinamiento acústico sí es una medición real.
+            "transcription_simulated": bool(transcription.get("simulated", True)),
         },
     }
     saved = store.save_edl_version(project_id, edl=edl_doc)

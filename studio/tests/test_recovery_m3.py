@@ -110,6 +110,42 @@ async def test_recover_resumes_render_job_once(
 
 
 @pytest.mark.anyio
+async def test_recover_resumes_multiple_jobs_with_bounded_concurrency(
+    recovery_env,
+    stub_comfyui_state: ComfyUIStubState,
+) -> None:
+    """M3-SCR-016: varios jobs huérfanos se reanudan con concurrencia acotada.
+
+    El `Semaphore(MAX_CONCURRENT_RESUMES)` + `asyncio.gather` debe completar todos los
+    jobs y producir recuentos de informe correctos e independientes del orden en que
+    terminan. Regresión sobre la reanudación concurrente (antes secuencial).
+    """
+    store, broker, project, client = recovery_env
+    jobs = [_create_stale_job(store, project["id"]) for _ in range(3)]
+
+    report = await recover_interrupted_jobs(
+        store=store,
+        comfyui_client=client,
+        broker=broker,
+        resume=True,
+        start_delay_s=0.0,
+    )
+
+    assert report == {
+        "stale": 3,
+        "interrupted": 0,
+        "requeued": 3,
+        "done": 3,
+        "failed": 0,
+    }
+    assert len(stub_comfyui_state.prompts) == 3
+    for job in jobs:
+        recovered = store.get_job(job["id"])
+        assert recovered is not None
+        assert recovered["status"] == "done"
+
+
+@pytest.mark.anyio
 async def test_recover_marks_exhausted_job_interrupted(
     recovery_env,
     stub_comfyui_state: ComfyUIStubState,

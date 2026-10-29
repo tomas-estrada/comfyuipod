@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import SIMULATED_ML_NOTICE
+from ..ml import is_real_backend, require_real_payload, run_worker
 from ..perception.keyframes import probe_media_info
 from ..projects import ProjectStore
 
@@ -435,6 +436,38 @@ def transcribe_project_asset(
     asset_path = store.get_asset_path(project_id, resolved_aid)
     if asset_path is None:
         raise ValueError(f"Archivo físico no encontrado para asset: {resolved_aid!r}")
+
+    # M3.4: backend real → delegar al worker ML (faster-whisper). Sin fallback
+    # a simulación: si el worker falla o devuelve simulación, se propaga el error.
+    if is_real_backend():
+        resp = run_worker(
+            "asr_transcribe",
+            {
+                "asset_path": str(asset_path),
+                "language": language,
+            },
+            timeout_s=300.0,
+        )
+        payload = require_real_payload(resp, "asr_transcribe")
+        return {
+            "asset_id": resolved_aid,
+            "language": payload.get("language", language),
+            "text": payload.get("text", ""),
+            "segments": payload.get("segments", []),
+            "words": payload.get("words", []),
+            "duration_sec": float(payload.get("duration_sec") or 0.0),
+            "backend": payload.get("backend", "faster-whisper"),
+            "model": payload.get("model", "large-v3"),
+            "simulated": bool(payload.get("simulated", False)),
+            "simulation_notice": SIMULATED_ML_NOTICE,
+            "compute_config": {
+                "diarization": None,
+                "asr": {
+                    "backend": payload.get("backend", "faster-whisper"),
+                    "model": payload.get("model", "large-v3"),
+                },
+            },
+        }
 
     compute_cfg = resolve_asr_compute_config(
         cuda_available=cuda_available,

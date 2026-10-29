@@ -18,6 +18,11 @@
         templates: [],
         jobs: [],
         edlData: null,
+        transcriptionData: null,
+        identities: [],
+        perceptionResults: null,
+        perceptionNotice: "",
+        editedCuts: null,
         toolEvents: [],
         selectedKeyframeIds: new Set(),
         chatDomProjectId: null,
@@ -364,6 +369,16 @@
         if (isSwitchingProject) {
             state.selectedKeyframeIds.clear();
             state.toolEvents = [];
+            // M2: el estado de percepción y los cortes editados son por proyecto; si no
+            // se limpian, el timeline de A aparece sobre el proyecto B.
+            state.identities = [];
+            state.perceptionResults = null;
+            state.editedCuts = null;
+            const searchInputEl = document.getElementById("perception-search-input");
+            if (searchInputEl) searchInputEl.value = "";
+            const searchStatusEl = document.getElementById("perception-search-status");
+            if (searchStatusEl) searchStatusEl.textContent = "";
+            renderIdentityOptions();
             renderToolEvents();
         }
         if (!shouldPreserveChatDom) {
@@ -764,6 +779,20 @@
                     <div>
                         <strong>${isResult ? "TOOL RESULT" : "TOOL CALL"}:</strong>
                         <code>${escapeHtml(toolName)}</code>
+                        ${
+                            p.role
+                                ? `<span class="code-badge" data-agent-role="${escapeHtml(
+                                      p.role
+                                  )}">rol: ${escapeHtml(p.role)}</span>`
+                                : ""
+                        }
+                        ${
+                            !isResult && p.delegate_role
+                                ? `<span class="code-badge">→ ${escapeHtml(
+                                      p.delegate_role
+                                  )}</span>`
+                                : ""
+                        }
                         <span class="muted-text">(${escapeHtml(evt.timestamp)})</span>
                     </div>
                     ${detailsHtml}
@@ -1552,6 +1581,7 @@
                     state.transcriptionData = trData;
                 }
             }
+            await refreshIdentities(targetProjectId);
             if (state.activeProjectId === targetProjectId) {
                 renderEdlView();
             }
@@ -1559,6 +1589,199 @@
             if (state.activeProjectId === targetProjectId) {
                 renderEdlView();
             }
+        }
+    }
+
+    /* --- M2 (M3-IDEA-030): búsqueda semántica de planos --- */
+    async function refreshIdentities(projectId) {
+        const targetId = projectId || state.activeProjectId;
+        if (!targetId) {
+            state.identities = [];
+            renderIdentityOptions();
+            return;
+        }
+        try {
+            const resp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(targetId)}/identities`
+            );
+            if (resp.ok) {
+                const data = await resp.json();
+                if (state.activeProjectId === targetId) {
+                    state.identities = Array.isArray(data.identities)
+                        ? data.identities
+                        : [];
+                    renderIdentityOptions();
+                }
+            }
+        } catch (_err) {
+            // Silencioso: si no hay percepción disponible el selector queda vacío.
+        }
+    }
+
+    function renderIdentityOptions() {
+        const select = document.getElementById("perception-identity-select");
+        if (!select) return;
+        const previous = select.value;
+        const options = ['<option value="">Cualquier persona</option>'];
+        for (const identity of state.identities || []) {
+            options.push(
+                `<option value="${escapeHtml(identity.id)}">${escapeHtml(
+                    identity.name || identity.id
+                )}</option>`
+            );
+        }
+        select.innerHTML = options.join("");
+        if (previous && state.identities.some((i) => i.id === previous)) {
+            select.value = previous;
+        }
+    }
+
+    function renderPerceptionResults() {
+        const listEl = document.getElementById("perception-search-results");
+        if (!listEl) return;
+        const data = state.perceptionResults;
+        if (!data) {
+            listEl.innerHTML =
+                '<p class="empty-hint">Sin búsqueda todavía. Escribe una descripción o filtra por persona.</p>';
+            return;
+        }
+        const shots = Array.isArray(data.shots) ? data.shots : [];
+        const notice = data.simulated
+            ? '<p class="item-meta"><strong>Aviso:</strong> resultados de una simulación determinista (<code>simulated: true</code>); sirven para validar el flujo, no la calidad del modelo.</p>'
+            : "";
+        if (shots.length === 0) {
+            listEl.innerHTML = `${notice}<p class="empty-hint">La búsqueda no devolvió planos. Indexa los medios del proyecto primero.</p>`;
+            return;
+        }
+        listEl.innerHTML =
+            notice +
+            shots
+                .map((shot) => {
+                    const score = Number(shot.score || 0).toFixed(3);
+                    const start = Number(
+                        shot.shot_start_sec !== undefined
+                            ? shot.shot_start_sec
+                            : shot.start_sec || 0
+                    ).toFixed(2);
+                    const end = Number(
+                        shot.shot_end_sec !== undefined ? shot.shot_end_sec : shot.end_sec || 0
+                    ).toFixed(2);
+                    const caption = shot.caption || shot.text || shot.keyframe_caption || "";
+                    const assetId = shot.keyframe_asset_id || shot.asset_id || "";
+                    return `
+                    <div class="item-card" data-shot-card="${escapeHtml(shot.id || "")}">
+                        <div class="item-main">
+                            <span class="item-title">Similitud <code>${score}</code> · ${start}s – ${end}s</span>
+                            <span class="item-meta">${escapeHtml(caption)}</span>
+                        </div>
+                        ${
+                            assetId
+                                ? `<div class="item-actions">
+                            <button type="button" class="btn btn-accent btn-sm" data-action="preview-asset" data-asset-id="${escapeHtml(
+                                assetId
+                            )}">Ver keyframe</button>
+                        </div>`
+                                : ""
+                        }
+                    </div>
+                `;
+                })
+                .join("");
+    }
+
+    async function runPerceptionSearch() {
+        const input = document.getElementById("perception-search-input");
+        const select = document.getElementById("perception-identity-select");
+        const statusEl = document.getElementById("perception-search-status");
+        const projectId = state.activeProjectId;
+        if (!projectId) {
+            setToast("Selecciona un proyecto antes de buscar.", "error");
+            return;
+        }
+        const query = (input && input.value ? input.value : "").trim();
+        const identityId = select ? select.value : "";
+        if (!query && !identityId) {
+            setToast("Escribe una descripción o elige una persona.", "error");
+            return;
+        }
+        const payload = { limit: 12 };
+        if (query) payload.query = query;
+        if (identityId) payload.identity_id = identityId;
+        if (statusEl) statusEl.textContent = "Buscando…";
+        try {
+            const resp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(projectId)}/perception/search`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                }
+            );
+            if (!resp.ok) {
+                const errBody = await resp.json().catch(() => ({}));
+                state.perceptionResults = null;
+                renderPerceptionResults();
+                if (statusEl) {
+                    statusEl.textContent =
+                        resp.status === 503
+                            ? "Percepción no disponible en este pod."
+                            : `Error ${resp.status}`;
+                }
+                setToast(
+                    errBody.detail
+                        ? String(errBody.detail).slice(0, 200)
+                        : `Error de búsqueda (${resp.status}).`,
+                    "error"
+                );
+                return;
+            }
+            const data = await resp.json();
+            state.perceptionResults = data;
+            renderPerceptionResults();
+            if (statusEl) {
+                statusEl.textContent = `${data.count || 0} planos encontrados.`;
+            }
+        } catch (err) {
+            if (statusEl) statusEl.textContent = "Error de red.";
+            setToast(`Error de búsqueda: ${err.message}`, "error");
+        }
+    }
+
+    async function runPerceptionIndex() {
+        const statusEl = document.getElementById("perception-search-status");
+        const projectId = state.activeProjectId;
+        const video = state.assets.find((a) => a.kind === "video");
+        if (!projectId) {
+            setToast("Selecciona un proyecto antes de indexar.", "error");
+            return;
+        }
+        if (!video) {
+            setToast("Sube un vídeo al proyecto antes de indexar.", "error");
+            return;
+        }
+        if (statusEl) statusEl.textContent = "Indexando medios…";
+        try {
+            const resp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(projectId)}/perception/index`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ asset_id: video.id }),
+                }
+            );
+            if (statusEl) {
+                statusEl.textContent = resp.ok
+                    ? "Indexación completada."
+                    : resp.status === 503
+                      ? "Percepción no disponible en este pod."
+                      : `Error ${resp.status}`;
+            }
+            if (resp.ok) {
+                await runPerceptionSearch();
+            }
+        } catch (err) {
+            if (statusEl) statusEl.textContent = "Error de red.";
+            setToast(`Error indexando: ${err.message}`, "error");
         }
     }
 
@@ -1643,22 +1866,117 @@
         }
 
         if (cutsListEl) {
-            cutsListEl.innerHTML = cuts
+            // M2 (M3-IDEA-031): cortes editables in situ. Los cambios quedan en
+            // `state.editedCuts` hasta que el usuario pulsa «Guardar cortes editados»,
+            // que crea una versión NUEVA del EDL (nunca sobrescribe la anterior).
+            const editableCuts = Array.isArray(state.editedCuts)
+                ? state.editedCuts
+                : cuts;
+            cutsListEl.innerHTML = editableCuts
                 .map(
                     (cut, idx) => `
-                    <div class="item-card">
+                    <div class="item-card" data-cut-index="${idx}">
                         <div class="item-main">
-                            <span class="item-title">Corte #${idx + 1}: ${Number(cut.in_sec).toFixed(2)}s – ${Number(cut.out_sec).toFixed(2)}s</span>
+                            <span class="item-title">Corte #${idx + 1}</span>
                             <span class="item-meta">
-                                Duración: <code>${(Number(cut.out_sec) - Number(cut.in_sec)).toFixed(2)}s</code> ·
                                 Hablante: <code>${escapeHtml(cut.speaker || "Locutor")}</code> ·
                                 Motivo: ${escapeHtml(cut.reason || "Selección editorial")}
                             </span>
+                            <div class="form-row" style="margin-top:0.4rem;">
+                                <div class="form-group flex-1">
+                                    <label for="cut-in-${idx}">Entrada (s)</label>
+                                    <input type="number" id="cut-in-${idx}" step="0.01" min="0"
+                                        data-cut-field="in_sec" data-cut-index="${idx}"
+                                        value="${Number(cut.in_sec).toFixed(2)}">
+                                </div>
+                                <div class="form-group flex-1">
+                                    <label for="cut-out-${idx}">Salida (s)</label>
+                                    <input type="number" id="cut-out-${idx}" step="0.01" min="0"
+                                        data-cut-field="out_sec" data-cut-index="${idx}"
+                                        value="${Number(cut.out_sec).toFixed(2)}">
+                                </div>
+                            </div>
                         </div>
                     </div>
                 `
                 )
                 .join("");
+        }
+        renderPerceptionResults();
+    }
+
+    function captureEditedCut(field, index, rawValue) {
+        const latest = state.edlData && (state.edlData.latest || state.edlData.edl);
+        const sourceCuts =
+            latest && latest.edl && Array.isArray(latest.edl.cuts) ? latest.edl.cuts : [];
+        if (!state.editedCuts) {
+            state.editedCuts = sourceCuts.map((cut) => ({ ...cut }));
+        }
+        const target = state.editedCuts[index];
+        if (!target) return;
+        const value = Number(rawValue);
+        if (!Number.isFinite(value) || value < 0) return;
+        target[field] = value;
+    }
+
+    async function saveEditedCuts() {
+        const projectId = state.activeProjectId;
+        const latest = state.edlData && (state.edlData.latest || state.edlData.edl);
+        if (!projectId || !latest) {
+            setToast("No hay EDL que editar.", "error");
+            return;
+        }
+        const sourceCuts =
+            latest.edl && Array.isArray(latest.edl.cuts) ? latest.edl.cuts : [];
+        const cuts = (state.editedCuts || sourceCuts).map((cut) => ({
+            in_sec: Number(cut.in_sec),
+            out_sec: Number(cut.out_sec),
+            reason: cut.reason || "Ajuste manual",
+            ...(cut.speaker ? { speaker: cut.speaker } : {}),
+            ...(cut.text ? { text: cut.text } : {}),
+        }));
+        for (const cut of cuts) {
+            if (!Number.isFinite(cut.in_sec) || !Number.isFinite(cut.out_sec)) {
+                setToast("Hay tiempos inválidos en el timeline.", "error");
+                return;
+            }
+            if (cut.out_sec <= cut.in_sec) {
+                setToast("Cada corte debe terminar después de empezar.", "error");
+                return;
+            }
+        }
+        try {
+            const resp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(projectId)}/edl`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        title: `${latest.title || "EDL"} (ajustado)`,
+                        aspect_ratio: (latest.edl && latest.edl.aspect_ratio) || "16:9",
+                        source_asset_id:
+                            (latest.edl && latest.edl.source_asset_id) || undefined,
+                        cuts,
+                        notes: "Cortes ajustados manualmente desde el timeline.",
+                    }),
+                }
+            );
+            if (!resp.ok) {
+                const errBody = await resp.json().catch(() => ({}));
+                setToast(
+                    errBody.detail
+                        ? String(errBody.detail).slice(0, 200)
+                        : `Error al guardar (${resp.status}).`,
+                    "error"
+                );
+                return;
+            }
+            const saved = await resp.json();
+            state.editedCuts = null;
+            setToast(`EDL v${saved.version} guardado con los cortes ajustados.`, "success");
+            await refreshEdl();
+        } catch (err) {
+            setToast(`Error guardando cortes: ${err.message}`, "error");
         }
     }
 
@@ -1853,8 +2171,44 @@
                 } else {
                     state.selectedKeyframeIds.delete(aid);
                 }
+                return;
+            }
+            // M2 (M3-IDEA-031): edición de tiempos de corte en el timeline.
+            const cutInput = event.target.closest("[data-cut-field]");
+            if (cutInput) {
+                captureEditedCut(
+                    cutInput.getAttribute("data-cut-field"),
+                    Number(cutInput.getAttribute("data-cut-index")),
+                    cutInput.value
+                );
             }
         });
+
+        const perceptionForm = document.getElementById("perception-search-form");
+        if (perceptionForm) {
+            perceptionForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                await runPerceptionSearch();
+            });
+        }
+        const perceptionIndexBtn = document.getElementById("perception-index-btn");
+        if (perceptionIndexBtn) {
+            perceptionIndexBtn.addEventListener("click", async () => {
+                await runPerceptionIndex();
+            });
+        }
+        const saveCutsBtn = document.getElementById("edl-save-cuts-btn");
+        if (saveCutsBtn) {
+            saveCutsBtn.addEventListener("click", async () => {
+                await saveEditedCuts();
+            });
+        }
+        const batchBuildBtn = document.getElementById("edl-build-batch-btn");
+        if (batchBuildBtn) {
+            batchBuildBtn.addEventListener("click", async () => {
+                await triggerEdlBuild(["16:9", "9:16"]);
+            });
+        }
 
         // Crear proyecto
         const createForm = document.getElementById("create-project-form");
@@ -2057,20 +2411,34 @@
             try {
                 const pid = await ensureActiveProject();
                 if (!pid) return;
+                const isBatch = Array.isArray(aspectRatio);
+                const payload = isBatch
+                    ? { aspect_ratios: aspectRatio }
+                    : { aspect_ratio: aspectRatio };
                 const resp = await apiFetch(
                     `/studio/api/projects/${encodeURIComponent(pid)}/edl/build`,
                     {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ aspect_ratio: aspectRatio }),
+                        body: JSON.stringify(payload),
                     }
                 );
                 if (resp.ok) {
-                    setToast(`EDL renderizado en formato ${aspectRatio}.`, "success");
+                    const data = await resp.json();
+                    const label = isBatch
+                        ? `${data.variant_count || aspectRatio.length} variantes`
+                        : `formato ${aspectRatio}`;
+                    setToast(`EDL renderizado (${label}).`, "success");
                     await refreshEdl();
                     await refreshGallery();
                 } else {
-                    setToast(`Error al renderizar EDL (${resp.status}).`, "error");
+                    const errBody = await resp.json().catch(() => ({}));
+                    setToast(
+                        errBody.detail
+                            ? String(errBody.detail).slice(0, 200)
+                            : `Error al renderizar EDL (${resp.status}).`,
+                        "error"
+                    );
                 }
             } catch (err) {
                 setToast(`Error al renderizar EDL: ${err.message}`, "error");

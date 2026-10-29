@@ -36,6 +36,11 @@ HISTORY_SUMMARY_THRESHOLD = 40
 HISTORY_KEEP_RECENT = 20
 SUB_AGENT_MAX_ITERATIONS = 4
 
+# M1.4: `max_iterations` y el agotamiento del presupuesto de llamadas LLM son
+# condiciones DISTINTAS con remedios distintos (subir iteraciones vs subir el
+# presupuesto de llamadas), así que no deben compartir telemetría.
+StopReason = Literal["completed", "max_iterations", "call_budget_exhausted"]
+
 
 class CallBudget:
     """Contador compartido de llamadas LLM por turno (agente principal + sub-agentes)."""
@@ -128,7 +133,7 @@ class AgentTurnResult:
     project_id: str
     reply: str
     iterations: int
-    stop_reason: Literal["completed", "max_iterations"] = "completed"
+    stop_reason: StopReason = "completed"
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_results: list[dict[str, Any]] = field(default_factory=list)
     provider: str = "primary"
@@ -167,6 +172,7 @@ class StudioAgent:
         allow_delegation: bool = True,
         max_llm_calls_per_turn: int = DEFAULT_MAX_LLM_CALLS_PER_TURN,
         budget: CallBudget | None = None,
+        agent_role: str | None = None,
     ) -> None:
         self._config = config
         self._store = store
@@ -184,6 +190,9 @@ class StudioAgent:
         self._allow_delegation = allow_delegation
         self._max_llm_calls_per_turn = max(1, int(max_llm_calls_per_turn))
         self._shared_budget = budget
+        # M2 (`M3-IDEA-037`): identifica al sub-agente que ejecuta cada herramienta, para
+        # que el panel muestre quién hizo qué en un turno delegado.
+        self._agent_role = agent_role
 
         if not any(isinstance(f, RedactingLogFilter) for f in logger.filters):
             logger.addFilter(RedactingLogFilter(self._redactor))
@@ -446,6 +455,7 @@ class StudioAgent:
                 persist_memory=False,
                 allow_delegation=False,
                 budget=budget,
+                agent_role=role,
             )
             sub_result = await sub_agent.run_turn(
                 project_id=project["id"],
@@ -477,12 +487,12 @@ class StudioAgent:
         final_reply = ""
         last_provider = "primary"
         last_model = self._config.studio_llm_model
-        stop_reason: Literal["completed", "max_iterations"] = "completed"
+        stop_reason: StopReason = "completed"
         iterations_run = 0
 
         for iteration in range(1, effective_max + 1):
             if not budget.consume():
-                stop_reason = "max_iterations"
+                stop_reason = "call_budget_exhausted"
                 if not final_reply:
                     final_reply = (
                         f"Se alcanzó el presupuesto de llamadas LLM por turno "
@@ -584,6 +594,10 @@ class StudioAgent:
                         "tool_call_id": tc.id,
                         "name": tc.name,
                         "arguments": safe_args,
+                        "role": self._agent_role,
+                        "delegate_role": (
+                            safe_args.get("role") if tc.name == "delegate_role" else None
+                        ),
                     },
                 )
                 yield call_ev
@@ -656,6 +670,7 @@ class StudioAgent:
                         "name": tc.name,
                         "result": safe_res,
                         "is_error": is_error,
+                        "role": self._agent_role,
                     },
                 )
                 yield res_ev

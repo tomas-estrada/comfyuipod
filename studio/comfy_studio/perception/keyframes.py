@@ -16,6 +16,17 @@ from ..projects import ProjectStore
 
 _PTS_TIME_RE = re.compile(r"pts_time:\s*([0-9]+(?:\.[0-9]+)?)")
 
+# M1.5: timeouts configurables (antes fijados en código: 20 s / 10 s / 60 s, lo que
+# hacía fallar cualquier clip largo o host lento). `StudioConfig` los inyecta; los
+# valores por defecto conservan el comportamiento histórico.
+DEFAULT_FFPROBE_TIMEOUT_S = 20.0
+DEFAULT_FFMPEG_SIGNATURE_TIMEOUT_S = 10.0
+DEFAULT_FFMPEG_KEYFRAME_TIMEOUT_S = 60.0
+
+# M3-SCR-004: cota DURA del PNG de keyframe. Antes se pasaba max(10 MiB, len+1024) a
+# save_upload, que por construcción nunca rechaza; 32 MiB cubre un PNG 4K fotográfico.
+MAX_KEYFRAME_PNG_BYTES = 32 * 1024 * 1024  # 32 MiB
+
 
 def _make_solid_png(
     width: int = 64, height: int = 36, rgb: tuple[int, int, int] = (40, 80, 160)
@@ -36,7 +47,11 @@ def _make_solid_png(
     )
 
 
-def probe_media_info(path: Path | str) -> dict[str, Any]:
+def probe_media_info(
+    path: Path | str,
+    *,
+    timeout_s: float = DEFAULT_FFPROBE_TIMEOUT_S,
+) -> dict[str, Any]:
     """Obtiene duración, dimensiones y streams de un archivo multimedia con ffprobe."""
     file_path = Path(path)
     ffprobe_bin = shutil.which("ffprobe")
@@ -68,7 +83,7 @@ def probe_media_info(path: Path | str) -> dict[str, Any]:
             check=False,
             capture_output=True,
             text=True,
-            timeout=20.0,
+            timeout=timeout_s,
         )
         if proc.returncode != 0 or not proc.stdout.strip():
             return {
@@ -146,7 +161,12 @@ def probe_media_info(path: Path | str) -> dict[str, Any]:
     }
 
 
-def extract_image_rgb_signature(image_path: Path | str, grid_size: int = 8) -> dict[str, Any]:
+def extract_image_rgb_signature(
+    image_path: Path | str,
+    grid_size: int = 8,
+    *,
+    timeout_s: float = DEFAULT_FFMPEG_SIGNATURE_TIMEOUT_S,
+) -> dict[str, Any]:
     """Extrae estadísticos RGB (media, cuadrantes y etiquetas semánticas de color) vía ffmpeg."""
     ffmpeg_bin = shutil.which("ffmpeg")
     path = Path(image_path)
@@ -170,7 +190,7 @@ def extract_image_rgb_signature(image_path: Path | str, grid_size: int = 8) -> d
             "pipe:1",
         ]
         try:
-            proc = subprocess.run(cmd, check=False, capture_output=True, timeout=10.0)
+            proc = subprocess.run(cmd, check=False, capture_output=True, timeout=timeout_s)
             raw = proc.stdout
             expected_len = grid_size * grid_size * 3
             if proc.returncode == 0 and len(raw) >= expected_len:
@@ -300,6 +320,8 @@ def extract_video_keyframes(
     max_keyframes: int = 30,
     max_frames: int | None = None,
     replace_existing: bool = True,
+    ffmpeg_timeout_s: float = DEFAULT_FFMPEG_KEYFRAME_TIMEOUT_S,
+    ffprobe_timeout_s: float = DEFAULT_FFPROBE_TIMEOUT_S,
 ) -> list[dict[str, Any]]:
     """Extrae keyframes de un asset de vídeo usando ffmpeg (escena + intervalo) con timestamps.
 
@@ -321,13 +343,17 @@ def extract_video_keyframes(
             f"El asset {video_asset_id!r} no es un vídeo (kind={video_asset.get('kind')!r})."
         )
 
-    info = probe_media_info(video_path)
+    info = probe_media_info(video_path, timeout_s=ffprobe_timeout_s)
     duration_sec = float(info.get("duration_sec") or 0.0)
     width = int(info.get("width") or 320)
     height = int(info.get("height") or 180)
 
     ffmpeg_bin = shutil.which("ffmpeg")
     extracted_frames: list[tuple[float, bytes]] = []
+    # M1.7 (M3-SCR-007): el PNG de relleno NO es un plano real del clip. Se marca
+    # para que `clip_index` lo excluya del índice CLIP: indexarlo produciría
+    # búsquedas semánticas que "encuentran" planos que no existen.
+    synthetic_frames = False
 
     if ffmpeg_bin:
         with tempfile.TemporaryDirectory(prefix="comfy_kf_") as tmp_dir:
@@ -357,7 +383,7 @@ def extract_video_keyframes(
                     check=False,
                     capture_output=True,
                     text=True,
-                    timeout=60.0,
+                    timeout=ffmpeg_timeout_s,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise ValueError(
@@ -382,9 +408,11 @@ def extract_video_keyframes(
                     extracted_frames.append((round(raw_ts, 3), png_file.read_bytes()))
 
     if not extracted_frames:
-        # Fallback determinista para contenedores sintéticos/mínimos en tests sin stream real
+        # Fallback determinista para contenedores sintéticos/mínimos en tests sin stream real.
+        # M1.7: se marca `synthetic` para que no se indexe ni se presente como plano real.
         fallback_png = _make_solid_png(width=64, height=36, rgb=(48, 96, 160))
         extracted_frames.append((0.0, fallback_png))
+        synthetic_frames = True
         if duration_sec <= 0.0:
             duration_sec = round(max(1.0, float(interval_sec)), 3)
 
@@ -441,13 +469,25 @@ def extract_video_keyframes(
                 "visual_tags": sig["visual_tags"],
                 "dominant_color": dominant,
                 "caption": caption,
+                "synthetic": synthetic_frames,
             }
+            if synthetic_frames:
+                # Honestidad explícita: este asset NO es un fotograma del clip.
+                meta["caption"] = (
+                    f"[SINTÉTICO] Marcador de posición (ffmpeg no pudo extraer fotogramas de "
+                    f"{video_asset.get('original_filename')}); no indexar."
+                )
+            if len(png_bytes) > MAX_KEYFRAME_PNG_BYTES:
+                raise ValueError(
+                    f"Keyframe #{idx + 1} ({len(png_bytes)} bytes) supera el límite duro de "
+                    f"{MAX_KEYFRAME_PNG_BYTES} bytes (M3-SCR-004)."
+                )
             saved_asset = store.save_upload(
                 project_id,
                 filename=kf_filename,
                 content_type="image/png",
                 data=png_bytes,
-                max_upload_bytes=max(10 * 1024 * 1024, len(png_bytes) + 1024),
+                max_upload_bytes=MAX_KEYFRAME_PNG_BYTES,
                 category="keyframes",
                 metadata=meta,
             )
@@ -469,7 +509,8 @@ def extract_video_keyframes(
                     "rgb_mean": sig["rgb_mean"],
                     "visual_tags": sig["visual_tags"],
                     "dominant_color": dominant,
-                    "caption": caption,
+                    "caption": meta["caption"],
+                    "synthetic": synthetic_frames,
                 }
             )
 

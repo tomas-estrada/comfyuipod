@@ -36,6 +36,10 @@ fn base_healthy_snapshot() -> SystemSnapshot {
         studio_health_ok: true,
         studio_health_detail:
             "studio-server healthy en 127.0.0.1:18190 (/studio/api/health HTTP 200)".to_string(),
+        studio_perception_ok: true,
+        studio_perception_detail: "percepción disponible".to_string(),
+        studio_perception_backend: "real".to_string(),
+        studio_perception_stale: false,
         mcp_health_ok: true,
         mcp_health_detail: "MCP healthy en 127.0.0.1:18190/studio/api/mcp/health (HTTP 200)"
             .to_string(),
@@ -407,14 +411,16 @@ fn strict_studio_health_s11_and_live_http_probe() {
     vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
     let cfg_studio = RuntimeConfig::from_map(&vars, None);
 
-    // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añaden S11 (studio_health) y S12 (mcp_health)
+    // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añaden S11 (studio_health),
+    //    S12 (mcp_health) y S13 (studio_perception, warn nunca fatal)
     let mut snap = base_healthy_snapshot();
     snap.disk_free_gb = 200.0;
     let rep_ok = evaluate_strict_checks(&cfg_studio, &snap);
     assert_eq!(rep_ok.result, "ok");
-    assert_eq!(rep_ok.checks.len(), 12);
+    assert_eq!(rep_ok.checks.len(), 15);
     for expected_id in [
-        "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12",
+        "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S13b",
+        "S13c",
     ] {
         assert!(
             rep_ok
@@ -523,4 +529,42 @@ fn strict_studio_health_s11_and_live_http_probe() {
     let _ = mcp_srv.join();
     assert!(mcp_ok2, "probe_mcp_health debía devolver ok: {mcp_detail2}");
     assert!(mcp_detail2.contains("/studio/api/mcp/health"));
+}
+
+// M4: contrato estricto del backend de percepción (S13b). El motor de salud de
+// M4 (studio/comfy_studio/engines/health.py) depende de esta invariante: un
+// backend "real" es production-ready (ok); "sim" es degradado (warn) pero NUNCA
+// fatal. Este test la bloquea en el compilador estricto para que no se rompa.
+#[test]
+fn strict_s13b_perception_backend_real_ok_sim_warn_never_fatal() {
+    let mut vars = BTreeMap::new();
+    vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    let cfg = RuntimeConfig::from_map(&vars, None);
+
+    // Backend real => S13b ok, resultado global ok.
+    let mut snap_real = base_healthy_snapshot();
+    snap_real.disk_free_gb = 200.0;
+    snap_real.studio_perception_backend = "real".to_string();
+    let rep_real = evaluate_strict_checks(&cfg, &snap_real);
+    let s13b_real = rep_real.checks.iter().find(|c| c.id == "S13b");
+    assert!(
+        matches!(s13b_real, Some(c) if c.status == "ok"),
+        "S13b con backend real debe ser ok"
+    );
+    assert_eq!(rep_real.result, "ok");
+
+    // Backend sim => S13b warn, pero el resultado global sigue siendo ok (warn no es fatal).
+    let mut snap_sim = base_healthy_snapshot();
+    snap_sim.disk_free_gb = 200.0;
+    snap_sim.studio_perception_backend = "sim".to_string();
+    let rep_sim = evaluate_strict_checks(&cfg, &snap_sim);
+    let s13b_sim = rep_sim.checks.iter().find(|c| c.id == "S13b");
+    assert!(
+        matches!(s13b_sim, Some(c) if c.status == "warn"),
+        "S13b con backend sim debe ser warn"
+    );
+    assert_ne!(
+        rep_sim.result, "fatal",
+        "un backend sim nunca debe ser fatal"
+    );
 }

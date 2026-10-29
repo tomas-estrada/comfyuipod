@@ -28,6 +28,36 @@ ASPECT_DIMENSIONS: dict[str, tuple[int, int]] = {
 
 # M3-SCR-005: cota defensiva de cortes por EDL (cada corte = 1 subprocess ffmpeg)
 MAX_EDL_CUTS = 200
+# M3-SCR-004: cota DURA del MP4 de salida. No se calcula a partir del propio tamaño
+# (max(N, len+N) nunca rechaza nada): 720p H.264 de un EDL acotado queda muy por debajo.
+MAX_EDL_OUTPUT_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
+
+# M1.5: timeouts configurables y proporcionales. Un timeout fijo de 60 s por corte hacía
+# fallar cualquier clip largo en hosts lentos. La cota es
+# `max(base, min(cap, 4 × duración_del_corte + base))`.
+DEFAULT_FFMPEG_TIMEOUT_S = 60.0
+MAX_FFMPEG_TIMEOUT_S = 1800.0
+CUT_TIMEOUT_FACTOR = 4.0
+DEFAULT_FFPROBE_TIMEOUT_S = 20.0
+
+
+def cut_subprocess_timeout(
+    cut_duration_sec: float,
+    *,
+    base_s: float = DEFAULT_FFMPEG_TIMEOUT_S,
+    cap_s: float = MAX_FFMPEG_TIMEOUT_S,
+) -> float:
+    """Timeout de subprocess para un corte: `max(base, min(cap, 4×duración + base))`.
+
+    Un corte de 3 s tarda muy poco; uno de 90 s necesita bastante más que 60 s en un
+    host con CPU lenta. Escalar con la duración evita el falso negativo por timeout
+    sin permitir un subprocess descontrolado cuando la duración reportada es absurda.
+    """
+    base = max(1.0, float(base_s))
+    cap = max(base, float(cap_s))
+    scaled = (CUT_TIMEOUT_FACTOR * max(0.0, float(cut_duration_sec))) + base
+    return float(min(cap, max(base, scaled)))
+
 
 probe_media_file = probe_media_info
 
@@ -79,6 +109,8 @@ def execute_edl_ffmpeg(
     source_asset_id: str | None = None,
     cuts: list[dict[str, Any]] | None = None,
     fps: int = 24,
+    ffmpeg_timeout_s: float = DEFAULT_FFMPEG_TIMEOUT_S,
+    ffprobe_timeout_s: float = DEFAULT_FFPROBE_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Ejecuta un EDL con `ffmpeg`, guarda el MP4 en el proyecto y lo verifica con `ffprobe`."""
     project = store.get_project(project_id)
@@ -144,6 +176,10 @@ def execute_edl_ffmpeg(
     expected_duration_sec = 0.0
     applied_cuts: list[dict[str, Any]] = []
     probed_sources: dict[Path, dict[str, Any]] = {}
+    # M3-SCR-018: cachear la resolución de fuente por asset preferido para no volver a
+    # escanear los assets del proyecto en cada corte (el ffprobe caro ya se memoiza en
+    # probed_sources; esto evita repetir list_assets/get_asset por corte).
+    resolved_sources: dict[str | None, tuple[str, Path]] = {}
 
     with tempfile.TemporaryDirectory(prefix="comfy_edl_build_") as tmp_dir_str:
         tmp_dir = Path(tmp_dir_str)
@@ -159,13 +195,20 @@ def execute_edl_ffmpeg(
                 raise ValueError(
                     f"Corte #{idx + 1} inválido: out_sec ({out_sec}) <= in_sec ({in_sec})."
                 )
-            cut_aid, src_path = _resolve_source_video_path(
-                store,
-                project_id,
-                preferred_asset_id=cut.get("asset_id") or default_source_aid,
-            )
+            preferred_aid = cut.get("asset_id") or default_source_aid
+            cached_source = resolved_sources.get(preferred_aid)
+            if cached_source is None:
+                cached_source = _resolve_source_video_path(
+                    store,
+                    project_id,
+                    preferred_asset_id=preferred_aid,
+                )
+                resolved_sources[preferred_aid] = cached_source
+            cut_aid, src_path = cached_source
             if src_path not in probed_sources:
-                probed_sources[src_path] = probe_media_info(src_path)
+                probed_sources[src_path] = probe_media_info(
+                    src_path, timeout_s=ffprobe_timeout_s
+                )
             src_has_audio = bool(probed_sources[src_path].get("has_audio"))
             if src_has_audio:
                 any_has_audio = True
@@ -268,11 +311,16 @@ def execute_edl_ffmpeg(
                     "-an",
                     str(seg_path),
                 ]
+            cut_timeout = cut_subprocess_timeout(cut_dur, base_s=ffmpeg_timeout_s)
             try:
-                proc = subprocess.run(cmd_cut, check=False, capture_output=True, timeout=60.0)
+                proc = subprocess.run(
+                    cmd_cut, check=False, capture_output=True, timeout=cut_timeout
+                )
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError(
-                    f"ffmpeg excedió el tiempo límite al recortar segmento #{idx + 1}."
+                    f"ffmpeg excedió el tiempo límite al recortar segmento #{idx + 1} "
+                    f"({cut_timeout:.0f}s para un corte de {cut_dur:.2f}s; ajusta "
+                    f"STUDIO_FFMPEG_TIMEOUT_S en hosts lentos)."
                 ) from exc
             if proc.returncode != 0 or not seg_path.is_file():
                 err = proc.stderr.decode("utf-8", errors="replace").strip()
@@ -318,7 +366,9 @@ def execute_edl_ffmpeg(
                 str(out_mp4),
             ]
             try:
-                proc_c = subprocess.run(cmd_concat, check=False, capture_output=True, timeout=60.0)
+                proc_c = subprocess.run(
+                    cmd_concat, check=False, capture_output=True, timeout=ffmpeg_timeout_s
+                )
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError("ffmpeg excedió el tiempo límite al concatenar el EDL.") from exc
             if proc_c.returncode != 0 or not out_mp4.is_file():
@@ -326,7 +376,20 @@ def execute_edl_ffmpeg(
                 raise RuntimeError(f"Error de ffmpeg al concatenar EDL: {err}")
 
         mp4_bytes = out_mp4.read_bytes()
-        probe_info = probe_media_info(out_mp4)
+        if len(mp4_bytes) > MAX_EDL_OUTPUT_BYTES:
+            raise RuntimeError(
+                f"El MP4 renderizado ({len(mp4_bytes)} bytes) supera el límite duro de "
+                f"{MAX_EDL_OUTPUT_BYTES} bytes (M3-SCR-004)."
+            )
+        probe_info = probe_media_info(out_mp4, timeout_s=ffprobe_timeout_s)
+        # M1.7 (M3-IDEA-010 / M3-SCR-006): un render que ffprobe no puede verificar NO
+        # puede registrarse como entregable verificado. Antes se devolvían dimensiones
+        # y duración fabricadas como si fuesen medidas reales.
+        if not bool(probe_info.get("probe_ok")):
+            raise RuntimeError(
+                "El MP4 renderizado no pudo verificarse con ffprobe (probe_ok=false): "
+                "revisa que ffprobe exista en el PATH y que el contenedor sea válido."
+            )
 
     aspect_slug = resolved_aspect.replace(":", "x")
     edl_ver = int(edl_record["version"])
@@ -337,7 +400,7 @@ def execute_edl_ffmpeg(
         filename=out_filename,
         content_type="video/mp4",
         data=mp4_bytes,
-        max_upload_bytes=max(200 * 1024 * 1024, len(mp4_bytes) + 1024),
+        max_upload_bytes=MAX_EDL_OUTPUT_BYTES,
         category="outputs",
         metadata={
             "edl_render": True,
@@ -376,7 +439,9 @@ def execute_edl_ffmpeg(
             "codec_name": str(probe_info.get("codec_name") or "h264"),
             "has_audio": bool(probe_info.get("has_audio")),
             "audio_codec_name": probe_info.get("audio_codec_name"),
-            # M3-SCR-006: false si ffprobe no pudo verificar el contenedor real
-            "probe_ok": bool(probe_info.get("probe_ok")),
+            # M1.7: llegar aquí implica probe_ok=True (si no, se lanzó RuntimeError antes);
+            # se conserva el campo para consumidores que distingan render verificado.
+            "probe_ok": True,
+            "verified": True,
         },
     }

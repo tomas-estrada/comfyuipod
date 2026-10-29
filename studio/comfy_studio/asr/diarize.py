@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import SIMULATED_ML_NOTICE
+from ..ml import is_real_backend, require_real_payload, run_worker
 from ..projects import ProjectStore
 from .whisperx import (
     analyze_wav_acoustic_windows,
@@ -103,6 +104,23 @@ def diarize_audio_file(
     src = Path(media_path)
     if not src.is_file():
         raise ValueError(f"Archivo de audio/vídeo no encontrado para diarización: {src}")
+
+    # M3.4: backend real → delegar al worker ML (FunASR cam++). Sin fallback
+    # a simulación: si el worker falla o devuelve simulación, se propaga el error.
+    if is_real_backend():
+        resp = run_worker("diarize", {"media_path": str(src)}, timeout_s=120.0)
+        payload = require_real_payload(resp, "diarize")
+        return {
+            "backend": payload.get("backend", "funasr_campplus"),
+            "model_path": CAMPPLUS_MODEL_REL,
+            "requires_hf_token": False,
+            "uses_pyannote": False,
+            "duration_sec": float(payload.get("duration_sec") or 0.0),
+            "speakers": payload.get("speakers", []),
+            "turns": payload.get("turns", []),
+            "simulated": bool(payload.get("simulated", False)),
+            "simulation_notice": SIMULATED_ML_NOTICE,
+        }
 
     acoustic_info: dict[str, Any] = {"duration_sec": 0.0, "speech_spans": []}
     with tempfile.TemporaryDirectory(prefix="comfy_diar_") as tmp_dir:

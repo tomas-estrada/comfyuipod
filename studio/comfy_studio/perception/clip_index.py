@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import SIMULATED_ML_NOTICE
+from ..ml import is_real_backend, require_real_payload, run_worker
 from ..projects import ProjectStore
 from .keyframes import extract_image_rgb_signature, extract_video_keyframes
 from .store import CLIP_EMBED_DIM, PerceptionVectorStore
@@ -228,7 +229,22 @@ def _l2_normalize(vec: list[float]) -> list[float]:
 
 
 def embed_text_clip(text: str) -> list[float]:
-    """Genera un embedding normalizado de 64 dimensiones para una consulta textual."""
+    """Genera un embedding normalizado para una consulta textual.
+
+    En backend `real` delega en el worker ML (CLIP ViT-L/14, 768-d). En
+    `sim`/`auto` usa la simulación determinista actual. Nunca falla silenciosamente:
+    si el worker en modo `real` devuelve error, se propaga (sin fallback a sim).
+    """
+    if is_real_backend():
+        resp = run_worker("clip_embed_text", {"text": text})
+        payload = require_real_payload(resp, "clip_embed_text")
+        emb = payload.get("embedding")
+        if not isinstance(emb, list):
+            raise RuntimeError(
+                f"worker clip_embed_text devolvió payload inválido: {payload}"
+            )
+        return [float(v) for v in emb]
+
     vec = [0.0] * CLIP_EMBED_DIM
     tokens = _tokenize(text)
     if not tokens:
@@ -269,7 +285,29 @@ def embed_image_clip(
     rgb_mean: list[float] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> list[float]:
-    """Genera un embedding multimodal CLIP (64-d) combinando señal visual RGB y semántica."""
+    """Genera un embedding multimodal CLIP combinando señal visual RGB y semántica.
+
+    En backend `real` delega en el worker ML. En `sim`/`auto` usa la
+    simulación determinista actual.
+    """
+    if is_real_backend():
+        payload_req: dict[str, Any] = {
+            "caption": caption,
+            "visual_tags": visual_tags or [],
+            "rgb_mean": rgb_mean,
+            "metadata": metadata or {},
+        }
+        if image_path is not None:
+            payload_req["image_path"] = str(image_path)
+        resp = run_worker("clip_embed_image", payload_req)
+        payload = require_real_payload(resp, "clip_embed_image")
+        emb = payload.get("embedding")
+        if not isinstance(emb, list):
+            raise RuntimeError(
+                f"worker clip_embed_image devolvió payload inválido: {payload}"
+            )
+        return [float(v) for v in emb]
+
     sig: dict[str, Any] = {}
     if image_path is not None and Path(image_path).is_file():
         sig = extract_image_rgb_signature(image_path)
@@ -313,9 +351,22 @@ class ClipVisualIndex:
         self,
         store: ProjectStore,
         vector_store: PerceptionVectorStore | None = None,
+        *,
+        ffmpeg_timeout_s: float | None = None,
+        ffprobe_timeout_s: float | None = None,
     ) -> None:
         self.store = store
         self.vector_store = vector_store or PerceptionVectorStore(store.data_dir)
+        # M1.5: timeouts configurables inyectados por `StudioConfig`; `None` mantiene
+        # los defaults históricos de `keyframes.py`.
+        from .keyframes import DEFAULT_FFMPEG_KEYFRAME_TIMEOUT_S, DEFAULT_FFPROBE_TIMEOUT_S
+
+        self.ffmpeg_timeout_s = (
+            ffmpeg_timeout_s if ffmpeg_timeout_s is not None else DEFAULT_FFMPEG_KEYFRAME_TIMEOUT_S
+        )
+        self.ffprobe_timeout_s = (
+            ffprobe_timeout_s if ffprobe_timeout_s is not None else DEFAULT_FFPROBE_TIMEOUT_S
+        )
 
     def index_keyframe_asset(
         self,
@@ -451,6 +502,8 @@ class ClipVisualIndex:
                         asset["id"],
                         scene_threshold=scene_threshold,
                         interval_sec=interval_sec,
+                        ffmpeg_timeout_s=self.ffmpeg_timeout_s,
+                        ffprobe_timeout_s=self.ffprobe_timeout_s,
                     )
                     extracted_keyframes.extend(kfs)
 
@@ -475,8 +528,15 @@ class ClipVisualIndex:
                     keyframes_to_index.append(asset)
 
         indexed_shots: list[dict[str, Any]] = []
+        skipped_synthetic = 0
         captions_map = captions_by_asset_id or {}
         for kf_asset in keyframes_to_index:
+            # M1.7 (M3-SCR-007): un keyframe marcado `synthetic` es un PNG de relleno,
+            # no un fotograma del clip. Indexarlo haría que la búsqueda semántica
+            # "encontrase" planos inexistentes con embeddings de un color sólido.
+            if bool((kf_asset.get("metadata") or {}).get("synthetic")):
+                skipped_synthetic += 1
+                continue
             cap_override = captions_map.get(kf_asset["id"])
             shot = self.index_keyframe_asset(
                 project_id,
@@ -502,6 +562,7 @@ class ClipVisualIndex:
             "extracted_keyframes_count": len(extracted_keyframes),
             "indexed_shots_count": len(indexed_shots),
             "shots_indexed": len(indexed_shots),
+            "skipped_synthetic_count": skipped_synthetic,
             "shots": indexed_shots,
             "results": results_list,
             # M3-IDEA-005: los embeddings son de un extractor determinista local,

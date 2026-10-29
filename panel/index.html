@@ -444,6 +444,12 @@
                         <button type="button" id="edl-build-9x16-btn" class="btn btn-accent btn-sm">
                             Renderizar EDL 9:16
                         </button>
+                        <button type="button" id="edl-build-batch-btn" class="btn btn-accent btn-sm">
+                            Renderizar lote 16:9 + 9:16
+                        </button>
+                        <button type="button" id="edl-save-cuts-btn" class="btn btn-primary btn-sm">
+                            Guardar cortes editados
+                        </button>
                         <button type="button" id="refresh-edl-btn" class="btn btn-secondary btn-sm">
                             Actualizar EDL
                         </button>
@@ -457,6 +463,44 @@
                 <div id="edl-simulation-notice" class="project-summary-box" role="note">
                     <p><strong>Modo simulación (M3):</strong> La transcripción, diarización, búsqueda semántica CLIP y detección facial de esta versión son <em>simulaciones deterministas</em> (pipeline completo sin pesos reales de <code>faster-whisper</code>/<code>wav2vec2</code>/<code>cam++</code>/<code>buffalo_l</code>/CLIP cargados). Las respuestas API incluyen <code>simulated: true</code>. No evaluar calidad de modelo con estas salidas.</p>
                 </div>
+
+                <!-- M2 (M3-IDEA-030): búsqueda semántica de planos -->
+                <div class="divider"></div>
+                <h3 class="section-subtitle">Búsqueda semántica de planos</h3>
+                <form id="perception-search-form" class="studio-form">
+                    <div class="form-row">
+                        <div class="form-group flex-2">
+                            <label for="perception-search-input">Descripción del plano</label>
+                            <input
+                                type="text"
+                                id="perception-search-input"
+                                maxlength="300"
+                                placeholder="Ej. persona frente a una pizarra con luz cálida"
+                            >
+                        </div>
+                        <div class="form-group flex-1">
+                            <label for="perception-identity-select">Filtrar por persona (opcional)</label>
+                            <select id="perception-identity-select">
+                                <option value="">Cualquier persona</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" id="perception-search-btn" class="btn btn-primary">
+                            Buscar planos
+                        </button>
+                        <button type="button" id="perception-index-btn" class="btn btn-secondary">
+                            Indexar medios del proyecto
+                        </button>
+                        <span id="perception-search-status" class="inline-status" aria-live="polite"></span>
+                    </div>
+                </form>
+                <div id="perception-search-results" class="items-list" aria-live="polite">
+                    <p class="empty-hint">Sin búsqueda todavía. Escribe una descripción o filtra por persona.</p>
+                </div>
+
+                <div class="divider"></div>
+                <h3 class="section-subtitle">Timeline EDL</h3>
 
                 <div class="edl-timeline-container" aria-label="Representación visual del timeline EDL">
                     <div class="timeline-track-row">

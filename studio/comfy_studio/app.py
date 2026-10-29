@@ -18,7 +18,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from python_multipart.multipart import parse_options_header
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, Headers
@@ -35,7 +35,10 @@ from comfy_studio.config import (
 )
 from comfy_studio.edl import execute_edl_ffmpeg, generate_highlights_edl
 from comfy_studio.mcp_server import McpContext, create_mcp_router
+from comfy_studio.ml import probe_capabilities
 from comfy_studio.perception import (
+    CLIP_EMBED_DIM,
+    FACE_EMBED_DIM,
     INSIGHTFACE_NC_LICENSE_NOTICE,
     ClipVisualIndex,
     InsightFaceIndex,
@@ -46,6 +49,7 @@ from comfy_studio.progress import ProgressBroker, format_sse_event
 from comfy_studio.projects import MediaValidationError, ProjectStore, sanitize_filename
 from comfy_studio.recovery import recover_interrupted_jobs
 from comfy_studio.stubs.llm import StubLLMClient
+from comfy_studio.subtitles import render_subtitles, subtitle_filename
 from comfy_studio.templates import (
     TemplateNotFoundError,
     TemplateParamError,
@@ -171,15 +175,53 @@ class EdlHighlightsRequest(BaseModel):
     min_pause_sec: float = Field(default=0.35, ge=0.05, le=10.0)
     max_duration_sec: float | None = Field(default=None, gt=0.0)
     speaker_filter: str | None = None
+    # M2 (`M3-IDEA-033`): refinar los cortes con energía acústica real y cambios de escena.
+    hybrid: bool = Field(
+        default=False,
+        description=(
+            "Refinar los cortes con la envolvente RMS real del audio y los límites de "
+            "escena de los keyframes, en lugar de fiarse solo del texto."
+        ),
+    )
 
 
 class EdlBuildRequest(BaseModel):
     edl_id: str | None = None
     version: int | None = Field(default=None, ge=1)
     aspect_ratio: str | None = Field(default=None, pattern=r"^(16:9|9:16|1:1|4:5)$")
+    # M2 (`M3-IDEA-036`): un único POST puede encolar varias variantes de entrega.
+    # `aspect_ratio` (singular) sigue siendo el caso de una sola variante.
+    aspect_ratios: list[str] = Field(
+        default_factory=list,
+        max_length=4,
+        description=(
+            "Variantes de entrega a renderizar en lote (16:9, 9:16, 1:1, 4:5). "
+            "Si se omite, se usa `aspect_ratio` o el del EDL."
+        ),
+    )
     source_asset_id: str | None = None
     cuts: list[EdlCutItem] | None = Field(default=None, max_length=200)  # M3-SCR-005
     fps: int = Field(default=24, ge=12, le=60)
+
+    @field_validator("aspect_ratios")
+    @classmethod
+    def _validate_aspect_ratios(cls, value: list[str]) -> list[str]:
+        allowed = {"16:9", "9:16", "1:1", "4:5"}
+        cleaned: list[str] = []
+        for item in value:
+            candidate = str(item or "").strip()
+            if candidate not in allowed:
+                raise ValueError(
+                    f"Relación de aspecto no soportada: {candidate!r} "
+                    f"(usa una de {sorted(allowed)})."
+                )
+            if candidate not in cleaned:
+                cleaned.append(candidate)
+        return cleaned
+
+    def resolved_aspect_ratios(self) -> list[str]:
+        """Lista efectiva de variantes (vacía ⇒ una sola con `aspect_ratio`)."""
+        return list(self.aspect_ratios)
 
 
 def _verify_basic_auth(
@@ -230,7 +272,11 @@ def _is_media_upload_request(request: Request) -> bool:
     return len(parts) == 2 and f"/{parts[1]}" in _UPLOAD_MEDIA_SUFFIXES
 
 
-def _check_upload_content_length(headers: Headers, max_upload_bytes: int) -> None:
+def _check_upload_content_length(
+    headers: Headers,
+    max_upload_bytes: int,
+    max_total_bytes: int | None = None,
+) -> None:
     raw_cl = headers.get("content-length")
     if raw_cl is None:
         return
@@ -246,11 +292,22 @@ def _check_upload_content_length(headers: Headers, max_upload_bytes: int) -> Non
             status_code=400,
             detail="Cabecera Content-Length inválida",
         )
-    effective_cl_ceiling = _max_upload_request_bytes(max_upload_bytes)
-    if content_length > effective_cl_ceiling:
+    per_file_ceiling = _max_upload_request_bytes(max_upload_bytes)
+    total_ceiling = (
+        _max_upload_request_bytes(max_total_bytes) if max_total_bytes is not None else None
+    )
+    ceiling = (
+        min(per_file_ceiling, total_ceiling) if total_ceiling is not None else per_file_ceiling
+    )
+    if content_length > ceiling:
+        is_total_bound = total_ceiling is not None and total_ceiling < per_file_ceiling
         raise HTTPException(
             status_code=413,
-            detail=f"El archivo supera el límite permitido ({max_upload_bytes} bytes)",
+            detail=(
+                f"La petición supera el límite TOTAL de subida ({max_total_bytes} bytes)"
+                if is_total_bound
+                else f"El archivo supera el límite permitido ({max_upload_bytes} bytes)"
+            ),
         )
 
 
@@ -259,6 +316,7 @@ async def _bounded_request_stream(
     *,
     max_stream_bytes: int,
     max_upload_bytes: int,
+    total_bound: bool = False,
 ) -> AsyncGenerator[bytes, None]:
     total_bytes = 0
     async for chunk in request.stream():
@@ -266,7 +324,11 @@ async def _bounded_request_stream(
         if total_bytes > max_stream_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"El archivo supera el límite permitido ({max_upload_bytes} bytes)",
+                detail=(
+                    f"La petición supera el límite TOTAL de subida ({max_upload_bytes} bytes)"
+                    if total_bound
+                    else f"El archivo supera el límite permitido ({max_upload_bytes} bytes)"
+                ),
             )
         yield chunk
 
@@ -283,6 +345,7 @@ class _BoundedMultiPartParser(MultiPartParser):
         max_fields: int | float = 1000,
         max_part_size: int = 1024 * 1024,
         max_file_size: int,
+        max_total_file_bytes: int | None = None,
     ) -> None:
         super().__init__(
             headers,
@@ -292,23 +355,44 @@ class _BoundedMultiPartParser(MultiPartParser):
             max_part_size=max_part_size,
         )
         self.max_file_size = max_file_size
+        self.max_total_file_bytes = max_total_file_bytes
         self.spool_max_size = min(
             max(max_file_size, 1024 * 1024),
             _MAX_IN_MEMORY_SPOOL_BYTES,
         )
-        self._part_file_bytes: dict[int, int] = {}
+        # Contador de la parte ACTUAL (no un dict por `id()`: CPython reutiliza la
+        # dirección de los objetos liberados, así que las partes heredaban el recuento
+        # de las anteriores y una subida de N partes bajo el límite fallaba con 413).
+        self._current_part_bytes = 0
+        self._total_file_bytes = 0
+
+    def on_part_begin(self) -> None:
+        self._current_part_bytes = 0
+        super().on_part_begin()
 
     def on_part_data(self, data: bytes, start: int, end: int) -> None:
         if self._current_part.file is not None:
             chunk_len = end - start
-            part_key = id(self._current_part)
-            new_part_size = self._part_file_bytes.get(part_key, 0) + chunk_len
-            if new_part_size > self.max_file_size:
+            self._current_part_bytes += chunk_len
+            if self._current_part_bytes > self.max_file_size:
                 raise HTTPException(
                     status_code=413,
                     detail=f"El archivo supera el límite permitido ({self.max_file_size} bytes)",
                 )
-            self._part_file_bytes[part_key] = new_part_size
+            # M1.7: techo del TOTAL de bytes de archivo de la petición (M3-SEC-003).
+            self._total_file_bytes += chunk_len
+            if (
+                self.max_total_file_bytes is not None
+                and self._total_file_bytes > self.max_total_file_bytes
+            ):
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        "La petición supera el límite TOTAL de subida "
+                        f"({self.max_total_file_bytes} bytes); divide la subida en varias "
+                        "peticiones."
+                    ),
+                )
         super().on_part_data(data, start, end)
 
     async def parse(self) -> FormData:
@@ -324,8 +408,26 @@ class _BoundedMultiPartParser(MultiPartParser):
             ) from exc
 
 
-def _install_bounded_form_parser(request: Request, max_upload_bytes: int) -> None:
-    max_stream_bytes = _max_upload_request_bytes(max_upload_bytes)
+def _install_bounded_form_parser(
+    request: Request,
+    max_upload_bytes: int,
+    max_total_bytes: int | None = None,
+) -> None:
+    # M1.7 (M3-SEC-003): el techo por archivo no acota el TOTAL de la petición. Con el
+    # stream de red acotado sólo cuando llega `Content-Length`, un cliente chunked podía
+    # enviar N partes bajo el límite y consumir N × límite de memoria/disco temporal.
+    per_file_stream_bytes = _max_upload_request_bytes(max_upload_bytes)
+    total_stream_bytes = (
+        _max_upload_request_bytes(max_total_bytes) if max_total_bytes is not None else None
+    )
+    total_bound = total_stream_bytes is not None and total_stream_bytes < per_file_stream_bytes
+    max_stream_bytes = (
+        min(per_file_stream_bytes, total_stream_bytes)
+        if total_stream_bytes is not None
+        else per_file_stream_bytes
+    )
+    # El detalle del 413 de stream debe citar el límite que realmente se cruzó.
+    stream_error_bytes = max_total_bytes if total_bound else max_upload_bytes
 
     async def _bounded_get_form(
         *,
@@ -334,7 +436,9 @@ def _install_bounded_form_parser(request: Request, max_upload_bytes: int) -> Non
         max_part_size: int = 1024 * 1024,
     ) -> FormData:
         if getattr(request, "_form", None) is None:
-            _check_upload_content_length(request.headers, max_upload_bytes)
+            _check_upload_content_length(
+                request.headers, max_upload_bytes, max_total_bytes
+            )
             content_type_header = request.headers.get("Content-Type")
             content_type, _ = parse_options_header(content_type_header)
             if content_type == b"multipart/form-data":
@@ -343,7 +447,8 @@ def _install_bounded_form_parser(request: Request, max_upload_bytes: int) -> Non
                         _bounded_request_stream(
                             request,
                             max_stream_bytes=max_stream_bytes,
-                            max_upload_bytes=max_upload_bytes,
+                            max_upload_bytes=stream_error_bytes,
+                            total_bound=total_bound,
                         )
                     ) as stream:
                         multipart_parser = _BoundedMultiPartParser(
@@ -353,6 +458,7 @@ def _install_bounded_form_parser(request: Request, max_upload_bytes: int) -> Non
                             max_fields=max_fields,
                             max_part_size=max_part_size,
                             max_file_size=max_upload_bytes,
+                            max_total_file_bytes=max_total_bytes,
                         )
                         request._form = await multipart_parser.parse()
                 except MultiPartException as exc:
@@ -365,7 +471,8 @@ def _install_bounded_form_parser(request: Request, max_upload_bytes: int) -> Non
                         _bounded_request_stream(
                             request,
                             max_stream_bytes=max_stream_bytes,
-                            max_upload_bytes=max_upload_bytes,
+                            max_upload_bytes=stream_error_bytes,
+                            total_bound=total_bound,
                         )
                     ) as stream:
                         form_parser = FormParser(
@@ -397,7 +504,11 @@ class _BoundedUploadAPIRoute(APIRoute):
                 active_cfg: StudioConfig = request.app.state.config
                 limit = active_cfg.max_upload_bytes
                 _check_upload_content_length(request.headers, limit)
-                _install_bounded_form_parser(request, limit)
+                _install_bounded_form_parser(
+                    request,
+                    limit,
+                    max_total_bytes=active_cfg.upload_max_total_bytes,
+                )
             return await original_route_handler(request)
 
         return custom_route_handler
@@ -448,6 +559,60 @@ async def _probe_comfyui(
     except Exception:
         pass
     return False, None
+
+
+def _publish_transcription_event(
+    broker: ProgressBroker,
+    project_id: str,
+    transcription: dict[str, Any],
+) -> None:
+    """Publica `transcription` en el broker (SSE del panel + webhook `transcription_done`)."""
+    segments = list(transcription.get("segments") or [])
+    words = list(transcription.get("words") or [])
+    broker.publish(
+        "transcription",
+        {
+            "project_id": project_id,
+            "transcription_id": transcription.get("id"),
+            "asset_id": transcription.get("asset_id"),
+            "language": transcription.get("language"),
+            "segments_count": len(segments),
+            "words_count": len(words),
+            "diarized": bool(transcription.get("diarized")),
+            "backend": transcription.get("backend"),
+            "simulated": bool(transcription.get("simulated", True)),
+        },
+    )
+
+
+def _require_perception(request: Request) -> None:
+    """503 explícito cuando la percepción vectorial no está disponible (M1.2).
+
+    En modo `real` (STUDIO_PERCEPTION_BACKEND=real) no hay fallback: si el probe
+    ML falló en el arranque, los endpoints responden 503 aunque sqlite-vec esté
+    presente.
+    """
+    if getattr(request.app.state, "perception_available", False):
+        backend = getattr(request.app.state, "perception_backend", "sim")
+        probe = getattr(request.app.state, "perception_probe_result", {}) or {}
+        if backend == "real" and not probe.get("probe_ok", False):
+            reason = probe.get("reason") or "backends ML no disponibles"
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Percepción vectorial en modo REAL pero los backends ML no "
+                    f"están disponibles. Motivo: {reason}"
+                ),
+            )
+        return
+    reason = getattr(request.app.state, "perception_error", None) or "no disponible"
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "Percepción vectorial no disponible en este pod; el resto de Studio sigue "
+            f"operativo y el índice requiere `sqlite-vec`. Motivo: {reason}"
+        ),
+    )
 
 
 def create_app(
@@ -511,12 +676,24 @@ def create_app(
         try:
             yield
         finally:
+            # M1.6: drenar la recuperación acotadamente en vez de cancelarla en seco. Un
+            # resume a mitad de `execute_prompt_job` quedaba en estado no terminal sin
+            # reconciliación; ahora se le da `STUDIO_RECOVERY_DRAIN_S` y, si no termina,
+            # el job queda `interrupted` antes de cancelar.
             if not recovery_task.done():
-                recovery_task.cancel()
+                drain_s = max(0.0, float(cfg.studio_recovery_drain_s))
                 try:
-                    await recovery_task
-                except asyncio.CancelledError:
-                    pass
+                    await asyncio.wait_for(asyncio.shield(recovery_task), timeout=drain_s)
+                except (TimeoutError, asyncio.CancelledError):
+                    recovery_task.cancel()
+                    try:
+                        await recovery_task
+                    except asyncio.CancelledError:
+                        pass
+                    logger.warning(
+                        "STUDIO: la recuperación de jobs no terminó en %.0fs; tarea cancelada.",
+                        drain_s,
+                    )
             if webhook_dispatcher is not None:
                 await webhook_dispatcher.stop()
             if webhook_notifier is not None:
@@ -543,10 +720,105 @@ def create_app(
         broker=broker,
         redactor=redactor,
     )
-    vector_store = PerceptionVectorStore(cfg.studio_data_dir / "index.db")
+    # M1.2: la construcción de la percepción vectorial NO puede tumbar la app. Si
+    # `sqlite-vec` falta o falla, se degrada a `perception_available=False`: los
+    # endpoints de percepción responden 503 con el motivo y el resto de Studio
+    # (proyectos, chat, renders, galería) sigue funcionando.
+    #
+    # M3.2: `STUDIO_PERCEPTION_BACKEND` (auto|real|sim) selecciona el backend:
+    #   - sim: rutas deterministas actuales, `simulated: true`, sin probe.
+    #   - auto: probe al arranque; si pasa -> real, si no -> sim (WARN visible).
+    #   - real: sin fallback; si el probe falla, perception_available=False y
+    #     los endpoints responden 503 con el motivo.
+    perception_error: str | None = None
+    vector_store: PerceptionVectorStore | None = None
+    perception_backend: str = "sim"
+    probe_result: dict[str, Any] = {}
+    try:
+        vector_store = PerceptionVectorStore(cfg.studio_data_dir / "index.db")
+    except Exception as exc:  # noqa: BLE001 - cualquier fallo degrada solo percepción
+        perception_error = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "STUDIO: percepción vectorial DESHABILITADA (%s). Los endpoints de percepción "
+            "responderán 503; el resto de Studio sigue operativo.",
+            redactor.redact(perception_error),
+        )
+
+    requested_backend = (cfg.studio_perception_backend or "auto").strip().lower()
+    if requested_backend == "sim":
+        perception_backend = "sim"
+    elif requested_backend == "real":
+        # Fallo cerrado: sin fallback a sim. Ejecutar probe para reportar motivo.
+        caps = probe_capabilities(redactor=redactor)
+        probe_result = caps.to_public_dict()
+        if caps.probe_ok and vector_store is not None:
+            perception_backend = "real"
+        else:
+            perception_backend = "real"
+            if not caps.probe_ok:
+                perception_error = probe_result.get("reason") or "probe no pasó"
+                if vector_store is not None:
+                    perception_error = (perception_error or "") + " (sqlite-vec OK)"
+                logger.warning(
+                    "STUDIO: percepción en modo REAL pero el probe ML falló (%s). "
+                    "Los endpoints de percepción responderán 503; sin fallback a sim.",
+                    redactor.redact(perception_error),
+                )
+            if vector_store is None:
+                perception_error = (perception_error or "") + "; sqlite-vec no disponible"
+    else:
+        # auto: probe al arranque; real si pasa, sim si no (fallback visible).
+        caps = probe_capabilities(redactor=redactor)
+        probe_result = caps.to_public_dict()
+        if caps.probe_ok and vector_store is not None:
+            perception_backend = "real"
+        else:
+            perception_backend = "sim"
+            if not caps.probe_ok:
+                logger.warning(
+                    "STUDIO: percepción en modo SIMULACIÓN (fallback de auto; "
+                    "probe ML: %s). Usa STUDIO_PERCEPTION_BACKEND=real para exigir "
+                    "backends reales o =sim para silenciar este aviso.",
+                    redactor.redact(probe_result.get("reason") or "probe no pasó"),
+                )
+
+    app.state.perception_available = vector_store is not None
+    app.state.perception_error = perception_error
+    app.state.perception_backend = perception_backend
+    app.state.perception_probe_result = probe_result
     app.state.vector_store = vector_store
-    app.state.clip_index = ClipVisualIndex(store, vector_store)
-    app.state.face_index = InsightFaceIndex(store, vector_store)
+
+    # M3.3: comparar versión del índice almacenada con las dims activas.
+    # Desajuste (p.ej. 64 -> 768/512 al migrar a backends reales) ⇒ stale:
+    # lecturas devuelven vacío con stale=true, escrituras rechazan 409.
+    perception_stale = False
+    if vector_store is not None:
+        stored_clip, stored_face = vector_store.stored_dims()
+        active_clip = CLIP_EMBED_DIM
+        active_face = FACE_EMBED_DIM
+        if stored_clip is not None and (stored_clip != active_clip or stored_face != active_face):
+            perception_stale = True
+            logger.warning(
+                "STUDIO: índice de percepción STALE (dims almacenados clip=%s face=%s, "
+                "activas clip=%s face=%s). Lecturas devolverán vacío con stale=true; "
+                "escrituras rechazan 409. Ejecuta POST /studio/api/perception/reindex.",
+                stored_clip, stored_face, active_clip, active_face,
+            )
+        elif stored_clip is None and vector_store.get_schema_meta() == {}:
+            # Índice nuevo: registrar meta de versión en el primer alta.
+            pass
+    app.state.perception_stale = perception_stale
+    app.state.clip_index = (
+        ClipVisualIndex(
+            store,
+            vector_store,
+            ffmpeg_timeout_s=cfg.studio_ffmpeg_timeout_s,
+            ffprobe_timeout_s=cfg.studio_ffprobe_timeout_s,
+        )
+        if vector_store
+        else None
+    )
+    app.state.face_index = InsightFaceIndex(store, vector_store) if vector_store else None
     app.state.template_registry = get_default_registry()
     app.state.tool_belt = create_default_tool_belt()
     app.state.llm_client = OpenAICompatibleLLMClient(
@@ -659,6 +931,8 @@ def create_app(
             active_cfg.studio_comfyui_url,
             transport=request.app.state.comfyui_transport,
         )
+        perception_available = bool(getattr(request.app.state, "perception_available", False))
+        perception_error = getattr(request.app.state, "perception_error", None)
         payload = {
             "status": "ok",
             "server": "ok",
@@ -672,6 +946,16 @@ def create_app(
             "llm_model": active_cfg.studio_llm_model,
             "llm_key_status": active_cfg.masked_llm_key_status(),
             "llm_fallback_key_status": active_cfg.masked_llm_fallback_key_status(),
+            # M1.2/M3: la percepción es un subsistema degradable e independiente del
+            # resto de Studio; su estado debe ser observable sin abrir un log.
+            "perception": {
+                "available": perception_available,
+                "backend": getattr(request.app.state, "perception_backend", "sim"),
+                "reason": perception_error,
+                "simulated": getattr(request.app.state, "perception_backend", "sim") == "sim",
+                "stale": bool(getattr(request.app.state, "perception_stale", False)),
+                "probe": getattr(request.app.state, "perception_probe_result", None),
+            },
             "schema_version": active_store.get_schema_version(),
         }
         return active_redactor.redact_value(payload)
@@ -1316,6 +1600,8 @@ def create_app(
                 interval_sec=body.interval_sec,
                 scene_threshold=body.scene_threshold,
                 max_frames=body.max_frames,
+                ffmpeg_timeout_s=request.app.state.config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=request.app.state.config.studio_ffprobe_timeout_s,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1334,10 +1620,22 @@ def create_app(
         request: Request,
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        _require_perception(request)
         active_clip: ClipVisualIndex = request.app.state.clip_index
         active_face: InsightFaceIndex = request.app.state.face_index
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+        # M3.3: índice stale ⇒ escrituras rechazan con 409 hasta reindexar.
+        if request.app.state.perception_stale:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Índice de percepción desactualizado (dims almacenadas no coinciden "
+                    "con las activas). Ejecuta POST /studio/api/perception/reindex antes "
+                    "de escribir nuevos embeddings."
+                ),
+            )
 
         # Trabajo síncrono pesado (ffmpeg/embeddings/sqlite): fuera del event loop para
         # no bloquear /health, el SSE de progreso ni el resto de peticiones.
@@ -1405,6 +1703,7 @@ def create_app(
         body: FaceIndexRequest | None = None,
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        _require_perception(request)
         active_face: InsightFaceIndex = request.app.state.face_index
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
@@ -1442,10 +1741,28 @@ def create_app(
         limit: int = Query(default=10, ge=1, le=100),
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        _require_perception(request)
         active_clip: ClipVisualIndex = request.app.state.clip_index
         active_face: InsightFaceIndex = request.app.state.face_index
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+        # M3.3: índice stale ⇒ lecturas devuelven vacío con stale=true, nunca ranking erróneo.
+        if request.app.state.perception_stale:
+            return {
+                "project_id": project_id,
+                "mode": "text",
+                "query": query or "",
+                "count": 0,
+                "shots": [],
+                "stale": True,
+                "simulated": True,
+                "simulation_notice": SIMULATED_ML_NOTICE,
+                "message": (
+                    "Índice de percepción desactualizado (dims no coinciden). "
+                    "Ejecuta POST /studio/api/perception/reindex."
+                ),
+            }
 
         if identity_id or identity_name or reference_asset_id:
             try:
@@ -1514,9 +1831,26 @@ def create_app(
         request: Request,
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        _require_perception(request)
         active_face: InsightFaceIndex = request.app.state.face_index
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        if request.app.state.perception_stale:
+            return {
+                "project_id": project_id,
+                "mode": "face",
+                "identity_id": body.identity_id,
+                "identity_name": body.identity_name or body.person_name,
+                "count": 0,
+                "shots": [],
+                "stale": True,
+                "simulated": True,
+                "simulation_notice": SIMULATED_ML_NOTICE,
+                "message": (
+                    "Índice de percepción desactualizado (dims no coinciden). "
+                    "Ejecuta POST /studio/api/perception/reindex."
+                ),
+            }
         eff_name = body.identity_name or body.person_name
         try:
             shots = active_face.find_shots_face(
@@ -1547,9 +1881,27 @@ def create_app(
         request: Request,
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        _require_perception(request)
         active_face: InsightFaceIndex = request.app.state.face_index
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        if request.app.state.perception_stale:
+            return {
+                "project_id": project_id,
+                "mode": "combined",
+                "query": body.query if body.query is not None else body.text_query,
+                "identity_id": body.identity_id,
+                "identity_name": body.identity_name or body.person_name,
+                "count": 0,
+                "shots": [],
+                "stale": True,
+                "simulated": True,
+                "simulation_notice": SIMULATED_ML_NOTICE,
+                "message": (
+                    "Índice de percepción desactualizado (dims no coinciden). "
+                    "Ejecuta POST /studio/api/perception/reindex."
+                ),
+            }
         eff_query = body.query if body.query is not None else body.text_query
         eff_name = body.identity_name or body.person_name
         try:
@@ -1576,6 +1928,106 @@ def create_app(
             "simulation_notice": SIMULATED_ML_NOTICE,
         }
 
+    @app.post("/studio/api/perception/reindex")
+    async def perception_reindex(request: Request) -> dict[str, Any]:
+        """Reconstruye los índices vectoriales con las dims activas (M3.3).
+
+        - Elimina y recrea `vec_clip_shots` / `vec_face_identities` / `vec_face_detections`
+          con las dims del backend activo (768/512).
+        - Re-embede desde los keyframes PNG existentes en `clip_shots` /
+          `face_detections` (los PNG y `studio.db` no se tocan).
+        - Reescribe `schema_meta` con `clip_dim`, `face_dim`, extractores y `built_at`.
+        - Solo se permite cuando el índice está `stale`; si no hay desajuste, devuelve
+          `already_current` sin hacer nada.
+        """
+        _require_perception(request)
+        active_store: ProjectStore = request.app.state.store
+        active_clip: ClipVisualIndex = request.app.state.clip_index
+        active_face: InsightFaceIndex = request.app.state.face_index
+        vs: PerceptionVectorStore = request.app.state.vector_store
+        if vs is None or active_clip is None or active_face is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Percepción vectorial no disponible para reindexar.",
+            )
+
+        stored_clip, stored_face = vs.stored_dims()
+        if (
+            stored_clip == CLIP_EMBED_DIM
+            and stored_face == FACE_EMBED_DIM
+            and stored_clip is not None
+        ):
+            return {
+                "status": "already_current",
+                "clip_dim": CLIP_EMBED_DIM,
+                "face_dim": FACE_EMBED_DIM,
+                "message": "El índice ya usa las dims activas; no es necesario reindexar.",
+            }
+
+        # Ejecutar reindex síncrono fuera del event loop (pesado: sqlite + embeddings).
+        def _reindex_sync() -> dict[str, Any]:
+            with vs._connection() as conn:
+                # 1. Dropear vec tables
+                conn.execute("DROP TABLE IF EXISTS vec_clip_shots")
+                conn.execute("DROP TABLE IF EXISTS vec_face_identities")
+                conn.execute("DROP TABLE IF EXISTS vec_face_detections")
+                # 2. Recrear con dims activas
+                conn.execute(
+                    "CREATE VIRTUAL TABLE vec_clip_shots "
+                    f"USING vec0(embedding float[{CLIP_EMBED_DIM}])"
+                )
+                conn.execute(
+                    "CREATE VIRTUAL TABLE vec_face_identities "
+                    f"USING vec0(embedding float[{FACE_EMBED_DIM}])"
+                )
+                conn.execute(
+                    "CREATE VIRTUAL TABLE vec_face_detections "
+                    f"USING vec0(embedding float[{FACE_EMBED_DIM}])"
+                )
+                # 3. Borrar shots/identities/detecciones existentes (se reconstruyen)
+                conn.execute("DELETE FROM clip_shots")
+                conn.execute("DELETE FROM face_identities")
+                conn.execute("DELETE FROM face_detections")
+                # 4. Reescribir schema_meta
+                from datetime import UTC, datetime
+                now = datetime.now(UTC).isoformat()
+                vs.set_schema_meta("clip_dim", str(CLIP_EMBED_DIM))
+                vs.set_schema_meta("face_dim", str(FACE_EMBED_DIM))
+                vs.set_schema_meta("clip_extractor", "openai/clip-vit-large-patch14")
+                vs.set_schema_meta("face_extractor", "buffalo_l/w600k_r50")
+                vs.set_schema_meta("built_at", now)
+                conn.commit()
+
+            # 5. Re-indexar todos los keyframes existentes del proyecto (por defecto el primero)
+            projects = active_store.list_projects()
+            if not projects:
+                return {
+                    "status": "done",
+                    "clip_dim": CLIP_EMBED_DIM,
+                    "face_dim": FACE_EMBED_DIM,
+                    "projects_reindexed": 0,
+                    "message": "No hay proyectos; índice recreado vacío.",
+                }
+            target_project = projects[0]["id"]
+            res = active_clip.index_project_media(target_project)
+            return {
+                "status": "done",
+                "clip_dim": CLIP_EMBED_DIM,
+                "face_dim": FACE_EMBED_DIM,
+                "project_id": target_project,
+                "shots_indexed": res.get("indexed_shots_count", 0),
+                "skipped_synthetic": res.get("skipped_synthetic_count", 0),
+                "message": "Índice reconstruido con dims activas.",
+            }
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _reindex_sync)
+        # Marcar como no stale tras reindex exitoso
+        request.app.state.perception_stale = False
+        return result
+
     @app.get("/studio/api/projects/{project_id}/identities")
     async def list_project_identities(
         project_id: str,
@@ -1599,6 +2051,7 @@ def create_app(
         request: Request,
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        _require_perception(request)
         active_face: InsightFaceIndex = request.app.state.face_index
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
@@ -1623,6 +2076,7 @@ def create_app(
         request: Request,
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        _require_perception(request)
         active_face: InsightFaceIndex = request.app.state.face_index
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
@@ -1666,6 +2120,45 @@ def create_app(
             "transcriptions": items,
         }
 
+    @app.get("/studio/api/projects/{project_id}/transcriptions/{transcription_id}/subtitles")
+    async def export_project_subtitles(
+        project_id: str,
+        transcription_id: str,
+        request: Request,
+        fmt: str = Query(default="srt", pattern="^(srt|vtt)$"),
+        include_speakers: bool = Query(default=True),
+        download: bool = Query(default=False),
+    ) -> Response:
+        """Exporta la transcripción como SRT o WebVTT (M2, `M3-IDEA-032`).
+
+        Es formateo puro sobre datos ya persistidos: funciona igual con la transcripción
+        simulada actual y con la real del hito M3.
+        """
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        transcription = active_store.get_transcription(project_id, transcription_id)
+        if transcription is None:
+            raise HTTPException(status_code=404, detail="Transcripción no encontrada")
+        try:
+            body = render_subtitles(
+                transcription,
+                fmt=fmt,  # type: ignore[arg-type]
+                include_speakers=include_speakers,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        media_type = "application/x-subrip" if fmt == "srt" else "text/vtt"
+        headers = {"Cache-Control": "no-store"}
+        if download:
+            filename = subtitle_filename(transcription, fmt=fmt)  # type: ignore[arg-type]
+            headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return Response(
+            content=body,
+            media_type=f"{media_type}; charset=utf-8",
+            headers=headers,
+        )
+
     @app.post("/studio/api/projects/{project_id}/transcribe")
     async def transcribe_project_endpoint(
         project_id: str,
@@ -1673,6 +2166,7 @@ def create_app(
         request: Request,
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        active_broker: ProgressBroker = request.app.state.broker
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
         try:
@@ -1686,6 +2180,7 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _publish_transcription_event(active_broker, project_id, result)
         return {
             "status": "transcribed",
             "project_id": project_id,
@@ -1699,6 +2194,7 @@ def create_app(
         request: Request,
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
+        active_broker: ProgressBroker = request.app.state.broker
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
         try:
@@ -1712,6 +2208,8 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if isinstance(result.get("transcription"), dict):
+            _publish_transcription_event(active_broker, project_id, result["transcription"])
         return {
             "status": "diarized",
             "project_id": project_id,
@@ -1765,6 +2263,8 @@ def create_app(
                 "aspect_ratio": body.aspect_ratio,
                 "total_duration_sec": total_dur,
                 "cuts_count": len(cuts_dicts),
+                # M2: `status` distingue propuesta de render en el evento webhook.
+                "status": "proposed",
             },
         )
         return saved
@@ -1792,6 +2292,7 @@ def create_app(
                 min_pause_sec=body.min_pause_sec,
                 max_duration_sec=body.max_duration_sec,
                 speaker_filter=body.speaker_filter,
+                hybrid=body.hybrid,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1804,6 +2305,7 @@ def create_app(
                 "aspect_ratio": body.aspect_ratio,
                 "total_duration_sec": saved["edl"].get("total_duration_sec", 0.0),
                 "cuts_count": len(saved["edl"].get("cuts") or []),
+                "status": "proposed",
             },
         )
         return saved
@@ -1816,38 +2318,61 @@ def create_app(
     ) -> dict[str, Any]:
         active_store: ProjectStore = request.app.state.store
         active_broker: ProgressBroker = request.app.state.broker
+        active_cfg: StudioConfig = request.app.state.config
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
         cuts_dicts = (
             [c.model_dump(exclude_none=True) for c in body.cuts] if body.cuts is not None else None
         )
-        try:
-            result = await run_in_threadpool(
-                execute_edl_ffmpeg,
-                active_store,
-                project_id,
-                edl_id=body.edl_id,
-                version=body.version,
-                aspect_ratio=body.aspect_ratio,
-                source_asset_id=body.source_asset_id,
-                cuts=cuts_dicts,
-                fps=body.fps,
-            )
-        except (ValueError, RuntimeError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        active_broker.publish(
-            "edl",
-            {
-                "project_id": project_id,
-                "edl_id": result["edl_id"],
-                "version": result["version"],
-                "aspect_ratio": result["aspect_ratio"],
-                "output_asset_id": result["output_asset"]["id"],
-                "status": "built",
-            },
-        )
-        return result
+        async def _render_one(aspect: str | None) -> dict[str, Any]:
+            try:
+                result = await run_in_threadpool(
+                    execute_edl_ffmpeg,
+                    active_store,
+                    project_id,
+                    edl_id=body.edl_id,
+                    version=body.version,
+                    aspect_ratio=aspect,
+                    source_asset_id=body.source_asset_id,
+                    cuts=cuts_dicts,
+                    fps=body.fps,
+                    ffmpeg_timeout_s=active_cfg.studio_ffmpeg_timeout_s,
+                    ffprobe_timeout_s=active_cfg.studio_ffprobe_timeout_s,
+                )
+            except (ValueError, RuntimeError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # Un evento webhook/SSE por variante (M2, `M3-IDEA-036`).
+            active_broker.publish(
+                "edl",
+                {
+                    "project_id": project_id,
+                    "edl_id": result["edl_id"],
+                    "version": result["version"],
+                    "aspect_ratio": result["aspect_ratio"],
+                    "output_asset_id": result["output_asset"]["id"],
+                    "status": "built",
+                },
+            )
+            return result
+
+        variants = body.resolved_aspect_ratios()
+        if not variants:
+            return await _render_one(body.aspect_ratio)
+
+        # Render por lotes: secuencial a propósito. Cada EDL ya lanza decenas de
+        # subprocess ffmpeg; paralelizarlos competiría por CPU con ComfyUI y haría
+        # impredecible el tiempo total. El resultado expone una entrada por variante.
+        results: list[dict[str, Any]] = []
+        for aspect in variants:
+            results.append(await _render_one(aspect))
+        first = results[0]
+        return {
+            **first,
+            "variants": results,
+            "variant_count": len(results),
+            "aspect_ratios": [r["aspect_ratio"] for r in results],
+        }
 
     @app.post("/studio/api/projects/{project_id}/edl/{version}/render")
     async def render_project_edl_version_endpoint(

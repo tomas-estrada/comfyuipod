@@ -171,7 +171,7 @@ async def test_llm_call_budget_stops_tool_loop(env) -> None:
 
     result = await agent.run_turn(project_id=project["id"], user_message="loop infinito")
 
-    assert result.stop_reason == "max_iterations"
+    assert result.stop_reason == "call_budget_exhausted"
     assert "presupuesto de llamadas LLM" in result.reply
     # Solo 2 llamadas LLM consumidas pese a tener 5 pasos guionizados
     tool_results = [ev for ev in result.events if ev["type"] == "tool_result"]

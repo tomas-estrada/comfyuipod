@@ -7,6 +7,10 @@ on:
       - master
     tags:
       - "v*"
+  pull_request:
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 concurrency:
@@ -573,6 +577,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Iniciar sesión en GitHub Container Registry (GHCR)
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -597,6 +602,10 @@ jobs:
 
       - name: Extraer tags finales de promoción (latest / semver)
         id: meta_final
+        # Solo en la rama por defecto: fuera de ella la promoción no ocurre y esta
+        # action emitiría avisos benignos de "no tag/version generated". Saltarla
+        # los elimina sin cambiar el comportamiento (los tags estarían vacíos igual).
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -608,16 +617,24 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          push: true
+          # En pull_request el GITHUB_TOKEN es de solo lectura para packages: no se
+          # publica en GHCR ni se escribe la caché de registro. En su lugar se carga
+          # la imagen al docker local para que el smoke test corra igual.
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta_candidate.outputs.tags }}
           labels: ${{ steps.meta_candidate.outputs.labels }}
           build-args: |
             IMAGE_TAG=${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}
             BUILD_DATE=${{ fromJSON(steps.meta_candidate.outputs.json).labels['org.opencontainers.image.created'] }}
           cache-from: type=registry,ref=${{ fromJSON(steps.meta_cache.outputs.json).tags[0] }}
-          cache-to: type=registry,ref=${{ fromJSON(steps.meta_cache.outputs.json).tags[0] }},mode=max
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0},mode=max', fromJSON(steps.meta_cache.outputs.json).tags[0]) || '' }}
 
       - name: Purgar caché local de BuildKit antes del pull del candidato (M-02)
+        # Solo en push/dispatch: ahí se re-descarga la imagen de GHCR, así que conviene
+        # liberar disco antes. En pull_request la imagen está cargada localmente y este
+        # prune la borraría, dejando al smoke sin imagen.
+        if: github.event_name != 'pull_request'
         run: |
           df -h
           docker buildx prune --all --force
@@ -634,18 +651,29 @@ jobs:
           smoke_comfy_pass="$(openssl rand -hex 8)"
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           echo "Ejecutando smoke test sobre: ${CANDIDATE_TAG}"
-          # Pull explícito, visible y acotado: el paso M-02 purga la caché local y la imagen pesa ~15-16 GB.
-          # Un pull colgado sería invisible dentro de $(...); aquí acotamos a 1800s por intento con 1 reintento.
-          echo "Haciendo docker pull explícito del candidato (acotado a 1800s por intento)..."
-          pull_start=$SECONDS
-          if ! timeout 1800 docker pull "${CANDIDATE_TAG}"; then
-            echo "::warning::docker pull falló tras $((SECONDS - pull_start))s; reintentando una vez (las capas ya descargadas se reutilizan)..."
-            timeout 1800 docker pull "${CANDIDATE_TAG}" || {
-              echo "::error::docker pull de ${CANDIDATE_TAG} falló tras 2 intentos (¿red/GHCR?)"
+          # En pull_request la imagen se cargó al docker local (push=false, load=true) y
+          # NO existe en GHCR, así que el pull explícito se omite. En push/dispatch sí se
+          # publicó, y el paso M-02 purgó la caché local, por lo que hay que re-descargarla.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "pull_request: usando la imagen cargada localmente (sin docker pull)."
+            docker image inspect "${CANDIDATE_TAG}" >/dev/null 2>&1 || {
+              echo "::error::la imagen ${CANDIDATE_TAG} no está cargada localmente en el runner de PR"
               exit 1
             }
+          else
+            # Pull explícito, visible y acotado: el paso M-02 purga la caché local y la imagen pesa ~15-16 GB.
+            # Un pull colgado sería invisible dentro de $(...); aquí acotamos a 1800s por intento con 1 reintento.
+            echo "Haciendo docker pull explícito del candidato (acotado a 1800s por intento)..."
+            pull_start=$SECONDS
+            if ! timeout 1800 docker pull "${CANDIDATE_TAG}"; then
+              echo "::warning::docker pull falló tras $((SECONDS - pull_start))s; reintentando una vez (las capas ya descargadas se reutilizan)..."
+              timeout 1800 docker pull "${CANDIDATE_TAG}" || {
+                echo "::error::docker pull de ${CANDIDATE_TAG} falló tras 2 intentos (¿red/GHCR?)"
+                exit 1
+              }
+            fi
+            echo "Pull del candidato completado en $((SECONDS - pull_start))s"
           fi
-          echo "Pull del candidato completado en $((SECONDS - pull_start))s"
           docker images "${CANDIDATE_TAG}"
           timeout 300 docker run --rm --entrypoint find "${CANDIDATE_TAG}" /workspace/comfyui-data/user -type f
           timeout 300 docker run --rm --entrypoint nginx "${CANDIDATE_TAG}" -t
@@ -1340,6 +1368,7 @@ jobs:
           retention-days: 14
 
       - name: Promover imagen verificada a latest / semver (ALTA-01)
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         run: |
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           while IFS= read -r target_tag; do

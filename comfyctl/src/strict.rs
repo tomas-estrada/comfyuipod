@@ -53,6 +53,18 @@ pub struct SystemSnapshot {
     pub cuda_torch_detail: String,
     pub studio_health_ok: bool,
     pub studio_health_detail: String,
+    /// M2 (`M3-IDEA-035`): estado del subsistema de percepción reportado por
+    /// `/studio/api/health` (`perception.available` + `perception.reason`).
+    /// Es `warn`, no `fatal`: desde M1.2 la percepción es degradable por diseño y el
+    /// resto de Studio sigue operativo sin ella.
+    pub studio_perception_ok: bool,
+    pub studio_perception_detail: String,
+    /// M3: backend de percepción reportado por `/studio/api/health` (`perception.backend`:
+    /// "sim" | "real"). `warn` si es "sim" (degradado por diseño en M1/M2).
+    pub studio_perception_backend: String,
+    /// M3: índice de percepción desactualizado (`perception.stale`: bool). `warn` si
+    /// true: las dims almacenadas no coinciden con las activas, se requiere `reindex`.
+    pub studio_perception_stale: bool,
     pub mcp_health_ok: bool,
     pub mcp_health_detail: String,
 }
@@ -79,6 +91,9 @@ impl SystemSnapshot {
         let (comfy_install_ok, comfy_install_detail) = probe_comfy_install(&cfg.comfy_app_dir);
         let (cuda_torch_ok, cuda_torch_detail) = probe_cuda_torch(cfg.strict_require_gpu);
         let (studio_health_ok, studio_health_detail) = probe_studio_health(cfg);
+        let (studio_perception_ok, studio_perception_detail) = probe_studio_perception(cfg);
+        let (studio_perception_backend, studio_perception_stale) =
+            probe_studio_perception_backend_and_stale(cfg);
         let (mcp_health_ok, mcp_health_detail) = probe_mcp_health(cfg);
 
         Self {
@@ -101,6 +116,10 @@ impl SystemSnapshot {
             cuda_torch_detail,
             studio_health_ok,
             studio_health_detail,
+            studio_perception_ok,
+            studio_perception_detail,
+            studio_perception_backend,
+            studio_perception_stale,
             mcp_health_ok,
             mcp_health_detail,
         }
@@ -427,6 +446,136 @@ fn http_probe_once(port: u16, path: &str) -> Result<u16, String> {
         .and_then(|s| s.parse::<u16>().ok())
         .ok_or_else(|| format!("línea de estado HTTP inválida: {status_line}"))?;
     Ok(code)
+}
+
+/// Lee la respuesta HTTP completa (status + cuerpo acotado) de un endpoint local.
+/// Usado por S13 para inspeccionar el JSON de `/studio/api/health`.
+fn http_get_body(port: u16, path: &str) -> Result<(u16, String), String> {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+        .map_err(|e| format!("conexión a 127.0.0.1:{port} falló: {e}"))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let req = format!("GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| format!("error enviando petición HTTP a 127.0.0.1:{port}: {e}"))?;
+    let mut raw = Vec::new();
+    // 64 KiB: el payload de /health es de unos cientos de bytes; el tope evita que un
+    // endpoint inesperadamente verboso bloquee el arranque.
+    let mut chunk = [0_u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                raw.extend_from_slice(chunk.get(..n).unwrap_or(&[]));
+                if raw.len() > 64 * 1024 {
+                    break;
+                }
+            }
+        }
+    }
+    if raw.is_empty() {
+        return Err(format!("respuesta vacía de 127.0.0.1:{port}"));
+    }
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let code = text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| "línea de estado HTTP inválida".to_string())?;
+    let body = text
+        .split_once("\r\n\r\n")
+        .map_or("", |(_, b)| b)
+        .to_string();
+    Ok((code, body))
+}
+
+/// Sondea `perception.available` en `/studio/api/health` (M2, `M3-IDEA-035`).
+/// Devuelve `(ok, detalle)`. `ok == false` ⇒ S13 en `warn` (degradable por diseño).
+pub fn probe_studio_perception(cfg: &RuntimeConfig) -> (bool, String) {
+    if !cfg.model_profile.is_studio_family() {
+        return (true, "Omitido fuera del perfil studio".to_string());
+    }
+    let port = cfg.studio_server_port;
+    let (code, body) = match http_get_body(port, "/studio/api/health") {
+        Ok(pair) => pair,
+        Err(e) => return (false, e),
+    };
+    if code != 200 {
+        return (false, format!("HTTP {code} en /studio/api/health"));
+    }
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return (
+            false,
+            "respuesta de /studio/api/health no es JSON válido".to_string(),
+        );
+    };
+    let Some(perception) = parsed.get("perception") else {
+        return (
+            false,
+            "la respuesta de /studio/api/health no incluye `perception`".to_string(),
+        );
+    };
+    let available = perception
+        .get("available")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if available {
+        let simulated = perception
+            .get("simulated")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        (
+            true,
+            if simulated {
+                "percepción disponible (backend en SIMULACIÓN: `simulated: true`)".to_string()
+            } else {
+                "percepción disponible".to_string()
+            },
+        )
+    } else {
+        let reason = perception
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("sin motivo reportado");
+        (false, format!("percepción deshabilitada: {reason}"))
+    }
+}
+
+/// Lee `perception.backend` ("sim" | "real") y `perception.stale` (bool) del
+/// `/studio/api/health` para el strict-check M3. Nunca fatal: son informativos
+/// (warn) porque la percepción es degradable por diseño.
+pub fn probe_studio_perception_backend_and_stale(cfg: &RuntimeConfig) -> (String, bool) {
+    if !cfg.model_profile.is_studio_family() {
+        return ("sim".to_string(), false);
+    }
+    let port = cfg.studio_server_port;
+    let Ok((code, body)) = http_get_body(port, "/studio/api/health") else {
+        return ("sim".to_string(), false);
+    };
+    if code != 200 {
+        return ("sim".to_string(), false);
+    }
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return ("sim".to_string(), false);
+    };
+    let Some(perception) = parsed.get("perception") else {
+        return ("sim".to_string(), false);
+    };
+    let backend = perception
+        .get("backend")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("sim")
+        .to_string();
+    let stale = perception
+        .get("stale")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    (backend, stale)
 }
 
 /// Comprueba la salud de `studio-server` en `127.0.0.1:{studio_server_port}` (`/studio/api/health`).
@@ -907,6 +1056,75 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
                     "El endpoint MCP (/studio/api/mcp/health) no respondió. Verifica STUDIO_ENABLE_MCP y la versión del studio-server; los agentes externos no podrán dirigir el pod hasta que se restablezca."
                         .to_string(),
                 )
+            },
+        });
+
+        // S13: percepción vectorial dentro del studio-server (M2, M3-IDEA-035).
+        // Warn, nunca fatal: desde M1.2 la percepción es degradable por diseño y el
+        // resto de Studio sigue operativo con `sqlite-vec` ausente.
+        let s13_ok = snap.studio_perception_ok;
+        checks.push(StrictCheckItem {
+            id: "S13".to_string(),
+            name: "studio_perception".to_string(),
+            status: if s13_ok { "ok" } else { "warn" }.to_string(),
+            detail: snap.studio_perception_detail.clone(),
+            remediation: if s13_ok {
+                None
+            } else {
+                Some(
+                    "La búsqueda semántica y el índice facial no están operativos en este pod. Comprueba que la extensión `sqlite-vec` esté instalada en el entorno del studio-server; el resto de Studio (proyectos, chat, renders, galería) sigue funcionando y los endpoints de percepción devolverán HTTP 503 con el motivo."
+                        .to_string(),
+                )
+            },
+        });
+
+        // S13b: backend de percepción (`perception.backend`). Warn si "sim"
+        // (modo degradado, sin pesos reales cargados).
+        let s13b_sim = snap.studio_perception_backend == "sim";
+        checks.push(StrictCheckItem {
+            id: "S13b".to_string(),
+            name: "studio_perception_backend".to_string(),
+            status: if s13b_sim { "warn" } else { "ok" }.to_string(),
+            detail: if s13b_sim {
+                format!(
+                    "percepción en modo SIMULACIÓN (no hay pesos CLIP/InsightFace/ASR/cam++ reales cargados); {}",
+                    snap.studio_perception_detail
+                )
+            } else {
+                format!(
+                    "percepción en modo REAL ({})",
+                    snap.studio_perception_backend
+                )
+            },
+            remediation: if s13b_sim {
+                Some(
+                    "Los backends de ML reales no están disponibles en este pod. La búsqueda semántica y el índice facial usan embeddings deterministas locales (simulación). Para backends reales, instala `sqlite-vec`, `torch`, `open_clip`, `faster-whisper`, `funasr` e `insightface` en el intérprete del ComfyUI (`STUDIO_ML_PYTHON_BIN`) y los pesos en `COMFY_DATA_DIR`, o deja `STUDIO_PERCEPTION_BACKEND=sim`."
+                        .to_string(),
+                )
+            } else {
+                None
+            },
+        });
+
+        // S13c: índice de percepción desactualizado (`perception.stale`). Warn si true.
+        let s13c_stale = snap.studio_perception_stale;
+        checks.push(StrictCheckItem {
+            id: "S13c".to_string(),
+            name: "studio_perception_stale".to_string(),
+            status: if s13c_stale { "warn" } else { "ok" }.to_string(),
+            detail: if s13c_stale {
+                "índice de percepción desactualizado: las dimensiones almacenadas no coinciden con las activas (768/512). Ejecuta POST /studio/api/perception/reindex para reconstruir los embeddings."
+                    .to_string()
+            } else {
+                "índice de percepción al día (dimensiones almacenadas coinciden con las activas).".to_string()
+            },
+            remediation: if s13c_stale {
+                Some(
+                    "Ejecuta POST /studio/api/perception/reindex en el studio-server para recrear las tablas vec_* con las dims activas y re-embeder los keyframes existentes. Los archivos PNG y studio.db no se modifican."
+                        .to_string(),
+                )
+            } else {
+                None
             },
         });
     }

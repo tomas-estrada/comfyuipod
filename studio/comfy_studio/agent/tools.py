@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -504,6 +506,14 @@ class BuildEdlArgs(BaseModel):
             "de highlights desde la transcripción."
         ),
     )
+    aspect_ratios: list[Literal["16:9", "9:16", "1:1", "4:5"]] = Field(
+        default_factory=list,
+        max_length=4,
+        description=(
+            "Renderiza varias variantes de entrega en un solo paso (M2). "
+            "Vacío ⇒ una sola variante (`aspect_ratio` o la del EDL)."
+        ),
+    )
 
 
 class ListTemplatesArgs(BaseModel):
@@ -587,6 +597,28 @@ class ExportEdlArgs(BaseModel):
         description=(
             "Número de versión del EDL a exportar (usa la última versión si se omite)."
         ),
+    )
+
+
+class ExportSubtitlesArgs(BaseModel):
+    """Argumentos para la herramienta `export_subtitles`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    transcription_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "ID de la transcripción a exportar (usa la última del proyecto si se omite)."
+        ),
+    )
+    format: Literal["srt", "vtt"] = Field(
+        default="srt",
+        description="Formato de subtítulos: `srt` (SubRip) o `vtt` (WebVTT).",
+    )
+    include_speakers: bool = Field(
+        default=True,
+        description="Prefijar cada línea con el hablante (`SPEAKER_00: …`) si existe.",
     )
 
 
@@ -730,10 +762,32 @@ def build_template_workflow(
 # ---------------------------------------------------------------------------
 
 
-def _get_vector_store(context: ToolContext):
-    from ..perception.store import PerceptionVectorStore
+_VECTOR_STORE_CACHE: dict[Path, Any] = {}
+_VECTOR_STORE_LOCK = threading.Lock()
 
-    return PerceptionVectorStore(context.config.studio_data_dir / "index.db")
+
+def _get_vector_store(context: ToolContext):
+    """Devuelve el `PerceptionVectorStore` compartido por proceso para el data dir.
+
+    M1.3: antes se construía un store NUEVO por cada llamada a herramienta (cada uno
+    abriendo `index.db` y recargando la extensión `sqlite-vec`), lo que multiplicaba
+    las conexiones concurrentes del agente. Ahora hay una instancia por `index.db`.
+    M1.2: un fallo de `sqlite-vec` se traduce a `ToolExecutionError` (el agente ve el
+    motivo y el servidor sigue vivo) en vez de propagar un `ImportError` hasta el loop.
+    """
+    from ..perception.store import PerceptionUnavailableError, PerceptionVectorStore
+
+    path = (context.config.studio_data_dir / "index.db").resolve()
+    with _VECTOR_STORE_LOCK:
+        cached = _VECTOR_STORE_CACHE.get(path)
+        if cached is not None:
+            return cached
+        try:
+            store = PerceptionVectorStore(path)
+        except PerceptionUnavailableError as exc:
+            raise ToolExecutionError(f"Percepción vectorial no disponible: {exc}") from exc
+        _VECTOR_STORE_CACHE[path] = store
+        return store
 
 
 async def _handle_enqueue_render(
@@ -848,6 +902,7 @@ async def _handle_propose_edl(
             "aspect_ratio": args.aspect_ratio,
             "total_duration_sec": total_duration,
             "cuts_count": len(cuts_dicts),
+            "status": "proposed",
         },
     )
     return {
@@ -886,6 +941,8 @@ async def _handle_extract_keyframes(
             interval_sec=args.interval_sec,
             scene_threshold=args.scene_threshold,
             max_frames=args.max_frames,
+            ffmpeg_timeout_s=context.config.studio_ffmpeg_timeout_s,
+            ffprobe_timeout_s=context.config.studio_ffprobe_timeout_s,
         )
     except ValueError as exc:
         raise ToolExecutionError(str(exc)) from exc
@@ -907,7 +964,12 @@ async def _handle_index_media(
     from ..perception.face_index import InsightFaceIndex
 
     vec_store = _get_vector_store(context)
-    clip_idx = ClipVisualIndex(context.store, vec_store)
+    clip_idx = ClipVisualIndex(
+        context.store,
+        vec_store,
+        ffmpeg_timeout_s=context.config.studio_ffmpeg_timeout_s,
+        ffprobe_timeout_s=context.config.studio_ffprobe_timeout_s,
+    )
     face_idx = InsightFaceIndex(context.store, vec_store)
 
     def _do_index() -> dict[str, Any]:
@@ -1099,31 +1161,48 @@ async def _handle_build_edl(
                     aspect_ratio=args.aspect_ratio or "16:9",
                 )
                 edl_id = generated["id"]
-        return execute_edl_ffmpeg(
-            context.store,
-            context.project_id,
-            edl_id=edl_id,
-            version=args.version,
-            aspect_ratio=args.aspect_ratio,
-            source_asset_id=args.source_asset_id,
-        )
+
+        def _render(aspect: str | None) -> dict[str, Any]:
+            return execute_edl_ffmpeg(
+                context.store,
+                context.project_id,
+                edl_id=edl_id,
+                version=args.version,
+                aspect_ratio=aspect,
+                source_asset_id=args.source_asset_id,
+                ffmpeg_timeout_s=context.config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=context.config.studio_ffprobe_timeout_s,
+            )
+
+        if not args.aspect_ratios:
+            return _render(args.aspect_ratio)
+        # M2: una variante por ratio, secuencial (cada EDL ya lanza muchos subprocess).
+        variants = [_render(aspect) for aspect in args.aspect_ratios]
+        return {
+            **variants[0],
+            "variants": variants,
+            "variant_count": len(variants),
+            "aspect_ratios": [v["aspect_ratio"] for v in variants],
+        }
 
     try:
         result = await run_in_threadpool(_do_build_edl)
     except (ValueError, RuntimeError) as exc:
         raise ToolExecutionError(str(exc)) from exc
 
-    context.broker.publish(
-        "edl",
-        {
-            "project_id": context.project_id,
-            "edl_id": result["edl_id"],
-            "version": result["version"],
-            "aspect_ratio": result["aspect_ratio"],
-            "output_asset_id": result["output_asset"]["id"],
-            "status": "built",
-        },
-    )
+    variants = result.get("variants") or [result]
+    for variant in variants:
+        context.broker.publish(
+            "edl",
+            {
+                "project_id": context.project_id,
+                "edl_id": variant["edl_id"],
+                "version": variant["version"],
+                "aspect_ratio": variant["aspect_ratio"],
+                "output_asset_id": variant["output_asset"]["id"],
+                "status": "built",
+            },
+        )
     return result
 
 
@@ -1299,8 +1378,50 @@ async def _handle_export_edl(
     }
 
 
-async def _handle_update_plan(
-    args: UpdatePlanArgs,
+async def _handle_export_subtitles(
+    args: ExportSubtitlesArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    """Exporta la transcripción del proyecto como SRT o WebVTT (M2)."""
+    from ..subtitles import render_subtitles, subtitle_filename
+
+    if args.transcription_id:
+        transcription = context.store.get_transcription(
+            context.project_id, args.transcription_id
+        )
+    else:
+        transcription = context.store.get_latest_transcription(context.project_id)
+    if transcription is None:
+        raise ToolExecutionError("No hay ninguna transcripción en el proyecto activo.")
+    try:
+        content = render_subtitles(
+            transcription,
+            fmt=args.format,
+            include_speakers=args.include_speakers,
+        )
+    except ValueError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+
+    cue_count = content.count("-->")
+    url = (
+        f"/studio/api/projects/{context.project_id}/transcriptions/"
+        f"{transcription['id']}/subtitles?fmt={args.format}"
+        f"&include_speakers={'true' if args.include_speakers else 'false'}&download=true"
+    )
+    return {
+        "status": "exported",
+        "project_id": context.project_id,
+        "transcription_id": transcription["id"],
+        "format": args.format,
+        "cue_count": cue_count,
+        "filename": subtitle_filename(transcription, fmt=args.format),
+        "download_url": url,
+        "simulated": bool(transcription.get("simulated", True)),
+        "content": content,
+    }
+
+
+async def _handle_update_plan(    args: UpdatePlanArgs,
     context: ToolContext,
 ) -> dict[str, Any]:
     plan_id = args.plan_id
@@ -1389,7 +1510,11 @@ class ToolSpec:
     description: str
     args_model: type[BaseModel]
     handler: Callable[[Any, ToolContext], Awaitable[dict[str, Any]]]
-    parallel_safe: bool = True
+    # M1.3: el valor por defecto es FAIL-SAFE (serializado). Solo las herramientas
+    # estrictamente de LECTURA se declaran `parallel_safe=True` explícitamente. Una
+    # herramienta nueva que olvide declararlo se serializa, no compite escribiendo
+    # `studio.db`/`index.db` con otra dentro del mismo `asyncio.gather`.
+    parallel_safe: bool = False
 
     def to_openai_schema(self) -> dict[str, Any]:
         raw_schema = self.args_model.model_json_schema()
@@ -1483,6 +1608,7 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=SearchAssetsArgs,
             handler=_handle_search_assets,
+            parallel_safe=True,
         )
     )
     belt.register(
@@ -1528,6 +1654,7 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=FindShotsTextArgs,
             handler=_handle_find_shots_text,
+            parallel_safe=True,
         )
     )
     belt.register(
@@ -1539,6 +1666,7 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=FindShotsFaceArgs,
             handler=_handle_find_shots_face,
+            parallel_safe=True,
         )
     )
     belt.register(
@@ -1584,6 +1712,7 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=ListTemplatesArgs,
             handler=_handle_list_templates,
+            parallel_safe=True,
         )
     )
     belt.register(
@@ -1595,6 +1724,7 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=JobStatusArgs,
             handler=_handle_job_status,
+            parallel_safe=True,
         )
     )
     belt.register(
@@ -1629,6 +1759,7 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=SystemStatusArgs,
             handler=_handle_system_status,
+            parallel_safe=True,
         )
     )
     belt.register(
@@ -1640,6 +1771,19 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=ExportEdlArgs,
             handler=_handle_export_edl,
+            parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="export_subtitles",
+            description=(
+                "Exporta la transcripción del proyecto como subtítulos SRT o WebVTT, con "
+                "prefijo de hablante opcional. Devuelve el contenido y la URL de descarga."
+            ),
+            args_model=ExportSubtitlesArgs,
+            handler=_handle_export_subtitles,
+            parallel_safe=True,
         )
     )
     belt.register(

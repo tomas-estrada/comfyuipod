@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import SIMULATED_ML_NOTICE
+from ..ml import is_real_backend, require_real_payload, run_worker
 from ..projects import ProjectStore
 from .clip_index import ClipVisualIndex
 from .keyframes import extract_image_rgb_signature
@@ -91,7 +92,24 @@ def detect_faces_in_image(
     *,
     metadata: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Detecta caras y calcula sus embeddings (64-d) sobre una imagen o keyframe."""
+    """Detecta caras y calcula sus embeddings sobre una imagen o keyframe.
+
+    En backend `real` delega en el worker ML (InsightFace buffalo_l, 512-d).
+    En `sim`/`auto` usa la simulación determinista actual.
+    """
+    if is_real_backend():
+        payload_req: dict[str, Any] = {"metadata": metadata or {}}
+        if image_path is not None:
+            payload_req["image_path"] = str(image_path)
+        resp = run_worker("faces_detect", payload_req)
+        payload = require_real_payload(resp, "faces_detect")
+        faces = payload.get("faces")
+        if not isinstance(faces, list):
+            raise RuntimeError(
+                f"worker faces_detect devolvió payload inválido: {payload}"
+            )
+        return faces
+
     meta = dict(metadata or {})
     if meta.get("no_faces") is True:
         return []
@@ -218,11 +236,15 @@ class InsightFaceIndex:
         project_id: str,
         identity_id: str,
         name: str = "",
-    ) -> dict[str, Any]:
-        """Renombra una identidad existente tanto en `studio.db` como en `index.db`."""
+    ) -> dict[str, Any] | None:
+        """Renombra una identidad existente tanto en `studio.db` como en `index.db`.
+
+        Devuelve `None` (sin lanzar) cuando la identidad no existe: el endpoint lo
+        traduce a 404, mientras un nombre inválido sigue siendo 400.
+        """
         updated = self.store.rename_identity(project_id, identity_id, name=name)
         if updated is None:
-            raise ValueError(f"Identidad no encontrada: {identity_id!r}")
+            return None
 
         vec_id = self.vector_store.get_face_identity(project_id, identity_id)
         if vec_id is not None:

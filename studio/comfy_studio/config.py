@@ -21,8 +21,14 @@ DEFAULT_STUDIO_COMFYUI_URL = "http://127.0.0.1:18188"
 DEFAULT_STUDIO_SERVER_HOST = "127.0.0.1"
 DEFAULT_STUDIO_SERVER_PORT = 18190
 DEFAULT_MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 512 MiB
+DEFAULT_UPLOAD_MAX_TOTAL_MB = 1024  # M1.7: techo del total de la petición multipart
 DEFAULT_SSE_HEARTBEAT_SECONDS = 15.0
 DEFAULT_STUDIO_RESUME_DELAY_S = 30.0
+DEFAULT_STUDIO_RECOVERY_DRAIN_S = 10.0
+# M1.5: los timeouts de ffmpeg/ffprobe estaban fijados en código (60 s / 20 s / 10 s),
+# lo que hacía fallar cualquier EDL con clips largos. Ahora son configurables.
+DEFAULT_STUDIO_FFMPEG_TIMEOUT_S = 60.0
+DEFAULT_STUDIO_FFPROBE_TIMEOUT_S = 20.0
 
 _HF_TOKEN_RE = re.compile(r"hf_[A-Za-z0-9]{12,}")
 _SK_TOKEN_RE = re.compile(r"sk-[A-Za-z0-9._\-]{8,}")
@@ -369,13 +375,22 @@ class StudioConfig:
     vast_api_key: str | None = field(default=None, repr=False)
     require_auth: bool = False
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
+    upload_max_total_bytes: int = DEFAULT_UPLOAD_MAX_TOTAL_MB * 1024 * 1024
     sse_heartbeat_seconds: float = DEFAULT_SSE_HEARTBEAT_SECONDS
     studio_webhook_url: str | None = None
     studio_webhook_secret: str | None = field(default=None, repr=False)
     studio_resume_jobs: bool = True
     studio_resume_delay_s: float = DEFAULT_STUDIO_RESUME_DELAY_S
+    studio_recovery_drain_s: float = DEFAULT_STUDIO_RECOVERY_DRAIN_S
+    studio_ffmpeg_timeout_s: float = DEFAULT_STUDIO_FFMPEG_TIMEOUT_S
+    studio_ffprobe_timeout_s: float = DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
     studio_api_token: str | None = field(default=None, repr=False)
     studio_enable_mcp: bool = True
+    # M3.1: protocolo de workers de ML en subprocesso (ComfyUI interpreter).
+    studio_ml_python_bin: str = "python3"
+    studio_ml_timeout_s: float = 120.0
+    # M3.2: backend de percepción: auto (probe al arranque), real (sin fallback), sim.
+    studio_perception_backend: str = "auto"
 
     def __post_init__(self) -> None:
         self.studio_server_host = sanitize_loopback_host(self.studio_server_host)
@@ -433,6 +448,26 @@ class StudioConfig:
         except ValueError:
             resume_delay_s = DEFAULT_STUDIO_RESUME_DELAY_S
 
+        def _positive_float(env_key: str, default: float) -> float:
+            raw = source.get(env_key, "").strip()
+            try:
+                value = float(raw) if raw else default
+            except ValueError:
+                return default
+            return value if value > 0 else default
+
+        def _positive_int(env_key: str, default: int) -> int:
+            raw = source.get(env_key, "").strip()
+            try:
+                value = int(raw) if raw else default
+            except ValueError:
+                return default
+            return value if value > 0 else default
+
+        upload_total_mb = _positive_int(
+            "STUDIO_UPLOAD_MAX_TOTAL_MB", DEFAULT_UPLOAD_MAX_TOTAL_MB
+        )
+
         comfy_pass = (
             source.get("COMFY_PASS", "").strip()
             or source.get("STUDIO_AUTH_PASS", "").strip()
@@ -489,13 +524,35 @@ class StudioConfig:
             comfy_pass=comfy_pass,
             require_auth=require_auth,
             max_upload_bytes=max_upload,
+            upload_max_total_bytes=upload_total_mb * 1024 * 1024,
             sse_heartbeat_seconds=heartbeat_s,
             studio_webhook_url=source.get("STUDIO_WEBHOOK_URL", "").strip() or None,
             studio_webhook_secret=source.get("STUDIO_WEBHOOK_SECRET", "").strip() or None,
             studio_resume_jobs=_parse_bool(source.get("STUDIO_RESUME_JOBS"), default=True),
             studio_resume_delay_s=resume_delay_s,
+            studio_recovery_drain_s=_positive_float(
+                "STUDIO_RECOVERY_DRAIN_S", DEFAULT_STUDIO_RECOVERY_DRAIN_S
+            ),
+            studio_ffmpeg_timeout_s=_positive_float(
+                "STUDIO_FFMPEG_TIMEOUT_S", DEFAULT_STUDIO_FFMPEG_TIMEOUT_S
+            ),
+            studio_ffprobe_timeout_s=_positive_float(
+                "STUDIO_FFPROBE_TIMEOUT_S", DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
+            ),
             studio_api_token=source.get("STUDIO_API_TOKEN", "").strip() or None,
             studio_enable_mcp=_parse_bool(source.get("STUDIO_ENABLE_MCP"), default=True),
+            # M3.1: binario Python del worker (ComfyUI interpreter por defecto).
+            studio_ml_python_bin=(
+                source.get("STUDIO_ML_PYTHON_BIN", "").strip() or "python3"
+            ),
+            # M3.1: timeout por defecto para llamadas al worker ML (segundos).
+            studio_ml_timeout_s=_positive_float(
+                "STUDIO_ML_TIMEOUT_S", 120.0
+            ),
+            # M3.2: backend de percepción: auto | real | sim.
+            studio_perception_backend=(
+                source.get("STUDIO_PERCEPTION_BACKEND", "").strip() or "auto"
+            ),
             vast_api_key=source.get("VAST_API_KEY", "").strip() or None,
         )
 
@@ -562,6 +619,13 @@ class StudioConfig:
             ),
             "STUDIO_RESUME_JOBS": "1" if self.studio_resume_jobs else "0",
             "STUDIO_RESUME_DELAY_S": str(self.studio_resume_delay_s),
+            "STUDIO_RECOVERY_DRAIN_S": str(self.studio_recovery_drain_s),
+            "STUDIO_FFMPEG_TIMEOUT_S": str(self.studio_ffmpeg_timeout_s),
+            "STUDIO_FFPROBE_TIMEOUT_S": str(self.studio_ffprobe_timeout_s),
+            "STUDIO_UPLOAD_MAX_TOTAL_MB": str(self.upload_max_total_bytes // (1024 * 1024)),
             "STUDIO_API_TOKEN": "<definido>" if self.studio_api_token else "<no definido>",
             "STUDIO_ENABLE_MCP": "1" if self.studio_enable_mcp else "0",
+            "STUDIO_ML_PYTHON_BIN": self.studio_ml_python_bin,
+            "STUDIO_ML_TIMEOUT_S": str(self.studio_ml_timeout_s),
+            "STUDIO_PERCEPTION_BACKEND": self.studio_perception_backend,
         }
