@@ -47,6 +47,19 @@ class _FakeClient:
         self.last_graph = graph
         return _FakeResult(["render_0001.png"])
 
+    async def _request(self, method, path, *, json_body=None, timeout=None, **kw):
+        # Simula el Manager: registra la instalación y hace visible el node type.
+        self.last_install = (method, path, json_body)
+        node_id = (json_body or {}).get("id")
+        if getattr(self, "_install_http_status", 200) < 400 and node_id:
+            self._info[node_id] = {}
+        return _FakeResp(getattr(self, "_install_http_status", 200))
+
+
+class _FakeResp:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
 
 def test_list_returns_node_types() -> None:
     eng = ComfyUIEngine(_FakeClient())
@@ -90,10 +103,23 @@ def test_install_blocked_when_dynamic_off(monkeypatch: pytest.MonkeyPatch) -> No
     assert "STUDIO_DYNAMIC=1" in (res.error or "")
 
 
-def test_install_pending_wiring_when_dynamic_on(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_real_success_when_dynamic_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STUDIO_DYNAMIC", "1")
-    eng = ComfyUIEngine(_FakeClient())
-    res = asyncio.run(eng.install("some-node"))
-    # dinámico activo pero endpoint de Manager aún no cableado (F6): falla tipado.
+    client = _FakeClient()
+    eng = ComfyUIEngine(client)
+    res = asyncio.run(eng.install("ComfyUI-SomeNode"))
+    # Manager 200 + el node aparece en object_info -> install ok, visible.
+    assert res.ok is True
+    assert res.payload["installed"] == "ComfyUI-SomeNode"
+    assert res.payload["visible"] is True
+    assert client.last_install[0] == "POST"
+
+
+def test_install_http_error_fails_typed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STUDIO_DYNAMIC", "1")
+    client = _FakeClient()
+    client._install_http_status = 500
+    eng = ComfyUIEngine(client)
+    res = asyncio.run(eng.install("ComfyUI-SomeNode"))
     assert res.ok is False
-    assert "F6" in (res.error or "")
+    assert "HTTP 500" in (res.error or "")
