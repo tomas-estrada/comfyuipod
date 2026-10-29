@@ -68,6 +68,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxrender1 \
         libgomp1 \
         libsndfile1 \
+        libnss3 \
+        libnspr4 \
+        libdbus-1-3 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libcups2 \
+        libdrm2 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxfixes3 \
+        libxrandr2 \
+        libgbm1 \
+        libxkbcommon0 \
+        libasound2t64 \
+        libpango-1.0-0 \
+        libcairo2 \
     && ffmpeg -version \
     && ttyd --version \
     && rm -rf /var/lib/apt/lists/*
@@ -201,6 +217,25 @@ RUN mkdir -p /etc/comfyui/models_configs \
         ln -sfn /workspace/comfyui-data/models/latentsync_checkpoints /opt/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints; \
     fi \
     && ln -sfn /opt/ComfyUI /workspace/ComfyUI
+
+# 5b. Motor editor (M5): Node 20 LTS + proyecto Remotion horneado.
+#     El binario `npx` queda en PATH y el proyecto (composición 'Reel') se instala
+#     en /opt/remotion con sus deps FIJADAS (package.json). El Chrome Headless Shell
+#     de Remotion se baja al build con `browser ensure` para que el primer render no
+#     espere. La ruta del proyecto se expone en STUDIO_REMOTION_PROJECT (la lee
+#     EditorEngine._render_backend). Un pin de versión equivocado rompe ESTE build.
+ENV STUDIO_REMOTION_PROJECT=/opt/remotion \
+    REMOTION_BROWSER_EXECUTABLE="" \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && node --version && npm --version \
+    && rm -rf /var/lib/apt/lists/*
+COPY studio/remotion/ /opt/remotion/
+RUN cd /opt/remotion \
+    && npm install --no-audit --no-fund --loglevel=error \
+    && npx remotion browser ensure \
+    && npm cache clean --force
 
 # 6. Copiar archivos de configuración, portal, estudio, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
 ARG IMAGE_TAG=dev
