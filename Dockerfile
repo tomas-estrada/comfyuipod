@@ -277,8 +277,34 @@ RUN git init /opt/wav2lip \
     && mkdir -p /workspace/comfyui-data/models/wav2lip \
     && pip3 freeze > /etc/comfyui/requirements.lock
 
-# 6. Copiar archivos de configuración, portal, estudio, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
-ARG IMAGE_TAG=dev
+# 5e. Motor voice_clone (M5): RVC (RVC-Project/Retrieval-based-Voice-Conversion)
+#     horneado por SHA fijado. Su pyproject pide torch ^2.1 (compatible con el
+#     2.9.1 del pod), pero NO dejamos que pip resuelva torch: instalamos el
+#     paquete `rvc` con --no-deps y añadimos solo las deps que su ruta `infer`
+#     importa, en versiones compatibles, SIN tocar torch. Los pesos (modelo .pth,
+#     hubert_base.pt, rmvpe.pt, index) NO se hornean: se bajan en runtime a
+#     STUDIO_VOICE_CLONE_MODEL_DIR (cacheados en el volumen). El adaptador CLI
+#     `rvc` (studio/engine_bin) traduce la interfaz del motor a `rvc infer`.
+#     Un SHA/dep equivocado o un import roto rompe ESTE build (guard de import).
+ENV STUDIO_VOICE_CLONE_BIN=/usr/local/bin/rvc \
+    STUDIO_VOICE_CLONE_MODEL_DIR=/workspace/comfyui-data/models/rvc \
+    RVC_REAL_BIN=rvc-real
+COPY studio/engine_bin/rvc /opt/engine_bin/rvc
+RUN git init /opt/rvc \
+    && git -C /opt/rvc remote add origin https://github.com/RVC-Project/Retrieval-based-Voice-Conversion \
+    && git -C /opt/rvc fetch --depth=1 origin 7b284a634667c34103eaaeed972b48ccdb4b893e \
+    && git -C /opt/rvc checkout -B develop FETCH_HEAD \
+    && test -f /opt/rvc/pyproject.toml \
+    && pip3 install --no-cache-dir --no-deps /opt/rvc \
+    && pip3 install --no-cache-dir "click>=8.1" "torchcrepe>=0.0.22" "torchfcpe" \
+        "faiss-cpu>=1.7" "praat-parselmouth>=0.4" "pyworld>=0.3" "python-dotenv>=1.0" \
+        "ffmpeg-python>=0.2" \
+    && python3 -c "import rvc; from rvc.wrapper.cli.cli import main" \
+    && printf '#!/usr/bin/env bash\nexec python3 -m rvc.wrapper.cli.cli "$@"\n' > /usr/local/bin/rvc-real \
+    && chmod +x /usr/local/bin/rvc-real \
+    && install -m 0755 /opt/engine_bin/rvc /usr/local/bin/rvc \
+    && mkdir -p /workspace/comfyui-data/models/rvc \
+    && pip3 freeze > /etc/comfyui/requirements.lock
 ARG BUILD_DATE=unknown
 
 COPY --from=builder --chmod=0755 /build/comfyctl/target/release/comfyctl /usr/local/bin/comfyctl
