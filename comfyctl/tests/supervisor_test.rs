@@ -3,7 +3,7 @@ use comfyctl::strict::{evaluate_strict_checks, probe_studio_health, SystemSnapsh
 use comfyctl::supervisor::{
     build_studio_server_command, render_crash_diagnostics, run_supervision_loop,
     should_start_studio_server, spawn_studio_server_if_enabled, stop_studio_server,
-    write_supervisor_json, SupervisorState,
+    wait_for_studio_ready, write_supervisor_json, SupervisorState,
 };
 use comfyctl::sys;
 use std::collections::BTreeMap;
@@ -657,4 +657,36 @@ fn crash_diagnostics_dump_is_redacted_before_print_and_log() {
     assert!(!dump.contains(comfy_pass), "fuga de COMFY_PASS: {dump}");
     assert!(dump.contains("[REDACTED]"), "{dump}");
     assert!(dump.contains("intento #2"), "cabecera ausente: {dump}");
+}
+
+// Fix de carrera de arranque: wait_for_studio_ready evita que S11 (studio_health)
+// sea fatal por una simple carrera al arrancar studio-server. Casos sin red:
+//  - perfil NO studio => devuelve true de inmediato (no hay studio-server que esperar).
+//  - perfil studio con STUDIO_READY_TIMEOUT_S=0 => espera desactivada => false,
+//    strict-check decide S11 con el diagnóstico correcto (comportamiento anterior).
+#[test]
+fn wait_for_studio_ready_non_studio_true_and_zero_timeout_false() {
+    // Caso 1: perfil por defecto (no studio) -> true inmediato, sin tocar la red.
+    let default_vars = BTreeMap::new();
+    let cfg_default = RuntimeConfig::from_map(&default_vars, None);
+    assert!(
+        !should_start_studio_server(&cfg_default),
+        "perfil por defecto no debe arrancar studio-server"
+    );
+    assert!(
+        wait_for_studio_ready(&cfg_default),
+        "sin studio-server, la espera debe devolver true de inmediato"
+    );
+
+    // Caso 2: perfil studio con timeout=0 -> espera desactivada -> false.
+    let mut studio_vars = BTreeMap::new();
+    studio_vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    let cfg_studio = RuntimeConfig::from_map(&studio_vars, None);
+    std::env::set_var("STUDIO_READY_TIMEOUT_S", "0");
+    let ready = wait_for_studio_ready(&cfg_studio);
+    std::env::remove_var("STUDIO_READY_TIMEOUT_S");
+    assert!(
+        !ready,
+        "con STUDIO_READY_TIMEOUT_S=0 la espera está desactivada y devuelve false"
+    );
 }

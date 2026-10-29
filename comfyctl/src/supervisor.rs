@@ -4,7 +4,9 @@
 //! de forma atómica y propaga `SIGTERM`/`SIGINT` limpiamente (`ExitCode=0`).
 
 use crate::config::RuntimeConfig;
-use crate::strict::{evaluate_strict_checks, write_and_print_strict_report, SystemSnapshot};
+use crate::strict::{
+    evaluate_strict_checks, probe_studio_health, write_and_print_strict_report, SystemSnapshot,
+};
 use crate::sys;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
@@ -345,6 +347,51 @@ fn graceful_shutdown_nginx() {
 /// lo cual ocurre con los perfiles de la familia studio (`studio`/`unreal`).
 pub const fn should_start_studio_server(cfg: &RuntimeConfig) -> bool {
     cfg.model_profile.is_studio_family()
+}
+
+/// Espera (acotado) a que `studio-server` responda sano ANTES de que `strict-check`
+/// juzgue S11 (`studio_health`). Sin esto hay una carrera de arranque: el supervisor
+/// lanza `studio-server` (`uvicorn` tarda segundos en abrir el puerto) y evalúa S11 de
+/// inmediato; un `studio-server` frío da `connection-refused` -> S11 fatal con
+/// `STRICT_START=1` -> el pod aborta (exit 20) y `ComfyUI` nunca arranca. Esto es un fallo
+/// real de producción, no solo de CI: un arranque lento de `studio-server` tumbaría el pod.
+///
+/// Sondea `/studio/api/health` cada segundo hasta `STUDIO_READY_TIMEOUT_S` (def. 60s).
+/// Devuelve `true` si llegó a estar sano; `false` si venció el plazo (`strict-check`
+/// decidirá entonces, posiblemente fatal, con el diagnóstico correcto). Respeta la
+/// señal de apagado. Un timeout de 0 desactiva la espera (comportamiento anterior).
+pub fn wait_for_studio_ready(cfg: &RuntimeConfig) -> bool {
+    if !should_start_studio_server(cfg) {
+        return true;
+    }
+    let timeout_s: u64 = std::env::var("STUDIO_READY_TIMEOUT_S")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(60);
+    if timeout_s == 0 {
+        return false;
+    }
+    let deadline = Instant::now() + Duration::from_secs(timeout_s);
+    let mut attempt: u64 = 0;
+    loop {
+        attempt += 1;
+        let (ok, _detail) = probe_studio_health(cfg);
+        if ok {
+            log_sup(&format!(
+                "studio-server sano antes de strict-check (intento {attempt})."
+            ));
+            return true;
+        }
+        if Instant::now() >= deadline || sys::is_shutdown_requested() {
+            log_sup(&format!(
+                "studio-server no estaba sano tras {timeout_s}s; strict-check decidirá S11."
+            ));
+            return false;
+        }
+        if sleep_interruptible(1) {
+            return false;
+        }
+    }
 }
 
 /// Construye el `Command` para ejecutar `studio-server` en `127.0.0.1:{studio_server_port}`,
@@ -741,6 +788,10 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
     crate::http::spawn_background_status_server(cfg.clone())?;
 
     let mut studio_child = spawn_studio_server_if_enabled(cfg);
+
+    // Esperar (acotado) a que studio-server abra y responda sano antes de strict-check,
+    // para que S11 (studio_health) no sea fatal por una simple carrera de arranque.
+    let _ = wait_for_studio_ready(cfg);
 
     // 1. Ejecutar strict-check (§6)
     let snap = SystemSnapshot::collect_live(cfg);
