@@ -84,6 +84,22 @@ def main() -> int:
     if not source.is_file():
         return _fail(f"audio fuente ausente: {source}", 2)
 
+    # RVC carga hubert vía fairseq (import perezoso en get_vc). fairseq no se
+    # hornea en la imagen (opción A: pesado/compile, arrastra torch): se instala
+    # en runtime junto con los pesos. Sin fairseq, fallo TIPADO honesto.
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("fairseq") is None:
+            raise ModuleNotFoundError("fairseq")
+    except ModuleNotFoundError:
+        return _fail(
+            "fairseq ausente: instálalo en runtime junto con los pesos RVC "
+            "(opción A: no se hornea en la imagen por ser compile-pesado y "
+            "arrastrar torch). Sin fairseq no se puede cargar el modelo hubert",
+            4,
+        )
+
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
 

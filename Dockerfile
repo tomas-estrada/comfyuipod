@@ -278,14 +278,18 @@ RUN git init /opt/wav2lip \
     && pip3 freeze > /etc/comfyui/requirements.lock
 
 # 5e. Motor voice_clone (M5): RVC (RVC-Project/Retrieval-based-Voice-Conversion)
-#     horneado por SHA fijado. Su pyproject pide torch ^2.1 (compatible con el
-#     2.9.1 del pod), pero NO dejamos que pip resuelva torch: instalamos el
-#     paquete `rvc` con --no-deps y añadimos solo las deps que su ruta `infer`
-#     importa, en versiones compatibles, SIN tocar torch. Los pesos (modelo .pth,
-#     hubert_base.pt, rmvpe.pt, index) NO se hornean: se bajan en runtime a
-#     STUDIO_VOICE_CLONE_MODEL_DIR (cacheados en el volumen). El adaptador CLI
-#     `rvc` (studio/engine_bin) traduce la interfaz del motor a `rvc infer`.
-#     Un SHA/dep equivocado o un import roto rompe ESTE build (guard de import).
+#     horneado por SHA fijado. ESTRATEGIA (opción A): el engine queda WARM en la
+#     imagen (paquete `rvc` + deps puras), pero fairseq NO se hornea. fairseq es
+#     compile-pesado y arrastra torch 2.15/numpy 2.4 (destruiría el torch 2.9.1
+#     del pod); además RVC solo lo necesita al CARGAR un modelo hubert, que ocurre
+#     en runtime sobre la GPU con pesos reales. Por eso fairseq + los pesos
+#     (modelo .pth, hubert_base.pt, rmvpe.pt, index) se bajan/instalan en runtime
+#     a STUDIO_VOICE_CLONE_MODEL_DIR (cacheados en el volumen), fuera de la ruta
+#     crítica del arranque. El import del CLI de RVC NO toca fairseq (la ruta `vc`
+#     lo importa de forma perezosa dentro de get_vc), así que el guard de import
+#     del build pasa sin fairseq. El adaptador CLI `rvc` (studio/engine_bin)
+#     traduce la interfaz del motor a `rvc infer` y falla TIPADO si falta fairseq
+#     o los pesos. Un SHA/dep equivocado o un import roto rompe ESTE build.
 ENV STUDIO_VOICE_CLONE_BIN=/usr/local/bin/rvc \
     STUDIO_VOICE_CLONE_MODEL_DIR=/workspace/comfyui-data/models/rvc \
     RVC_REAL_BIN=rvc-real
@@ -296,9 +300,9 @@ RUN git init /opt/rvc \
     && git -C /opt/rvc checkout -B develop FETCH_HEAD \
     && test -f /opt/rvc/pyproject.toml \
     && pip3 install --no-cache-dir --no-deps /opt/rvc \
-    && pip3 install --no-cache-dir "click>=8.1" "torchcrepe>=0.0.22" "torchfcpe" \
+    && pip3 install --no-cache-dir "click>=8.1" "torchcrepe>=0.0.22,<0.0.23" "torchfcpe" \
         "faiss-cpu>=1.7" "praat-parselmouth>=0.4" "pyworld>=0.3" "python-dotenv>=1.0" \
-        "ffmpeg-python>=0.2" \
+        "ffmpeg-python>=0.2" "pydub>=0.25" \
     && python3 -c "import rvc; from rvc.wrapper.cli.cli import main" \
     && printf '#!/usr/bin/env bash\nexec python3 -m rvc.wrapper.cli.cli "$@"\n' > /usr/local/bin/rvc-real \
     && chmod +x /usr/local/bin/rvc-real \
