@@ -236,7 +236,10 @@ WORKDIR /opt/remotion
 RUN npm install --no-audit --no-fund --loglevel=error \
     && npx remotion browser ensure \
     && npm cache clean --force
-WORKDIR /
+# Restaurar el WORKDIR a /opt/ComfyUI: el warm-up posterior ejecuta `python3 main.py`
+# relativo a ese directorio (no a /). (fix: el build V-editor dejó CWD en / y el
+# warm-up falló con "can't open file '//main.py'").
+WORKDIR /opt/ComfyUI
 
 # 5c. Motor upscaler (M5): Real-ESRGAN ncnn-vulkan (binario prebuilt + modelos
 #     incluidos en el release; CPU/Vulkan, no necesita torch). Se baja el zip del
