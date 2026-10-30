@@ -89,6 +89,8 @@ fn base_healthy_studio_snapshot(studio_ok: bool, studio_detail: &str) -> SystemS
         mcp_health_ok: true,
         mcp_health_detail: "MCP healthy en 127.0.0.1:18190/studio/api/mcp/health (HTTP 200)"
             .to_string(),
+        engine_roster_ok: true,
+        engine_roster_detail: "roster de motores: 12 ready, 0 stub, 0 sin cablear".to_string(),
     }
 }
 
