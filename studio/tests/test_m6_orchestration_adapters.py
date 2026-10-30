@@ -179,6 +179,84 @@ def test_engine_runner_engine_failure_is_typed():
     assert res["error"] == "boom"
 
 
+class _GraphCapturingEngine:
+    """Motor comfyui falso: captura el job y exige `graph` (como el real)."""
+
+    def __init__(self) -> None:
+        self.name = "comfyui"
+        self.last_job: dict[str, Any] | None = None
+
+    async def run(self, spec: EngineRunSpec) -> EngineResult:
+        self.last_job = dict(spec.job)
+        graph = spec.job.get("graph")
+        if not isinstance(graph, dict) or not graph:
+            return EngineResult(
+                ok=False, engine=self.name, verb="run", error="graph vacío"
+            )
+        return EngineResult(
+            ok=True,
+            engine=self.name,
+            verb="run",
+            payload={"outputs": ["/out/reel.mp4"], "count": 1},
+        )
+
+
+class _FakeRegistry:
+    """Registro de plantillas falso: render_workflow devuelve un grafo con el prompt."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def render_workflow(self, template_id, params=None, *, job_id=None, strict=False):
+        self.calls.append((template_id, dict(params or {})))
+        return {"1": {"class_type": "T2V", "inputs": {"prompt": (params or {}).get("prompt")}}}
+
+
+def test_engine_runner_resolves_comfyui_graph_from_default_template():
+    """Sin `graph` ni `template_id`, resuelve el default wan_t2v inyectando el prompt."""
+    eng = _GraphCapturingEngine()
+    reg = _FakeRegistry()
+    runner = EngineRunnerAdapter({"comfyui": eng}, template_registry=reg)
+    res = runner.run_layer(
+        "comfyui", {"kind": "gen", "shot": "s1", "prompt": "un dron costero"}
+    )
+    assert res["ok"] is True
+    assert res["output_path"] == "/out/reel.mp4"
+    # se usó la plantilla por defecto y se pasó el prompt como parámetro.
+    assert reg.calls == [("wan_t2v", {"prompt": "un dron costero"})]
+    # el motor recibió un grafo no vacío.
+    assert isinstance(eng.last_job["graph"], dict) and eng.last_job["graph"]
+
+
+def test_engine_runner_respects_explicit_template_id():
+    eng = _GraphCapturingEngine()
+    reg = _FakeRegistry()
+    runner = EngineRunnerAdapter({"comfyui": eng}, template_registry=reg)
+    runner.run_layer(
+        "comfyui",
+        {"kind": "gen", "shot": "s2", "template_id": "wan_i2v", "prompt": "x"},
+    )
+    assert reg.calls[0][0] == "wan_i2v"
+
+
+def test_engine_runner_keeps_existing_graph_untouched():
+    """Si el job ya trae `graph`, no se toca el registro."""
+    eng = _GraphCapturingEngine()
+    reg = _FakeRegistry()
+    runner = EngineRunnerAdapter({"comfyui": eng}, template_registry=reg)
+    runner.run_layer("comfyui", {"kind": "gen", "graph": {"1": {"x": 1}}})
+    assert reg.calls == []
+
+
+def test_engine_runner_without_registry_leaves_job_as_is():
+    """Sin registro, el job sin grafo llega al motor y este reporta su error tipado."""
+    eng = _GraphCapturingEngine()
+    runner = EngineRunnerAdapter({"comfyui": eng})
+    res = runner.run_layer("comfyui", {"kind": "gen", "prompt": "x"})
+    assert res["ok"] is False
+    assert "graph" in res["error"]
+
+
 # --------------------------------------------------------------------------
 # 3) QaShotEvaluator
 # --------------------------------------------------------------------------

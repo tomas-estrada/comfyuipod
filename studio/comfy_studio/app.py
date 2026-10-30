@@ -883,6 +883,7 @@ def create_app(
                 },
                 qa_engine=QaEngine(),
                 editor_engine=EditorEngine(backend="remotion"),
+                template_registry=app.state.template_registry,
             )
             logger.info(
                 "STUDIO: orquestación con motores REALES (STUDIO_ORCH_REAL_ENGINES=1)."
