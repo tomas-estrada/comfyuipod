@@ -89,10 +89,11 @@ def test_unknown_op_is_typed_failure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_non_stub_fails_typed_not_raises() -> None:
-    # Sin stub y sin backend real (fase 1), falla TIPADO, nunca lanza.
+    # Sin stub y sin backend real (llmlingua no instalado en CI), falla TIPADO, nunca lanza.
     res = CompressCapability().run("compress", {"text": "x"})
     assert res.ok is False
     assert res.error is not None
+    assert "LLMLingua-2" in res.error
 
 
 def test_registry_has_all_four_and_describe() -> None:
