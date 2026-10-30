@@ -174,6 +174,13 @@ def _extract_json(text: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
+# motor que exige un grafo API de ComfyUI ya resuelto en el job.
+_GRAPH_ENGINES: frozenset[str] = frozenset({"comfyui"})
+# plantilla por defecto cuando la capa `gen` de comfyui no trae `template_id`
+# ni `graph`: text-to-video (la forma de shot más común del planner).
+_DEFAULT_COMFY_TEMPLATE = "wan_t2v"
+
+
 class EngineRunnerAdapter:
     """`EngineRunner` que despacha cada capa al motor real correspondiente.
 
@@ -182,10 +189,57 @@ class EngineRunnerAdapter:
     al motor (tolerando async) y devuelve `{'ok', 'output_path'?, 'error'?}`. Un
     motor desconocido o un fallo del motor se devuelven como `ok=False` tipado,
     nunca como excepción hacia el grafo.
+
+    Puente prompt→grafo (M6): el planner (real o stub) describe cada capa `gen`
+    de comfyui con `params` (p.ej. `{"prompt": ...}`), no con un grafo API ya
+    armado. `ComfyUIEngine.run` en cambio exige `job['graph']`. Cuando el job de
+    un motor "de grafo" no trae `graph`, este adaptador lo resuelve desde el
+    registro de plantillas: toma `template_id` (o `_DEFAULT_COMFY_TEMPLATE` para
+    text-to-video) y renderiza el workflow inyectando los `params` de la capa.
+    Así la generación real funciona aun sin un LLM que arme grafos a mano.
     """
 
-    def __init__(self, engines: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        engines: Mapping[str, Any],
+        *,
+        template_registry: Any | None = None,
+        default_comfy_template: str = _DEFAULT_COMFY_TEMPLATE,
+    ) -> None:
         self._engines = dict(engines)
+        self._registry = template_registry
+        self._default_template = default_comfy_template
+
+    def _resolve_graph(self, job: dict[str, Any]) -> dict[str, Any]:
+        """Devuelve `job` con `graph` resuelto desde una plantilla si falta.
+
+        No lanza: si no hay registro o la plantilla falla, deja el job como está
+        y el motor devolverá su error tipado de 'grafo vacío'.
+        """
+        if job.get("graph") or self._registry is None:
+            return job
+        template_id = job.get("template_id") or self._default_template
+        # params del template = todo lo de la capa salvo claves de control.
+        control_keys = {"kind", "shot", "template_id", "graph", "job_id", "project_id"}
+        params = {k: v for k, v in job.items() if k not in control_keys}
+        try:
+            graph = self._registry.render_workflow(
+                template_id,
+                params,
+                job_id=job.get("shot"),
+                strict=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - no romper el grafo; el motor reportará
+            logger.warning(
+                "EngineRunnerAdapter: no se pudo renderizar plantilla %r (%s).",
+                template_id,
+                exc,
+            )
+            return job
+        resolved = dict(job)
+        resolved["graph"] = graph
+        resolved.setdefault("template_id", template_id)
+        return resolved
 
     def run_layer(
         self, engine: str, job: dict[str, Any], *, cost_cap: float | None = None
@@ -197,7 +251,10 @@ class EngineRunnerAdapter:
                 "engine": engine,
                 "error": f"motor no disponible en el servidor: {engine!r}",
             }
-        spec = EngineRunSpec(job=dict(job), cost_cap=cost_cap)
+        job = dict(job)
+        if engine in _GRAPH_ENGINES:
+            job = self._resolve_graph(job)
+        spec = EngineRunSpec(job=job, cost_cap=cost_cap)
         try:
             raw = _run_engine_sync(impl, spec)
         except Exception as exc:  # noqa: BLE001 - tipificar, no romper el grafo
@@ -207,8 +264,14 @@ class EngineRunnerAdapter:
         # normalizar output_path desde el payload del motor si no está en la raíz.
         if "output_path" not in result:
             payload = result.get("payload")
-            if isinstance(payload, dict) and payload.get("output_path"):
-                result["output_path"] = payload["output_path"]
+            if isinstance(payload, dict):
+                if payload.get("output_path"):
+                    result["output_path"] = payload["output_path"]
+                else:
+                    # ComfyUI devuelve payload['outputs'] = [rutas]; usar la 1ª.
+                    outputs = payload.get("outputs")
+                    if isinstance(outputs, list) and outputs:
+                        result["output_path"] = str(outputs[0])
         return result
 
 
@@ -310,6 +373,7 @@ def build_server_collaborators(
     editor_engine: Any | None = None,
     compositor_engine: Any | None = None,
     available_nodes: set[str] | None = None,
+    template_registry: Any | None = None,
 ) -> Collaborators:
     """Arma el `Collaborators` real del servidor desde las piezas disponibles.
 
@@ -318,7 +382,11 @@ def build_server_collaborators(
     incrementalmente (p.ej. solo el runner y el qa) sin romper el resto.
     """
     planner = LLMPlannerAdapter(llm_client) if llm_client is not None else None
-    runner = EngineRunnerAdapter(engines) if engines else None
+    runner = (
+        EngineRunnerAdapter(engines, template_registry=template_registry)
+        if engines
+        else None
+    )
     evaluator = QaShotEvaluator(qa_engine) if qa_engine is not None else None
     assembler = (
         EngineAssembler(editor_engine, compositor_engine=compositor_engine)
