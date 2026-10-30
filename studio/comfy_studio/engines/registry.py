@@ -170,4 +170,12 @@ def build_default_registry() -> EngineRegistry:
             note="Natron compositing node-based; binario pinned en imagen",
         )
     )
+    reg.register(
+        EngineEntry(
+            "qa",
+            EngineTier.WARM,
+            wired=True,
+            note="QA de vídeo: FFmpeg (nivel 1 horneado) + VBench (nivel 2, venv aislado runtime)",
+        )
+    )
     return reg
