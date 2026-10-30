@@ -9,6 +9,13 @@ escalonado (15), ensamblaje (16).
 
 from __future__ import annotations
 
+from comfy_studio.orchestration.adapters import (
+    EngineAssembler,
+    EngineRunnerAdapter,
+    LLMPlannerAdapter,
+    QaShotEvaluator,
+    build_server_collaborators,
+)
 from comfy_studio.orchestration.assembler import (
     Assembler,
     StubAssembler,
@@ -23,6 +30,7 @@ from comfy_studio.orchestration.evaluator import (
     ShotEvaluator,
     StubShotEvaluator,
     evaluate_and_replan,
+    make_template_reselector,
 )
 from comfy_studio.orchestration.executor import (
     CyclicDependencyError,
@@ -41,6 +49,7 @@ from comfy_studio.orchestration.planner import (
     PlannerLLM,
     StubPlannerLLM,
     plan_production,
+    replan_shot_focalized,
 )
 from comfy_studio.orchestration.service import (
     ProductionNotApprovedError,
@@ -75,7 +84,10 @@ __all__ = [
     "CyclicDependencyError",
     "DiscoveredTemplate",
     "DiscoveryProvider",
+    "EngineAssembler",
     "EngineRunner",
+    "EngineRunnerAdapter",
+    "LLMPlannerAdapter",
     "Layer",
     "PlannerLLM",
     "ProductionCheckpointer",
@@ -84,6 +96,7 @@ __all__ = [
     "ProductionNotFoundError",
     "ProductionService",
     "ProductionState",
+    "QaShotEvaluator",
     "ReplanTier",
     "Sequence",
     "Shot",
@@ -99,10 +112,13 @@ __all__ = [
     "TemplateSelector",
     "assemble_reel",
     "build_production_graph",
+    "build_server_collaborators",
     "evaluate_and_replan",
     "execute_next_shot",
     "langgraph_available",
+    "make_template_reselector",
     "orchestration_health_report",
     "plan_production",
+    "replan_shot_focalized",
     "topological_shots",
 ]

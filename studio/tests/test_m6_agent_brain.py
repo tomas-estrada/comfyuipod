@@ -143,3 +143,20 @@ def test_memory_real_requires_db_path() -> None:
     res = MemoryCapability().run("remember", {"key": "x", "value": "y"})
     assert res.ok is False
     assert "db_path" in (res.error or "")
+
+
+def test_memory_real_sqlite_updated_at_float(tmp_path) -> None:
+    import sqlite3
+    import time
+
+    cap = MemoryCapability()
+    db = str(tmp_path / "mem_time.db")
+    before = time.time() - 0.5
+    cap.run("remember", {"db_path": db, "key": "k1", "value": "v1"})
+    after = time.time() + 0.5
+    with sqlite3.connect(db) as conn:
+        row = conn.execute("SELECT updated_at FROM agent_memory WHERE key = 'k1'").fetchone()
+        assert row is not None
+        ts = row[0]
+        assert isinstance(ts, float)
+        assert before <= ts <= after

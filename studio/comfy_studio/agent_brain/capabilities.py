@@ -51,7 +51,7 @@ class MemoryCapability(BrainCapability):
         conn.execute(
             "CREATE TABLE IF NOT EXISTS agent_memory ("
             "key TEXT PRIMARY KEY, value TEXT NOT NULL, "
-            "updated_at REAL NOT NULL DEFAULT (strftime('%s','now')))"
+            "updated_at REAL NOT NULL)"
         )
         return conn
 
@@ -99,11 +99,14 @@ class MemoryCapability(BrainCapability):
                     return BrainResult(
                         ok=False, capability=self.name, op=op, error="remember requiere 'key'"
                     )
+                import time
+
+                now = time.time()
                 conn.execute(
-                    "INSERT INTO agent_memory(key, value) VALUES(?, ?) "
+                    "INSERT INTO agent_memory(key, value, updated_at) VALUES(?, ?, ?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
-                    "updated_at=strftime('%s','now')",
-                    (key, value),
+                    "updated_at=excluded.updated_at",
+                    (key, value, now),
                 )
                 conn.commit()
                 return BrainResult(

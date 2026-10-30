@@ -19,11 +19,14 @@ from comfy_studio.orchestration import (
     Shot,
     ShotStatus,
     StubShotEvaluator,
+    TemplateSelector,
     assemble_reel,
     build_production_graph,
     evaluate_and_replan,
     execute_next_shot,
+    make_template_reselector,
     plan_production,
+    replan_shot_focalized,
     topological_shots,
 )
 
@@ -301,3 +304,70 @@ def test_full_graph_default_stubs_reaches_done():
     assert final.phase == "done"
     assert final.final_output_path is not None
     assert all(s.status == ShotStatus.ACCEPTED for s in final.all_shots())
+
+
+# --- M6 Producción: adaptadores y replan focalizado ------------------------
+
+
+def test_make_template_reselector_swaps_viable_template():
+    sel = TemplateSelector()
+    reselector = make_template_reselector(sel)
+    shot = Shot(
+        description="un coche veloz en la noche",
+        layers=[Layer(kind="gen", engine="comfyui", template_id="wan_t2v")],
+    )
+    swapped = reselector(shot)
+    assert swapped is True
+    assert shot.layers[0].template_id != "wan_t2v"
+
+
+def test_replan_shot_focalized_preserves_sequences_and_deps():
+    a = Shot(description="primer plano", layers=[Layer(kind="gen", engine="comfyui")])
+    b = Shot(description="segundo plano", layers=[Layer(kind="gen", engine="comfyui")])
+    b.depends_on = [a.id]
+    st = ProductionState(idea="película nocturna")
+    st.sequences.append(Sequence(title="secuencia 1", shots=[a, b]))
+
+    ok = replan_shot_focalized(b, st)
+    assert ok is True
+    assert b.depends_on == [a.id]
+    assert len(st.sequences) == 1
+    assert len(st.all_shots()) == 2
+    assert b.description != ""
+
+
+def test_evaluate_and_replan_global_triggers_focal_replanner():
+    class AlwaysFailEvaluator(StubShotEvaluator):
+        def evaluate(self, shot):
+            return {"vbench": 0.1}
+
+    shot = Shot(
+        description="plano complejo",
+        acceptance={"vbench_min": 0.8},
+        layers=[Layer(kind="gen", engine="comfyui")],
+    )
+    st = ProductionState(idea="test")
+    st.sequences.append(Sequence(title="s", shots=[shot]))
+
+    focal_calls = []
+
+    def dummy_replan(s, state):
+        focal_calls.append(s.id)
+        return True
+
+    # 1. LOCAL
+    shot.status = ShotStatus.EVALUATING
+    evaluate_and_replan(st, AlwaysFailEvaluator())
+    assert shot.status == ShotStatus.REPLANNING
+
+    # 2. TEMPLATE
+    shot.status = ShotStatus.EVALUATING
+    evaluate_and_replan(st, AlwaysFailEvaluator())
+    assert shot.status == ShotStatus.REPLANNING
+
+    # 3. GLOBAL (debe invocar replan_shot focalizado)
+    shot.status = ShotStatus.EVALUATING
+    evaluate_and_replan(st, AlwaysFailEvaluator(), replan_shot=dummy_replan)
+    assert shot.status == ShotStatus.REPLANNING
+    assert focal_calls == [shot.id]
+    assert st.log[-1]["focal_replanned"] is True

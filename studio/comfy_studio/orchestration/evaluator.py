@@ -21,7 +21,7 @@ de modo que esta capa no depende de él en CI.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 from comfy_studio.orchestration.state import (
     ProductionState,
@@ -88,11 +88,58 @@ def _default_reselect(shot: Shot) -> bool:
     return False
 
 
+def make_template_reselector(
+    selector: Any | None = None,
+    *,
+    available_nodes: set[str] | None = None,
+) -> TemplateReselector:
+    """Crea una función TemplateReselector respaldada por TemplateSelector (M6-SCR-005)."""
+    from comfy_studio.orchestration.template_selector import (
+        ShotIntent,
+        TemplateSelector,
+    )
+
+    sel = selector or TemplateSelector()
+
+    def _reselect(shot: Shot) -> bool:
+        current_tpl: str | None = None
+        target_layer = None
+        for layer in shot.layers:
+            if layer.template_id:
+                current_tpl = layer.template_id
+                target_layer = layer
+                break
+        if target_layer is None and shot.layers:
+            target_layer = shot.layers[0]
+            current_tpl = target_layer.template_id
+
+        intent = ShotIntent(
+            intent=shot.description,
+            output_kind="video",
+            duration_s=shot.duration_s,
+        )
+        candidates = sel.select(intent, available_nodes=available_nodes, top_k=10)
+        for cand in candidates:
+            if cand.viable and cand.template_id != current_tpl:
+                if target_layer is not None:
+                    target_layer.template_id = cand.template_id
+                    try:
+                        adapted = sel.adapt(cand.template_id, intent)
+                        target_layer.params.update(adapted)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return True
+        return False
+
+    return _reselect
+
+
 def evaluate_and_replan(
     state: ProductionState,
     evaluator: ShotEvaluator | None = None,
     *,
     reselect_template: TemplateReselector | None = None,
+    replan_shot: Callable[[Shot, ProductionState], bool] | None = None,
 ) -> ProductionState:
     """Evalúa el shot en EVALUATING y decide aceptar o replanificar (nodo del grafo).
 
@@ -129,7 +176,16 @@ def evaluate_and_replan(
             )
         elif tier is ReplanTier.GLOBAL:
             # señal para el planner global: reconsiderar el shot entero.
-            state.record("replan", shot=shot.id, tier=str(tier), global_replan=True)
+            replanned = False
+            if replan_shot is not None:
+                replanned = bool(replan_shot(shot, state))
+            state.record(
+                "replan",
+                shot=shot.id,
+                tier=str(tier),
+                global_replan=True,
+                focal_replanned=replanned,
+            )
         else:  # LOCAL
             state.record("replan", shot=shot.id, tier=str(tier))
         return state
