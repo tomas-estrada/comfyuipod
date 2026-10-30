@@ -36,6 +36,7 @@ from comfy_studio.orchestration.graph import (
     ProductionGraph,
     langgraph_available,
 )
+from comfy_studio.orchestration.health import orchestration_health_report
 from comfy_studio.orchestration.planner import (
     PlannerLLM,
     StubPlannerLLM,
@@ -55,13 +56,25 @@ from comfy_studio.orchestration.state import (
     Shot,
     ShotStatus,
 )
+from comfy_studio.orchestration.template_selector import (
+    ChainStep,
+    DiscoveredTemplate,
+    DiscoveryProvider,
+    ShotIntent,
+    TemplateCandidate,
+    TemplateChain,
+    TemplateSelector,
+)
 
 __all__ = [
     "END",
     "REPLAN_ESCALATION",
     "Assembler",
+    "ChainStep",
     "Collaborators",
     "CyclicDependencyError",
+    "DiscoveredTemplate",
+    "DiscoveryProvider",
     "EngineRunner",
     "Layer",
     "PlannerLLM",
@@ -75,16 +88,21 @@ __all__ = [
     "Sequence",
     "Shot",
     "ShotEvaluator",
+    "ShotIntent",
     "ShotStatus",
     "StubAssembler",
     "StubEngineRunner",
     "StubPlannerLLM",
     "StubShotEvaluator",
+    "TemplateCandidate",
+    "TemplateChain",
+    "TemplateSelector",
     "assemble_reel",
     "build_production_graph",
     "evaluate_and_replan",
     "execute_next_shot",
     "langgraph_available",
+    "orchestration_health_report",
     "plan_production",
     "topological_shots",
 ]

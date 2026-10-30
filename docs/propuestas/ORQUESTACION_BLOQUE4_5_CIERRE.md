@@ -71,3 +71,53 @@ GPU/vast.ai.
 ruff limpio; suite del studio 472 verde (34 tests de orquestación); Rust
 fmt + clippy `-D warnings` + test `--locked` verde (incl. el test S15/S16 nuevo y
 los snapshots actualizados). Cero regresión.
+
+
+
+---
+
+## Respuesta a la auditoría profesional M6 (2026-10-30)
+
+Un auditor externo (sin todo el contexto, con un validador adversario) revisó la
+rama `a427b8f` y abrió 12 hallazgos. Cruzados contra `main` tras el merge, el
+dictamen y las acciones:
+
+### Arreglados en código (bugs reales, verificables sin GPU)
+
+| ID | Qué era | Fix |
+|---|---|---|
+| **M6-SCR-001** | Una dep INEXISTENTE (id alucinado por el LLM) nunca entra en `accepted` ni `failed` → el shot se saltaba para siempre → el grafo giraba hasta `max_steps`. (Mi fix previo solo cubría deps `FAILED`.) | `execute_next_shot` detecta deps huérfanas (`dep not in known`) y marca el shot `FAILED` (`shot_unreachable`). |
+| **M6-SCR-004** | Si el ensamblador falla, no marca `done` → el router devolvía `ASSEMBLE` eternamente → `max_steps`. | Contador `assemble_attempts` en `state.metadata`; tras 2 fallos marca `phase="failed"`. El router (`_route`) ahora termina en `done` **o** `failed`. |
+| **M6-SCR-002** | `StoryboardGate` vivía solo en RAM (`self._gates`); tras reiniciar el pod, `approve_plan` lanzaba `ProductionNotApprovedError` para siempre. | El estado de la puerta se persiste en `state.metadata["storyboard_gate"]` (va en el checkpoint). `approve_plan` la hidrata del checkpoint si la RAM está vacía. Test de "reinicio del pod". |
+| **M6-SCR-006** | Ruta `/workspace` hardcodeada (rompía en Windows/macOS) y sin WAL. | El dir deriva de `_default_studio_data_dir` (portable); `_connect` aplica `PRAGMA journal_mode=WAL` + `busy_timeout`. |
+| **M6-OPS-003** | `health.py` reportaba `degraded` siempre (LangGraph no se hornea por diseño), generando ruido. | Reporta `ready` con `engine: stdlib|langgraph` en los metadatos; `degraded`/`down` quedan para fallos reales. (El validador ya había confirmado que S15 en Rust no avisaba por esto; esto limpia la semántica JSON.) |
+| **M6-AGT-002** | `TemplateSelector`, símbolos del selector y `orchestration_health_report` sin exportar en `__init__.__all__`. | Exportados; simetría con `engines`/`agent_brain`. |
+| **M6-OPS-001** | `cargo fmt --check` fallaba. | Ya resuelto antes de leer la auditoría (commit `eee9690`). |
+
+### Diferido a la integración de servidor (con autorización GPU/vast.ai)
+
+No son bugs del esqueleto; son el cableado real que el plan maestro ya tenía como
+fase de servidor. Se dejan escritos como invariantes ANTES de cablear:
+
+- **M6-AGT-001 — gobernanza de gasto (CRÍTICO de diseño).** `approve_plan` **NUNCA**
+  se expondrá al agente LLM: es la puerta de gasto humano. Al cablear: exponer al
+  agente/MCP solo `plan_production`, `get_plan`, `production_status`; `approve_plan`
+  va exclusivamente en la API pública, accionado por el humano, y despachado como
+  job de fondo (`ProjectStore.enqueue_job`) para no bloquear Nginx (504).
+- **M6-SCR-003 — replan global focalizado.** Hoy el escalón GLOBAL no reescribe el
+  shot (reejecuta igual hasta agotar → `FAILED`, sin bucle gracias a SCR-001/004).
+  Al integrar el LLM real: `replan_shot_with_llm(shot, state, planner)` que reescribe
+  SOLO ese shot, sin destruir los shots ya aceptados (objeción correcta del validador).
+- **M6-SCR-005 — conectar `TemplateSelector` al escalón de plantilla.** Hoy
+  `_default_reselect` es no-op (`changed=False`). El adaptador real tomará el
+  `ShotIntent` del shot y aplicará otra plantilla viable vía `TemplateSelector.select`.
+- **M6-OPS-002 — 6 GET redundantes a `/studio/api/health` en Rust.** Optimización:
+  una sola petición en `SystemSnapshot::gather()` alimentando las 6 sondas.
+- **M6-SCR-007 — tipo `updated_at` en `agent_memory`.** Higiene SQLite menor.
+
+### Veredicto propio
+El auditor acertó en los 3 críticos/altos de robustez del lazo (deadlock por deps,
+bucle del ensamblador, pérdida del gate) — todos arreglados y con test de regresión.
+Los diferidos son cableado de servidor, no defectos del esqueleto. Gate tras los
+fixes: ruff limpio, **499 tests** del studio verdes, Rust fmt+clippy`-D`+test `--locked`
+verdes.

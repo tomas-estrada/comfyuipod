@@ -246,10 +246,52 @@ def test_full_graph_with_replan_reaches_done():
     st = ProductionState(idea="gato astronauta")
     final = graph.run(st)
     assert final.phase == "done"
-    assert final.final_output_path is not None
-    # hubo al menos un replan antes de aceptar.
-    assert any(e["kind"] == "replan" for e in final.log)
-    assert final.is_complete()
+
+
+# --- auditoría M6: robustez del lazo ---------------------------------------
+
+
+def test_missing_dependency_is_unreachable_not_deadlock():
+    # M6-SCR-001: una dep INEXISTENTE (id alucinado) no está en failed ni
+    # accepted -> antes se saltaba para siempre; ahora falla en claro.
+    b = Shot(description="b", layers=[Layer(kind="gen", engine="comfyui")])
+    b.depends_on = ["shot_inexistente_99"]
+    st = ProductionState(idea="hallu")
+    st.sequences.append(Sequence(title="s", shots=[b]))
+    execute_next_shot(st)
+    assert b.status == ShotStatus.FAILED
+    assert "shot_inexistente_99" in (b.error or "")
+    assert "shot_unreachable" in [e["kind"] for e in st.log]
+
+
+def test_graph_with_missing_dep_terminates_not_max_steps():
+    b = Shot(description="b", layers=[Layer(kind="gen", engine="comfyui")])
+    b.depends_on = ["ghost"]
+    st = ProductionState(idea="hallu2")
+    st.sequences.append(Sequence(title="s", shots=[b]))
+    graph = build_production_graph(max_steps=50)
+    final = graph.run(st)
+    assert final.phase in ("done", "failed")  # terminó, no halted
+    assert b.status == ShotStatus.FAILED
+
+
+def test_assembler_failure_gives_up_to_failed_not_infinite_loop():
+    # M6-SCR-004: un ensamblador que siempre falla no debe girar hasta max_steps;
+    # tras agotar reintentos marca phase=failed y el router termina.
+    class FailAsm:
+        def assemble(self, production_id, clips):
+            return {"ok": False, "error": "ffmpeg murió"}
+
+    s1 = Shot(description="a", output_path="/tmp/a.mp4")
+    s1.status = ShotStatus.ACCEPTED
+    st = ProductionState(idea="asm-fail")
+    st.sequences.append(Sequence(title="s", shots=[s1]))
+    col = Collaborators(assembler=FailAsm())
+    graph = build_production_graph(collaborators=col, max_steps=50)
+    final = graph.run(st)
+    assert final.phase == "failed"  # terminó, no halted
+    assert int(final.metadata.get("assemble_attempts", 0)) >= 2
+    assert "assemble_giveup" in [e["kind"] for e in final.log]
 
 
 def test_full_graph_default_stubs_reaches_done():

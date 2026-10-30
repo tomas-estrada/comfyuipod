@@ -20,11 +20,22 @@ from pathlib import Path
 
 from comfy_studio.orchestration.state import ProductionState
 
-#: dónde vive la base de checkpoints (bajo el dir de datos del estudio).
-_DEFAULT_DIR = os.environ.get(
-    "STUDIO_ORCH_CHECKPOINT_DIR",
-    "/workspace/comfyui-data/orchestration",
-)
+
+def _default_checkpoint_dir() -> Path:
+    """Dir de checkpoints: env explícito, si no bajo el data-dir del estudio.
+
+    Evita el hardcode de `/workspace` (que rompía en Windows/macOS sin permisos
+    sobre la raíz del volumen): reutiliza `_default_studio_data_dir`, que ya
+    resuelve el pod Linux, un override por env y un tempdir portable (M6-SCR-006).
+    """
+    explicit = os.environ.get("STUDIO_ORCH_CHECKPOINT_DIR", "").strip()
+    if explicit:
+        return Path(explicit)
+    # import local: config importa mucho; checkpointer debe ser liviano.
+    from comfy_studio.config import _default_studio_data_dir
+
+    return _default_studio_data_dir(os.environ) / "orchestration"
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS production_checkpoint (
@@ -37,13 +48,16 @@ CREATE INDEX IF NOT EXISTS idx_checkpoint_updated
     ON production_checkpoint(updated_at);
 """
 
+#: busy_timeout uniforme (ms) para tolerar lecturas concurrentes de estado.
+_BUSY_TIMEOUT_MS = 5000
+
 
 class ProductionCheckpointer:
     """Guarda/lee el estado de una producción por id en SQLite local."""
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         if db_path is None:
-            base = Path(_DEFAULT_DIR)
+            base = _default_checkpoint_dir()
             base.mkdir(parents=True, exist_ok=True)
             db_path = base / "checkpoints.sqlite3"
         self.db_path = str(db_path)
@@ -52,6 +66,10 @@ class ProductionCheckpointer:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=5.0)
         conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout: lecturas de estado concurrentes sin bloquear al
+        # grafo que escribe tras cada paso (mismo patrón que projects.py).
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS};")
         return conn
 
     def _ensure_schema(self) -> None:
