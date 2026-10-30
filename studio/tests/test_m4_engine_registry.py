@@ -31,12 +31,28 @@ def test_comfyui_is_resident_and_wired() -> None:
     assert residents == ["comfyui"]
 
 
-def test_editor_declared_unwired_pending_decision() -> None:
+def test_editor_wired_with_remotion() -> None:
     reg = build_default_registry()
     editor = reg.get("editor")
     assert editor is not None
-    assert editor.wired is False
+    assert editor.wired is True
     assert "Remotion" in editor.note
+
+
+def test_full_roster_all_wired() -> None:
+    # Tras M5 todos los motores del roster están cableados.
+    reg = build_default_registry()
+    for name in (
+        "voice_clone",
+        "music_gen",
+        "lipsync",
+        "upscaler",
+        "capture3d",
+        "compositor",
+        "heavy_video",
+    ):
+        e = reg.get(name)
+        assert e is not None and e.wired is True, f"{name} debería estar cableado"
 
 
 def test_duplicate_registration_rejected() -> None:
@@ -53,5 +69,5 @@ def test_describe_is_serializable(monkeypatch: pytest.MonkeyPatch) -> None:
     # Debe serializar a JSON sin objetos vivos.
     blob = json.dumps(desc)
     assert '"dynamic": false' in blob
-    assert desc["count"] == 6
+    assert desc["count"] == 12
     assert all(set(e) == {"name", "tier", "wired", "note"} for e in desc["engines"])

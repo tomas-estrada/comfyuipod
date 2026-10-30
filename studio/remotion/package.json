@@ -1,0 +1,23 @@
+{
+  "name": "comfyui-studio-reel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Baked Remotion project for the studio editor engine. Composition 'Reel' consumes timeline input-props built by EditorEngine._remotion_props.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20 <23"
+  },
+  "scripts": {
+    "render": "remotion render Reel"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.413",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.413"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.0",
+    "typescript": "5.9.3"
+  }
+}

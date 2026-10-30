@@ -15,6 +15,7 @@ NUNCA se persiste ni se registra; todo log pasa por el redactor del pod.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass
@@ -152,18 +153,110 @@ class HeavyVideoEngine:
         )
 
     async def _call_api(self, hv: HeavyVideoSpec, key: str) -> EngineResult:
-        """Backend real del proveedor. Cableado en F5+ tras elegir proveedor.
+        """Backend real: API de vídeo pesado (Minimax por defecto).
 
-        `key` NO se registra ni se devuelve: solo se usa en la cabecera de la
-        petición saliente a loopback-permitido/externo-permitido del proveedor.
-        Hasta cablear, falla tipado en vez de fingir.
+        Flujo: POST de la tarea -> poll del estado -> descarga del MP4 a
+        `output_path`. `key` solo viaja en la cabecera Authorization; NUNCA se
+        registra ni se devuelve (toda traza pasa por SecretRedactor). Endpoint y
+        modelo son configurables por entorno para no fijar proveedor en código.
         """
+        import httpx
+
+        from comfy_studio.config import SecretRedactor
+
+        redactor = SecretRedactor()
+        base_url = (
+            os.environ.get("STUDIO_HEAVY_VIDEO_BASE_URL")
+            or "https://api.minimax.io/v1"
+        ).rstrip("/")
+        model = os.environ.get("STUDIO_HEAVY_VIDEO_MODEL") or "video-01"
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        submit_body = {
+            "model": model,
+            "prompt": hv.prompt,
+            "strength": hv.strength,
+            "duration_seconds": hv.max_seconds,
+        }
+        deadline_s = float(os.environ.get("STUDIO_HEAVY_VIDEO_TIMEOUT_S") or 600.0)
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                sub = await client.post(
+                    f"{base_url}/video_generation", headers=headers, json=submit_body
+                )
+                if sub.status_code >= 400:
+                    return EngineResult(
+                        ok=False,
+                        engine=self.name,
+                        verb="run",
+                        error=redactor.redact(
+                            f"submit falló HTTP {sub.status_code}: {sub.text[:300]}"
+                        ),
+                    )
+                task_id = (sub.json() or {}).get("task_id")
+                if not task_id:
+                    return EngineResult(
+                        ok=False,
+                        engine=self.name,
+                        verb="run",
+                        error="el proveedor no devolvió task_id",
+                    )
+                # Poll acotado por tiempo.
+                start = time.monotonic()
+                file_url = None
+                while time.monotonic() - start < deadline_s:
+                    st = await client.get(
+                        f"{base_url}/query/video_generation",
+                        headers=headers,
+                        params={"task_id": task_id},
+                    )
+                    data = st.json() if st.status_code < 400 else {}
+                    status = (data or {}).get("status", "")
+                    if status in ("Success", "success", "Succeed"):
+                        file_url = (data or {}).get("file_url") or (data or {}).get(
+                            "download_url"
+                        )
+                        break
+                    if status in ("Fail", "failed", "Error"):
+                        return EngineResult(
+                            ok=False,
+                            engine=self.name,
+                            verb="run",
+                            error=redactor.redact(f"la tarea falló: {str(data)[:300]}"),
+                        )
+                    await _async_sleep(3.0)
+                if not file_url:
+                    return EngineResult(
+                        ok=False,
+                        engine=self.name,
+                        verb="run",
+                        error=f"tiempo agotado ({deadline_s:.0f}s) esperando el vídeo",
+                    )
+                dl = await client.get(file_url)
+                if dl.status_code >= 400:
+                    return EngineResult(
+                        ok=False,
+                        engine=self.name,
+                        verb="run",
+                        error=redactor.redact(f"descarga falló HTTP {dl.status_code}"),
+                    )
+                hv.output_path.parent.mkdir(parents=True, exist_ok=True)
+                hv.output_path.write_bytes(dl.content)
+        except httpx.HTTPError as exc:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=redactor.redact(f"error HTTP del proveedor: {exc}"),
+            )
         return EngineResult(
-            ok=False,
+            ok=True,
             engine=self.name,
             verb="run",
-            error=(
-                f"backend de vídeo pesado '{hv.provider}' aún no cableado; "
-                "usar STUDIO_STUB_HEAVY_VIDEO=1 para tests"
-            ),
+            payload={"output": str(hv.output_path), "provider": hv.provider, "model": model},
         )
+
+
+
+async def _async_sleep(seconds: float) -> None:
+    """Pausa asíncrona del poll (aislada para poder mockearla en tests)."""
+    await asyncio.sleep(seconds)

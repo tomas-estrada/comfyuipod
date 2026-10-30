@@ -62,11 +62,14 @@ class ComfyUIEngine:
     # -- install -------------------------------------------------------------
 
     async def install(self, submotor: str, *, ref: str | None = None) -> EngineResult:
-        """Instala un custom node vía ComfyUI-Manager (punto de cableado F2).
+        """Instala un custom node vía ComfyUI-Manager.
 
         Guarda de política: en pod determinista (STUDIO_DYNAMIC off) y nodo no
         horneado, se rechaza de forma tipada — no se instala nada a mitad de
-        ejecución sin autorización dinámica.
+        ejecución sin autorización dinámica. El endpoint del Manager es
+        configurable (varía entre versiones) y la instalación queda acotada por
+        PIP_CONSTRAINT en el entorno de ComfyUI (AGENTS.md regla 6). Tras
+        instalar, se re-verifica con object_info; no se finge éxito.
         """
         if not is_dynamic_enabled():
             return EngineResult(
@@ -78,17 +81,51 @@ class ComfyUIEngine:
                     "determinista los nodos vienen horneados (nodes.lock)"
                 ),
             )
-        # F2: el cableado real al endpoint de ComfyUI-Manager se añade en F6
-        # junto a la puerta de instalación y el fijado PIP_CONSTRAINT. Hasta
-        # entonces, no fingir éxito.
+
+        import os
+
+        from comfy_studio.comfyui_client import ComfyUIError
+
+        endpoint = os.environ.get("STUDIO_COMFY_MANAGER_INSTALL_PATH") or "/customnode/install"
+        body: dict = {"id": submotor}
+        if ref:
+            body["version"] = ref
+        try:
+            resp = await self._client._request(  # noqa: SLF001 - ruta interna del cliente
+                "POST", endpoint, json_body=body, timeout=600.0
+            )
+        except ComfyUIError as exc:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="install",
+                error=f"install vía Manager falló: {exc}",
+            )
+        if resp.status_code >= 400:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="install",
+                error=f"Manager respondió HTTP {resp.status_code} al instalar '{submotor}'",
+            )
+        # Re-verificar: el node type debe aparecer en object_info tras instalar.
+        verify = await self.verify(submotor)
+        if not verify.ok:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="install",
+                error=(
+                    f"'{submotor}' instalado pero no visible en object_info todavía; "
+                    "puede requerir reinicio de ComfyUI"
+                ),
+                payload={"installed": submotor, "visible": False},
+            )
         return EngineResult(
-            ok=False,
+            ok=True,
             engine=self.name,
             verb="install",
-            error=(
-                f"cableado de ComfyUI-Manager pendiente (F6) para instalar '{submotor}'; "
-                "STUDIO_DYNAMIC está activo pero el endpoint aún no está conectado"
-            ),
+            payload={"installed": submotor, "visible": True},
         )
 
     # -- verify --------------------------------------------------------------

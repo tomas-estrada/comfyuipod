@@ -84,3 +84,43 @@ def test_bad_op_rejected(tmp_path: Path) -> None:
     res = AudioEngine().run(EngineRunSpec(job=job))
     assert res.ok is False
     assert "op" in (res.error or "")
+
+
+
+def test_real_stt_delegates_to_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Fuera de stub, STT delega en el worker ASR; escribimos la transcripción.
+    monkeypatch.delenv("STUDIO_STUB_AUDIO", raising=False)
+    import comfy_studio.ml.runner as runner
+    from comfy_studio.ml import MlWorkerResponse
+
+    def _fake_run_worker(subcommand, payload=None, **kw):
+        assert subcommand == "asr_transcribe"
+        assert payload and "audio_path" in payload
+        return MlWorkerResponse(
+            ok=True,
+            subcommand="asr_transcribe",
+            payload={"text": "hola desde el worker", "language": "es", "simulated": False},
+        )
+
+    monkeypatch.setattr(runner, "run_worker", _fake_run_worker)
+    src = tmp_path / "in.wav"
+    src.write_bytes(b"RIFF")
+    out = tmp_path / "t.txt"
+    res = AudioEngine().run(
+        EngineRunSpec(job={"op": "stt", "input_audio": str(src), "output_path": str(out)})
+    )
+    assert res.ok is True
+    assert out.read_text(encoding="utf-8") == "hola desde el worker"
+    assert res.payload["language"] == "es"
+
+
+def test_real_tts_typed_pending_outside_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # TTS no tiene backend real integrado: debe fallar tipado, no fingir.
+    monkeypatch.delenv("STUDIO_STUB_AUDIO", raising=False)
+    res = AudioEngine().run(
+        EngineRunSpec(job={"op": "tts", "text": "hola", "output_path": str(tmp_path / "v.wav")})
+    )
+    assert res.ok is False
+    assert "TTS" in (res.error or "") or "síntesis" in (res.error or "")

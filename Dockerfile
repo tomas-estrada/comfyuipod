@@ -68,6 +68,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxrender1 \
         libgomp1 \
         libsndfile1 \
+        libnss3 \
+        libnspr4 \
+        libdbus-1-3 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libcups2 \
+        libdrm2 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxfixes3 \
+        libxrandr2 \
+        libgbm1 \
+        libxkbcommon0 \
+        libasound2t64 \
+        libpango-1.0-0 \
+        libcairo2 \
     && ffmpeg -version \
     && ttyd --version \
     && rm -rf /var/lib/apt/lists/*
@@ -202,8 +218,180 @@ RUN mkdir -p /etc/comfyui/models_configs \
     fi \
     && ln -sfn /opt/ComfyUI /workspace/ComfyUI
 
-# 6. Copiar archivos de configuración, portal, estudio, observabilidad y scripts + warm-up y limpieza (MED-03 / M-03 / L-07 / §7.2)
-ARG IMAGE_TAG=dev
+# 5b. Motor editor (M5): Node 20 LTS + proyecto Remotion horneado.
+#     El binario `npx` queda en PATH y el proyecto (composición 'Reel') se instala
+#     en /opt/remotion con sus deps FIJADAS (package.json). El Chrome Headless Shell
+#     de Remotion se baja al build con `browser ensure` para que el primer render no
+#     espere. La ruta del proyecto se expone en STUDIO_REMOTION_PROJECT (la lee
+#     EditorEngine._render_backend). Un pin de versión equivocado rompe ESTE build.
+ENV STUDIO_REMOTION_PROJECT=/opt/remotion \
+    REMOTION_BROWSER_EXECUTABLE="" \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && node --version && npm --version \
+    && rm -rf /var/lib/apt/lists/*
+COPY studio/remotion/ /opt/remotion/
+WORKDIR /opt/remotion
+RUN npm install --no-audit --no-fund --loglevel=error \
+    && npx remotion browser ensure \
+    && npm cache clean --force
+# Restaurar el WORKDIR a /opt/ComfyUI: el warm-up posterior ejecuta `python3 main.py`
+# relativo a ese directorio (no a /). (fix: el build V-editor dejó CWD en / y el
+# warm-up falló con "can't open file '//main.py'").
+WORKDIR /opt/ComfyUI
+
+# 5c. Motor upscaler (M5): Real-ESRGAN ncnn-vulkan (binario prebuilt + modelos
+#     incluidos en el release; CPU/Vulkan, no necesita torch). Se baja el zip del
+#     release fijado, el binario va a /usr/local/bin y los modelos a /opt/realesrgan.
+#     Las rutas se exponen en STUDIO_UPSCALER_BIN / STUDIO_UPSCALER_MODEL_DIR
+#     (las lee UpscalerEngine._run_model). Un release/URL equivocado rompe ESTE build.
+ENV STUDIO_UPSCALER_BIN=/usr/local/bin/realesrgan-ncnn-vulkan \
+    STUDIO_UPSCALER_MODEL_DIR=/opt/realesrgan/models
+RUN curl -fsSL -o /tmp/realesrgan.zip \
+        https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip \
+    && mkdir -p /opt/realesrgan \
+    && unzip -o /tmp/realesrgan.zip -d /opt/realesrgan \
+    && install -m 0755 /opt/realesrgan/realesrgan-ncnn-vulkan /usr/local/bin/realesrgan-ncnn-vulkan \
+    && test -d /opt/realesrgan/models \
+    && rm -f /tmp/realesrgan.zip
+
+# 5d. Motor lipsync (M5): Wav2Lip (Rudrabha) horneado en /opt/wav2lip por SHA fijado.
+#     NO se instala su requirements.txt (pide torch==1.1.0 / numpy 1.17 de 2020, roto
+#     con el stack torch 2.9.1 + Py3.12 del pod): instalamos solo las deps que
+#     inference.py importa, en versiones compatibles, SIN tocar torch. El checkpoint
+#     wav2lip_gan.pth NO se hornea: se baja en runtime a STUDIO_LIPSYNC_MODEL_DIR
+#     (cacheado en el volumen). El adaptador CLI `wav2lip` (studio/engine_bin) traduce
+#     la interfaz del motor a inference.py. Un SHA/dep equivocado rompe ESTE build.
+ENV STUDIO_LIPSYNC_BIN=/usr/local/bin/wav2lip \
+    STUDIO_LIPSYNC_MODEL_DIR=/workspace/comfyui-data/models/wav2lip \
+    WAV2LIP_HOME=/opt/wav2lip
+COPY studio/engine_bin/wav2lip /usr/local/bin/wav2lip
+RUN git init /opt/wav2lip \
+    && git -C /opt/wav2lip remote add origin https://github.com/Rudrabha/Wav2Lip \
+    && git -C /opt/wav2lip fetch --depth=1 origin bac9a81e63ecc153202353372e5724b83d9e6322 \
+    && git -C /opt/wav2lip checkout -B main FETCH_HEAD \
+    && test -f /opt/wav2lip/inference.py \
+    && chmod +x /usr/local/bin/wav2lip \
+    && pip3 install --no-cache-dir "librosa>=0.10,<0.11" "numba>=0.59" \
+    && mkdir -p /workspace/comfyui-data/models/wav2lip \
+    && pip3 freeze > /etc/comfyui/requirements.lock
+
+# 5e. Motor voice_clone (M5): RVC (RVC-Project/Retrieval-based-Voice-Conversion)
+#     horneado por SHA fijado. ESTRATEGIA (opción A): el engine queda WARM en la
+#     imagen (paquete `rvc` + deps puras), pero fairseq NO se hornea. fairseq es
+#     compile-pesado y arrastra torch 2.15/numpy 2.4 (destruiría el torch 2.9.1
+#     del pod); además RVC solo lo necesita al CARGAR un modelo hubert, que ocurre
+#     en runtime sobre la GPU con pesos reales. Por eso fairseq + los pesos
+#     (modelo .pth, hubert_base.pt, rmvpe.pt, index) se bajan/instalan en runtime
+#     a STUDIO_VOICE_CLONE_MODEL_DIR (cacheados en el volumen), fuera de la ruta
+#     crítica del arranque. El import del CLI de RVC NO toca fairseq (la ruta `vc`
+#     lo importa de forma perezosa dentro de get_vc), así que el guard de import
+#     del build pasa sin fairseq. El adaptador CLI `rvc` (studio/engine_bin)
+#     traduce la interfaz del motor a `rvc infer` y falla TIPADO si falta fairseq
+#     o los pesos. Un SHA/dep equivocado o un import roto rompe ESTE build.
+ENV STUDIO_VOICE_CLONE_BIN=/usr/local/bin/rvc \
+    STUDIO_VOICE_CLONE_MODEL_DIR=/workspace/comfyui-data/models/rvc \
+    RVC_REAL_BIN=rvc-real
+COPY studio/engine_bin/rvc /opt/engine_bin/rvc
+RUN git init /opt/rvc \
+    && git -C /opt/rvc remote add origin https://github.com/RVC-Project/Retrieval-based-Voice-Conversion \
+    && git -C /opt/rvc fetch --depth=1 origin 7b284a634667c34103eaaeed972b48ccdb4b893e \
+    && git -C /opt/rvc checkout -B develop FETCH_HEAD \
+    && test -f /opt/rvc/pyproject.toml \
+    && pip3 install --no-cache-dir --no-deps /opt/rvc \
+    && pip3 install --no-cache-dir "click>=8.1" "torchcrepe>=0.0.22,<0.0.23" "torchfcpe" \
+        "faiss-cpu>=1.7" "praat-parselmouth>=0.4" "pyworld>=0.3" "python-dotenv>=1.0" \
+        "ffmpeg-python>=0.2" "pydub>=0.25" \
+    && python3 -c "import rvc; from rvc.wrapper.cli.cli import main" \
+    && printf '#!/usr/bin/env bash\nexec python3 -m rvc.wrapper.cli.cli "$@"\n' > /usr/local/bin/rvc-real \
+    && chmod +x /usr/local/bin/rvc-real \
+    && install -m 0755 /opt/engine_bin/rvc /usr/local/bin/rvc \
+    && mkdir -p /workspace/comfyui-data/models/rvc \
+    && pip3 freeze > /etc/comfyui/requirements.lock
+
+# 5f. Motor music_gen (M5): MusicGen via audiocraft (facebookresearch/audiocraft)
+#     horneado por SHA fijado. ESTRATEGIA (opción A, igual que RVC): el paquete
+#     `audiocraft` queda WARM en la imagen (--no-deps), pero sus deps pesadas y
+#     fragiles (xformers, demucs, spacy, flashy) + los pesos NO se hornean:
+#     audiocraft pinea torch==2.1/torchvision==0.16/numpy<2/xformers<0.0.23, que
+#     clavarían el torch 2.9.1+cu128 del pod, y son compile-pesadas. Se instalan
+#     en runtime a STUDIO_MUSIC_GEN_MODEL_DIR (cacheado en el volumen). audiocraft.
+#     models importa todo el zoo de forma EAGER (toca xformers), así que el guard
+#     del build NO importa audiocraft: solo verifica que el paquete está presente
+#     y que el shim compila. El adaptador `musicgen` importa MusicGen de forma
+#     perezosa y falla TIPADO sin las deps o el modelo. Un SHA equivocado rompe
+#     ESTE build (el pip --no-deps y el test de presencia).
+ENV STUDIO_MUSIC_GEN_BIN=/usr/local/bin/musicgen \
+    STUDIO_MUSIC_GEN_MODEL_DIR=/workspace/comfyui-data/models/musicgen
+COPY studio/engine_bin/musicgen /opt/engine_bin/musicgen
+RUN git init /opt/audiocraft \
+    && git -C /opt/audiocraft remote add origin https://github.com/facebookresearch/audiocraft \
+    && git -C /opt/audiocraft fetch --depth=1 origin 896ec7c47f5e5d1e5aa1e4b260c4405328bf009d \
+    && git -C /opt/audiocraft checkout -B main FETCH_HEAD \
+    && test -f /opt/audiocraft/audiocraft/models/musicgen.py \
+    && pip3 install --no-cache-dir --no-deps /opt/audiocraft \
+    && pip3 install --no-cache-dir "einops" "julius" "num2words" "sentencepiece" \
+        "encodec" "torchmetrics" "huggingface_hub" \
+    && python3 -c "import importlib.util; assert importlib.util.find_spec('audiocraft'), 'audiocraft no instalado'" \
+    && install -m 0755 /opt/engine_bin/musicgen /usr/local/bin/musicgen \
+    && mkdir -p /workspace/comfyui-data/models/musicgen \
+    && pip3 freeze > /etc/comfyui/requirements.lock
+
+# 5g. Motor compositor (M5): Natron (NatronGitHub/Natron), el "Nuke" open-source.
+#     Compositing basado en nodos para el ensamblaje final. A diferencia de los
+#     motores Python, Natron es una app C++ AUTOCONTENIDA: el bundle portable
+#     .tgz trae NatronRenderer + todas sus libs, así que NO toca torch/pip y no
+#     hay riesgo de clobber ni re-freeze del lock. Se hornea pinned por versión
+#     (v2.5.0, la última estable con build Linux portable; URL verificada 200
+#     antes de hornear). El adaptador `compositor` llama a NatronRenderer -w; sin
+#     binario falla TIPADO. Guard del build: extraer + `NatronRenderer --version`
+#     para cazar una lib compartida ausente antes del smoke. Una URL/versión
+#     equivocada rompe ESTE build (curl -f + el test de versión).
+ENV STUDIO_COMPOSITOR_BIN=/usr/local/bin/NatronRenderer
+# NB: el asset .tgz es un ÚNICO ELF gzip (el launcher GUI), SIN NatronRenderer;
+# el árbol portable real con bin/NatronRenderer es el -no-installer.tar.xz.
+RUN curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
+        -o /tmp/natron.tar.xz \
+        https://github.com/NatronGitHub/Natron/releases/download/v2.5.0/Natron-2.5.0-Linux-x86_64-no-installer.tar.xz \
+    && mkdir -p /opt/natron \
+    && tar -xJf /tmp/natron.tar.xz -C /opt/natron --strip-components=1 \
+    && rm -f /tmp/natron.tar.xz \
+    && NATRON_RENDERER="$(find /opt/natron -name NatronRenderer -type f | head -n1)" \
+    && test -n "$NATRON_RENDERER" \
+    && ln -sf "$NATRON_RENDERER" /usr/local/bin/NatronRenderer \
+    && (/usr/local/bin/NatronRenderer --version 2>&1 | head -n3 || true)
+
+# 5h. Motor capture3d (M5): Nerfstudio (nerfstudio-project/nerfstudio), captura 3D
+#     (NeRF / Gaussian Splatting). ESTRATEGIA (opción A, igual que RVC/MusicGen):
+#     el paquete `nerfstudio` + sus binarios (ns-train/ns-export/ns-process-data)
+#     quedan WARM, pero tiny-cuda-nn (tcnn) NO se hornea. Razones verificadas:
+#       - `pip install nerfstudio` resolvería torch a 2.15.0, CLAVANDO el torch
+#         2.9.1+cu128 del pod -> se instala con un CONSTRAINT que fija torch y
+#         torchvision a las versiones ya horneadas, así el resolver no las mueve.
+#       - tcnn es un import GUARDADO (nerfstudio/utils/external.py: try/except ->
+#         TCNN_EXISTS); nerfstudio importa y ns-export corre SIN tcnn. tcnn compila
+#         kernels CUDA contra el arch de la GPU (nvcc), imposible en CI sin GPU; se
+#         instala en runtime en la Blackwell (cacheado en volumen).
+#       - nerfacc==0.5.2 y gsplat==1.4.0 traen wheels py3-none-any: instalan sin
+#         GPU y compilan/JIT sus kernels en runtime.
+#     El adaptador `capture3d` falla TIPADO sin binarios/tcnn. Guard del build:
+#     binarios en PATH + `import nerfstudio` (funciona sin tcnn). Una versión mala
+#     rompe ESTE build. Pinned nerfstudio==1.1.5 (última estable).
+ENV STUDIO_CAPTURE3D_BIN_DIR=/usr/local/bin
+RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/ns-constraints.txt \
+    && PROTOBUF_KEEP="$(python3 -c 'import importlib.metadata as m; print(m.version("protobuf"))')" \
+    && echo "protobuf pre-nerfstudio = ${PROTOBUF_KEEP} (onnx/insightface lo necesitan)" \
+    && PIP_CONSTRAINT=/tmp/ns-constraints.txt pip3 install --no-cache-dir nerfstudio==1.1.5 \
+    && rm -f /tmp/ns-constraints.txt \
+    # nerfstudio pinea protobuf<=5 y degrada el que onnx>=6.31.1 (insightface) necesita
+    # para su símbolo runtime_version. Restauramos el protobuf previo SIN tocar nada más;
+    # el cap <=5 de nerfstudio es conservador y su telemetría tolera protobuf 6 en runtime.
+    && pip3 install --no-cache-dir --no-deps "protobuf==${PROTOBUF_KEEP}" \
+    && python3 -c "import nerfstudio; from nerfstudio.utils.external import TCNN_EXISTS; print('nerfstudio ok, tcnn=', TCNN_EXISTS)" \
+    && python3 -c "from google.protobuf import runtime_version; import onnx; print('onnx+protobuf ok')" \
+    && command -v ns-train && command -v ns-export && command -v ns-process-data \
+    && pip3 freeze > /etc/comfyui/requirements.lock
 ARG BUILD_DATE=unknown
 
 COPY --from=builder --chmod=0755 /build/comfyctl/target/release/comfyctl /usr/local/bin/comfyctl

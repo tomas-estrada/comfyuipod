@@ -129,12 +129,52 @@ class AudioEngine:
                     "traer el submotor (F6) o usar STUDIO_STUB_AUDIO=1"
                 ),
             )
-        # tts/stt reales se delegan al worker/IndexTTS existentes en F6.
+
+        # STT real: delegar al worker de ML existente (faster-whisper,
+        # asr_transcribe). Escribe la transcripción en output_path.
+        if audio.op == "stt":
+            from comfy_studio.ml.runner import run_worker
+
+            resp = run_worker(
+                "asr_transcribe",
+                {"audio_path": str(audio.input_audio)},
+            )
+            if not resp.ok:
+                return EngineResult(
+                    ok=False,
+                    engine=self.name,
+                    verb="run",
+                    error=f"stt falló: {resp.error or 'error del worker'}",
+                    stderr_tail=resp.stderr_tail,
+                )
+            text = str((resp.payload or {}).get("text", ""))
+            simulated = bool((resp.payload or {}).get("simulated", False))
+            audio.output_path.parent.mkdir(parents=True, exist_ok=True)
+            audio.output_path.write_text(text, encoding="utf-8")
+            return EngineResult(
+                ok=True,
+                engine=self.name,
+                verb="run",
+                payload={
+                    "op": "stt",
+                    "output": str(audio.output_path),
+                    "language": (resp.payload or {}).get("language"),
+                    "duration_s": round(time.monotonic() - start, 3),
+                },
+                simulated=simulated,
+            )
+
+        # TTS: el pod aún no incluye un backend de síntesis real (IndexTTS no
+        # está integrado). Falla tipado en vez de fingir; usar STUDIO_STUB_AUDIO=1
+        # para tests, o traer el submotor de TTS (fase posterior).
         return EngineResult(
             ok=False,
             engine=self.name,
             verb="run",
-            error=f"delegación real de '{audio.op}' a worker/IndexTTS pendiente (F6)",
+            error=(
+                f"op '{audio.op}' sin backend real integrado todavía; "
+                "STT usa el worker ASR, TTS requiere integrar el submotor de síntesis"
+            ),
         )
 
     # -- helpers -------------------------------------------------------------

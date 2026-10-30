@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Adaptador CLI `rvc` para el motor voice_clone del estudio.
+
+El motor (`VoiceCloneEngine._run_rvc`) invoca un binario llamado `rvc` con la
+interfaz fija:
+
+    rvc --op clone      --model-dir DIR --reference REF.wav --output OUT.wav \
+        --pitch N --source SRC.wav
+    rvc --op synthesize --model-dir DIR --reference REF.wav --output OUT.wav \
+        --pitch N --text "..."
+
+El proyecto RVC (RVC-Project/Retrieval-based-Voice-Conversion) expone un CLI
+`click` por subcomandos (`rvc infer --modelPath ... --inputPath ...`) que lee
+los pesos de un `.env` en el CWD. Este wrapper traduce la interfaz del motor a
+ese `rvc infer`, de forma aislada (subproceso, sin shell), con fallo TIPADO si
+faltan los pesos.
+
+RVC es CONVERSIÓN de voz, no TTS: convierte un audio fuente al timbre del
+modelo. No sintetiza voz a partir de texto. Por eso `--op synthesize` (texto)
+falla tipado honestamente en vez de fingir: necesita un front-end TTS que
+alimente a RVC, que no se hornea aquí.
+
+El repo RVC se hornea en la imagen (pip install por SHA fijado); los pesos
+(modelo `.pth`, index, hubert_base.pt, rmvpe) NO se hornean: viven en
+--model-dir y se bajan en runtime (cacheados en el volumen). Sin pesos, salida
+tipada no-cero.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+# Nombres canónicos esperados dentro de --model-dir (bajados en runtime).
+_MODEL_NAME = "model.pth"
+_HUBERT_NAME = "hubert_base.pt"
+_RMVPE_NAME = "rmvpe.pt"
+
+
+def _fail(msg: str, code: int) -> int:
+    sys.stderr.write(f"rvc: {msg}\n")
+    return code
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="rvc", add_help=True)
+    parser.add_argument("--op", required=True, choices=["clone", "synthesize"])
+    parser.add_argument("--model-dir", required=True)
+    parser.add_argument("--reference", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--pitch", type=int, default=0)
+    parser.add_argument("--source")
+    parser.add_argument("--text")
+    args = parser.parse_args()
+
+    # RVC hace conversión de voz, no síntesis desde texto.
+    if args.op == "synthesize":
+        return _fail(
+            "op 'synthesize' no soportada: RVC convierte voz, no sintetiza "
+            "desde texto; requiere un front-end TTS que alimente a RVC",
+            2,
+        )
+
+    if not args.source:
+        return _fail("op 'clone' requiere --source (audio a convertir)", 2)
+
+    model_dir = Path(args.model_dir)
+    model_pth = model_dir / _MODEL_NAME
+    hubert = model_dir / _HUBERT_NAME
+    rmvpe = model_dir / _RMVPE_NAME
+    missing = [p.name for p in (model_pth, hubert, rmvpe) if not p.is_file()]
+    if missing:
+        return _fail(
+            f"pesos RVC ausentes en {model_dir}: {', '.join(missing)} "
+            "(baja los pesos al --model-dir antes de ejecutar)",
+            3,
+        )
+
+    source = Path(args.source)
+    if not source.is_file():
+        return _fail(f"audio fuente ausente: {source}", 2)
+
+    # RVC carga hubert vía fairseq (import perezoso en get_vc). fairseq no se
+    # hornea en la imagen (opción A: pesado/compile, arrastra torch): se instala
+    # en runtime junto con los pesos. Sin fairseq, fallo TIPADO honesto.
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("fairseq") is None:
+            raise ModuleNotFoundError("fairseq")
+    except ModuleNotFoundError:
+        return _fail(
+            "fairseq ausente: instálalo en runtime junto con los pesos RVC "
+            "(opción A: no se hornea en la imagen por ser compile-pesado y "
+            "arrastrar torch). Sin fairseq no se puede cargar el modelo hubert",
+            4,
+        )
+
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    # RVC lee los pesos de un `.env` en el CWD (weight_root, hubert_path,
+    # rmvpe_root, index_root). Lo generamos apuntando a --model-dir en un CWD
+    # temporal aislado.
+    index_file = next(iter(sorted(model_dir.glob("*.index"))), None)
+    with tempfile.TemporaryDirectory() as workdir:
+        env_file = Path(workdir) / ".env"
+        env_file.write_text(
+            f"weight_root={model_dir}\n"
+            f"index_root={model_dir}\n"
+            f"rmvpe_root={model_dir}\n"
+            f"hubert_path={hubert}\n",
+            encoding="utf-8",
+        )
+
+        rvc_bin = os.environ.get("RVC_REAL_BIN") or "rvc"
+        cmd = [
+            rvc_bin,
+            "infer",
+            "--modelPath",
+            _MODEL_NAME,
+            "--inputPath",
+            str(source),
+            "--outputPath",
+            str(out),
+            "--f0upkey",
+            str(args.pitch),
+        ]
+        if index_file is not None:
+            cmd += ["--indexFile", str(index_file)]
+
+        try:
+            res = subprocess.run(  # noqa: S603 - args fijos, sin shell
+                cmd,
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError as exc:
+            return _fail(f"no se pudo lanzar rvc infer: {exc}", 1)
+
+    if res.stdout:
+        sys.stdout.write(res.stdout[-2000:])
+    if res.returncode != 0 or not out.exists():
+        sys.stderr.write((res.stderr or "rvc: infer falló sin salida")[-2000:])
+        return res.returncode or 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

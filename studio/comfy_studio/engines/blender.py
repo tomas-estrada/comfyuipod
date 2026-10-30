@@ -17,6 +17,7 @@ Mantiene su modo stub existente (`STUDIO_STUB_BLENDER=1`).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from comfy_studio.blender import (
@@ -61,7 +62,13 @@ class BlenderEngine(Engine):
         )
 
     def install(self, submotor: str, *, ref: str | None = None) -> EngineResult:
-        """Habilitar un add-on de Blender (submotor). Guarda STUDIO_DYNAMIC."""
+        """Habilitar un add-on de Blender (submotor). Guarda STUDIO_DYNAMIC.
+
+        Ejecuta un script bpy `--python` en Blender headless que habilita el
+        add-on por nombre de módulo (y lo instala desde `ref` si es un .zip/.py).
+        Subproceso aislado, timeout, stderr redactado. En modo stub reporta éxito
+        sin lanzar binario; sin binario de Blender, falla TIPADO.
+        """
         if not is_dynamic_enabled():
             return EngineResult(
                 ok=False,
@@ -72,13 +79,92 @@ class BlenderEngine(Engine):
                     "en pod determinista los add-ons vienen horneados"
                 ),
             )
+        if self.is_stub():
+            return EngineResult(
+                ok=True,
+                engine=self.name,
+                verb="install",
+                payload={"addon": submotor, "enabled": True},
+                simulated=True,
+            )
+
+        import subprocess
+        import tempfile
+
+        from comfy_studio.blender import find_blender_bin
+        from comfy_studio.config import SecretRedactor
+
+        redactor = SecretRedactor()
+        blender_bin = self._blender_bin or find_blender_bin()
+        if not blender_bin:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="install",
+                error="binario de Blender no encontrado para habilitar el add-on",
+            )
+        mod = json.dumps(submotor)
+        ref_lit = json.dumps(str(ref) if ref else "")
+        script = (
+            "import bpy, addon_utils\n"
+            f"mod = {mod}\n"
+            f"ref = {ref_lit}\n"
+            "if ref and (ref.endswith('.zip') or ref.endswith('.py')):\n"
+            "    bpy.ops.preferences.addon_install(filepath=ref, overwrite=True)\n"
+            "bpy.ops.preferences.addon_enable(module=mod)\n"
+            "bpy.ops.wm.save_userpref()\n"
+            "ok = any(m.__name__ == mod and getattr(m, '__addon_enabled__', False) "
+            "for m in addon_utils.modules())\n"
+            "print('ADDON_ENABLED' if ok else 'ADDON_ENABLE_FAILED')\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".py", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(script)
+            script_path = fh.name
+        try:
+            res = subprocess.run(  # noqa: S603 - args fijos, sin shell
+                [blender_bin, "-b", "--python", script_path],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300.0,
+            )
+        except subprocess.TimeoutExpired:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="install",
+                error="habilitar add-on excedió el timeout (300s)",
+            )
+        except OSError as exc:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="install",
+                error=redactor.redact(f"no se pudo lanzar Blender: {exc}"),
+            )
+        finally:
+            try:
+                Path(script_path).unlink()
+            except OSError:
+                pass
+        if res.returncode != 0 or "ADDON_ENABLED" not in (res.stdout or ""):
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="install",
+                error=redactor.redact(
+                    f"no se pudo habilitar el add-on '{submotor}': "
+                    f"rc={res.returncode} {(res.stderr or '')[:200]}"
+                ),
+            )
         return EngineResult(
-            ok=False,
+            ok=True,
             engine=self.name,
             verb="install",
-            error=(
-                f"cableado de enable/pip de add-ons pendiente (F6) para '{submotor}'"
-            ),
+            payload={"addon": submotor, "enabled": True},
         )
 
     def verify(self, submotor: str) -> EngineResult:

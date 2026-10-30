@@ -82,3 +82,15 @@ def test_install_blocked_when_dynamic_off(
     res = eng.install("some-addon")
     assert res.ok is False
     assert "STUDIO_DYNAMIC=1" in (res.error or "")
+
+
+def test_install_addon_stub_when_dynamic_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_DYNAMIC", "1")
+    monkeypatch.setenv("STUDIO_STUB_BLENDER", "1")
+    eng = BlenderEngine(log_dir=tmp_path / "logs")
+    res = eng.install("io_scene_custom")
+    assert res.ok is True and res.simulated is True
+    assert res.payload["addon"] == "io_scene_custom"
+    assert res.payload["enabled"] is True
