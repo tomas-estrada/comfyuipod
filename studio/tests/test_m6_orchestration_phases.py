@@ -107,6 +107,47 @@ def test_execute_failing_runner_triggers_replanning():
     assert shot.error == "boom"
 
 
+def test_failed_dependency_propagates_as_unreachable():
+    # A falló definitivamente; B depende de A -> B es inalcanzable (FAILED),
+    # no se queda pendiente para siempre.
+    a = Shot(description="a")
+    a.status = ShotStatus.FAILED
+    b = Shot(description="b", layers=[Layer(kind="gen", engine="comfyui")])
+    b.depends_on = [a.id]
+    st = ProductionState(idea="dep-fail")
+    st.sequences.append(Sequence(title="s", shots=[a, b]))
+    execute_next_shot(st)
+    assert b.status == ShotStatus.FAILED
+    assert a.id in (b.error or "")
+    kinds = [e["kind"] for e in st.log]
+    assert "shot_unreachable" in kinds
+
+
+def test_graph_with_unsatisfiable_dep_reaches_done_not_max_steps():
+    # un runner que siempre falla + un evaluador exigente agota el replan del
+    # primer shot; el segundo (dependiente) queda inalcanzable; el grafo TERMINA
+    # (ensambla lo que haya, phase=done) en vez de girar hasta max_steps.
+    class AlwaysFail:
+        def run_layer(self, engine, job, *, cost_cap=None):
+            return {"ok": False, "error": "nope"}
+
+    a = Shot(
+        description="a",
+        acceptance={"vbench_min": 0.99},
+        layers=[Layer(kind="gen", engine="comfyui")],
+    )
+    b = Shot(description="b", layers=[Layer(kind="gen", engine="comfyui")])
+    b.depends_on = [a.id]
+    st = ProductionState(idea="unsat")
+    st.sequences.append(Sequence(title="s", shots=[a, b]))
+    col = Collaborators(runner=AlwaysFail())
+    graph = build_production_graph(collaborators=col, max_steps=50)
+    final = graph.run(st)
+    assert final.phase == "done"  # terminó, no halted
+    assert a.status == ShotStatus.FAILED
+    assert b.status == ShotStatus.FAILED
+
+
 # --- fase 15: feedback loop + replan escalonado ----------------------------
 
 

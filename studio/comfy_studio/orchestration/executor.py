@@ -109,10 +109,22 @@ def execute_next_shot(
     accepted = {
         s.id for s in state.all_shots() if s.status == ShotStatus.ACCEPTED
     }
+    failed = {s.id for s in state.all_shots() if s.status == ShotStatus.FAILED}
 
     for shot in topological_shots(state):
         if shot.status not in (ShotStatus.PLANNED, ShotStatus.REPLANNING):
             continue
+        # una dependencia que falló definitivamente hace el shot INALCANZABLE:
+        # propagar el fallo en vez de dejarlo pendiente para siempre (que haría
+        # girar el grafo hasta max_steps sin avanzar).
+        blocked_by_failed = [dep for dep in shot.depends_on if dep in failed]
+        if blocked_by_failed:
+            shot.status = ShotStatus.FAILED
+            shot.error = f"dependencia fallida: {', '.join(blocked_by_failed)}"[:500]
+            state.record(
+                "shot_unreachable", shot=shot.id, failed_deps=blocked_by_failed
+            )
+            return state
         # no ejecutar hasta que sus dependencias estén aceptadas.
         if any(dep not in accepted for dep in shot.depends_on):
             continue
@@ -127,13 +139,17 @@ def execute_next_shot(
                 layer.engine, job, cost_cap=shot.cost_cap_usd or None
             )
             if not result.get("ok", False):
-                shot.status = ShotStatus.REPLANNING
                 shot.error = str(result.get("error", "fallo de capa sin detalle"))[:500]
+                # un fallo de ejecución escala el replan igual que un fallo de
+                # aceptación: local->plantilla->global->FAILED. Así un runner que
+                # siempre falla no deja el shot girando en REPLANNING para siempre.
+                tier = shot.escalate_replan()
                 state.record(
                     "execute_failed",
                     shot=shot.id,
                     layer=layer.kind,
                     engine=layer.engine,
+                    tier=str(tier) if tier else None,
                 )
                 return state
             layer.output_path = result.get("output_path")
