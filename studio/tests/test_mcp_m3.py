@@ -72,9 +72,15 @@ def test_mcp_tools_list_exposes_safe_subset(client: TestClient) -> None:
     # Herramientas sensibles del agente NO se exponen vía MCP
     assert "delegate_role" not in names
     assert "update_plan" not in names
+    # GOBERNANZA (M6-AGT-001): el agente ve las 3 tools de producción de
+    # lectura/planificación, pero NUNCA la puerta de gasto humano `approve_plan`.
+    assert {"plan_production", "get_plan", "production_status"}.issubset(names)
+    assert "approve_plan" not in names
+    # las tools del belt y globales (no las de producción) llevan project_id.
+    production_tools = {"plan_production", "get_plan", "production_status"}
     for tool in tools:
         assert tool["inputSchema"]["type"] == "object"
-        if tool["name"] != "list_projects":
+        if tool["name"] not in ({"list_projects"} | production_tools):
             assert "project_id" in tool["inputSchema"]["properties"]
 
 
@@ -298,7 +304,7 @@ def test_mcp_auth_matrix_basic_auth_and_studio_token(
         assert wrong.status_code == 401
 
 
-# --- VAL-MCP-002: catálogo exacto de 9 tools y delegate_role fuera -----------
+# --- VAL-MCP-002: catálogo exacto de tools y delegate_role/approve_plan fuera -
 
 MCP_EXPECTED_TOOL_NAMES = {
     "list_templates",
@@ -310,16 +316,22 @@ MCP_EXPECTED_TOOL_NAMES = {
     "tag_asset",
     "list_projects",
     "list_assets",
+    # producción (M6): planear/leer/estado SÍ; approve_plan NUNCA (gasto humano).
+    "plan_production",
+    "get_plan",
+    "production_status",
 }
 
 
-def test_mcp_tools_list_is_exactly_the_nine_allowed_tools(client: TestClient) -> None:
+def test_mcp_tools_list_is_exactly_the_allowed_tools(client: TestClient) -> None:
     tools = _rpc(client, "tools/list", {}).json()["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert len(names) == 9
+    assert len(names) == len(MCP_EXPECTED_TOOL_NAMES)
     assert set(names) == MCP_EXPECTED_TOOL_NAMES
     assert "delegate_role" not in names
     assert "update_plan" not in names
+    # la puerta de gasto humano NO se expone al agente (M6-AGT-001).
+    assert "approve_plan" not in names
 
 
 def test_mcp_delegate_role_is_not_invocable(client: TestClient) -> None:
