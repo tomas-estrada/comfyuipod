@@ -842,7 +842,10 @@ pub fn probe_studio_brain(cfg: &RuntimeConfig) -> (bool, String) {
             ),
         );
     }
-    (true, format!("cerebro: {total} capacidades, 0 no disponibles"))
+    (
+        true,
+        format!("cerebro: {total} capacidades, 0 no disponibles"),
+    )
 }
 
 fn parse_driver_major(driver: &str) -> u32 {

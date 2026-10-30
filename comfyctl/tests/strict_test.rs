@@ -644,8 +644,7 @@ fn strict_s15_s16_orchestration_and_brain_warn_never_fatal() {
     snap_bad.orchestration_ok = false;
     snap_bad.orchestration_detail = "orquestación DOWN: import falló".to_string();
     snap_bad.agent_brain_ok = false;
-    snap_bad.agent_brain_detail =
-        "cerebro: 4 capacidades, 1 NO DISPONIBLES (compress)".to_string();
+    snap_bad.agent_brain_detail = "cerebro: 4 capacidades, 1 NO DISPONIBLES (compress)".to_string();
     let rep_bad = evaluate_strict_checks(&cfg, &snap_bad);
     let orch_warn = rep_bad.checks.iter().find(|c| c.id == "S15");
     let brain_warn = rep_bad.checks.iter().find(|c| c.id == "S16");
