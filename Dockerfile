@@ -392,6 +392,21 @@ RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/ns-constrain
     && python3 -c "from google.protobuf import runtime_version; import onnx; print('onnx+protobuf ok')" \
     && command -v ns-train && command -v ns-export && command -v ns-process-data \
     && pip3 freeze > /etc/comfyui/requirements.lock
+
+# 5i. Cerebro del agente (M6 Bloque 1, grupo B): compresión de contexto, recuperación
+#     y re-ranking. Son LIGEROS (CPU) y sus metadatos NO topan torch/numpy, pero se
+#     instalan con un CONSTRAINT que fija torch/torchvision a las versiones del pod
+#     para que el resolver no las mueva (lección RVC/nerfstudio). La memoria del
+#     cerebro usa SQLite de la stdlib: no se hornea nada para ella. Un pin malo rompe
+#     ESTE build (import guard). PROTOBUF se protege igual que en el bloque nerfstudio.
+RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/brain-constraints.txt \
+    && PROTOBUF_KEEP="$(python3 -c 'import importlib.metadata as m; print(m.version("protobuf"))')" \
+    && PIP_CONSTRAINT=/tmp/brain-constraints.txt pip3 install --no-cache-dir \
+        "llmlingua==0.2.2" "bm25s==0.3.16" "flashrank==0.2.10" \
+    && rm -f /tmp/brain-constraints.txt \
+    && pip3 install --no-cache-dir --no-deps "protobuf==${PROTOBUF_KEEP}" \
+    && python3 -c "import importlib.util as u; assert all(u.find_spec(m) for m in ('llmlingua','bm25s','flashrank')), 'cerebro: falta una lib'; print('agent-brain libs ok')" \
+    && pip3 freeze > /etc/comfyui/requirements.lock
 ARG BUILD_DATE=unknown
 
 COPY --from=builder --chmod=0755 /build/comfyctl/target/release/comfyctl /usr/local/bin/comfyctl

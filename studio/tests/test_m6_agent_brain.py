@@ -119,6 +119,27 @@ def test_health_report_counts_stub(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_health_report_counts_unavailable_without_stub() -> None:
     rep = brain_health_report(build_default_brain())
-    # Fase 1 sin stub: ningún backend real -> todas unavailable.
-    assert rep["counts"]["unavailable"] == 4
-    assert rep["counts"]["ready"] == 0
+    # Sin stub: memory está READY (SQLite stdlib siempre disponible); compress/
+    # retrieve/rerank quedan unavailable en CI (sus libs no están instaladas).
+    assert rep["counts"]["ready"] == 1
+    assert rep["counts"]["unavailable"] == 3
+
+
+def test_memory_real_sqlite_roundtrip(tmp_path) -> None:
+    # Backend real (sin stub): remember -> recall sobre SQLite stdlib.
+    cap = MemoryCapability()
+    db = str(tmp_path / "mem.db")
+    stored = cap.run("remember", {"db_path": db, "key": "paleta", "value": "neón azul"})
+    assert stored.ok and stored.simulated is False
+    got = cap.run("recall", {"db_path": db, "query": "paleta"})
+    assert got.ok and got.simulated is False
+    assert got.payload["memories"] == [{"key": "paleta", "value": "neón azul"}]
+    # recall sin coincidencia -> lista vacía honesta.
+    none = cap.run("recall", {"db_path": db, "query": "inexistente"})
+    assert none.payload["memories"] == []
+
+
+def test_memory_real_requires_db_path() -> None:
+    res = MemoryCapability().run("remember", {"key": "x", "value": "y"})
+    assert res.ok is False
+    assert "db_path" in (res.error or "")

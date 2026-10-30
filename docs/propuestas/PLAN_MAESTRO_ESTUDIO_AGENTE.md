@@ -136,10 +136,10 @@ loopback, fix-repo-not-test, cada fase un commit verde (Rust + Python + build CI
 **Bloque 1 — Cerebro del agente (grupo B, pilar)**
 | # | Entregable |
 |---|---|
-| 1 | `agent_brain/` scaffold + contrato tipado + stubs; registry del cerebro |
-| 2 | LLMLingua-2 (compresión) horneado + wire, stub CI |
-| 3 | BM25s + FlashRank (recuperación/re-rank) horneado + wire |
-| 4 | Letta (memoria persistente) horneado + wire loopback, stub CI |
+| 1 | ✅ `agent_brain/` scaffold + contrato tipado (`BrainResult`) + stubs + registry |
+| 2 | ✅ LLMLingua-2 (compresión) wire real + stub + bake (constraint torch-safe) |
+| 3 | ✅ BM25s + FlashRank (recuperación/re-rank) wire real + stub + bake |
+| 4 | ✅ Memoria persistente — **decisión de criterio: NO Letta** (framework pesado, servidor FastAPI + pydantic v2 chocarían con la app del estudio); se usa un almacén de hechos SQLite de la stdlib (sin deps nuevas, sin segundo proceso). Letta queda diferido como servicio externo opcional. |
 
 **Bloque 2 — Motores nuevos (grupo A)**
 | # | Entregable |

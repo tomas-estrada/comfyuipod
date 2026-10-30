@@ -20,13 +20,40 @@ from comfy_studio.agent_brain.base import BrainCapability
 
 
 class MemoryCapability(BrainCapability):
-    """Memoria persistente por proyecto (Letta en fase 4). Ops: remember / recall."""
+    """Memoria persistente por proyecto. Ops: remember / recall.
+
+    DECISIÓN DE CRITERIO (fase 4): NO se embebe Letta. Letta es un framework
+    pesado que trae su propio servidor FastAPI + pydantic v2 + sqlalchemy, que
+    chocarían con la app FastAPI del estudio y violarían el split servicio/runtime
+    (pref.service_vs_runtime_split) metiendo un segundo proceso in-process. Para
+    una memoria persistente estable y sin dependencias nuevas se usa un almacén
+    de hechos respaldado por **SQLite de la stdlib** (`sqlite3`): recuerda hechos
+    por clave (personajes, paletas, acuerdos de estilo) y los recupera por
+    coincidencia léxica. Letta queda como posible servicio EXTERNO opcional a
+    futuro si se necesitan sus niveles archival/recall; no se descarta, se difiere.
+
+    La ruta de la BD se pasa en `args["db_path"]` (el proyecto la fija); en stub
+    no toca disco.
+    """
 
     name = "memory"
     tier = BrainCapabilityTier.WARM
 
     def available(self) -> bool:
-        return self.is_stub()  # fase 4 añade el backend Letta real
+        # sqlite3 es stdlib: el backend real siempre está disponible.
+        return True
+
+    @staticmethod
+    def _connect(db_path: str) -> Any:
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS agent_memory ("
+            "key TEXT PRIMARY KEY, value TEXT NOT NULL, "
+            "updated_at REAL NOT NULL DEFAULT (strftime('%s','now')))"
+        )
+        return conn
 
     def run(self, op: str, args: dict[str, Any]) -> BrainResult:
         if op not in ("remember", "recall"):
@@ -40,7 +67,6 @@ class MemoryCapability(BrainCapability):
                     payload={"stored": True, "key": str(args.get("key", ""))},
                     simulated=True,
                 )
-            # recall: stub devuelve lista vacía honesta (no inventa memorias)
             return BrainResult(
                 ok=True,
                 capability=self.name,
@@ -48,12 +74,62 @@ class MemoryCapability(BrainCapability):
                 payload={"memories": []},
                 simulated=True,
             )
-        return BrainResult(
-            ok=False,
-            capability=self.name,
-            op=op,
-            error="backend de memoria (Letta) no disponible; usa STUDIO_STUB_BRAIN_MEMORY=1",
-        )
+        db_path = str(args.get("db_path", "")).strip()
+        if not db_path:
+            return BrainResult(
+                ok=False,
+                capability=self.name,
+                op=op,
+                error="memory requiere 'db_path' (ruta SQLite del proyecto)",
+            )
+        try:
+            conn = self._connect(db_path)
+        except Exception as exc:  # noqa: BLE001 - sqlite puede lanzar varios tipos
+            return BrainResult(
+                ok=False,
+                capability=self.name,
+                op=op,
+                error=f"memory: no se pudo abrir la BD: {type(exc).__name__}",
+            )
+        try:
+            if op == "remember":
+                key = str(args.get("key", "")).strip()
+                value = str(args.get("value", ""))
+                if not key:
+                    return BrainResult(
+                        ok=False, capability=self.name, op=op, error="remember requiere 'key'"
+                    )
+                conn.execute(
+                    "INSERT INTO agent_memory(key, value) VALUES(?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+                    "updated_at=strftime('%s','now')",
+                    (key, value),
+                )
+                conn.commit()
+                return BrainResult(
+                    ok=True,
+                    capability=self.name,
+                    op=op,
+                    payload={"stored": True, "key": key},
+                )
+            # recall: coincidencia léxica simple sobre clave y valor.
+            query = str(args.get("query", "")).strip()
+            k = int(args.get("k", 5))
+            like = f"%{query}%"
+            rows = conn.execute(
+                "SELECT key, value FROM agent_memory "
+                "WHERE key LIKE ? OR value LIKE ? ORDER BY updated_at DESC LIMIT ?",
+                (like, like, k),
+            ).fetchall()
+            memories = [{"key": r[0], "value": r[1]} for r in rows]
+            return BrainResult(
+                ok=True,
+                capability=self.name,
+                op=op,
+                payload={"memories": memories},
+            )
+        finally:
+            conn.close()
 
 
 class CompressCapability(BrainCapability):
