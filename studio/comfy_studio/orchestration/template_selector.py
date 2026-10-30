@@ -24,11 +24,41 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from comfy_studio.engines import is_dynamic_enabled
 from comfy_studio.templates import get_default_registry
 from comfy_studio.templates.registry import TemplateRegistry
+
+
+@dataclass(slots=True)
+class DiscoveredTemplate:
+    """Una plantilla candidata hallada en una fuente comunitaria (no curada).
+
+    Forma mínima para poder buscar/cruzar igual que una curada: id, texto para
+    casar la intención, nodos requeridos (para el cruce de capacidades) y la
+    procedencia. El workflow JSON en sí se trae solo si el agente la elige.
+    """
+
+    template_id: str
+    name: str
+    category: str
+    text: str  # resumen/descripción para el match léxico
+    required_nodes: list[str] = field(default_factory=list)
+    source: str = "community"
+
+
+class DiscoveryProvider(Protocol):
+    """Fuente de plantillas de la comunidad (ComfyUI-Manager, repos, etc.).
+
+    Inyectable: el pod determinista no trae ninguno (búsqueda 100% local). El
+    proveedor real se conecta en runtime y SOLO se consulta con STUDIO_DYNAMIC=1,
+    respetando loopback y la regla n.º 6 (instalar solo vía Manager+PIP_CONSTRAINT).
+    No lanza: devuelve [] si no puede buscar.
+    """
+
+    def discover(self, query: str, *, output_kind: str, limit: int) -> list[DiscoveredTemplate]:
+        ...
 
 
 @dataclass(slots=True)
@@ -142,12 +172,20 @@ class TemplateSelector:
       1. buscar candidatos por intención/estilo (léxico aquí; BM25s+semántico luego),
       2. cruzar con capacidades instaladas (required_nodes vs nodos disponibles),
       3. re-rankear los viables (FlashRank en fase posterior; aquí score léxico),
-      4. adaptar el JSON (TODO fase siguiente),
-      5. encadenar varias plantillas (TODO fase siguiente).
+      4. adaptar el JSON (intent -> params reales de la plantilla),
+      5. encadenar varias plantillas en un sub-grafo tipado,
+      (b) descubrimiento dinámico: ampliar el índice con fuentes comunitarias,
+          SOLO con STUDIO_DYNAMIC=1 y un proveedor inyectado.
     """
 
-    def __init__(self, registry: TemplateRegistry | None = None) -> None:
+    def __init__(
+        self,
+        registry: TemplateRegistry | None = None,
+        *,
+        discovery_provider: DiscoveryProvider | None = None,
+    ) -> None:
         self._registry = registry or get_default_registry()
+        self._discovery = discovery_provider
 
     # -- paso 1+2+3: buscar, cruzar, rankear --------------------------------
 
@@ -194,6 +232,51 @@ class TemplateSelector:
                     reason=reason,
                 )
             )
+
+        # Capa (b): descubrimiento dinámico. Solo con STUDIO_DYNAMIC=1 y un proveedor
+        # inyectado; las plantillas comunitarias pasan por el MISMO cruce de capacidades
+        # que las curadas (nada entra sin verificar nodos). Nunca rompe la búsqueda local.
+        if self.discovery_enabled() and self._discovery is not None:
+            try:
+                found = self._discovery.discover(
+                    intent.prompt_text(), output_kind=intent.output_kind, limit=top_k
+                )
+            except Exception:  # noqa: BLE001 - un proveedor externo no debe romper la selección
+                found = []
+            known = {c.template_id for c in candidates}
+            for dt in found:
+                if dt.template_id in known:
+                    continue
+                dscore = self._lexical_score(
+                    query_tokens,
+                    {
+                        "name": dt.name,
+                        "category": dt.category,
+                        "summary": dt.text,
+                        "description": "",
+                    },
+                )
+                dmissing = (
+                    [n for n in dt.required_nodes if n not in available_nodes]
+                    if available_nodes is not None
+                    else []
+                )
+                candidates.append(
+                    TemplateCandidate(
+                        template_id=dt.template_id,
+                        name=dt.name,
+                        category=dt.category or dt.source,
+                        score=dscore,
+                        viable=not dmissing,
+                        required_nodes=list(dt.required_nodes),
+                        missing_nodes=dmissing,
+                        reason=(
+                            "viable"
+                            if not dmissing
+                            else f"faltan nodos: {', '.join(dmissing)}"
+                        ),
+                    )
+                )
 
         # Viables primero, luego por score; los no viables al final (el agente puede
         # decidir instalar el submotor que falta si STUDIO_DYNAMIC lo permite).

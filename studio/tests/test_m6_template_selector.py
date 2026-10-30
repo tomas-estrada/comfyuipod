@@ -181,6 +181,78 @@ def test_discovery_gate_follows_dynamic(monkeypatch: pytest.MonkeyPatch) -> None
     assert sel.discovery_enabled() is True
 
 
+class _FakeProvider:
+    def __init__(self, items):
+        self._items = items
+
+    def discover(self, query, *, output_kind, limit):  # noqa: ARG002
+        return self._items
+
+
+def test_discovery_ignored_when_dynamic_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from comfy_studio.orchestration.template_selector import DiscoveredTemplate
+
+    monkeypatch.delenv("STUDIO_DYNAMIC", raising=False)
+    prov = _FakeProvider(
+        [DiscoveredTemplate("community_x", "Comunidad X", "video", "texto a video", [])]
+    )
+    sel = TemplateSelector(discovery_provider=prov)
+    ids = [c.template_id for c in sel.select(ShotIntent(intent="texto a video"), top_k=20)]
+    assert "community_x" not in ids  # determinista: no se consulta la comunidad
+
+
+def test_discovery_merges_when_dynamic_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    from comfy_studio.orchestration.template_selector import DiscoveredTemplate
+
+    monkeypatch.setenv("STUDIO_DYNAMIC", "1")
+    prov = _FakeProvider(
+        [
+            DiscoveredTemplate(
+                "community_t2v", "Comunidad T2V", "video", "texto a video de la comunidad", []
+            )
+        ]
+    )
+    sel = TemplateSelector(discovery_provider=prov)
+    cands = sel.select(ShotIntent(intent="texto a video"), top_k=50)
+    ids = [c.template_id for c in cands]
+    assert "community_t2v" in ids
+
+
+def test_discovery_candidate_crossed_with_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    from comfy_studio.orchestration.template_selector import DiscoveredTemplate
+
+    monkeypatch.setenv("STUDIO_DYNAMIC", "1")
+    prov = _FakeProvider(
+        [
+            DiscoveredTemplate(
+                "community_needs_node",
+                "Comunidad",
+                "video",
+                "texto a video",
+                ["NodoRaroNoInstalado"],
+            )
+        ]
+    )
+    sel = TemplateSelector(discovery_provider=prov)
+    cands = sel.select(ShotIntent(intent="texto a video"), available_nodes=set(), top_k=50)
+    comm = next(c for c in cands if c.template_id == "community_needs_node")
+    assert comm.viable is False
+    assert "NodoRaroNoInstalado" in comm.missing_nodes
+
+
+def test_discovery_provider_error_does_not_break_select(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STUDIO_DYNAMIC", "1")
+
+    class _Boom:
+        def discover(self, query, *, output_kind, limit):  # noqa: ARG002
+            raise RuntimeError("red caída")
+
+    sel = TemplateSelector(discovery_provider=_Boom())
+    # La búsqueda local sigue funcionando pese al fallo del proveedor.
+    cands = sel.select(ShotIntent(intent="texto a video wan"), top_k=10)
+    assert cands
+
+
 def test_candidate_serializable() -> None:
     sel = TemplateSelector()
     cands = sel.select(ShotIntent(intent="video"), top_k=1)
