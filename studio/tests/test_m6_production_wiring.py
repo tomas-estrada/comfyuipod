@@ -115,3 +115,48 @@ def test_agent_cannot_approve_via_mcp(client: TestClient) -> None:
     st = _call_tool(client, "production_status", {"production_id": production_id})
     st_payload = json.loads(st.json()["result"]["content"][0]["text"])
     assert st_payload["storyboard_approved"] is False
+
+
+# --------------------------------------------------------------------------
+# Cableado de motores reales (STUDIO_ORCH_REAL_ENGINES) — sin GPU
+# --------------------------------------------------------------------------
+
+
+def test_real_engines_flag_wires_live_collaborators(
+    monkeypatch, studio_config, stub_comfyui_transport
+) -> None:
+    """Con STUDIO_ORCH_REAL_ENGINES=1 el servicio se arma con colaboradores reales.
+
+    No toca GPU: los motores se instancian pero el test solo comprueba que el
+    cableado ocurrió (collaborators no vacío con adaptadores reales).
+    """
+    from comfy_studio.app import create_app
+    from comfy_studio.orchestration.adapters import (
+        EngineAssembler,
+        EngineRunnerAdapter,
+        QaShotEvaluator,
+    )
+
+    monkeypatch.setenv("STUDIO_ORCH_REAL_ENGINES", "1")
+    app = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
+    collab = app.state.production_service.collaborators
+    # planner, runner, evaluator y assembler deben ser los adaptadores reales.
+    assert isinstance(collab.runner, EngineRunnerAdapter)
+    assert isinstance(collab.evaluator, QaShotEvaluator)
+    assert isinstance(collab.assembler, EngineAssembler)
+    assert collab.planner is not None
+    assert collab.reselect_template is not None
+
+
+def test_no_flag_keeps_stub_collaborators(
+    monkeypatch, studio_config, stub_comfyui_transport
+) -> None:
+    """Sin el flag, el servicio usa colaboradores None (stub) — CI por defecto."""
+    from comfy_studio.app import create_app
+
+    monkeypatch.delenv("STUDIO_ORCH_REAL_ENGINES", raising=False)
+    app = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
+    collab = app.state.production_service.collaborators
+    assert collab.runner is None
+    assert collab.evaluator is None
+    assert collab.assembler is None

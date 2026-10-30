@@ -35,10 +35,15 @@ from comfy_studio.config import (
     install_log_redaction,
 )
 from comfy_studio.edl import execute_edl_ffmpeg, generate_highlights_edl
+from comfy_studio.engines.comfyui import ComfyUIEngine
+from comfy_studio.engines.editor import EditorEngine
 from comfy_studio.engines.health import health_report
+from comfy_studio.engines.qa import QaEngine
 from comfy_studio.engines.registry import build_default_registry
+from comfy_studio.engines.upscaler import UpscalerEngine
 from comfy_studio.mcp_server import McpContext, create_mcp_router
 from comfy_studio.ml import probe_capabilities
+from comfy_studio.orchestration.adapters import build_server_collaborators
 from comfy_studio.orchestration.health import orchestration_health_report
 from comfy_studio.orchestration.service import (
     ProductionNotApprovedError,
@@ -736,12 +741,8 @@ def create_app(
         broker=broker,
         redactor=redactor,
     )
-    # Servicio de producción (orquestación M6). Por defecto corre con
-    # colaboradores stub (CI/arranque sin GPU); el servidor cablea los
-    # adaptadores reales cuando los motores están vivos. La StoryboardGate es
-    # la puerta de gasto humano: approve_plan NUNCA se expone al agente LLM
-    # (ver mcp_server.py / M6-AGT-001), solo la API pública la acciona.
-    app.state.production_service = ProductionService()
+    # (El ProductionService se arma más abajo, tras construir app.state.llm_client,
+    # porque el cableado de motores reales lo necesita — M6-AGT-001.)
     # M1.2: la construcción de la percepción vectorial NO puede tumbar la app. Si
     # `sqlite-vec` falta o falla, se degrada a `perception_available=False`: los
     # endpoints de percepción responden 503 con el motivo y el resto de Studio
@@ -857,6 +858,43 @@ def create_app(
         tool_belt=app.state.tool_belt,
         redactor=redactor,
     )
+
+    # Servicio de producción (orquestación M6). La StoryboardGate es la puerta
+    # de gasto humano: approve_plan NUNCA se expone al agente LLM (ver
+    # mcp_server.py / M6-AGT-001), solo la API pública la acciona.
+    #
+    # Colaboradores: por defecto STUB (CI/tests sin GPU). En el pod, con
+    # STUDIO_ORCH_REAL_ENGINES=1, se cablean los adaptadores reales a los
+    # motores vivos (requiere llm_client ya construido, de ahí esta posición).
+    # El cableado es TOLERANTE a fallos: si construir un motor real falla, esa
+    # fase cae a su stub y el servicio arranca igual (nunca tumba el pod).
+    orch_collaborators = None
+    if (os.environ.get("STUDIO_ORCH_REAL_ENGINES") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        try:
+            orch_collaborators = build_server_collaborators(
+                llm_client=app.state.llm_client,
+                engines={
+                    "comfyui": ComfyUIEngine(app.state.comfyui_client),
+                    "upscaler": UpscalerEngine(),
+                },
+                qa_engine=QaEngine(),
+                editor_engine=EditorEngine(backend="remotion"),
+            )
+            logger.info(
+                "STUDIO: orquestación con motores REALES (STUDIO_ORCH_REAL_ENGINES=1)."
+            )
+        except Exception as exc:  # noqa: BLE001 - nunca tumbar el arranque
+            logger.warning(
+                "STUDIO: no se pudieron cablear los motores reales de orquestación "
+                "(%s); se usan stubs.",
+                redactor.redact(str(exc)),
+            )
+            orch_collaborators = None
+    app.state.production_service = ProductionService(collaborators=orch_collaborators)
 
     mcp_ctx = McpContext(
         store=store,
