@@ -19,6 +19,7 @@ pendientes, ejecutar→evaluar (con replan en medio); cuando todos están acepta
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from comfy_studio.orchestration.assembler import Assembler, assemble_reel
@@ -30,7 +31,7 @@ from comfy_studio.orchestration.evaluator import (
 from comfy_studio.orchestration.executor import EngineRunner, execute_next_shot
 from comfy_studio.orchestration.graph import END, ProductionGraph
 from comfy_studio.orchestration.planner import PlannerLLM, plan_production
-from comfy_studio.orchestration.state import ProductionState, ShotStatus
+from comfy_studio.orchestration.state import ProductionState, Shot, ShotStatus
 
 # Fases del grafo (nombres de nodo).
 PLAN = "plan"
@@ -47,6 +48,7 @@ class Collaborators:
     runner: EngineRunner | None = None
     evaluator: ShotEvaluator | None = None
     reselect_template: TemplateReselector | None = None
+    replan_shot: Callable[[Shot, ProductionState], bool] | None = None
     assembler: Assembler | None = None
 
 
@@ -86,7 +88,10 @@ def build_production_graph(
     graph.add_node(
         EVALUATE,
         lambda s: evaluate_and_replan(
-            s, col.evaluator, reselect_template=col.reselect_template
+            s,
+            col.evaluator,
+            reselect_template=col.reselect_template,
+            replan_shot=col.replan_shot,
         ),
     )
     graph.add_node(ASSEMBLE, lambda s: assemble_reel(s, col.assembler))

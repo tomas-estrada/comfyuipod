@@ -123,3 +123,30 @@ class ProductionCheckpointer:
                 (production_id,),
             )
             return cur.rowcount > 0
+
+    def prune(
+        self, *, keep_max: int = 100, older_than_days: float | None = None
+    ) -> int:
+        """Poda checkpoints antiguos para evitar crecimiento indefinido de SQLite.
+
+        Devuelve el total de filas eliminadas.
+        """
+        deleted = 0
+        with self._connect() as conn:
+            if older_than_days is not None and older_than_days > 0:
+                cutoff = time.time() - (older_than_days * 86400.0)
+                cur = conn.execute(
+                    "DELETE FROM production_checkpoint WHERE updated_at < ?",
+                    (cutoff,),
+                )
+                deleted += cur.rowcount
+            if keep_max > 0:
+                cur = conn.execute(
+                    "DELETE FROM production_checkpoint WHERE production_id NOT IN ("
+                    "SELECT production_id FROM production_checkpoint "
+                    "ORDER BY updated_at DESC LIMIT ?"
+                    ")",
+                    (int(keep_max),),
+                )
+                deleted += cur.rowcount
+        return deleted

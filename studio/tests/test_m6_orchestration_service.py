@@ -111,3 +111,46 @@ def test_gate_blocks_expensive_loop_until_approved(tmp_path):
     assert pre["storyboard_approved"] is False
     assert pre["final_output_path"] is None
     assert not isinstance(ProductionNotApprovedError, str)  # símbolo exportado
+
+
+def test_approval_persists_full_storyboard_gate_dict(tmp_path):
+    # M6-SCR-002: persistencia completa de StoryboardGate incluyendo historial y rondas
+    db = tmp_path / "gate_full.sqlite3"
+    svc1 = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    pid = svc1.plan_production("un plano cinematográfico", cost_cap_usd=1.0)["production_id"]
+
+    st1 = svc1.checkpointer.load(pid)
+    assert st1 is not None
+    gate_data = st1.metadata.get("storyboard_gate")
+    assert isinstance(gate_data, dict)
+    assert gate_data["state"] == "awaiting_approval"
+    assert gate_data["rounds"] == 1
+    assert len(gate_data["history"]) >= 1
+
+    # Reinicio del pod: svc2 hidrata desde dict y aprueba manteniendo el historial
+    svc2 = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    out = svc2.approve_plan(pid)
+    assert out["phase"] == "done"
+
+    st2 = svc2.checkpointer.load(pid)
+    assert st2 is not None
+    gate_data2 = st2.metadata.get("storyboard_gate")
+    assert isinstance(gate_data2, dict)
+    assert gate_data2["state"] == "approved"
+    assert len(gate_data2["history"]) >= 2
+
+
+def test_approval_legacy_string_gate_fallback(tmp_path):
+    # Compatibilidad hacia atrás si un checkpoint previo guardó el estado como string
+    db = tmp_path / "legacy.sqlite3"
+    svc1 = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    pid = svc1.plan_production("un plano legado", cost_cap_usd=1.0)["production_id"]
+
+    st = svc1.checkpointer.load(pid)
+    st.metadata["storyboard_gate"] = "awaiting_approval"
+    svc1.checkpointer.save(st)
+
+    # Reinicio del pod: svc2 maneja el string sin lanzar excepción
+    svc2 = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    out = svc2.approve_plan(pid)
+    assert out["phase"] == "done"

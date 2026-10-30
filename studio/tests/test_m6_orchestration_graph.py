@@ -122,6 +122,32 @@ def test_checkpointer_missing_and_delete(tmp_path):
     assert cp.load(st.id) is None
 
 
+def test_checkpointer_prune_keep_max_and_age(tmp_path):
+    import time
+
+    db = tmp_path / "prune.sqlite3"
+    cp = ProductionCheckpointer(db_path=db)
+
+    # Crear 5 estados distintos
+    for i in range(5):
+        st = _sample_state()
+        st.id = f"prod_{i}"
+        cp.save(st)
+        time.sleep(0.01)
+
+    assert len(cp.list_ids()) == 5
+
+    # Poda manteniendo los 3 más recientes
+    deleted = cp.prune(keep_max=3)
+    assert deleted == 2
+    assert len(cp.list_ids()) == 3
+
+    # Poda por días (ninguno tiene más de 1 día de antigüedad)
+    del_days = cp.prune(keep_max=10, older_than_days=1.0)
+    assert del_days == 0
+    assert len(cp.list_ids()) == 3
+
+
 # --- grafo esqueleto -------------------------------------------------------
 
 

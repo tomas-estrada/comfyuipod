@@ -144,3 +144,43 @@ def plan_production(
         planner=type(planner).__name__,
     )
     return state
+
+
+def replan_shot_focalized(
+    shot: Shot,
+    state: ProductionState,
+    llm: PlannerLLM | None = None,
+) -> bool:
+    """Replanifica un único shot con el LLM sin purgar secuencias completadas (M6-SCR-003).
+
+    Conserva dependencias y duración; reescribe las capas del shot con
+    nuevos parámetros sugeridos por el planner para superar la evaluación.
+    """
+    planner = llm or StubPlannerLLM()
+    context = {
+        "idea": state.idea,
+        "failed_shot_id": shot.id,
+        "previous_description": shot.description,
+        "last_score": shot.last_score,
+    }
+    raw = planner.plan(
+        f"Reencuadre de calidad: {shot.description}", context=context
+    )
+    seqs = raw.get("sequences", [])
+    if seqs and seqs[0].get("shots"):
+        new_shot_data = seqs[0]["shots"][0]
+        shot.description = str(
+            new_shot_data.get("description", shot.description)
+        )[:200]
+        if new_shot_data.get("layers"):
+            shot.layers = [
+                Layer(
+                    kind=str(ly.get("kind", "gen")),
+                    engine=str(ly.get("engine", "comfyui")),
+                    template_id=ly.get("template_id"),
+                    params=dict(ly.get("params", {})),
+                )
+                for ly in new_shot_data.get("layers", [])
+            ]
+        return True
+    return False

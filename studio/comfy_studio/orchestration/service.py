@@ -68,10 +68,10 @@ class ProductionService:
         gate = StoryboardGate()
         gate.submit_draft(draft_path=f"plan:{state.id}")
         self._gates[state.id] = gate
-        # PERSISTIR el estado de la puerta junto al checkpoint: si no, un reinicio
+        # PERSISTIR la puerta completa junto al checkpoint: si no, un reinicio
         # del pod vacía self._gates y toda producción planificada queda bloqueada
-        # para siempre al aprobar (M6-SCR-002).
-        state.metadata["storyboard_gate"] = gate.state.value
+        # para siempre al aprobar, perdiendo historial y rondas (M6-SCR-002).
+        state.metadata["storyboard_gate"] = gate.to_dict()
         state.phase = "awaiting_approval"
         state.record("await_approval", shots=len(state.all_shots()))
         self.checkpointer.save(state)
@@ -98,11 +98,12 @@ class ProductionService:
         gate = self._gates.get(production_id)
         if gate is None:
             persisted = state.metadata.get("storyboard_gate")
-            gate = (
-                StoryboardGate(state=StoryboardState(persisted))
-                if persisted
-                else StoryboardGate()
-            )
+            if isinstance(persisted, dict):
+                gate = StoryboardGate.from_dict(persisted)
+            elif isinstance(persisted, str):
+                gate = StoryboardGate(state=StoryboardState(persisted))
+            else:
+                gate = StoryboardGate()
         # avanzar la puerta a APPROVED (fail-closed si no estaba esperando).
         if not gate.can_enter_build():
             if gate.state is StoryboardState.AWAITING_APPROVAL:
@@ -112,7 +113,7 @@ class ProductionService:
                     f"storyboard no aprobable desde {gate.state}"
                 )
         self._gates[production_id] = gate
-        state.metadata["storyboard_gate"] = gate.state.value
+        state.metadata["storyboard_gate"] = gate.to_dict()
         state.storyboard_approved = True
         state.phase = "executing"
         state.record("approved")
