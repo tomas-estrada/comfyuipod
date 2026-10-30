@@ -56,3 +56,46 @@ def test_verify_reports_model_absence(monkeypatch: pytest.MonkeyPatch) -> None:
     res = UpscalerEngine().verify("any")
     assert res.ok is False
     assert res.payload["model_available"] is False
+
+
+def _video_job(tmp_path: Path) -> dict:
+    src = tmp_path / "in.mp4"
+    src.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    return {
+        "input_path": str(src),
+        "output_path": str(tmp_path / "out.mp4"),
+        "scale": 2,
+        "mode": "video",
+    }
+
+
+def test_list_reports_modes_and_video_submotor() -> None:
+    res = UpscalerEngine().list()
+    assert set(res.payload["modes"]) == {"image", "video"}
+    assert "SeedVR2" in res.payload["video_submotor"]
+
+
+def test_video_stub_writes_mp4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STUDIO_STUB_UPSCALER", "1")
+    res = UpscalerEngine().run(EngineRunSpec(job=_video_job(tmp_path)))
+    assert res.ok is True and res.simulated is True
+    assert res.payload["mode"] == "video"
+    assert b"ftyp" in Path(res.payload["output"]).read_bytes()
+
+
+def test_video_mode_typed_fail_without_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Fuera de stub, el modo vídeo (SeedVR2) falla TIPADO con remediación, no finge.
+    monkeypatch.delenv("STUDIO_STUB_UPSCALER", raising=False)
+    res = UpscalerEngine().run(EngineRunSpec(job=_video_job(tmp_path)))
+    assert res.ok is False
+    assert "SeedVR2" in (res.error or "")
+
+
+def test_bad_mode_rejected(tmp_path: Path) -> None:
+    job = _job(tmp_path)
+    job["mode"] = "holograma"
+    res = UpscalerEngine().run(EngineRunSpec(job=job))
+    assert res.ok is False
+    assert "mode" in (res.error or "")

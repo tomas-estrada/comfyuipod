@@ -407,6 +407,35 @@ RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/brain-constr
     && pip3 install --no-cache-dir --no-deps "protobuf==${PROTOBUF_KEEP}" \
     && python3 -c "import importlib.util as u; assert all(u.find_spec(m) for m in ('llmlingua','bm25s','flashrank')), 'cerebro: falta una lib'; print('agent-brain libs ok')" \
     && pip3 freeze > /etc/comfyui/requirements.lock
+
+# 5j. TTS español (M6 Bloque 2, motor audio op=tts): Kokoro-82M (Apache, CPU, voces
+#     en español con lang_code='e'). torch/numpy/transformers de kokoro no topan, pero
+#     el resolver movería torch a 2.15 en un entorno limpio -> constraint que fija el
+#     torch del pod (ya instalado, así que no se refetcha). Clonación de voz (Chatterbox/
+#     CosyVoice3) NO se hornea: sus pines torch==2.6.0 clavarían el pod -> van a un venv
+#     aislado en runtime. soundfile para escribir el WAV. Import guard rompe un pin malo.
+RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/kokoro-constraints.txt \
+    && PROTOBUF_KEEP="$(python3 -c 'import importlib.metadata as m; print(m.version("protobuf"))')" \
+    && PIP_CONSTRAINT=/tmp/kokoro-constraints.txt pip3 install --no-cache-dir \
+        "kokoro==0.9.4" "soundfile" \
+    && rm -f /tmp/kokoro-constraints.txt \
+    && pip3 install --no-cache-dir --no-deps "protobuf==${PROTOBUF_KEEP}" \
+    && python3 -c "import importlib.util as u; assert u.find_spec('kokoro') and u.find_spec('soundfile'), 'TTS: falta kokoro/soundfile'; print('kokoro TTS ok')" \
+    && pip3 freeze > /etc/comfyui/requirements.lock
+
+# 5k. Rotoscopia por texto (M6 Bloque 2, motor roto): SAM 3 (facebookresearch/sam3).
+#     El PAQUETE se hornea bajo constraint torch-safe (sam3 no topa torch pero el
+#     resolver lo movería a 2.15 en limpio; el torch del pod ya instalado lo satisface;
+#     numpy<2.4 compatible). Los PESOS (facebook/sam3) son HF-gated: NO se bajan en el
+#     build (no haría falta token aquí) -> se bajan en runtime a STUDIO_ROTO_MODEL_DIR
+#     con el token HF del operador. Import guard rompe un pin malo. PROTOBUF protegido.
+RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/sam3-constraints.txt \
+    && PROTOBUF_KEEP="$(python3 -c 'import importlib.metadata as m; print(m.version("protobuf"))')" \
+    && PIP_CONSTRAINT=/tmp/sam3-constraints.txt pip3 install --no-cache-dir "sam3==0.1.4" \
+    && rm -f /tmp/sam3-constraints.txt \
+    && pip3 install --no-cache-dir --no-deps "protobuf==${PROTOBUF_KEEP}" \
+    && python3 -c "import importlib.util as u; assert u.find_spec('sam3'), 'roto: falta sam3'; print('sam3 roto ok')" \
+    && pip3 freeze > /etc/comfyui/requirements.lock
 ARG BUILD_DATE=unknown
 
 COPY --from=builder --chmod=0755 /build/comfyctl/target/release/comfyctl /usr/local/bin/comfyctl
@@ -464,7 +493,8 @@ RUN sed -i 's/\r$//' \
     rm -rf /tmp/comfy_warmup.log /opt/ComfyUI/temp /workspace/comfyui-data/temp /workspace/comfyui-data/user/default/comfy.settings.json /workspace/comfyui-data/user/__manager /workspace/comfyui-data/user/default/ComfyUI-Manager /root/.config /root/.cache && \
     mkdir -p /workspace/comfyui-data/user/__manager /workspace/comfyui-data/user/default/ComfyUI-Manager && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/__manager/config.ini && \
-    cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini
+    cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini && \
+    pip3 freeze > /etc/comfyui/requirements.lock
 
 EXPOSE 8188
 

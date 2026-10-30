@@ -164,17 +164,71 @@ class AudioEngine:
                 simulated=simulated,
             )
 
-        # TTS: el pod aún no incluye un backend de síntesis real (IndexTTS no
-        # está integrado). Falla tipado en vez de fingir; usar STUDIO_STUB_AUDIO=1
-        # para tests, o traer el submotor de TTS (fase posterior).
+        # TTS: backend real Kokoro (lang_code='e' = español, Apache, CPU). Horneado
+        # en la imagen bajo constraint torch-safe. Clonación de voz (Chatterbox/
+        # CosyVoice3) queda DIFERIDA a un venv aislado en runtime: sus pines
+        # torch==2.6.0 clavarían el torch 2.9.1 del pod. Sin kokoro, falla tipado.
+        if audio.op == "tts":
+            return self._run_kokoro_tts(audio, start)
+
         return EngineResult(
             ok=False,
             engine=self.name,
             verb="run",
             error=(
                 f"op '{audio.op}' sin backend real integrado todavía; "
-                "STT usa el worker ASR, TTS requiere integrar el submotor de síntesis"
+                "STT usa el worker ASR, TTS usa Kokoro"
             ),
+        )
+
+    def _run_kokoro_tts(self, audio: AudioSpec, start: float) -> EngineResult:
+        try:
+            import numpy as np
+            import soundfile as sf
+            from kokoro import KPipeline
+        except ImportError:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=(
+                    "backend TTS (Kokoro) no disponible; "
+                    "hornear `kokoro` en la imagen o usar STUDIO_STUB_AUDIO=1"
+                ),
+            )
+        # voice_id puede nombrar una voz española (p.ej. 'ef_dora'); default a una es.
+        voice = audio.voice_id if audio.voice_id != "default" else "ef_dora"
+        try:
+            pipeline = KPipeline(lang_code="e")  # español
+            chunks = [
+                audio_chunk
+                for _gs, _ps, audio_chunk in pipeline(audio.text, voice=voice)
+            ]
+        except (RuntimeError, ValueError, OSError) as exc:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"Kokoro TTS falló: {type(exc).__name__}: {exc}",
+            )
+        if not chunks:
+            return EngineResult(
+                ok=False, engine=self.name, verb="run", error="Kokoro no produjo audio"
+            )
+        audio.output_path.parent.mkdir(parents=True, exist_ok=True)
+        wav = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+        sf.write(str(audio.output_path), wav, 24000)
+        return EngineResult(
+            ok=True,
+            engine=self.name,
+            verb="run",
+            payload={
+                "op": "tts",
+                "output": str(audio.output_path),
+                "voice": voice,
+                "lang": "es",
+                "duration_s": round(time.monotonic() - start, 3),
+            },
         )
 
     # -- helpers -------------------------------------------------------------
