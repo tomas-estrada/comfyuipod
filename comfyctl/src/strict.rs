@@ -71,6 +71,14 @@ pub struct SystemSnapshot {
     /// (`engines.counts`). `warn` si hay motores `unwired`; `stub` es válido en CI.
     pub engine_roster_ok: bool,
     pub engine_roster_detail: String,
+    /// M6-B5 (S15): estado de la capa de orquestación (`orchestration.state`).
+    /// `warn` si `down`; `degraded`/`ready` son válidos.
+    pub orchestration_ok: bool,
+    pub orchestration_detail: String,
+    /// M6-B5 (S16): estado del cerebro del agente (`agent_brain.capabilities`).
+    /// `warn` si alguna capacidad está `unavailable`; `stub` es válido en CI.
+    pub agent_brain_ok: bool,
+    pub agent_brain_detail: String,
 }
 
 impl SystemSnapshot {
@@ -100,6 +108,8 @@ impl SystemSnapshot {
             probe_studio_perception_backend_and_stale(cfg);
         let (mcp_health_ok, mcp_health_detail) = probe_mcp_health(cfg);
         let (engine_roster_ok, engine_roster_detail) = probe_studio_engines(cfg);
+        let (orchestration_ok, orchestration_detail) = probe_studio_orchestration(cfg);
+        let (agent_brain_ok, agent_brain_detail) = probe_studio_brain(cfg);
 
         Self {
             gpu_query_ok,
@@ -129,6 +139,10 @@ impl SystemSnapshot {
             mcp_health_detail,
             engine_roster_ok,
             engine_roster_detail,
+            orchestration_ok,
+            orchestration_detail,
+            agent_brain_ok,
+            agent_brain_detail,
         }
     }
 }
@@ -734,6 +748,103 @@ pub fn probe_studio_engines(cfg: &RuntimeConfig) -> (bool, String) {
     )
 }
 
+/// M6-B5 (S15): estado de la capa de orquestación reportado por `/studio/api/health`
+/// (`orchestration.state`). Warn, nunca fatal: `degraded` (`LangGraph` no horneado, se
+/// usa el runner stdlib) es utilizable; solo `down` (grafo no construible) se señala.
+pub fn probe_studio_orchestration(cfg: &RuntimeConfig) -> (bool, String) {
+    if !cfg.model_profile.is_studio_family() {
+        return (true, "Omitido fuera del perfil studio".to_string());
+    }
+    let port = cfg.studio_server_port;
+    let Ok((code, body)) = http_get_body(port, "/studio/api/health") else {
+        return (
+            true,
+            "orquestación no consultable (health no accesible)".to_string(),
+        );
+    };
+    if code != 200 {
+        return (true, format!("orquestación no consultable (HTTP {code})"));
+    }
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return (true, "orquestación no parseable".to_string());
+    };
+    let Some(orch) = parsed.get("orchestration") else {
+        return (true, "health sin bloque 'orchestration'".to_string());
+    };
+    let state = orch
+        .get("state")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("down");
+    let note = orch
+        .get("note")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    if state == "down" {
+        return (false, format!("orquestación DOWN: {note}"));
+    }
+    (true, format!("orquestación {state} ({note})"))
+}
+
+/// M6-B5 (S16): estado del cerebro del agente reportado por `/studio/api/health`
+/// (`agent_brain.capabilities`). Warn, nunca fatal: una capacidad en stub es válida
+/// en CI; solo una capacidad `error` (backend roto) se señala como warn.
+pub fn probe_studio_brain(cfg: &RuntimeConfig) -> (bool, String) {
+    if !cfg.model_profile.is_studio_family() {
+        return (true, "Omitido fuera del perfil studio".to_string());
+    }
+    let port = cfg.studio_server_port;
+    let Ok((code, body)) = http_get_body(port, "/studio/api/health") else {
+        return (
+            true,
+            "cerebro no consultable (health no accesible)".to_string(),
+        );
+    };
+    if code != 200 {
+        return (true, format!("cerebro no consultable (HTTP {code})"));
+    }
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return (true, "cerebro no parseable".to_string());
+    };
+    let Some(brain) = parsed.get("agent_brain") else {
+        return (true, "health sin bloque 'agent_brain'".to_string());
+    };
+    let caps = brain
+        .get("capabilities")
+        .and_then(serde_json::Value::as_array);
+    // `unavailable` = una capacidad cuyo backend real debía estar y no cargó.
+    // `stub` es válido en CI. Señalamos (warn) solo las unavailable.
+    let unavailable_names: Vec<String> = caps
+        .map(|arr| {
+            arr.iter()
+                .filter(|c| {
+                    let stub = c.get("stub").and_then(serde_json::Value::as_bool) == Some(true);
+                    let avail =
+                        c.get("available").and_then(serde_json::Value::as_bool) == Some(true);
+                    !stub && !avail
+                })
+                .filter_map(|c| {
+                    c.get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let total = caps.map_or(0, Vec::len);
+    if !unavailable_names.is_empty() {
+        return (
+            false,
+            format!(
+                "cerebro: {} capacidades, {} NO DISPONIBLES ({})",
+                total,
+                unavailable_names.len(),
+                unavailable_names.join(", ")
+            ),
+        );
+    }
+    (true, format!("cerebro: {total} capacidades, 0 no disponibles"))
+}
+
 fn parse_driver_major(driver: &str) -> u32 {
     driver
         .split('.')
@@ -1217,6 +1328,44 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
             } else {
                 Some(
                     "Hay motores declarados en el roster sin backend real (`unwired`). Revisa studio/comfy_studio/engines/registry.py y cablea cada motor a su adaptador, o retíralo del roster; los motores en modo stub (STUDIO_STUB_<NAME>=1) son válidos en CI pero no en producción."
+                        .to_string(),
+                )
+            },
+        });
+
+        // S15: capa de orquestación (M6-B5). Warn, nunca fatal: `degraded`
+        // (LangGraph no horneado, se usa el runner stdlib equivalente) es utilizable;
+        // solo `down` (grafo no construible por fallo de import) se señala.
+        let orch_ready = snap.orchestration_ok;
+        checks.push(StrictCheckItem {
+            id: "S15".to_string(),
+            name: "orchestration_ready".to_string(),
+            status: if orch_ready { "ok" } else { "warn" }.to_string(),
+            detail: snap.orchestration_detail.clone(),
+            remediation: if orch_ready {
+                None
+            } else {
+                Some(
+                    "La capa de orquestación (studio/comfy_studio/orchestration/) no se puede construir: revisa el import del grafo y del ProductionService. `degraded` (sin LangGraph horneado) es válido; `down` no."
+                        .to_string(),
+                )
+            },
+        });
+
+        // S16: cerebro del agente (M6-B1). Warn, nunca fatal: una capacidad en
+        // stub es válida en CI; solo una `unavailable` (backend real que debía
+        // estar y no cargó) se señala.
+        let brain_ready = snap.agent_brain_ok;
+        checks.push(StrictCheckItem {
+            id: "S16".to_string(),
+            name: "agent_brain_ready".to_string(),
+            status: if brain_ready { "ok" } else { "warn" }.to_string(),
+            detail: snap.agent_brain_detail.clone(),
+            remediation: if brain_ready {
+                None
+            } else {
+                Some(
+                    "Una capacidad del cerebro (studio/comfy_studio/agent_brain/) está `unavailable`: su backend (llmlingua/bm25s/flashrank) no cargó. Revisa el bake del Dockerfile; el modo stub es válido en CI pero no en producción."
                         .to_string(),
                 )
             },

@@ -41,6 +41,11 @@ from comfy_studio.orchestration.planner import (
     StubPlannerLLM,
     plan_production,
 )
+from comfy_studio.orchestration.service import (
+    ProductionNotApprovedError,
+    ProductionNotFoundError,
+    ProductionService,
+)
 from comfy_studio.orchestration.state import (
     REPLAN_ESCALATION,
     Layer,
@@ -62,6 +67,9 @@ __all__ = [
     "PlannerLLM",
     "ProductionCheckpointer",
     "ProductionGraph",
+    "ProductionNotApprovedError",
+    "ProductionNotFoundError",
+    "ProductionService",
     "ProductionState",
     "ReplanTier",
     "Sequence",

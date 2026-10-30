@@ -45,6 +45,10 @@ fn base_healthy_snapshot() -> SystemSnapshot {
             .to_string(),
         engine_roster_ok: true,
         engine_roster_detail: "roster de motores: 12 ready, 0 stub, 0 sin cablear".to_string(),
+        orchestration_ok: true,
+        orchestration_detail: "orquestación ready ()".to_string(),
+        agent_brain_ok: true,
+        agent_brain_detail: "cerebro: 4 capacidades, 0 no disponibles".to_string(),
     }
 }
 
@@ -414,16 +418,17 @@ fn strict_studio_health_s11_and_live_http_probe() {
     let cfg_studio = RuntimeConfig::from_map(&vars, None);
 
     // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añaden S11 (studio_health),
-    //    S12 (mcp_health), S13/S13b/S13c (percepción, warn nunca fatal) y S14
-    //    (engine_roster, warn nunca fatal)
+    //    S12 (mcp_health), S13/S13b/S13c (percepción, warn nunca fatal), S14
+    //    (engine_roster), S15 (orchestration_ready) y S16 (agent_brain_ready),
+    //    todos warn nunca fatal
     let mut snap = base_healthy_snapshot();
     snap.disk_free_gb = 200.0;
     let rep_ok = evaluate_strict_checks(&cfg_studio, &snap);
     assert_eq!(rep_ok.result, "ok");
-    assert_eq!(rep_ok.checks.len(), 16);
+    assert_eq!(rep_ok.checks.len(), 18);
     for expected_id in [
         "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S13b",
-        "S13c", "S14",
+        "S13c", "S14", "S15", "S16",
     ] {
         assert!(
             rep_ok
@@ -606,5 +611,54 @@ fn strict_s14_engine_roster_ready_ok_unwired_warn_never_fatal() {
     assert_ne!(
         rep_unwired.result, "fatal",
         "un roster incompleto nunca debe ser fatal"
+    );
+}
+
+#[test]
+fn strict_s15_s16_orchestration_and_brain_warn_never_fatal() {
+    // M6-B5: orquestación (S15) y cerebro (S16) entran como warn nunca fatal.
+    let mut vars = BTreeMap::new();
+    vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    vars.insert("STRICT_START".to_string(), "1".to_string());
+    let cfg = RuntimeConfig::from_map(&vars, None);
+
+    // Sanos => S15 y S16 ok.
+    let mut snap = base_healthy_snapshot();
+    snap.disk_free_gb = 200.0;
+    let rep_ok = evaluate_strict_checks(&cfg, &snap);
+    let s15_ok = rep_ok.checks.iter().find(|c| c.id == "S15");
+    let s16_ok = rep_ok.checks.iter().find(|c| c.id == "S16");
+    assert!(
+        matches!(s15_ok, Some(c) if c.name == "orchestration_ready" && c.status == "ok"),
+        "S15 con orquestación sana debe ser ok"
+    );
+    assert!(
+        matches!(s16_ok, Some(c) if c.name == "agent_brain_ready" && c.status == "ok"),
+        "S16 con cerebro sano debe ser ok"
+    );
+
+    // Orquestación down + cerebro con capacidad no disponible => ambos warn,
+    // con remediación, pero nunca fatal ni con STRICT_START=1.
+    let mut snap_bad = base_healthy_snapshot();
+    snap_bad.disk_free_gb = 200.0;
+    snap_bad.orchestration_ok = false;
+    snap_bad.orchestration_detail = "orquestación DOWN: import falló".to_string();
+    snap_bad.agent_brain_ok = false;
+    snap_bad.agent_brain_detail =
+        "cerebro: 4 capacidades, 1 NO DISPONIBLES (compress)".to_string();
+    let rep_bad = evaluate_strict_checks(&cfg, &snap_bad);
+    let orch_warn = rep_bad.checks.iter().find(|c| c.id == "S15");
+    let brain_warn = rep_bad.checks.iter().find(|c| c.id == "S16");
+    assert!(
+        matches!(orch_warn, Some(c) if c.status == "warn" && c.remediation.is_some()),
+        "S15 con orquestación down debe ser warn con remediación"
+    );
+    assert!(
+        matches!(brain_warn, Some(c) if c.status == "warn" && c.remediation.is_some()),
+        "S16 con cerebro no disponible debe ser warn con remediación"
+    );
+    assert_ne!(
+        rep_bad.result, "fatal",
+        "orquestación/cerebro degradados nunca deben ser fatal"
     );
 }

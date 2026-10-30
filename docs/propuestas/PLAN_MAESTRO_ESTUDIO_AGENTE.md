@@ -159,19 +159,19 @@ loopback, fix-repo-not-test, cada fase un commit verde (Rust + Python + build CI
 **Bloque 4 — Orquestación avanzada (ejes 1/2/4 sobre LangGraph)**
 | # | Entregable |
 |---|---|
-| 12 | LangGraph base: `ProductionState` tipado + checkpointer SQLite + nodos esqueleto |
-| 13 | Planificación jerárquica (idea→secuencias→shots→capas), planner LLM con stub determinista |
-| 14 | Ejecución adaptativa (paralelo/topológico) enlazando motores como nodos |
-| 15 | Feedback loop (evaluador VBench+FFmpeg) + replanificación escalonada (local→plantilla→global) |
-| 16 | Ensamblaje (editor+compositor) + reel final descargable |
+| 12 | ✅ LangGraph base: `ProductionState` tipado + checkpointer SQLite + nodos esqueleto (runner stdlib + LangGraph opcional) |
+| 13 | ✅ Planificación jerárquica (idea→secuencias→shots→capas), planner LLM con stub determinista |
+| 14 | ✅ Ejecución adaptativa (orden topológico por `depends_on`) enlazando motores como nodos |
+| 15 | ✅ Feedback loop (evaluador VBench+FFmpeg inyectable) + replanificación escalonada (local→plantilla→global) |
+| 16 | ✅ Ensamblaje (editor+compositor inyectable) + reel final |
 
 **Bloque 5 — Superficie e integración**
 | # | Entregable |
 |---|---|
-| 17 | API + tools del agente: `plan_production`, `get_plan`, `approve_plan`, `production_status` |
-| 18 | strict-check S15 `orchestration_ready` + S16 `agent_brain_ready` |
-| 19 | Dockerfile: hornear grupo A+B pinned (cada pin verificado por build CI, incremental) |
-| 20 | Doc de cierre + actualización del `EngineRegistry`/health para los nuevos motores |
+| 17 | ✅ Tools del agente: `plan_production`, `get_plan`, `approve_plan`, `production_status` vía `ProductionService` + `StoryboardGate` |
+| 18 | ✅ strict-check S15 `orchestration_ready` + S16 `agent_brain_ready` (warn nunca fatal; studio 16→18 items) |
+| 19 | ✅ Dockerfile: grupo A+B ya horneado en B1/B2 (brain, Kokoro, SAM3); VBench/SeedVR2 runtime por diseño |
+| 20 | ✅ Doc de cierre `ORQUESTACION_BLOQUE4_5_CIERRE.md`; health de orquestación en `/studio/api/health` |
 
 ---
 
