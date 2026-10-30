@@ -40,6 +40,11 @@ from comfy_studio.engines.registry import build_default_registry
 from comfy_studio.mcp_server import McpContext, create_mcp_router
 from comfy_studio.ml import probe_capabilities
 from comfy_studio.orchestration.health import orchestration_health_report
+from comfy_studio.orchestration.service import (
+    ProductionNotApprovedError,
+    ProductionNotFoundError,
+    ProductionService,
+)
 from comfy_studio.perception import (
     CLIP_EMBED_DIM,
     FACE_EMBED_DIM,
@@ -81,6 +86,13 @@ class ProjectUpdateRequest(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     aspect_ratio: str | None = Field(default=None, max_length=32)
     metadata: dict[str, Any] | None = None
+
+
+class ProductionPlanRequest(BaseModel):
+    """Cuerpo para planificar una producción (borrador barato, pre-aprobación)."""
+
+    idea: str = Field(..., min_length=1, max_length=4000)
+    cost_cap_usd: float = Field(default=0.0, ge=0.0, le=1000.0)
 
 
 class JobCreateRequest(BaseModel):
@@ -724,6 +736,12 @@ def create_app(
         broker=broker,
         redactor=redactor,
     )
+    # Servicio de producción (orquestación M6). Por defecto corre con
+    # colaboradores stub (CI/arranque sin GPU); el servidor cablea los
+    # adaptadores reales cuando los motores están vivos. La StoryboardGate es
+    # la puerta de gasto humano: approve_plan NUNCA se expone al agente LLM
+    # (ver mcp_server.py / M6-AGT-001), solo la API pública la acciona.
+    app.state.production_service = ProductionService()
     # M1.2: la construcción de la percepción vectorial NO puede tumbar la app. Si
     # `sqlite-vec` falta o falla, se degrada a `perception_available=False`: los
     # endpoints de percepción responden 503 con el motivo y el resto de Studio
@@ -847,6 +865,7 @@ def create_app(
         config=cfg,
         tool_belt=app.state.tool_belt,
         redactor=redactor,
+        production_service=app.state.production_service,
     )
     app.state.mcp_context = mcp_ctx
     app.include_router(create_mcp_router(mcp_ctx))
@@ -1068,6 +1087,67 @@ def create_app(
         if not deleted:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
         return {"deleted": True, "id": project_id}
+
+    # --- Producciones (orquestación M6) ---
+    #
+    # GOBERNANZA (M6-AGT-001): la puerta de gasto humano. `plan` deja la
+    # producción en `awaiting_approval` SIN gastar GPU; el lazo caro (ejecución
+    # + ensamblaje) solo corre tras `approve`, y `approve` SOLO vive aquí, en la
+    # API pública accionada por el usuario. El agente LLM NUNCA ve `approve`
+    # (ver BELT_TOOLS_EXPOSED en mcp_server.py). `approve` despacha el lazo como
+    # tarea de fondo (run_in_threadpool) para no bloquear Nginx (504).
+
+    @app.post("/studio/api/productions", status_code=201)
+    async def plan_production_route(
+        body: ProductionPlanRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        service: ProductionService = request.app.state.production_service
+        try:
+            return await run_in_threadpool(
+                service.plan_production,
+                body.idea,
+                cost_cap_usd=body.cost_cap_usd,
+            )
+        except Exception as exc:  # noqa: BLE001 - errores de planificación -> 400
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/studio/api/productions/{production_id}")
+    async def get_production_route(
+        production_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        service: ProductionService = request.app.state.production_service
+        try:
+            return await run_in_threadpool(service.get_plan, production_id)
+        except ProductionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/studio/api/productions/{production_id}/status")
+    async def production_status_route(
+        production_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        service: ProductionService = request.app.state.production_service
+        try:
+            return await run_in_threadpool(service.production_status, production_id)
+        except ProductionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/studio/api/productions/{production_id}/approve")
+    async def approve_production_route(
+        production_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Aprobación HUMANA de la puerta de gasto: corre el lazo caro de fondo."""
+        service: ProductionService = request.app.state.production_service
+        try:
+            # corre el grafo caro fuera del event loop para no bloquear Nginx.
+            return await run_in_threadpool(service.approve_plan, production_id)
+        except ProductionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ProductionNotApprovedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # --- Subida y gestión de medios ---
 

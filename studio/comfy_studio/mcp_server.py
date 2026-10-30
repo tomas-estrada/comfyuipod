@@ -91,7 +91,58 @@ _EXTRA_TOOLS_SCHEMA: list[dict[str, Any]] = [
             "required": [],
         },
     },
+    {
+        "name": "plan_production",
+        "description": (
+            "Planifica una producción (idea -> secuencias -> shots) y la deja "
+            "ESPERANDO APROBACIÓN HUMANA. Es un borrador barato: NO gasta GPU y NO "
+            "ejecuta nada. Solo un humano aprueba el gasto pesado desde el panel; "
+            "el agente no puede aprobar."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "idea": {"type": "string", "description": "La idea del reel a producir."},
+                "cost_cap_usd": {
+                    "type": "number",
+                    "description": "Tope de coste total en USD a repartir por shot (opcional).",
+                },
+            },
+            "required": ["idea"],
+        },
+    },
+    {
+        "name": "get_plan",
+        "description": "Devuelve el plan serializado de una producción por su production_id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string", "description": "Id de la producción."},
+            },
+            "required": ["production_id"],
+        },
+    },
+    {
+        "name": "production_status",
+        "description": (
+            "Estado de una producción: fase, progreso de shots y ruta del reel final."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "production_id": {"type": "string", "description": "Id de la producción."},
+            },
+            "required": ["production_id"],
+        },
+    },
 ]
+
+#: tools de producción expuestas al agente vía MCP. `approve_plan` está
+#: DELIBERADAMENTE AUSENTE: es la puerta de gasto humano (M6-AGT-001), accionada
+#: solo por el usuario en la API pública. Nunca se añade aquí.
+PRODUCTION_TOOLS_EXPOSED: frozenset[str] = frozenset(
+    {"plan_production", "get_plan", "production_status"}
+)
 
 
 @dataclass(slots=True)
@@ -104,6 +155,10 @@ class McpContext:
     config: StudioConfig
     tool_belt: ToolBelt
     redactor: SecretRedactor
+    #: servicio de producción (orquestación M6). Opcional: si no se inyecta, las
+    #: tools de producción no se ofrecen. NUNCA expone `approve_plan` (la puerta
+    #: de gasto humano vive solo en la API pública — M6-AGT-001).
+    production_service: Any | None = None
 
 
 class McpToolError(Exception):
@@ -169,6 +224,33 @@ async def _call_mcp_tool(
             await run_in_threadpool(_resolve_project_id, ctx.store, requested)  # valida existencia
         projects = await run_in_threadpool(ctx.store.list_projects)
         return {"projects": projects}
+
+    # tools de producción (orquestación M6). GOBERNANZA: solo las 3 de lectura/
+    # planificación; `approve_plan` NUNCA llega aquí (puerta de gasto humano,
+    # M6-AGT-001). Un intento de llamarla cae en "no disponible".
+    if name in PRODUCTION_TOOLS_EXPOSED:
+        service = ctx.production_service
+        if service is None:
+            raise McpToolError("El servicio de producción no está disponible.")
+        try:
+            if name == "plan_production":
+                idea = str(args.get("idea") or "").strip()
+                if not idea:
+                    raise McpToolError("plan_production requiere 'idea'.")
+                cost_cap = float(args.get("cost_cap_usd", 0.0) or 0.0)
+                return await run_in_threadpool(
+                    service.plan_production, idea, cost_cap_usd=cost_cap
+                )
+            production_id = str(args.get("production_id") or "").strip()
+            if not production_id:
+                raise McpToolError(f"{name} requiere 'production_id'.")
+            if name == "get_plan":
+                return await run_in_threadpool(service.get_plan, production_id)
+            return await run_in_threadpool(service.production_status, production_id)
+        except McpToolError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - tipificar hacia el cliente MCP
+            raise McpToolError(str(exc)) from exc
 
     belt_available = name in BELT_TOOLS_EXPOSED and ctx.tool_belt.get(name) is not None
     if name != "list_assets" and not belt_available:
