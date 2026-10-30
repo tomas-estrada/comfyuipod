@@ -34,6 +34,8 @@ from comfy_studio.config import (
     install_log_redaction,
 )
 from comfy_studio.edl import execute_edl_ffmpeg, generate_highlights_edl
+from comfy_studio.engines.health import health_report
+from comfy_studio.engines.registry import build_default_registry
 from comfy_studio.mcp_server import McpContext, create_mcp_router
 from comfy_studio.ml import probe_capabilities
 from comfy_studio.perception import (
@@ -957,6 +959,9 @@ def create_app(
                 "probe": getattr(request.app.state, "perception_probe_result", None),
             },
             "schema_version": active_store.get_schema_version(),
+            # M5-F7: estado por motor del roster (ready/stub/unwired) para que el
+            # strict-check del supervisor observe cada motor, no solo que el studio vive.
+            "engines": health_report(build_default_registry()),
         }
         return active_redactor.redact_value(payload)
 

@@ -43,6 +43,8 @@ fn base_healthy_snapshot() -> SystemSnapshot {
         mcp_health_ok: true,
         mcp_health_detail: "MCP healthy en 127.0.0.1:18190/studio/api/mcp/health (HTTP 200)"
             .to_string(),
+        engine_roster_ok: true,
+        engine_roster_detail: "roster de motores: 12 ready, 0 stub, 0 sin cablear".to_string(),
     }
 }
 
@@ -412,15 +414,16 @@ fn strict_studio_health_s11_and_live_http_probe() {
     let cfg_studio = RuntimeConfig::from_map(&vars, None);
 
     // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añaden S11 (studio_health),
-    //    S12 (mcp_health) y S13 (studio_perception, warn nunca fatal)
+    //    S12 (mcp_health), S13/S13b/S13c (percepción, warn nunca fatal) y S14
+    //    (engine_roster, warn nunca fatal)
     let mut snap = base_healthy_snapshot();
     snap.disk_free_gb = 200.0;
     let rep_ok = evaluate_strict_checks(&cfg_studio, &snap);
     assert_eq!(rep_ok.result, "ok");
-    assert_eq!(rep_ok.checks.len(), 15);
+    assert_eq!(rep_ok.checks.len(), 16);
     for expected_id in [
         "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S13b",
-        "S13c",
+        "S13c", "S14",
     ] {
         assert!(
             rep_ok
@@ -566,5 +569,42 @@ fn strict_s13b_perception_backend_real_ok_sim_warn_never_fatal() {
     assert_ne!(
         rep_sim.result, "fatal",
         "un backend sim nunca debe ser fatal"
+    );
+}
+
+#[test]
+fn strict_s14_engine_roster_ready_ok_unwired_warn_never_fatal() {
+    // M5-F7: el roster de motores entra al strict-check como S14, warn nunca fatal.
+    let mut vars = BTreeMap::new();
+    vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    vars.insert("STRICT_START".to_string(), "1".to_string());
+    let cfg = RuntimeConfig::from_map(&vars, None);
+
+    // Roster sano (todos ready) => S14 ok.
+    let mut snap = base_healthy_snapshot();
+    snap.disk_free_gb = 200.0;
+    let rep_ok = evaluate_strict_checks(&cfg, &snap);
+    let s14_ok = rep_ok.checks.iter().find(|c| c.id == "S14");
+    assert!(
+        matches!(s14_ok, Some(c) if c.name == "engine_roster" && c.status == "ok"),
+        "S14 con roster sano debe ser ok"
+    );
+
+    // Un motor sin cablear => S14 warn, con remediación, pero el resultado global
+    // no es fatal ni siquiera con STRICT_START=1 (un roster incompleto no invalida el host).
+    let mut snap_unwired = base_healthy_snapshot();
+    snap_unwired.disk_free_gb = 200.0;
+    snap_unwired.engine_roster_ok = false;
+    snap_unwired.engine_roster_detail =
+        "roster de motores: 11 ready, 0 stub, 1 SIN CABLEAR (capture3d)".to_string();
+    let rep_unwired = evaluate_strict_checks(&cfg, &snap_unwired);
+    let s14_warn = rep_unwired.checks.iter().find(|c| c.id == "S14");
+    assert!(
+        matches!(s14_warn, Some(c) if c.status == "warn" && c.remediation.is_some()),
+        "S14 con un motor sin cablear debe ser warn con remediación"
+    );
+    assert_ne!(
+        rep_unwired.result, "fatal",
+        "un roster incompleto nunca debe ser fatal"
     );
 }

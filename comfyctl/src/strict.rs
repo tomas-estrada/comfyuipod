@@ -67,6 +67,10 @@ pub struct SystemSnapshot {
     pub studio_perception_stale: bool,
     pub mcp_health_ok: bool,
     pub mcp_health_detail: String,
+    /// M5-F7: estado del roster de motores reportado por `/studio/api/health`
+    /// (`engines.counts`). `warn` si hay motores `unwired`; `stub` es válido en CI.
+    pub engine_roster_ok: bool,
+    pub engine_roster_detail: String,
 }
 
 impl SystemSnapshot {
@@ -95,6 +99,7 @@ impl SystemSnapshot {
         let (studio_perception_backend, studio_perception_stale) =
             probe_studio_perception_backend_and_stale(cfg);
         let (mcp_health_ok, mcp_health_detail) = probe_mcp_health(cfg);
+        let (engine_roster_ok, engine_roster_detail) = probe_studio_engines(cfg);
 
         Self {
             gpu_query_ok,
@@ -122,6 +127,8 @@ impl SystemSnapshot {
             studio_perception_stale,
             mcp_health_ok,
             mcp_health_detail,
+            engine_roster_ok,
+            engine_roster_detail,
         }
     }
 }
@@ -660,6 +667,73 @@ pub fn probe_mcp_health(cfg: &RuntimeConfig) -> (bool, String) {
     (false, last_err)
 }
 
+/// Lee el bloque `engines` de `/studio/api/health` (M5-F7) y resume el estado del
+/// roster: `ready` (backend real), `stub` (modo prueba, OK en CI) y `unwired`
+/// (declarado sin backend). Warn, nunca fatal: un motor en stub es válido en CI y
+/// uno sin cablear es un problema de roster a señalar, no un host inviable (S11 ya
+/// cubre la vida del proceso). `ok=false` solo si hay motores `unwired`.
+pub fn probe_studio_engines(cfg: &RuntimeConfig) -> (bool, String) {
+    if !cfg.model_profile.is_studio_family() {
+        return (true, "Omitido fuera del perfil studio".to_string());
+    }
+    let port = cfg.studio_server_port;
+    let Ok((code, body)) = http_get_body(port, "/studio/api/health") else {
+        return (
+            true,
+            "roster de motores no consultable (health no accesible)".to_string(),
+        );
+    };
+    if code != 200 {
+        return (
+            true,
+            format!("roster de motores no consultable (HTTP {code})"),
+        );
+    }
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return (true, "roster de motores no parseable".to_string());
+    };
+    let Some(engines) = parsed.get("engines") else {
+        return (true, "health sin bloque 'engines'".to_string());
+    };
+    let counts = engines.get("counts");
+    let count_of = |key: &str| -> u64 {
+        counts
+            .and_then(|c| c.get(key))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    let ready = count_of("ready");
+    let stub = count_of("stub");
+    let unwired = count_of("unwired");
+    let unwired_names: Vec<String> = engines
+        .get("engines")
+        .and_then(serde_json::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter(|e| e.get("state").and_then(serde_json::Value::as_str) == Some("unwired"))
+                .filter_map(|e| {
+                    e.get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if unwired > 0 {
+        return (
+            false,
+            format!(
+                "roster de motores: {ready} ready, {stub} stub, {unwired} SIN CABLEAR ({})",
+                unwired_names.join(", ")
+            ),
+        );
+    }
+    (
+        true,
+        format!("roster de motores: {ready} ready, {stub} stub, 0 sin cablear"),
+    )
+}
+
 fn parse_driver_major(driver: &str) -> u32 {
     driver
         .split('.')
@@ -1125,6 +1199,26 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
                 )
             } else {
                 None
+            },
+        });
+
+        // S14: roster de motores (M5-F7). Warn, nunca fatal: un motor en stub es
+        // válido en CI y uno `unwired` es un problema de roster a señalar, no un host
+        // inviable (S11 ya cubre la vida del proceso). El gate observa cada motor,
+        // no solo que el studio vive.
+        let s14_ok = snap.engine_roster_ok;
+        checks.push(StrictCheckItem {
+            id: "S14".to_string(),
+            name: "engine_roster".to_string(),
+            status: if s14_ok { "ok" } else { "warn" }.to_string(),
+            detail: snap.engine_roster_detail.clone(),
+            remediation: if s14_ok {
+                None
+            } else {
+                Some(
+                    "Hay motores declarados en el roster sin backend real (`unwired`). Revisa studio/comfy_studio/engines/registry.py y cablea cada motor a su adaptador, o retíralo del roster; los motores en modo stub (STUDIO_STUB_<NAME>=1) son válidos en CI pero no en producción."
+                        .to_string(),
+                )
             },
         });
     }
