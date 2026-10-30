@@ -422,6 +422,20 @@ RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/kokoro-const
     && pip3 install --no-cache-dir --no-deps "protobuf==${PROTOBUF_KEEP}" \
     && python3 -c "import importlib.util as u; assert u.find_spec('kokoro') and u.find_spec('soundfile'), 'TTS: falta kokoro/soundfile'; print('kokoro TTS ok')" \
     && pip3 freeze > /etc/comfyui/requirements.lock
+
+# 5k. Rotoscopia por texto (M6 Bloque 2, motor roto): SAM 3 (facebookresearch/sam3).
+#     El PAQUETE se hornea bajo constraint torch-safe (sam3 no topa torch pero el
+#     resolver lo movería a 2.15 en limpio; el torch del pod ya instalado lo satisface;
+#     numpy<2.4 compatible). Los PESOS (facebook/sam3) son HF-gated: NO se bajan en el
+#     build (no haría falta token aquí) -> se bajan en runtime a STUDIO_ROTO_MODEL_DIR
+#     con el token HF del operador. Import guard rompe un pin malo. PROTOBUF protegido.
+RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/sam3-constraints.txt \
+    && PROTOBUF_KEEP="$(python3 -c 'import importlib.metadata as m; print(m.version("protobuf"))')" \
+    && PIP_CONSTRAINT=/tmp/sam3-constraints.txt pip3 install --no-cache-dir "sam3==0.1.4" \
+    && rm -f /tmp/sam3-constraints.txt \
+    && pip3 install --no-cache-dir --no-deps "protobuf==${PROTOBUF_KEEP}" \
+    && python3 -c "import importlib.util as u; assert u.find_spec('sam3'), 'roto: falta sam3'; print('sam3 roto ok')" \
+    && pip3 freeze > /etc/comfyui/requirements.lock
 ARG BUILD_DATE=unknown
 
 COPY --from=builder --chmod=0755 /build/comfyctl/target/release/comfyctl /usr/local/bin/comfyctl
