@@ -39,6 +39,7 @@ from comfy_studio.engines.health import health_report
 from comfy_studio.engines.registry import build_default_registry
 from comfy_studio.mcp_server import McpContext, create_mcp_router
 from comfy_studio.ml import probe_capabilities
+from comfy_studio.orchestration.health import orchestration_health_report
 from comfy_studio.perception import (
     CLIP_EMBED_DIM,
     FACE_EMBED_DIM,
@@ -965,6 +966,8 @@ def create_app(
             "engines": health_report(build_default_registry()),
             # M6-B1: estado del cerebro del agente (memory/compress/retrieve/rerank).
             "agent_brain": brain_health_report(build_default_brain()),
+            # M6-B5: estado de la capa de orquestación (grafo/servicio/LangGraph).
+            "orchestration": orchestration_health_report(),
         }
         return active_redactor.redact_value(payload)
 

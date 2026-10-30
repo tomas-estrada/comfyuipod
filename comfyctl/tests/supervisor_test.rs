@@ -91,6 +91,10 @@ fn base_healthy_studio_snapshot(studio_ok: bool, studio_detail: &str) -> SystemS
             .to_string(),
         engine_roster_ok: true,
         engine_roster_detail: "roster de motores: 12 ready, 0 stub, 0 sin cablear".to_string(),
+        orchestration_ok: true,
+        orchestration_detail: "orquestación ready ()".to_string(),
+        agent_brain_ok: true,
+        agent_brain_detail: "cerebro: 4 capacidades, 0 no disponibles".to_string(),
     }
 }
 
