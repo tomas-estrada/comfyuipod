@@ -120,10 +120,57 @@ def test_adapt_ignores_params_template_lacks() -> None:
     assert "frames" not in params
 
 
-def test_chain_returns_template_ids() -> None:
+def test_chain_builds_linked_subgraph() -> None:
     sel = TemplateSelector()
-    chained = sel.chain([ShotIntent(intent="texto a video wan")])
-    assert isinstance(chained, list)
+    all_nodes: set[str] = set()
+    for tpl in sel._registry.list_templates():
+        all_nodes.update(tpl.get("required_nodes") or [])
+    ch = sel.chain(
+        [
+            ShotIntent(intent="texto a video wan", output_kind="video"),
+            ShotIntent(intent="imagen sdxl", output_kind="image"),
+        ],
+        available_nodes=all_nodes,
+    )
+    assert len(ch.steps) == 2
+    # El primer paso no se alimenta de nada; el segundo del primero.
+    assert ch.steps[0].feeds_from is None
+    assert ch.steps[1].feeds_from == 0
+    # Pasos viables traen params adaptados.
+    for s in ch.steps:
+        if s.viable:
+            assert isinstance(s.params, dict)
+
+
+def test_chain_viable_only_if_all_steps_viable() -> None:
+    sel = TemplateSelector()
+    # Sin nodos instalados, los pasos que requieren nodos no son viables.
+    ch = sel.chain(
+        [ShotIntent(intent="texto a video", output_kind="video")],
+        available_nodes=set(),
+    )
+    # Si algún paso no es viable, la cadena entera no lo es.
+    if not all(s.viable for s in ch.steps):
+        assert ch.viable is False
+
+
+def test_chain_ids_shortcut_returns_list() -> None:
+    sel = TemplateSelector()
+    all_nodes: set[str] = set()
+    for tpl in sel._registry.list_templates():
+        all_nodes.update(tpl.get("required_nodes") or [])
+    ids = sel.chain_ids(
+        [ShotIntent(intent="texto a video wan", output_kind="video")],
+        available_nodes=all_nodes,
+    )
+    assert isinstance(ids, list)
+
+
+def test_chain_serializable() -> None:
+    sel = TemplateSelector()
+    ch = sel.chain([ShotIntent(intent="video")])
+    d = ch.to_public_dict()
+    assert "viable" in d and "steps" in d
 
 
 def test_discovery_gate_follows_dynamic(monkeypatch: pytest.MonkeyPatch) -> None:
