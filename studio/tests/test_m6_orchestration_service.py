@@ -85,6 +85,22 @@ def test_cost_cap_split_persists_through_service(tmp_path):
     assert abs(total - 3.0) < 0.01
 
 
+def test_approval_survives_pod_restart(tmp_path):
+    # M6-SCR-002: planificar, luego "reiniciar el pod" (nuevo servicio, gates RAM
+    # vacíos) compartiendo el mismo checkpointer. Aprobar debe funcionar porque el
+    # estado de la puerta se persiste junto al checkpoint, no solo en RAM.
+    db = tmp_path / "restart.sqlite3"
+    svc1 = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    pid = svc1.plan_production("ciudad lluviosa", cost_cap_usd=1.0)["production_id"]
+
+    # reinicio: proceso nuevo, self._gates vacío, mismo SQLite.
+    svc2 = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    assert svc2._gates == {}
+    out = svc2.approve_plan(pid)
+    assert out["phase"] == "done"
+    assert out["status"]["storyboard_approved"] is True
+
+
 def test_gate_blocks_expensive_loop_until_approved(tmp_path):
     # un nuevo servicio sin la gate en memoria (simula reinicio): sin aprobación
     # previa, approve_plan es la única vía a ejecutar, y crea la aprobación.

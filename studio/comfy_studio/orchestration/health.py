@@ -9,9 +9,11 @@ nunca lanza, serializable. Un pod cuyo grafo de producción no importa debe fall
 RUIDOSAMENTE al arrancar, no a mitad de un reel.
 
 Estados:
-  - `ready`    : el grafo y el servicio importan y construyen; el lazo corre.
-  - `degraded` : importan pero falta un colaborador real clave (p.ej. LangGraph no
-                 horneado → se usa el runner stdlib; es utilizable pero se marca).
+  - `ready`    : el grafo y el servicio importan y construyen; el lazo corre. El
+                 runner stdlib es el camino OFICIAL de producción (LangGraph no se
+                 hornea por diseño), así que su ausencia NO degrada: se reporta
+                 `ready` con `engine` en los metadatos.
+  - `degraded` : reservado para un subsistema realmente roto pero no caído.
   - `down`     : el grafo no se puede construir (fallo de import) — fail-closed.
 """
 
@@ -34,6 +36,7 @@ def orchestration_health_report() -> dict[str, Any]:
             "graph_buildable": False,
             "service_available": False,
             "langgraph": False,
+            "engine": None,
             "note": f"import de orquestación falló: {type(exc).__name__}",
         }
 
@@ -47,20 +50,22 @@ def orchestration_health_report() -> dict[str, Any]:
 
     lg = bool(langgraph_available())
     service_ok = ProductionService is not None
+    engine = "langgraph" if lg else "stdlib"
 
     if not graph_ok or not service_ok:
         state = "down"
-    elif not lg:
-        # utilizable con el runner stdlib; LangGraph no horneado -> degradado.
-        state = "degraded"
-        note = note or "LangGraph no instalado; se usa el runner stdlib equivalente"
     else:
+        # el runner stdlib es un camino de producción válido (equivalente), no un
+        # estado degradado: el pod corre en su modo estándar. Solo 'down' avisa.
         state = "ready"
+        if not lg:
+            note = note or "runner stdlib (LangGraph no horneado, por diseño)"
 
     return {
         "state": state,
         "graph_buildable": graph_ok,
         "service_available": service_ok,
         "langgraph": lg,
+        "engine": engine,
         "note": note,
     }

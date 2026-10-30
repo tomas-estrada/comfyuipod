@@ -110,10 +110,22 @@ def execute_next_shot(
         s.id for s in state.all_shots() if s.status == ShotStatus.ACCEPTED
     }
     failed = {s.id for s in state.all_shots() if s.status == ShotStatus.FAILED}
+    known = {s.id for s in state.all_shots()}
 
     for shot in topological_shots(state):
         if shot.status not in (ShotStatus.PLANNED, ShotStatus.REPLANNING):
             continue
+        # una dependencia INEXISTENTE (p.ej. un id alucinado por el LLM) nunca
+        # estará en accepted ni en failed -> el shot se saltaría para siempre y
+        # el router giraría hasta max_steps. Es inalcanzable: fallar en claro.
+        missing_deps = [dep for dep in shot.depends_on if dep not in known]
+        if missing_deps:
+            shot.status = ShotStatus.FAILED
+            shot.error = f"dependencia inexistente: {', '.join(missing_deps)}"[:500]
+            state.record(
+                "shot_unreachable", shot=shot.id, missing_deps=missing_deps
+            )
+            return state
         # una dependencia que falló definitivamente hace el shot INALCANZABLE:
         # propagar el fallo en vez de dejarlo pendiente para siempre (que haría
         # girar el grafo hasta max_steps sin avanzar).

@@ -147,6 +147,9 @@ class ProductionState:
     updated_at: float = field(default_factory=time.time)
     #: bitácora de decisiones del grafo (replan, bifurcación, aceptación).
     log: list[dict[str, Any]] = field(default_factory=list)
+    #: metadatos persistidos junto al estado (puerta de storyboard, contadores
+    #: de reintento, etc.). Se serializa con el checkpoint para reanudar.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # -- helpers de recorrido ------------------------------------------------
 
@@ -189,6 +192,7 @@ class ProductionState:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "log": list(self.log),
+            "metadata": dict(self.metadata),
             "sequences": [
                 {
                     "id": seq.id,
@@ -240,6 +244,7 @@ class ProductionState:
             created_at=float(data.get("created_at", time.time())),
             updated_at=float(data.get("updated_at", time.time())),
             log=list(data.get("log", [])),
+            metadata=dict(data.get("metadata", {})),
         )
         for seq_d in data.get("sequences", []):
             seq = Sequence(title=seq_d["title"], id=seq_d["id"])

@@ -57,7 +57,7 @@ class Collaborators:
 
 def _route(state: ProductionState) -> str:
     """Decide el siguiente nodo desde el estado."""
-    if state.phase == "done":
+    if state.phase in ("done", "failed"):
         return END
     if not state.sequences:
         return PLAN

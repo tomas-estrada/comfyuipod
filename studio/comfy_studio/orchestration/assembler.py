@@ -17,6 +17,9 @@ from typing import Any, Protocol
 
 from comfy_studio.orchestration.state import ProductionState, ShotStatus
 
+#: cuántas veces reintentar el ensamblaje antes de fallar en claro.
+_MAX_ASSEMBLE_ATTEMPTS = 2
+
 
 class Assembler(Protocol):
     """Contrato del ensamblador (síncrono).
@@ -67,12 +70,20 @@ def assemble_reel(
 
     result = asm.assemble(state.id, clips)
     if not result.get("ok", False):
+        attempts = int(state.metadata.get("assemble_attempts", 0)) + 1
+        state.metadata["assemble_attempts"] = attempts
         state.record(
             "assemble_failed",
             clips=len(clips),
+            attempt=attempts,
             error=str(result.get("error", "fallo de ensamblaje"))[:500],
         )
-        # no se marca done: el grafo puede reintentar o el humano interviene.
+        # tras agotar los reintentos, FALLAR en claro: si no, el router vería
+        # "sin pendientes y phase != done" y devolvería ASSEMBLE para siempre
+        # (hasta max_steps). El humano revisa un estado 'failed', no un halted.
+        if attempts >= _MAX_ASSEMBLE_ATTEMPTS:
+            state.phase = "failed"
+            state.record("assemble_giveup", attempts=attempts)
         return state
 
     state.final_output_path = result.get("output_path")

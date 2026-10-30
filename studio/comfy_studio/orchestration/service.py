@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from comfy_studio.engines.storyboard_gate import StoryboardGate
+from comfy_studio.engines.storyboard_gate import StoryboardGate, StoryboardState
 from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
 from comfy_studio.orchestration.conductor import Collaborators, build_production_graph
 from comfy_studio.orchestration.planner import plan_production as _plan
@@ -68,6 +68,10 @@ class ProductionService:
         gate = StoryboardGate()
         gate.submit_draft(draft_path=f"plan:{state.id}")
         self._gates[state.id] = gate
+        # PERSISTIR el estado de la puerta junto al checkpoint: si no, un reinicio
+        # del pod vacía self._gates y toda producción planificada queda bloqueada
+        # para siempre al aprobar (M6-SCR-002).
+        state.metadata["storyboard_gate"] = gate.state.value
         state.phase = "awaiting_approval"
         state.record("await_approval", shots=len(state.all_shots()))
         self.checkpointer.save(state)
@@ -89,17 +93,26 @@ class ProductionService:
     def approve_plan(self, production_id: str) -> dict[str, Any]:
         """El humano aprueba; corre el lazo caro y devuelve el resultado."""
         state = self._load(production_id)
-        gate = self._gates.get(production_id) or StoryboardGate(
-            state=StoryboardGate().state
-        )
+        # hidratar la puerta: primero la de RAM; si el pod reinició, desde el
+        # estado persistido en el checkpoint (M6-SCR-002).
+        gate = self._gates.get(production_id)
+        if gate is None:
+            persisted = state.metadata.get("storyboard_gate")
+            gate = (
+                StoryboardGate(state=StoryboardState(persisted))
+                if persisted
+                else StoryboardGate()
+            )
         # avanzar la puerta a APPROVED (fail-closed si no estaba esperando).
         if not gate.can_enter_build():
-            if gate.state.value == "awaiting_approval":
+            if gate.state is StoryboardState.AWAITING_APPROVAL:
                 gate.approve()
             else:
                 raise ProductionNotApprovedError(
                     f"storyboard no aprobable desde {gate.state}"
                 )
+        self._gates[production_id] = gate
+        state.metadata["storyboard_gate"] = gate.state.value
         state.storyboard_approved = True
         state.phase = "executing"
         state.record("approved")
