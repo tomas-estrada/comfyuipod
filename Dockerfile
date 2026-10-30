@@ -380,9 +380,16 @@ RUN curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
 #     rompe ESTE build. Pinned nerfstudio==1.1.5 (última estable).
 ENV STUDIO_CAPTURE3D_BIN_DIR=/usr/local/bin
 RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/ns-constraints.txt \
+    && PROTOBUF_KEEP="$(python3 -c 'import importlib.metadata as m; print(m.version("protobuf"))')" \
+    && echo "protobuf pre-nerfstudio = ${PROTOBUF_KEEP} (onnx/insightface lo necesitan)" \
     && PIP_CONSTRAINT=/tmp/ns-constraints.txt pip3 install --no-cache-dir nerfstudio==1.1.5 \
     && rm -f /tmp/ns-constraints.txt \
+    # nerfstudio pinea protobuf<=5 y degrada el que onnx>=6.31.1 (insightface) necesita
+    # para su símbolo runtime_version. Restauramos el protobuf previo SIN tocar nada más;
+    # el cap <=5 de nerfstudio es conservador y su telemetría tolera protobuf 6 en runtime.
+    && pip3 install --no-cache-dir --no-deps "protobuf==${PROTOBUF_KEEP}" \
     && python3 -c "import nerfstudio; from nerfstudio.utils.external import TCNN_EXISTS; print('nerfstudio ok, tcnn=', TCNN_EXISTS)" \
+    && python3 -c "from google.protobuf import runtime_version; import onnx; print('onnx+protobuf ok')" \
     && command -v ns-train && command -v ns-export && command -v ns-process-data \
     && pip3 freeze > /etc/comfyui/requirements.lock
 ARG BUILD_DATE=unknown
