@@ -77,10 +77,47 @@ def test_best_returns_viable_or_none() -> None:
     assert best is None or best.viable
 
 
-def test_adapt_returns_default_params() -> None:
+def test_adapt_fills_prompt_from_intent() -> None:
     sel = TemplateSelector()
-    params = sel.adapt("wan_t2v", ShotIntent(intent="algo"))
-    assert isinstance(params, dict)
+    intent = ShotIntent(
+        intent="un coche rojo derrapa al atardecer",
+        style_tags=["cinematográfico", "cámara orbital"],
+    )
+    params = sel.adapt("wan_t2v", intent)
+    assert "coche rojo" in params["prompt"]
+    assert "cámara orbital" in params["prompt"]
+    # Los defaults de la plantilla se conservan donde no hay mapeo.
+    assert params["steps"] == 4
+
+
+def test_adapt_vertical_swaps_dimensions() -> None:
+    sel = TemplateSelector()
+    base = sel.adapt("wan_t2v", ShotIntent(intent="algo"))
+    vert = sel.adapt("wan_t2v", ShotIntent(intent="algo", orientation="vertical"))
+    # wan_t2v default es 832x480 horizontal; vertical lo intercambia.
+    assert (vert["width"], vert["height"]) == (base["height"], base["width"])
+
+
+def test_adapt_duration_maps_to_frames() -> None:
+    sel = TemplateSelector()
+    params = sel.adapt("wan_t2v", ShotIntent(intent="algo", duration_s=3.0))
+    # 3 s * 16 fps = 48 frames (acotado por el rango de la plantilla).
+    assert params["frames"] == 48
+
+
+def test_adapt_output_validates_against_registry() -> None:
+    sel = TemplateSelector()
+    params = sel.adapt("wan_t2v", ShotIntent(intent="un dragón vuela sobre la ciudad"))
+    # El dict adaptado debe pasar la validación real de la plantilla (prompt presente).
+    validated = sel._registry.validate_params("wan_t2v", params, strict=False)
+    assert validated["prompt"].strip() != ""
+
+
+def test_adapt_ignores_params_template_lacks() -> None:
+    sel = TemplateSelector()
+    # sdxl_image no tiene 'frames'; pasar duración no debe inyectar un param inexistente.
+    params = sel.adapt("sdxl_image", ShotIntent(intent="un retrato", duration_s=5.0))
+    assert "frames" not in params
 
 
 def test_chain_returns_template_ids() -> None:
