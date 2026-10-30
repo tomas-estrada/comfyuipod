@@ -302,6 +302,41 @@ def test_assembler_editor_failure_is_typed():
     assert res["error"] == "boom"
 
 
+class _TimelineStrictEditor:
+    """Editor falso con el MISMO contrato que EditorEngine._parse_timeline.
+
+    Exige `job['clips']` en la raíz (lista de {path, duration_s}) y un
+    `job['output_path']`. Reproduce el `KeyError: 'clips'` que rompía antes.
+    Devuelve la ruta en `payload['output']`, como el editor real.
+    """
+
+    name = "editor"
+
+    def run(self, spec: EngineRunSpec) -> EngineResult:
+        job = spec.job
+        try:
+            clips = job["clips"]  # raíz, no job['timeline']['clips']
+            out = job["output_path"]
+            _ = [c["path"] for c in clips]
+        except (KeyError, TypeError) as exc:
+            return EngineResult(
+                ok=False, engine=self.name, verb="run", error=f"timeline inválida: {exc}"
+            )
+        return EngineResult(
+            ok=True, engine=self.name, verb="run", payload={"output": out, "clips": len(clips)}
+        )
+
+
+def test_assembler_builds_job_in_editor_timeline_shape():
+    """El job debe llevar clips en la raíz + output_path (no anidado en 'timeline')."""
+    asm = EngineAssembler(_TimelineStrictEditor())
+    res = asm.assemble("prod_42", [{"path": "/out/a.mp4", "duration_s": 5.0}])
+    assert res["ok"] is True
+    # output_path se toma de payload['output'] (contrato del editor real).
+    assert res["output_path"].endswith("prod_42_reel.mp4")
+    assert res["clips"] == 1
+
+
 # --------------------------------------------------------------------------
 # build_server_collaborators: el grafo corre con colaboradores reales
 # --------------------------------------------------------------------------

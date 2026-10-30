@@ -337,14 +337,23 @@ class EngineAssembler:
         self._compositor = compositor_engine
 
     def assemble(self, production_id: str, clips: list[dict[str, Any]]) -> dict[str, Any]:
-        timeline = {
-            "production_id": production_id,
+        # El `EditorEngine` espera el job en la forma de `TimelineSpec`:
+        # `clips` en la RAÍZ (no anidado bajo `timeline`) con {path, duration_s,
+        # transition_in?}, y un `output_path` obligatorio para el reel final.
+        # Pasarle {"timeline": {...}} rompía con "timeline inválida: 'clips'".
+        job = {
             "clips": [
-                {"path": c.get("path"), "duration_s": c.get("duration_s", 5.0)}
+                {
+                    "path": c.get("path"),
+                    "duration_s": c.get("duration_s", 5.0),
+                    "transition_in": c.get("transition_in", "cut"),
+                }
                 for c in clips
             ],
+            "output_path": f"projects/default/outputs/{production_id}_reel.mp4",
+            "mode": "assemble",
         }
-        spec = EngineRunSpec(job={"timeline": timeline, "mode": "assemble"})
+        spec = EngineRunSpec(job=job)
         try:
             raw = _run_engine_sync(self._editor, spec)
         except Exception as exc:  # noqa: BLE001 - tipificar, no romper el grafo
@@ -353,10 +362,11 @@ class EngineAssembler:
         result = _result_to_dict(raw)
         if not result.get("ok", False):
             return {"ok": False, "error": result.get("error", "fallo de ensamblaje")}
+        # el editor devuelve la ruta del reel en payload['output'] (o output_path).
         output = result.get("output_path")
         if not output:
             payload = result.get("payload") or {}
-            output = payload.get("output_path")
+            output = payload.get("output") or payload.get("output_path")
         return {"ok": True, "output_path": output, "clips": len(clips)}
 
 
