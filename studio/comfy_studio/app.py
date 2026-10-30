@@ -27,6 +27,7 @@ from starlette.formparsers import FormParser, MultiPartException, MultiPartParse
 from comfy_studio import SIMULATED_ML_NOTICE
 from comfy_studio.agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
 from comfy_studio.agent.tools import EdlCutItem
+from comfy_studio.agent_brain.registry import brain_health_report, build_default_brain
 from comfy_studio.asr import diarize_project_asset, transcribe_project_asset
 from comfy_studio.comfyui_client import ComfyUIClient, ComfyUIError
 from comfy_studio.config import (
@@ -962,6 +963,8 @@ def create_app(
             # M5-F7: estado por motor del roster (ready/stub/unwired) para que el
             # strict-check del supervisor observe cada motor, no solo que el studio vive.
             "engines": health_report(build_default_registry()),
+            # M6-B1: estado del cerebro del agente (memory/compress/retrieve/rerank).
+            "agent_brain": brain_health_report(build_default_brain()),
         }
         return active_redactor.redact_value(payload)
 
