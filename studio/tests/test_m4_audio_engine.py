@@ -117,10 +117,10 @@ def test_real_stt_delegates_to_worker(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_real_tts_typed_pending_outside_stub(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # TTS no tiene backend real integrado: debe fallar tipado, no fingir.
+    # TTS usa Kokoro; ausente en CI -> falla TIPADO mencionando Kokoro, no finge.
     monkeypatch.delenv("STUDIO_STUB_AUDIO", raising=False)
     res = AudioEngine().run(
         EngineRunSpec(job={"op": "tts", "text": "hola", "output_path": str(tmp_path / "v.wav")})
     )
     assert res.ok is False
-    assert "TTS" in (res.error or "") or "síntesis" in (res.error or "")
+    assert "Kokoro" in (res.error or "")
