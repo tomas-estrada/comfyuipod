@@ -24,8 +24,13 @@ from comfy_studio.engines import (
 )
 
 _STUB_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+_STUB_MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 16
 _MODEL_DIR_ENV = "STUDIO_UPSCALER_MODEL_DIR"
 _BIN_ENV = "STUDIO_UPSCALER_BIN"
+# Nodo ComfyUI del upscaler de vídeo SeedVR2 (submotor on-the-run, no horneado).
+_SEEDVR2_NODE = "ComfyUI-SeedVR2_VideoUpscaler"
+_SEEDVR2_NODE_ENV = "STUDIO_UPSCALER_VIDEO_NODE"  # tipo de nodo que verifica object_info
+_MODES = ("image", "video")
 _SCALES = (2, 3, 4)
 _DEFAULT_TIMEOUT_S = 900.0
 
@@ -35,11 +40,14 @@ class UpscaleSpec:
     input_path: Path
     output_path: Path
     scale: int = 4
+    mode: str = "image"  # image = Real-ESRGAN (horneado); video = SeedVR2 (ComfyUI)
     timeout_s: float = _DEFAULT_TIMEOUT_S
 
     def validate(self) -> None:
         if self.scale not in _SCALES:
             raise ValueError(f"scale debe ser uno de {_SCALES}, no {self.scale!r}")
+        if self.mode not in _MODES:
+            raise ValueError(f"mode debe ser uno de {_MODES}, no {self.mode!r}")
 
 
 class UpscalerEngine:
@@ -62,6 +70,8 @@ class UpscalerEngine:
             verb="list",
             payload={
                 "scales": list(_SCALES),
+                "modes": list(_MODES),
+                "video_submotor": os.environ.get(_SEEDVR2_NODE_ENV) or _SEEDVR2_NODE,
                 "model_available": self._model_available(),
                 "stub": self.is_stub(),
             },
@@ -97,7 +107,7 @@ class UpscalerEngine:
         start = time.monotonic()
         if self.is_stub():
             u.output_path.parent.mkdir(parents=True, exist_ok=True)
-            u.output_path.write_bytes(_STUB_PNG)
+            u.output_path.write_bytes(_STUB_MP4 if u.mode == "video" else _STUB_PNG)
             return EngineResult(
                 ok=True,
                 engine=self.name,
@@ -105,10 +115,29 @@ class UpscalerEngine:
                 payload={
                     "output": str(u.output_path),
                     "scale": u.scale,
+                    "mode": u.mode,
                     "duration_s": round(time.monotonic() - start, 3),
                 },
                 simulated=True,
-                stderr_tail="STUDIO_STUB_UPSCALER: upscale simulado",
+                stderr_tail=f"STUDIO_STUB_UPSCALER: upscale {u.mode} simulado",
+            )
+
+        # Modo vídeo = SeedVR2, upscale temporalmente consistente (sin flicker).
+        # Es un SUBMOTOR de ComfyUI (nodo ComfyUI-SeedVR2_VideoUpscaler, Apache) +
+        # pesos: NO se hornea (traería torch deps que clavarían el pod). Se instala
+        # on-the-run vía ComfyUI-Manager. Aquí falla TIPADO con remediación si el
+        # nodo no está; el cableado real al grafo ComfyUI llega en una fase posterior.
+        if u.mode == "video":
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=(
+                    "upscale de vídeo (SeedVR2) es un submotor de ComfyUI aún no "
+                    f"instalado; instala el nodo {_SEEDVR2_NODE} vía ComfyUI-Manager "
+                    "(requiere STUDIO_DYNAMIC=1) o usa STUDIO_STUB_UPSCALER=1. "
+                    "Para imagen frame-a-frame usa mode='image' (Real-ESRGAN horneado)."
+                ),
             )
 
         if not self._model_available():
@@ -129,6 +158,7 @@ class UpscalerEngine:
             input_path=Path(job["input_path"]),
             output_path=Path(job["output_path"]),
             scale=int(job.get("scale", 4)),
+            mode=str(job.get("mode", "image")),
         )
 
     def _run_model(self, u: UpscaleSpec, start: float) -> EngineResult:
