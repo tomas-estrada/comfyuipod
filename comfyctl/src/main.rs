@@ -4,7 +4,8 @@ use comfyctl::config::RuntimeConfig;
 use comfyctl::http::ServerContext;
 use comfyctl::report::build_report_markdown;
 use comfyctl::{diag, http, strict, supervisor};
-use pico_args::Arguments;
+use comfyctl::tracing::setup_tracing;
+pico_args::Arguments;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -40,6 +41,7 @@ fn ensure_no_leftover_args(args: Arguments) -> Result<(), String> {
 }
 
 fn run() -> Result<u8, String> {
+    setup_tracing();
     let mut args = Arguments::from_env();
     if args.contains(["-h", "--help"]) {
         print_help();

@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  comfyctl:
+    build: ./comfyctl
+    ports:
+      - "8080:8080"
+    networks:
+      - comfy_net
+
+  studio:
+    build: ./studio
+    ports:
+      - "8000:8000"
+    networks:
+      - comfy_net
+    environment:
+      - COMFY_PASS=${COMFY_PASS}
+      - STUDIO_LLM_API_KEY=${STUDIO_LLM_API_KEY}
+
+  panel:
+    build: ./panel
+    ports:
+      - "80:80"
+    depends_on:
+      - studio
+    networks:
+      - comfy_net
+
+networks:
+  comfy_net:
+    driver: bridge

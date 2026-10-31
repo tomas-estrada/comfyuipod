@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# Vast.ai CLI Wrapper for ComfyUIPod
+
+VASTAI_CMD="vastai"
+
+case "$1" in
+    list)
+        $VASTAI_CMD show instances --raw | jq -r '.[] | "ID: \(.id), GPU: \(.gpu_name), Status: \(.actual_status)"'
+        ;;
+    create)
+        $VASTAI_CMD create instance --image pytorch/pytorch --env '-e COMFY_PASS=password' --disk 50 --onstart-cmd "bash /workspace/start.sh"
+        ;;
+    destroy)
+        $VASTAI_CMD destroy instance $2
+        ;;
+    status)
+        $VASTAI_CMD show instance $2 --raw | jq -r '.actual_status'
+        ;;
+    *)
+        echo "Usage: $0 {list|create|destroy <id>|status <id>}"
+        exit 1
+        ;;
+esac

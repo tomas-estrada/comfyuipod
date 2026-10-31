@@ -1,0 +1,29 @@
+groups:
+  - name: comfyui-alerts
+    rules:
+      - alert: ComfyUICrash
+        expr: increase(comfyui_restarts_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ComfyUI has crashed (instance {{ $labels.instance }})"
+          description: "ComfyUI restarted {{ $value }} times in the last 5 minutes."
+
+      - alert: GPUOOM
+        expr: gpu_memory_usage_bytes / gpu_memory_total_bytes > 0.95
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU OOM imminent (instance {{ $labels.instance }})"
+          description: "GPU {{ $labels.gpu_id }} is using {{ $value }}% of memory."
+
+      - alert: ModelDownloadFailure
+        expr: increase(model_downloads_total{status="failed"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model download failed (instance {{ $labels.instance }})"
+          description: "Model {{ $labels.model_name }} failed to download."
