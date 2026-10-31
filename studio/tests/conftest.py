@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-
-from studio.comfy_studio.app import create_app
-
+from comfy_studio.app import create_app
 from comfy_studio.config import StudioConfig
 from comfy_studio.stubs.comfyui import ComfyUIStubState, create_stub_comfyui_app
 

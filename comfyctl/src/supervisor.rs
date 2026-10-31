@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
-use sysinfo::{System, SystemExt, CpuExt, ProcessExt};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastExitInfo {
@@ -27,28 +26,6 @@ pub struct LastExitInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceMonitor {
-    system: System,
-}
-
-impl ResourceMonitor {
-    pub fn new() -> Self {
-        ResourceMonitor {
-            system: System::new_all(),
-        }
-    }
-
-    pub fn check_resources(&mut self) -> bool {
-        self.system.refresh_all();
-        let cpu_usage = self.system.global_cpu_info().cpu_usage();
-        let memory_usage = self.system.used_memory();
-        let total_memory = self.system.total_memory();
-        
-        // Límites: 80% CPU, 90% memoria
-        cpu_usage < 80.0 && (memory_usage as f64 / total_memory as f64) < 0.9
-    }
-}
-
 pub struct SupervisorState {
     pub state: String,
     pub attempt: u32,
@@ -71,22 +48,6 @@ impl SupervisorState {
             pid: None,
             started_at: None,
             last_exit: None,
-        }
-    }
-
-    /// Escala verticalmente un proyecto basado en el uso de recursos.
-    pub fn scale_vertically(&self, project_id: &str) {
-        let mut monitor = ResourceMonitor::new();
-        if !monitor.check_resources() {
-            log_sup(&format!(
-                "Escalando hacia abajo el proyecto {} debido a restricciones de recursos",
-                project_id
-            ));
-        } else {
-            log_sup(&format!(
-                "Recursos suficientes para el proyecto {}",
-                project_id
-            ));
         }
     }
 

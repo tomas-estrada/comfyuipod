@@ -1,8 +1,8 @@
-# config/nodes.lock — Versiones fijadas por commit SHA y límites de recursos (verificadas el 2026-10-16)
-# Formato: <tipo> <nombre_directorio> <repo_url> <commit_sha> [cpu_limit] [memory_limit]
+# config/nodes.lock — Versiones fijadas por commit SHA (verificadas el 2026-10-16)
+# Formato: <tipo> <nombre_directorio> <repo_url> <commit_sha>
 # Para actualizar: ejecutar git ls-remote <repo_url> HEAD y reemplazar el SHA.
 
-core ComfyUI https://github.com/Comfy-Org/ComfyUI.git bdc63e72f5ab29fde448c161db3057827148c0ef 80 90
+core ComfyUI https://github.com/Comfy-Org/ComfyUI.git bdc63e72f5ab29fde448c161db3057827148c0ef
 dep sam2 https://github.com/facebookresearch/sam2.git 2b90b9f5ceec907a1c18123530e92e794ad901a4
 node ComfyUI-Manager https://github.com/Comfy-Org/ComfyUI-Manager.git 4d3bed4b569205124a52444caf25de1719fae0de
 node ComfyUI-VideoHelperSuite https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git 4d907bee61e92c2e65af3bd6383a4e4d356126d1

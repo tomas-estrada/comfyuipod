@@ -11,31 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-try:
-    import hvac
-    VAULT_AVAILABLE = True
-except ImportError:
-    hvac = None
-    VAULT_AVAILABLE = False
-
-    try:
-        import base64
-        import os
-
-        from cryptography.hazmat.backends import default_backend
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        CRYPTOGRAPHY_AVAILABLE = True
-    except ImportError:
-        AESGCM = None
-        CRYPTOGRAPHY_AVAILABLE = False
-
 SECRET_PLACEHOLDER = "[REDACTED]"
-
-DEFAULT_VAULT_ADDR = "http://127.0.0.1:8200"
-DEFAULT_VAULT_MOUNT_POINT = "comfyui"
-DEFAULT_VAULT_PATH = "secrets"
 
 DEFAULT_STUDIO_LLM_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 DEFAULT_STUDIO_LLM_MODEL = "qwen3-vl-plus"
@@ -108,130 +84,6 @@ def _parse_bool(raw: str | None, default: bool = False) -> bool:
     return cleaned in {"1", "true", "yes", "on"}
 
 
-class VaultClient:
-    """Cliente para HashiCorp Vault. Fetch secrets dinámicamente en runtime."""
-
-    def __init__(
-        self,
-        vault_addr: str | None = None,
-        vault_token: str | None = None,
-        vault_mount_point: str | None = None,
-        vault_path: str | None = None,
-    ):
-        self.vault_addr = vault_addr or os.getenv("VAULT_ADDR", DEFAULT_VAULT_ADDR)
-        self.vault_token = vault_token or os.getenv("VAULT_TOKEN")
-        self.vault_mount_point = vault_mount_point or os.getenv(
-            "VAULT_MOUNT_POINT", DEFAULT_VAULT_MOUNT_POINT
-        )
-        self.vault_path = vault_path or os.getenv("VAULT_PATH", DEFAULT_VAULT_PATH)
-        self.client = None
-        
-        if not VAULT_AVAILABLE:
-            logging.warning(
-                "Vault no disponible: el paquete 'hvac' no está instalado. "
-                "Instala con: pip install hvac"
-            )
-            return
-            
-        if not self.vault_token:
-            logging.warning(
-                "Vault token no proporcionado. Usa VAULT_TOKEN o pasa token explícitamente."
-            )
-            return
-            
-        try:
-            self.client = hvac.Client(url=self.vault_addr, token=self.vault_token)
-            if not self.client.is_authenticated():
-                logging.warning("Vault token no es válido o Vault no está accesible.")
-                self.client = None
-        except Exception as e:
-            logging.warning(f"Error inicializando Vault client: {e}")
-            self.client = None
-
-    def get_secret(self, secret_key: str) -> str | None:
-        """Fetch un secreto desde Vault."""
-        if not self.client:
-            return None
-            
-        try:
-            secret = self.client.secrets.kv.v2.read_secret_version(
-                path=self.vault_path, mount_point=self.vault_mount_point
-            )
-            return secret.get("data", {}).get("data", {}).get(secret_key)
-        except Exception as e:
-            logging.warning(f"Error fetching secret '{secret_key}' desde Vault: {e}")
-            return None
-
-
-class SecretsEncryptor:
-    """Encryptor para secrets at rest usando AES-256-GCM."""
-
-    def __init__(self, encryption_key: str | None = None):
-        self.encryption_key = encryption_key or os.getenv("SECRETS_ENCRYPTION_KEY")
-        if not self.encryption_key:
-            logging.warning(
-                "SECRETS_ENCRYPTION_KEY no proporcionado. Generando clave aleatoria."
-            )
-            self.encryption_key = base64.urlsafe_b64encode(os.urandom(32)).decode()
-
-    def _derive_key(self, salt: bytes) -> bytes:
-        """Deriva una clave AES-256 desde la encryption_key usando PBKDF2."""
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100000,
-            backend=default_backend(),
-        )
-        return kdf.derive(self.encryption_key.encode())
-
-    def encrypt(self, plaintext: str) -> str | None:
-        """Encrypt plaintext usando AES-256-GCM."""
-        if not CRYPTOGRAPHY_AVAILABLE:
-            logging.warning(
-                "Cryptography no disponible: el paquete 'cryptography' no está instalado. "
-                "Instala con: pip install cryptography"
-            )
-            return None
-            
-        try:
-            salt = os.urandom(16)
-            key = self._derive_key(salt)
-            nonce = os.urandom(12)
-            aesgcm = AESGCM(key)
-            ciphertext = aesgcm.encrypt(nonce, plaintext.encode(), None)
-            # Format: salt:nonce:ciphertext
-            return (
-                f"{base64.urlsafe_b64encode(salt).decode()}:{base64.urlsafe_b64encode(nonce).decode()}:"
-                f"{base64.urlsafe_b64encode(ciphertext).decode()}"
-            )
-        except Exception as e:
-            logging.warning(f"Error encrypting secret: {e}")
-            return None
-
-    def decrypt(self, ciphertext: str) -> str | None:
-        """Decrypt ciphertext usando AES-256-GCM."""
-        if not CRYPTOGRAPHY_AVAILABLE:
-            logging.warning(
-                "Cryptography no disponible: el paquete 'cryptography' no está instalado. "
-                "Instala con: pip install cryptography"
-            )
-            return None
-            
-        try:
-            salt_b64, nonce_b64, ciphertext_b64 = ciphertext.split(":")
-            salt = base64.urlsafe_b64decode(salt_b64)
-            nonce = base64.urlsafe_b64decode(nonce_b64)
-            ciphertext_bytes = base64.urlsafe_b64decode(ciphertext_b64)
-            key = self._derive_key(salt)
-            aesgcm = AESGCM(key)
-            plaintext = aesgcm.decrypt(nonce, ciphertext_bytes, None)
-            return plaintext.decode()
-        except Exception as e:
-            logging.warning(f"Error decrypting secret: {e}")
-            return None
-
-
 def sanitize_loopback_host(host: str | None) -> str:
     """Fuerza binding exclusivo a loopback 127.0.0.1 (Regla 2 de AGENTS.md)."""
     if not host:
@@ -256,10 +108,7 @@ def _default_studio_data_dir(env: Mapping[str, str]) -> Path:
 
 
 class SecretRedactor:
-    """Redactor determinista de secretos para logs, diagnósticos y respuestas HTTP.
-    
-    Incluye patrones para PII (emails, IPs, nombres de usuario) y secretos.
-    """
+    """Redactor determinista de secretos para logs, diagnósticos y respuestas HTTP."""
 
     def __init__(
         self,
@@ -283,15 +132,6 @@ class SecretRedactor:
             reverse=True,
         )
         self._literal_secrets: tuple[str, ...] = tuple(cleaned)
-        
-        # Patrones para PII y otros datos sensibles
-        self._pii_patterns = [
-            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",  # Emails
-            r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",  # IPs
-            r"\buser[=:][^\s]+",  # Usernames
-            r"\bname[=:][^\s]+",  # Nombres
-        ]
-        self._pii_regex = re.compile("|".join(self._pii_patterns), re.IGNORECASE)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> SecretRedactor:
@@ -355,9 +195,6 @@ class SecretRedactor:
         out = _VAST_API_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _BEARER_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _URL_USERINFO_RE.sub(rf"\1{SECRET_PLACEHOLDER}\3", out)
-        
-        # Redactar PII
-        out = self._pii_regex.sub(SECRET_PLACEHOLDER, out)
         return out
 
     def redact_value(self, value: Any) -> Any:
@@ -549,11 +386,6 @@ class StudioConfig:
     studio_ffprobe_timeout_s: float = DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
     studio_api_token: str | None = field(default=None, repr=False)
     studio_enable_mcp: bool = True
-    job_priorities: dict[str, int] = field(default_factory=lambda: {
-        "high": 0,
-        "medium": 1,
-        "low": 2,
-    })
     # M3.1: protocolo de workers de ML en subprocesso (ComfyUI interpreter).
     studio_ml_python_bin: str = "python3"
     studio_ml_timeout_s: float = 120.0
@@ -589,16 +421,6 @@ class StudioConfig:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> StudioConfig:
         source = env if env is not None else os.environ
-
-        # Initialize Vault client
-        vault_client = None
-        if VAULT_AVAILABLE and _parse_bool(source.get("USE_VAULT"), default=False):
-            vault_client = VaultClient(
-                vault_addr=source.get("VAULT_ADDR"),
-                vault_token=source.get("VAULT_TOKEN"),
-                vault_mount_point=source.get("VAULT_MOUNT_POINT"),
-                vault_path=source.get("VAULT_PATH"),
-            )
 
         raw_port = source.get("STUDIO_SERVER_PORT", "").strip()
         try:
@@ -646,19 +468,11 @@ class StudioConfig:
             "STUDIO_UPLOAD_MAX_TOTAL_MB", DEFAULT_UPLOAD_MAX_TOTAL_MB
         )
 
-        # Fetch secrets from Vault if available
-        def _get_secret(secret_key: str) -> str | None:
-            if vault_client:
-                return vault_client.get_secret(secret_key)
-            return source.get(secret_key, "").strip() or None
-
-        _get_secret("STUDIO_LLM_KEY")
-        _get_secret("STUDIO_LLM_FALLBACK_KEY")
-        comfy_pass = _get_secret("COMFY_PASS") or _get_secret("STUDIO_AUTH_PASS")
-        _get_secret("STUDIO_API_TOKEN")
-        _get_secret("STUDIO_WEBHOOK_SECRET")
-        _get_secret("VAST_API_KEY")
-        
+        comfy_pass = (
+            source.get("COMFY_PASS", "").strip()
+            or source.get("STUDIO_AUTH_PASS", "").strip()
+            or None
+        )
         require_auth_env = _parse_bool(source.get("STUDIO_REQUIRE_AUTH"), default=False)
         require_auth = bool(comfy_pass) or require_auth_env
 

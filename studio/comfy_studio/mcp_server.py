@@ -34,7 +34,6 @@ from starlette.concurrency import run_in_threadpool
 from .agent.tools import ToolBelt, ToolContext
 from .comfyui_client import ComfyUIClient
 from .config import SecretRedactor, StudioConfig
-from .models.rbac import Permission, Role
 from .progress import ProgressBroker
 from .projects import ProjectStore
 
@@ -156,7 +155,6 @@ class McpContext:
     config: StudioConfig
     tool_belt: ToolBelt
     redactor: SecretRedactor
-    user_roles: list[Role] = None
     #: servicio de producción (orquestación M6). Opcional: si no se inyecta, las
     #: tools de producción no se ofrecen. NUNCA expone `approve_plan` (la puerta
     #: de gasto humano vive solo en la API pública — M6-AGT-001).
@@ -397,36 +395,6 @@ def _check_bearer_token(request: Request, ctx: McpContext) -> JSONResponse | Non
             )
         },
     )
-
-
-class MCP:
-    """Servidor MCP con enforcement de RBAC."""
-
-    def __init__(self, ctx: McpContext):
-        self.store = ctx.store
-        self.comfy_client = ctx.comfyui_client
-        self.redactor = ctx.redactor
-        self.permissions = self._get_permissions(ctx.user_roles or [])
-
-    def _get_permissions(self, user_roles: list[Role]):
-        """Mapea roles a permisos."""
-        permissions = set()
-        for role in user_roles:
-            if role == Role.ADMIN:
-                permissions.update([
-                    Permission.READ, Permission.WRITE, 
-                    Permission.DELETE, Permission.EXECUTE
-                ])
-            elif role == Role.EDITOR:
-                permissions.update([Permission.READ, Permission.WRITE])
-            elif role == Role.VIEWER:
-                permissions.update([Permission.READ])
-        return permissions
-
-    def create_cluster(self):
-        if Permission.WRITE not in self.permissions:
-            raise PermissionError("Write access required")
-        # Proceed with cluster creation
 
 
 def create_mcp_router(ctx: McpContext) -> APIRouter:

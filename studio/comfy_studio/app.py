@@ -18,21 +18,14 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
-from opentelemetry import trace
-from opentelemetry.exporter.jaeger.thrift import JaegerExporter
-from opentelemetry.instrumentation.flask import FlaskInstrumentor
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, Field, field_validator
 from python_multipart.multipart import parse_options_header
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, Headers
 from starlette.formparsers import FormParser, MultiPartException, MultiPartParser
-from studio.auth import router as auth_router
-from studio.models import router as models_router
-from studio.projects import router as projects_router
 
 from comfy_studio import SIMULATED_ML_NOTICE
+from comfy_studio.agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
 from comfy_studio.agent.tools import EdlCutItem
 from comfy_studio.agent_brain.registry import brain_health_report, build_default_brain
 from comfy_studio.asr import diarize_project_asset, transcribe_project_asset
@@ -49,11 +42,6 @@ from comfy_studio.engines.qa import QaEngine
 from comfy_studio.engines.registry import build_default_registry
 from comfy_studio.engines.upscaler import UpscalerEngine
 from comfy_studio.mcp_server import McpContext, create_mcp_router
-from comfy_studio.metrics import (
-    API_ERRORS,
-    API_LATENCY,
-    start_metrics_server,
-)
 from comfy_studio.ml import probe_capabilities
 from comfy_studio.orchestration.adapters import build_server_collaborators
 from comfy_studio.orchestration.health import orchestration_health_report
@@ -87,33 +75,6 @@ from comfy_studio.webhooks import (
     WebhookNotifier,
     create_webhook_notifier,
 )
-
-from .agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
-from .logging_config import setup_logging
-from .models.rbac import Permission, Role
-
-
-def get_active_user_roles(user: dict):
-    """Obtiene los roles activos del usuario."""
-    # En una implementación real, esto se obtendría de la base de datos
-    return user.get("roles", [])
-
-
-def get_permissions(user_roles: list[Role]):
-    """Mapea roles a permisos."""
-    permissions = set()
-    for role in user_roles:
-        if role == Role.ADMIN:
-            permissions.update([
-                Permission.READ, Permission.WRITE, 
-                Permission.DELETE, Permission.EXECUTE
-            ])
-        elif role == Role.EDITOR:
-            permissions.update([Permission.READ, Permission.WRITE])
-        elif role == Role.VIEWER:
-            permissions.update([Permission.READ])
-    return permissions
-
 
 logger = logging.getLogger("comfy_studio.app")
 
@@ -682,21 +643,8 @@ def create_app(
 ) -> FastAPI:
     cfg = config if config is not None else StudioConfig.from_env()
     redactor = cfg.redactor()
-    setup_logging()
     install_log_redaction(redactor)
     install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
-    start_metrics_server()
-    
-    # Setup OpenTelemetry tracing
-    trace.set_tracer_provider(TracerProvider())
-    jaeger_exporter = JaegerExporter(
-        agent_host_name="jaeger",
-        agent_port=6831,
-    )
-    trace.get_tracer_provider().add_span_processor(
-        BatchSpanProcessor(jaeger_exporter)
-    )
-    FlaskInstrumentor().instrument_app(app)
 
     # M3-SEC-002: sin contraseña exigible no hay lockout posible (ver test de
     # regresión), pero la postura fail-open debe ser VISIBLE: WARN en arranque +
@@ -793,11 +741,6 @@ def create_app(
         broker=broker,
         redactor=redactor,
     )
-    
-    # Include new routers
-    app.include_router(projects_router, prefix="/api")
-    app.include_router(auth_router, prefix="/api")
-    app.include_router(models_router, prefix="/api")
     # (El ProductionService se arma más abajo, tras construir app.state.llm_client,
     # porque el cableado de motores reales lo necesita — M6-AGT-001.)
     # M1.2: la construcción de la percepción vectorial NO puede tumbar la app. Si
@@ -964,9 +907,7 @@ def create_app(
         production_service=app.state.production_service,
     )
     app.state.mcp_context = mcp_ctx
-    from comfy_studio.api.routes import router as api_router
     app.include_router(create_mcp_router(mcp_ctx))
-    app.include_router(api_router, prefix="/studio/api")
 
     @app.middleware("http")
     async def edge_auth_and_redaction_middleware(request: Request, call_next):
@@ -1132,18 +1073,6 @@ def create_app(
         body: ProjectCreateRequest,
         request: Request,
     ) -> dict[str, Any]:
-        with API_LATENCY.labels('/studio/api/projects').time():
-            try:
-                from studio.projects import active_store
-                return active_store.create_project(
-                    name=body.name,
-                    description=body.description,
-                    aspect_ratio=body.aspect_ratio,
-                    metadata=body.metadata,
-                )
-            except ValueError as exc:
-                API_ERRORS.labels('/studio/api/projects', 400).inc()
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
         active_store: ProjectStore = request.app.state.store
         try:
             return active_store.create_project(
