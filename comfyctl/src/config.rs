@@ -54,8 +54,9 @@ impl ModelProfile {
             return 5;
         }
         match self {
-            Self::Studio => 180,
-            Self::Unreal => 210,
+            // vast.ai requirements: 200 GB (studio) / 250 GB (unreal)
+            Self::Studio => 200,
+            Self::Unreal => 250,
             Self::All => 75,
             Self::General | Self::Realistic | Self::Anime => 45,
             Self::Minimal => 10,
@@ -318,11 +319,11 @@ impl RuntimeConfig {
             hf_hub_disable_xet: get("HF_HUB_DISABLE_XET").map(ToString::to_string),
             strict_start,
             strict_require_gpu,
-            strict_min_vram_mb: get_u64("STRICT_MIN_VRAM_MB", 20000),
-            strict_warn_vram_mb: get_u64("STRICT_WARN_VRAM_MB", 22000),
+            strict_min_vram_mb: get_u64("STRICT_MIN_VRAM_MB", 24576),  // 24 GB for vast.ai
+            strict_warn_vram_mb: get_u64("STRICT_WARN_VRAM_MB", 24576),  // No warning band
             strict_min_driver: get_u32("STRICT_MIN_DRIVER", 570),
-            strict_min_ram_mb: get_u64("STRICT_MIN_RAM_MB", 16384),
-            strict_warn_ram_mb: get_u64("STRICT_WARN_RAM_MB", 32768),
+            strict_min_ram_mb: get_u64("STRICT_MIN_RAM_MB", 32768),  // 32 GB for vast.ai
+            strict_warn_ram_mb: get_u64("STRICT_WARN_RAM_MB", 32768),  // No warning band
             strict_min_disk_gb,
             strict_fatal_grace_s: get_u64("STRICT_FATAL_GRACE", 600),
             status_server_port,

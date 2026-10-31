@@ -1,0 +1,17 @@
+{
+  "image": "nvidia/cuda:12.2.0-base-ubuntu22.04",
+  "disk": 500,
+  "gpu": {
+    "count": 1,
+    "type": "RTX_3090"
+  },
+  "ports": [
+    "8188:8188",
+    "8000:8000"
+  ],
+  "env": {
+    "COMFY_PASS": "your_secure_password",
+    "STUDIO_API_TOKEN": "your_api_token"
+  },
+  "on_start": "bash /workspace/ComfyUIPod/scripts/deploy_vastai.sh"
+}
