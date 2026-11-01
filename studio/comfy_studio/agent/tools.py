@@ -31,6 +31,7 @@ TemplateIdLiteral = Literal[
     "wan_flf2v",
     "wan_i2v",
     "wan_i2v_5b",
+    "wan_s2v",
     "wan_t2v",
     "wan_t2v_5b",
     "sdxl_image",
@@ -46,6 +47,7 @@ VALID_TEMPLATES: tuple[str, ...] = (
     "wan_flf2v",
     "wan_i2v",
     "wan_i2v_5b",
+    "wan_s2v",
     "wan_t2v",
     "wan_t2v_5b",
     "sdxl_image",
@@ -216,7 +218,7 @@ class EnqueueRenderArgs(BaseModel):
         description=(
             "Identificador de la plantilla API-format a ejecutar: "
             "face_fix, vace_inpaint, vace_restyle, vace_swap, wan_flf2v, wan_i2v, "
-            "wan_i2v_5b, wan_t2v, wan_t2v_5b, sdxl_image, sdxl_ipadapter "
+            "wan_i2v_5b, wan_s2v, wan_t2v, wan_t2v_5b, sdxl_image, sdxl_ipadapter "
             "o hunyuan3d_image_to_3d."
         ),
     )
@@ -1603,7 +1605,7 @@ def create_default_tool_belt() -> ToolBelt:
             description=(
                 "Encola y ejecuta un render de vídeo o imagen en ComfyUI a partir de una "
                 "plantilla curada (face_fix, vace_inpaint, vace_restyle, vace_swap, "
-                "wan_flf2v, wan_i2v, wan_i2v_5b, wan_t2v, wan_t2v_5b, "
+                "wan_flf2v, wan_i2v, wan_i2v_5b, wan_s2v, wan_t2v, wan_t2v_5b, "
                 "sdxl_image, sdxl_ipadapter). Valida los parámetros antes de "
                 "enviar a ComfyUI."
             ),

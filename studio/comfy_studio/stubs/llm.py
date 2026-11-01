@@ -256,6 +256,10 @@ class StubLLMClient:
             "ip-adapter",
             "5b",
             "i2v_5b",
+            "wan_s2v",
+            "s2v",
+            "hablado",
+            "avatar",
             "render",
             "genera un vídeo",
             "genera un video",
@@ -274,6 +278,8 @@ class StubLLMClient:
                 template_id = "face_fix"
             elif "wan_flf2v" in lower or "flf2v" in lower:
                 template_id = "wan_flf2v"
+            elif "wan_s2v" in lower or "s2v" in lower or "hablado" in lower or "avatar" in lower:
+                template_id = "wan_s2v"
             elif "wan_i2v_5b" in lower or "i2v_5b" in lower:
                 template_id = "wan_i2v_5b"
             elif "wan_i2v" in lower or "i2v" in lower:

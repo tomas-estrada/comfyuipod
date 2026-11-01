@@ -1,0 +1,297 @@
+{
+  "id": "wan_s2v",
+  "name": "Wan 2.2 S2V 14B — Video Hablado desde Imagen + Audio en Español (480p)",
+  "category": "video_generation",
+  "output_kind": "video",
+  "summary": "Genera un video de avatar parlante a partir de una imagen de referencia y una pista de audio en español, con Wan 2.2 S2V 14B fp8_scaled y encoder wav2vec2-large-xlsr-53-spanish, a 480p con el audio original muxado.",
+  "description": "Convierte una imagen fija (retrato generado con sdxl_image/sdxl_ipadapter o foto subida) y un audio del proyecto (voz en español, transcripción o voz clonada) en un clip sincronizado labialmente. Usa el modelo Wan 2.2 S2V 14B fp8_scaled con el encoder de audio wav2vec2-large-xlsr-53-spanish (español) vía AudioEncoderLoader + AudioEncoderEncode hacia WanSoundImageToVideo, muestreo con KSampler de etapa única y mux del audio original en VHS_VideoCombine. Todo el habla del proyecto es español: el encoder monolingüe español da mejor sincronía labial que el inglés.",
+  "performance_defaults": {
+    "precision": "fp8_scaled",
+    "resolution": "480p",
+    "width": 832,
+    "height": 480,
+    "frames": 81,
+    "steps": 20,
+    "cfg": 6.0,
+    "fps": 16,
+    "audio_encoder": "wav2vec2-large-xlsr-53-spanish.safetensors",
+    "offload": true
+  },
+  "models": [
+    "wan2.2_s2v_14B_fp8_scaled.safetensors",
+    "wav2vec2-large-xlsr-53-spanish.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan_2.1_vae.safetensors"
+  ],
+  "required_nodes": [
+    "UNETLoader",
+    "CLIPLoader",
+    "VAELoader",
+    "LoadImage",
+    "LoadAudio",
+    "AudioEncoderLoader",
+    "AudioEncoderEncode",
+    "CLIPTextEncode",
+    "WanSoundImageToVideo",
+    "KSampler",
+    "VAEDecode",
+    "VHS_VideoCombine"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción breve del sujeto y la escena (la sincronía labial la marca el audio; el prompt guía solo luz, fondo y estilo)."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "borroso, baja calidad, labios desincronizados, parpadeo extraño, cabeza deformada, artefactos, texto sobreimpreso",
+      "description": "Defectos a evitar en el video parlante."
+    },
+    "image_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "image",
+      "description": "ID del asset de imagen de referencia (retrato) en el proyecto que será animado por el audio."
+    },
+    "image_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_reference.png",
+      "description": "Nombre del archivo de imagen de referencia en ComfyUI input (se rellena automáticamente desde image_asset_id)."
+    },
+    "audio_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "audio",
+      "description": "ID del asset de audio en español en el proyecto (voz grabada, transcripción TTS o clon RVC) que conducirá la sincronía labial."
+    },
+    "audio_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_audio.wav",
+      "description": "Nombre del archivo de audio en ComfyUI input (se rellena automáticamente desde audio_asset_id)."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 832,
+      "min": 256,
+      "max": 1280,
+      "description": "Ancho del video en píxeles (832 por defecto para 480p 16:9)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 480,
+      "min": 256,
+      "max": 1280,
+      "description": "Alto del video en píxeles (480 por defecto para 480p 16:9)."
+    },
+    "frames": {
+      "type": "integer",
+      "required": false,
+      "default": 81,
+      "min": 1,
+      "max": 241,
+      "description": "Número de fotogramas (81 frames ≈ 5 s a 16 fps). Debe cubrir la duración del audio."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 20,
+      "min": 1,
+      "max": 100,
+      "description": "Pasos de muestreo (20 por defecto para S2V; con LoRA lightning baja a 4)."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 6.0,
+      "min": 1.0,
+      "max": 20.0,
+      "description": "Escala CFG (6.0 por defecto en la ruta estándar de S2V; 1.0 con LoRA lightning)."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista de muestreo."
+    }
+  },
+  "docs": {
+    "uso": "Crear avatares parlantes, vídeos de diálogo o locuciones en español a partir de un retrato del proyecto y una pista de audio (voz subida, TTS de IndexTTS o clon de voz RVC). El encoder wav2vec2-large-xlsr-53-spanish está afinado solo en español: para todo el habla del proyecto en español ofrece mejor sincronía labial que el encoder inglés.",
+    "inputs": [
+      "prompt (obligatorio): describe sujeto, fondo e iluminación; el movimiento labial lo fija el audio.",
+      "image_asset_id / image_input: retrato de referencia (de sdxl_image/sdxl_ipadapter o subido).",
+      "audio_asset_id / audio_input: pista de audio en español del proyecto; marca la duración y la sincronía.",
+      "frames (81 por defecto): fotogramas a 16 fps; iguala o supera la duración del audio (p. ej. 5 s ≈ 81 frames)."
+    ],
+    "defaults": {
+      "resolution": "832x480 (480p 16:9)",
+      "frames": 81,
+      "fps": 16,
+      "steps": 20,
+      "cfg": 6.0,
+      "sampler": "euler",
+      "scheduler": "simple",
+      "audio_encoder": "wav2vec2-large-xlsr-53-spanish.safetensors"
+    },
+    "notas_rendimiento": "El S2V 14B fp8_scaled (~16.4 GiB) más el encoder wav2vec2 español (~1.2 GiB) corren a 480p con holgura en RTX 5090 (32 GB). El audio original se muxa en el MP4 de salida vía VHS_VideoCombine (audio), así el clip ya sale con sonido."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_s2v_14B_fp8_scaled.safetensors",
+        "weight_dtype": "fp8_e4m3fn"
+      },
+      "_meta": {
+        "title": "Cargar Wan 2.2 S2V 14B fp8"
+      }
+    },
+    "2": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "wan"
+      },
+      "_meta": {
+        "title": "Cargar UMT5 XXL fp8"
+      }
+    },
+    "3": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "wan_2.1_vae.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Wan VAE"
+      }
+    },
+    "4": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "{{image_input}}"
+      },
+      "_meta": {
+        "title": "Cargar Imagen de Referencia (Retrato)"
+      }
+    },
+    "5": {
+      "class_type": "LoadAudio",
+      "inputs": {
+        "audio": "{{audio_input}}"
+      },
+      "_meta": {
+        "title": "Cargar Audio en Español"
+      }
+    },
+    "6": {
+      "class_type": "AudioEncoderLoader",
+      "inputs": {
+        "audio_encoder_name": "wav2vec2-large-xlsr-53-spanish.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Encoder de Audio Español (wav2vec2 xlsr-53)"
+      }
+    },
+    "7": {
+      "class_type": "AudioEncoderEncode",
+      "inputs": {
+        "audio_encoder": ["6", 0],
+        "audio": ["5", 0]
+      },
+      "_meta": {
+        "title": "Codificar Audio con wav2vec2 Español"
+      }
+    },
+    "8": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{prompt}}",
+        "clip": ["2", 0]
+      },
+      "_meta": {
+        "title": "Prompt Positivo"
+      }
+    },
+    "9": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["2", 0]
+      },
+      "_meta": {
+        "title": "Prompt Negativo"
+      }
+    },
+    "10": {
+      "class_type": "WanSoundImageToVideo",
+      "inputs": {
+        "positive": ["8", 0],
+        "negative": ["9", 0],
+        "vae": ["3", 0],
+        "audio_encoder_output": ["7", 0],
+        "ref_image": ["4", 0],
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "length": "{{frames}}",
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "Acondicionamiento S2V (audio español + imagen)"
+      }
+    },
+    "11": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1.0,
+        "model": ["1", 0],
+        "positive": ["10", 0],
+        "negative": ["10", 1],
+        "latent_image": ["10", 2]
+      },
+      "_meta": {
+        "title": "Muestreo KSampler S2V (etapa única)"
+      }
+    },
+    "12": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["11", 0],
+        "vae": ["3", 0]
+      },
+      "_meta": {
+        "title": "Decodificar Latente"
+      }
+    },
+    "13": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "images": ["12", 0],
+        "audio": ["5", 0],
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "{{output_prefix}}",
+        "format": "video/h264-mp4",
+        "pingpong": false,
+        "save_output": true
+      },
+      "_meta": {
+        "title": "Guardar Video con Audio Muxado en Galería del Proyecto"
+      }
+    }
+  }
+}

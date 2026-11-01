@@ -1092,6 +1092,45 @@ class ComfyUIClient:
             mime_type=mime_type,
         )
 
+    async def upload_audio(
+        self,
+        data: bytes | Path,
+        filename: str | None = None,
+        *,
+        subfolder: str = "",
+        overwrite: bool = True,
+        storage_type: str = "input",
+        mime_type: str = "audio/wav",
+    ) -> ComfyUIUploadResult:
+        """Sube un audio para LoadAudio mediante POST /upload/audio.
+
+        ComfyUI core acepta /upload/audio con el campo multipart 'audio'.
+        """
+        if isinstance(data, Path):
+            raw_bytes = data.read_bytes()
+            effective_name = filename or data.name
+        else:
+            raw_bytes = data
+            effective_name = filename or "upload.wav"
+
+        resp = await self._request(
+            "POST",
+            "/upload/audio",
+            files={"audio": (effective_name, raw_bytes, mime_type)},
+            data={
+                "subfolder": subfolder,
+                "overwrite": "true" if overwrite else "false",
+                "type": storage_type,
+            },
+        )
+        body = resp.json()
+        return ComfyUIUploadResult(
+            name=str(body.get("name") or effective_name),
+            subfolder=str(body.get("subfolder") or subfolder),
+            storage_type=str(body.get("type") or storage_type),
+            overwrite=bool(body.get("overwrite", overwrite)),
+        )
+
     async def interrupt(self) -> dict[str, Any]:
         """Envía POST /interrupt para detener la ejecución activa."""
         resp = await self._request("POST", "/interrupt")

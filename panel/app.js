@@ -1290,12 +1290,13 @@
             steps: stepsVal,
         };
         if (selectedAssetId) {
-            if (templateId === "vace_inpaint" || templateId === "vace_restyle") {
+            if (templateId === "vace_inpaint" || templateId === "vace_restyle" || templateId === "vace_swap") {
                 params.video_asset_id = selectedAssetId;
             } else if (
                 templateId === "wan_i2v" ||
                 templateId === "wan_i2v_5b" ||
-                templateId === "sdxl_ipadapter"
+                templateId === "sdxl_ipadapter" ||
+                templateId === "wan_s2v"
             ) {
                 params.image_asset_id = selectedAssetId;
             } else if (templateId === "wan_flf2v") {

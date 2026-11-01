@@ -1,6 +1,6 @@
 # Registro de Plantillas de Comfy Studio (`templates-registry`)
 
-Este documento describe las **11 plantillas curadas** (hitos M2 + ampliaciones) incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de rendimiento en una **RTX 5090 (32 GB GDDR7)**, el validador estructural y los endpoints HTTP expuestos por `studio-server` (`127.0.0.1:18190`).
+Este documento describe las **13 plantillas curadas** (hitos M2 + ampliaciones) incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de rendimiento en una **RTX 5090 (32 GB GDDR7)**, el validador estructural y los endpoints HTTP expuestos por `studio-server` (`127.0.0.1:18190`).
 
 ---
 
@@ -123,7 +123,6 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 ---
 
 ### 2.7 `wan_i2v` — Wan 2.2 14B Image-to-Video (I2V Lightning 4-step)
-### 2.8 `wan_i2v` — Wan 2.2 14B Image-to-Video (I2V Lightning 4-step)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_i2v.json`](../studio/comfy_studio/templates/data/wan_i2v.json)
 - **Uso**: Animar un fotograma clave o retrato estático (`image_asset_id` / `image_input`) convirtiéndolo en un plano de vídeo de 5 segundos con preservación de identidad y composición mediante `WanImageToVideo` y `CLIPVisionEncode`.
@@ -135,6 +134,23 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
   - `prompt` (*string*, obligatorio): acción de los sujetos y movimiento de cámara a partir de la imagen inicial.
   - `image_asset_id` / `image_input` (*string*): imagen inicial del plano.
 - **Defaults de rendimiento**: `832x480` (`480p`), `81` frames (`16` fps), `steps=4`, `cfg=1.0`, `offload=true`, `fp8_scaled`.
+
+---
+
+### 2.8 `wan_s2v` — Wan 2.2 S2V 14B Avatar Hablado desde Imagen + Audio en Español (480p)
+
+- **Archivo**: [`studio/comfy_studio/templates/data/wan_s2v.json`](../studio/comfy_studio/templates/data/wan_s2v.json)
+- **Uso**: Generar un video de avatar parlante a partir de un retrato del proyecto (`image_asset_id`) y una pista de audio **en español** (`audio_asset_id`), con sincronía labial dirigida por el audio. Pipeline nativo de comfy-core: `LoadAudio` + `AudioEncoderLoader` (**wav2vec2-large-xlsr-53-spanish**, encoder monolingüe español) + `AudioEncoderEncode` → `WanSoundImageToVideo` (`audio_encoder_output` + `ref_image`) + `KSampler` + `VAEDecode` + `VHS_VideoCombine` con `audio` muxado. Todo el habla del proyecto es español: el encoder xlsr-53-spanish ofrece mejor sincronía labial en español que el encoder inglés.
+- **Modelos requeridos**:
+  - `wan2.2_s2v_14B_fp8_scaled.safetensors` (~16.4 GiB)
+  - `wav2vec2-large-xlsr-53-spanish.safetensors` (encoder de audio español, grupo `wan_core`)
+  - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `wan_2.1_vae.safetensors`
+- **Entradas principales (`inputs`)**:
+  - `prompt` (*string*, obligatorio): sujeto, fondo e iluminación (el labio lo marca el audio).
+  - `image_asset_id` / `image_input` (*string*): retrato de referencia del proyecto.
+  - `audio_asset_id` / `audio_input` (*string*): pista de audio en español del proyecto (voz, TTS IndexTTS o clon RVC).
+  - `frames` (*integer*, `81` por defecto): fotogramas a 16 fps; cubrir la duración del audio.
+- **Defaults de rendimiento**: `832x480` (`480p`), `81` frames (`16` fps), `steps=20`, `cfg=6.0`, sampler `euler` + `simple`, audio muxado en el MP4 de salida.
 
 ---
 
@@ -246,7 +262,7 @@ python -m comfy_studio.templates
 
 | Método y Ruta | Descripción |
 |---|---|
-| `GET /studio/api/templates` | Lista las 11 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
+| `GET /studio/api/templates` | Lista las 13 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
 | `GET /studio/api/templates/{template_id}` | Devuelve el detalle completo de una plantilla incluyendo su grafo `workflow` en formato API (`404` si no existe). |
 | `POST /studio/api/templates/{template_id}/submit` | Valida `params` contra el schema de la plantilla (`422` con detalle si hay campos inválidos, fuera de rango o desconocidos, sin encolar en ComfyUI), sube a ComfyUI los `*_asset_id` referenciados del proyecto, crea el job en `studio.db`, ejecuta el workflow contra ComfyUI, descarga las salidas vía `/view` y las registra en la galería del proyecto (`category="outputs"`). |
 | `GET /studio/api/projects/{project_id}/gallery` | Lista los assets generados en la galería del proyecto enriquecidos con `preview_url`, `download_url` y `view_url`. |

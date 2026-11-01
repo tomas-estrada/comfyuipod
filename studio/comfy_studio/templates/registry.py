@@ -23,6 +23,7 @@ EXPECTED_M2_TEMPLATE_IDS: tuple[str, ...] = (
     "wan_flf2v",
     "wan_i2v",
     "wan_i2v_5b",
+    "wan_s2v",
     "wan_t2v",
     "wan_t2v_5b",
     "sdxl_image",
@@ -38,6 +39,7 @@ ASSET_PARAM_TO_INPUT_PARAM: dict[str, tuple[str, str]] = {
     "image_asset_id": ("image_input", "image"),
     "first_frame_asset_id": ("first_frame_input", "image"),
     "last_frame_asset_id": ("last_frame_input", "image"),
+    "audio_asset_id": ("audio_input", "audio"),
 }
 
 
@@ -461,6 +463,13 @@ class TemplateRegistry:
         for input_param, asset, asset_path in assets_to_upload:
             if asset["kind"] == "video":
                 up_res = await comfyui_client.upload_video(
+                    asset_path,
+                    filename=asset["filename"],
+                    subfolder=eff_project_id,
+                    mime_type=asset["mime_type"],
+                )
+            elif asset["kind"] == "audio":
+                up_res = await comfyui_client.upload_audio(
                     asset_path,
                     filename=asset["filename"],
                     subfolder=eff_project_id,

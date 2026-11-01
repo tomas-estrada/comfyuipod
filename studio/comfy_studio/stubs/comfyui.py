@@ -369,6 +369,15 @@ def create_stub_comfyui_app(state: ComfyUIStubState | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         return await _handle_upload(image, subfolder, overwrite, type, ".png")
 
+    @app.post("/upload/audio")
+    async def upload_audio(
+        audio: UploadFile = File(...),
+        subfolder: str = Form(""),
+        overwrite: str = Form("true"),
+        type: str = Form("input"),
+    ) -> dict[str, Any]:
+        return await _handle_upload(audio, subfolder, overwrite, type, ".wav")
+
     @app.post("/upload/video")
     @app.post("/vhs/upload")
     async def upload_video(

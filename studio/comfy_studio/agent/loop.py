@@ -90,7 +90,7 @@ SYSTEM_PROMPT_ES = (
     "1. `search_assets`: buscar vídeos, imágenes, keyframes o audios dentro del proyecto activo.\n"
     "2. `enqueue_render`: lanzar renders en ComfyUI con las plantillas curadas "
     "(`face_fix`, `vace_inpaint`, `vace_restyle`, `vace_swap`, `wan_flf2v`, `wan_i2v`, "
-    "`wan_i2v_5b`, `wan_t2v`, `wan_t2v_5b`, `sdxl_image`, `sdxl_ipadapter`). "
+    "`wan_i2v_5b`, `wan_s2v`, `wan_t2v`, `wan_t2v_5b`, `sdxl_image`, `sdxl_ipadapter`). "
     "Por defecto usa 480p (832x480) para VACE/Wan en 24 GB VRAM.\n"
     "3. `propose_edl`: proponer una lista de decisión de edición (EDL) con cortes "
     "`in_sec`/`out_sec`, motivo editorial y relación de aspecto (`16:9` o `9:16`).\n"

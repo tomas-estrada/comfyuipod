@@ -258,6 +258,35 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": ("audio", "meta_batch", "vae"),
         "outputs": 1,
     },
+    # --- Audio (comfy-core) + Wan 2.2 S2V: video hablado desde audio ---
+    "LoadAudio": {
+        "required_inputs": ("audio",),
+        "optional_inputs": (),
+        "outputs": 1,  # AUDIO
+    },
+    "AudioEncoderLoader": {
+        "required_inputs": ("audio_encoder_name",),
+        "optional_inputs": (),
+        "outputs": 1,  # AUDIO_ENCODER
+    },
+    "AudioEncoderEncode": {
+        "required_inputs": ("audio_encoder", "audio"),
+        "optional_inputs": (),
+        "outputs": 1,  # AUDIO_ENCODER_OUTPUT
+    },
+    "WanSoundImageToVideo": {
+        "required_inputs": (
+            "positive",
+            "negative",
+            "vae",
+            "width",
+            "height",
+            "length",
+            "batch_size",
+        ),
+        "optional_inputs": ("audio_encoder_output", "ref_image", "control_video", "ref_motion"),
+        "outputs": 3,  # positive, negative, latent
+    },
     # --- IP-Adapter Plus (ComfyUI_IPAdapter_plus a0f451a): identidad por imagen ---
     "IPAdapterModelLoader": {
         "required_inputs": ("ipadapter_file",),
