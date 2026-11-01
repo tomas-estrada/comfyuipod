@@ -18,6 +18,7 @@ from .validator import (
 EXPECTED_M2_TEMPLATE_IDS: tuple[str, ...] = (
     "vace_inpaint",
     "vace_restyle",
+    "vace_swap",
     "wan_flf2v",
     "wan_i2v",
     "wan_i2v_5b",

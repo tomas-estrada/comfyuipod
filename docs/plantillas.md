@@ -1,6 +1,6 @@
 # Registro de Plantillas de Comfy Studio (`templates-registry`)
 
-Este documento describe las **10 plantillas curadas** (hitos M2 + ampliaciones) incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de rendimiento en una **RTX 5090 (32 GB GDDR7)**, el validador estructural y los endpoints HTTP expuestos por `studio-server` (`127.0.0.1:18190`).
+Este documento describe las **11 plantillas curadas** (hitos M2 + ampliaciones) incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de rendimiento en una **RTX 5090 (32 GB GDDR7)**, el validador estructural y los endpoints HTTP expuestos por `studio-server` (`127.0.0.1:18190`).
 
 ---
 
@@ -56,7 +56,25 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.3 `wan_flf2v` — Wan 2.2 14B First-Last-Frame to Video (FLF2V)
+### 2.3 `vace_swap` — VACE 14B Intercambio de Personaje con Identidad de Referencia
+
+- **Archivo**: [`studio/comfy_studio/templates/data/vace_swap.json`](../studio/comfy_studio/templates/data/vace_swap.json)
+- **Uso**: Sustituir al personaje u objeto de un vídeo base por el sujeto concreto de una imagen de referencia (por ejemplo, un niño o un coche específicos) conservando el movimiento, la cámara y el fondo originales. Conecta la imagen de referencia a `reference_image` y una máscara opcional (repetida temporalmente con `RepeatImageBatch` y convertida con `ImageToMask`) a `control_masks` en `WanVaceToVideo` para delimitar la zona editable.
+- **Modelos requeridos**:
+  - `wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors`
+  - `wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors`
+  - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `wan_2.1_vae.safetensors`
+- **Entradas principales (`inputs`)**:
+  - `prompt` (*string*, obligatorio): descripción del sujeto de referencia y del resultado del intercambio.
+  - `video_asset_id` / `video_input` (*string*): vídeo fuente cuyo movimiento y escena se preservan (`control_video`).
+  - `image_asset_id` / `image_input` (*string*): foto del sujeto concreto a insertar, conectada a `reference_image` en `WanVaceToVideo`.
+  - `mask_asset_id` / `mask_input` (*string*, opcional): máscara en blanco y negro que delimita la región editable (`control_masks`).
+  - `strength` (*number*, `0.0`–`1.0`): fidelidad de la identidad respecto al vídeo base (`0.95` por defecto).
+- **Defaults de rendimiento**: `832x480` (`480p`), `81` frames (`16` fps), `steps=4`, `cfg=1.0`, `strength=0.95`, `offload=true`, `fp8_scaled`.
+
+---
+
+### 2.4 `wan_flf2v` — Wan 2.2 14B First-Last-Frame to Video (FLF2V)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_flf2v.json`](../studio/comfy_studio/templates/data/wan_flf2v.json)
 - **Uso**: Generar una transición de vídeo continua y coherente entre un fotograma inicial (`first_frame`) y un fotograma final (`last_frame`) mediante el nodo nativo `WanFirstLastFrameToVideo`. Ideal para unir cortes del montaje o interpolar entre dos keyframes generados con `sdxl_image`.
@@ -210,7 +228,7 @@ python -m comfy_studio.templates
 
 | Método y Ruta | Descripción |
 |---|---|
-| `GET /studio/api/templates` | Lista las 10 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
+| `GET /studio/api/templates` | Lista las 11 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
 | `GET /studio/api/templates/{template_id}` | Devuelve el detalle completo de una plantilla incluyendo su grafo `workflow` en formato API (`404` si no existe). |
 | `POST /studio/api/templates/{template_id}/submit` | Valida `params` contra el schema de la plantilla (`422` con detalle si hay campos inválidos, fuera de rango o desconocidos, sin encolar en ComfyUI), sube a ComfyUI los `*_asset_id` referenciados del proyecto, crea el job en `studio.db`, ejecuta el workflow contra ComfyUI, descarga las salidas vía `/view` y las registra en la galería del proyecto (`category="outputs"`). |
 | `GET /studio/api/projects/{project_id}/gallery` | Lista los assets generados en la galería del proyecto enriquecidos con `preview_url`, `download_url` y `view_url`. |
