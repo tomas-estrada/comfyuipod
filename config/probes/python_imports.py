@@ -14,7 +14,7 @@ def main() -> None:
             f"OK|cv2={cv2.__version__} insightface={insightface.__version__} "
             f"huggingface_hub={huggingface_hub.__version__} hf_xet={xet_ver}"
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"FAIL|Error importando módulos críticos: {exc}")
 
 

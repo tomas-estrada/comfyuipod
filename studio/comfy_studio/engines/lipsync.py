@@ -150,7 +150,7 @@ class LipsyncEngine:
         ]
         ls.output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            res = subprocess.run(  # noqa: S603 - args fijos, sin shell
+            res = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,

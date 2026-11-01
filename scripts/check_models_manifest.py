@@ -87,7 +87,7 @@ def fetch_head_size(url: str, timeout: float = 20.0, retries: int = 3) -> tuple[
                 if attempt < retries:
                     time.sleep(1.5 * attempt)
                 continue
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last_err = exc
             if attempt < retries:
                 time.sleep(1.5 * attempt)
@@ -95,7 +95,9 @@ def fetch_head_size(url: str, timeout: float = 20.0, retries: int = 3) -> tuple[
 
         raw_size = hdrs.get("x-linked-size") or hdrs.get("content-length")
         if raw_size is None:
-            last_err = RuntimeError(f"Sin cabecera x-linked-size/content-length en {url} (HTTP {status})")
+            last_err = RuntimeError(
+                f"Sin cabecera x-linked-size/content-length en {url} (HTTP {status})"
+            )
             if attempt < retries:
                 time.sleep(1.5 * attempt)
             continue
@@ -244,7 +246,9 @@ def validate_manifest_data(
                 )
         for cat in cat_counts:
             if cat not in meta_cats:
-                errors.append(f"Categoría {cat!r} presente en models pero ausente en meta.categories")
+                errors.append(
+                    f"Categoría {cat!r} presente en models pero ausente en meta.categories"
+                )
     else:
         errors.append("meta.categories debe ser un objeto")
 
@@ -254,7 +258,7 @@ def validate_manifest_data(
             expected = item["bytes"]
             try:
                 _status, remote_size = head_fn(url)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 return f"HEAD fallo para {url}: {exc}"
             if remote_size != expected:
                 return (
@@ -305,8 +309,14 @@ def run_fixture_self_test() -> int:
             {
                 "category": "animate_opt_in",
                 "repo_id": "Comfy-Org/Wan-2.2",
-                "remote_path": "split_files/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors",
-                "url": "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/main/split_files/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors",
+                "remote_path": (
+                    "split_files/diffusion_models/"
+                    "wan2.2_animate_14B_int8_convrot.safetensors"
+                ),
+                "url": (
+                    "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/main/"
+                    "split_files/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors"
+                ),
                 "bytes": 18413068672,
                 "target_dir": "models/diffusion_models",
                 "filename": "wan2.2_animate_14B_int8_convrot.safetensors",
@@ -416,7 +426,8 @@ def main() -> int:
     print(
         f"OK [{mode_label}]: {meta['default_entries']} entradas por defecto "
         f"({meta['default_bytes']:,} B = {meta['default_bytes'] / 1e9:.2f} GB) + "
-        f"{meta['opt_in_entries']} opt-in ({meta['opt_in_bytes']:,} B) verificadas en {manifest_path}."
+        f"{meta['opt_in_entries']} opt-in ({meta['opt_in_bytes']:,} B) "
+        f"verificadas en {manifest_path}."
     )
     return 0
 

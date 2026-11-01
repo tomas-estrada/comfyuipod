@@ -291,7 +291,7 @@ class EditorEngine(Engine):
         ]
         start = time.monotonic()
         try:
-            res = subprocess.run(  # noqa: S603 - args fijos, sin shell
+            res = subprocess.run(
                 cmd,
                 cwd=project,
                 capture_output=True,

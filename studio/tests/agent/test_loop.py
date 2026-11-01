@@ -922,17 +922,17 @@ async def test_agent_loop_wan_i2v_and_sdxl_image_registry_integration_scr005_scr
     sdxl_prompt = stub_comfyui_state.prompts[1]["prompt"]
 
     expected_rel = f"{pid}/{uploaded_img['filename']}"
-    load_img = [n for n in i2v_prompt.values() if n["class_type"] == "LoadImage"][0]
+    load_img = next(n for n in i2v_prompt.values() if n["class_type"] == "LoadImage")
     assert load_img["inputs"]["image"] == expected_rel
     assert load_img["inputs"]["image"] != uploaded_img["id"]
 
-    vhs_out = [n for n in i2v_prompt.values() if n["class_type"] == "VHS_VideoCombine"][0]
+    vhs_out = next(n for n in i2v_prompt.values() if n["class_type"] == "VHS_VideoCombine")
     assert (
         vhs_out["inputs"]["filename_prefix"]
         == f"projects/{pid}/outputs/wan_i2v_{i2v_res['job_id']}"
     )
 
-    sdxl_save = [n for n in sdxl_prompt.values() if n["class_type"] == "SaveImage"][0]
+    sdxl_save = next(n for n in sdxl_prompt.values() if n["class_type"] == "SaveImage")
     assert (
         sdxl_save["inputs"]["filename_prefix"]
         == f"projects/{pid}/outputs/sdxl_image_{sdxl_res['job_id']}"

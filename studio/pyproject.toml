@@ -11,15 +11,15 @@ dependencies = [
     "fastapi==0.162.0",
     "uvicorn==0.54.0",
     "httpx==0.28.1",
-    "openai==3.39.0",
-    "pydantic==2.14.1",
+    "openai==3.42.0",
+    "pydantic==2.14.2",
     "sqlite-vec==0.1.9",
-    "python-multipart==0.0.32",
+    "python-multipart==0.0.33",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest==9.1.1",
+    "pytest==9.2.0",
     "ruff==0.17.3",
 ]
 asr = [

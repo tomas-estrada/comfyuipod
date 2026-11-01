@@ -172,7 +172,7 @@ class QaEngine:
             "-",
         ]
         try:
-            res = subprocess.run(  # noqa: S603 - args fijos, sin shell
+            res = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -235,7 +235,7 @@ class QaEngine:
             str(qa.video_path),
         ]
         try:
-            res = subprocess.run(  # noqa: S603 - intérprete de venv fijo, sin shell
+            res = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,

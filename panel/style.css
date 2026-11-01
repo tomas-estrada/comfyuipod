@@ -770,3 +770,17 @@ a:focus-visible {
     color: var(--text-muted);
     padding: 0 0.4rem;
 }
+
+/* Utilidades (reemplazan estilos inline; CSP sin 'unsafe-inline') */
+.mt-02 { margin-top: 0.2rem; }
+.mt-025 { margin-top: 0.25rem; }
+.mt-035 { margin-top: 0.35rem; }
+.mt-04 { margin-top: 0.4rem; }
+.mt-045 { margin-top: 0.45rem; }
+.mt-06 { margin-top: 0.6rem; }
+.mb-035 { margin-bottom: 0.35rem; }
+.mt-0 { margin-top: 0; }
+.warn-text { color: #b45309; }
+.flex-1-280 { flex: 1 1 280px; }
+.row-center-gap05 { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.row-between-gap04 { display: flex; justify-content: space-between; align-items: center; gap: 0.4rem; }

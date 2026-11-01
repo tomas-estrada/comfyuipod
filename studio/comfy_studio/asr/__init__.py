@@ -27,11 +27,11 @@ from .whisperx import (
 __all__ = [
     "ALIGNER_EN_REL",
     "ALIGNER_ES_REL",
-    "ASRComputeConfig",
     "CAMPPLUS_MODEL_REL",
-    "CamPlusDiarizer",
     "FASTER_WHISPER_MODEL_REL",
     "SPANISH_FILLER_WORDS",
+    "ASRComputeConfig",
+    "CamPlusDiarizer",
     "WhisperXTranscriber",
     "analyze_wav_acoustic_windows",
     "diarize_audio_file",

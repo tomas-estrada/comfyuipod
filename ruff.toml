@@ -1,0 +1,9 @@
+# Root ruff config: extends the studio/pyproject.toml ruleset to the whole
+# repo so `ruff check studio panel scripts config/probes` (AGENTS.md) and CI
+# use one identical rule set regardless of the working directory.
+target-version = "py311"
+line-length = 100
+
+[lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]

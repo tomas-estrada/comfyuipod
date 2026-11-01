@@ -241,7 +241,7 @@ class TemplateSelector:
                 found = self._discovery.discover(
                     intent.prompt_text(), output_kind=intent.output_kind, limit=top_k
                 )
-            except Exception:  # noqa: BLE001 - un proveedor externo no debe romper la selección
+            except Exception:
                 found = []
             known = {c.template_id for c in candidates}
             for dt in found:

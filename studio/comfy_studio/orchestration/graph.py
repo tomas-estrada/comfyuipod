@@ -34,11 +34,9 @@ END = "__end__"
 
 def langgraph_available() -> bool:
     """True si la biblioteca LangGraph está instalada (horneada)."""
-    try:
-        import langgraph.graph  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    from importlib.util import find_spec
+
+    return find_spec("langgraph") is not None
 
 
 class ProductionGraph:

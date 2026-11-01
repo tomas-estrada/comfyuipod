@@ -123,7 +123,7 @@ class BlenderEngine(Engine):
             fh.write(script)
             script_path = fh.name
         try:
-            res = subprocess.run(  # noqa: S603 - args fijos, sin shell
+            res = subprocess.run(
                 [blender_bin, "-b", "--python", script_path],
                 capture_output=True,
                 text=True,

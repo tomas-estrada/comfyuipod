@@ -149,7 +149,7 @@ def detect_faces_in_image(
 
     emb = compute_face_embedding_from_signature(
         sig,
-        identity_hint=hint_str if hint_str else None,
+        identity_hint=hint_str or None,
     )
     return [
         {

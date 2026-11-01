@@ -362,8 +362,8 @@ class _BoundedMultiPartParser(MultiPartParser):
         headers: Headers,
         stream: AsyncGenerator[bytes, None],
         *,
-        max_files: int | float = 1000,
-        max_fields: int | float = 1000,
+        max_files: float = 1000,
+        max_fields: float = 1000,
         max_part_size: int = 1024 * 1024,
         max_file_size: int,
         max_total_file_bytes: int | None = None,
@@ -452,8 +452,8 @@ def _install_bounded_form_parser(
 
     async def _bounded_get_form(
         *,
-        max_files: int | float = 1000,
-        max_fields: int | float = 1000,
+        max_files: float = 1000,
+        max_fields: float = 1000,
         max_part_size: int = 1024 * 1024,
     ) -> FormData:
         if getattr(request, "_form", None) is None:
@@ -690,7 +690,7 @@ def create_app(
                 )
                 if report.get("stale"):
                     logger.info("Recuperación de jobs tras reinicio: %s", report)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.exception("Error en la recuperación de jobs interrumpidos")
 
         recovery_task: asyncio.Task[None] = asyncio.create_task(_run_job_recovery())
@@ -759,7 +759,7 @@ def create_app(
     probe_result: dict[str, Any] = {}
     try:
         vector_store = PerceptionVectorStore(cfg.studio_data_dir / "index.db")
-    except Exception as exc:  # noqa: BLE001 - cualquier fallo degrada solo percepción
+    except Exception as exc:
         perception_error = f"{type(exc).__name__}: {exc}"
         logger.warning(
             "STUDIO: percepción vectorial DESHABILITADA (%s). Los endpoints de percepción "
@@ -888,7 +888,7 @@ def create_app(
             logger.info(
                 "STUDIO: orquestación con motores REALES (STUDIO_ORCH_REAL_ENGINES=1)."
             )
-        except Exception as exc:  # noqa: BLE001 - nunca tumbar el arranque
+        except Exception as exc:
             logger.warning(
                 "STUDIO: no se pudieron cablear los motores reales de orquestación "
                 "(%s); se usan stubs.",
@@ -1148,7 +1148,7 @@ def create_app(
                 body.idea,
                 cost_cap_usd=body.cost_cap_usd,
             )
-        except Exception as exc:  # noqa: BLE001 - errores de planificación -> 400
+        except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/studio/api/productions/{production_id}")

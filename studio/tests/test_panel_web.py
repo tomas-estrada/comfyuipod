@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,45 @@ def test_panel_files_exist_vanilla_without_build_artifacts() -> None:
     assert (PANEL_DIR / "style.css").is_file()
     assert (PANEL_DIR / "app.js").is_file()
     assert not (PANEL_DIR / "node_modules").exists()
+
+
+def test_panel_has_no_inline_styles_or_scripts() -> None:
+    """CSP sin 'unsafe-inline': app.js no debe generar style=/onclick= inline."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+    inline_styles = re.findall(r'style="[^"]*"', app_js)
+    allowed = [s for s in inline_styles if s.startswith('style="width:${')]
+    assert inline_styles == allowed, f"app.js usa style inline no permitidos: {inline_styles}"
+    assert not re.search(r"\son(click|load|error|mouseover)=", app_js, re.I)
+    index_html = (PANEL_DIR / "index.html").read_text(encoding="utf-8")
+    assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", index_html, re.I)
+
+
+def test_nginx_sends_csp_on_every_location() -> None:
+    """Cada location de config/nginx.conf debe llevar Content-Security-Policy."""
+    conf = (REPO_ROOT / "config" / "nginx.conf").read_text(encoding="utf-8")
+    http_block = re.search(r"^http\s*\{", conf, re.M)
+    assert http_block, "nginx.conf debe tener bloque http"
+    close = re.search(r"^\}", conf[http_block.end():], re.M)
+    assert close, "bloque http sin cierre"
+    http_body = conf[http_block.end(): http_block.end() + close.start()]
+    assert "server_tokens off;" in http_body, "server_tokens off debe estar dentro del bloque http"
+    tokens = list(re.finditer(r"location\s+(\S+)\s*\{|[{}]", conf))
+    stack: list[dict] = []
+    blocks: list[tuple[str, str]] = []
+    for t in tokens:
+        if t.group(0).startswith("location"):
+            stack.append({"name": t.group(1), "depth": 1, "start": t.end()})
+        elif stack:
+            stack[-1]["depth"] += 1 if t.group(0) == "{" else -1
+            if stack[-1]["depth"] == 0:
+                blocks.append((stack[-1]["name"], conf[stack[-1]["start"]: t.start()]))
+                stack.pop()
+    assert blocks, "No se encontraron bloques location en nginx.conf"
+    for name, block in blocks:
+        assert "Content-Security-Policy" in block, f"location {name} sin CSP"
+        assert "X-Content-Type-Options" in block, f"location {name} sin X-Content-Type-Options"
+        assert "X-Frame-Options" in block, f"location {name} sin X-Frame-Options"
+        assert "Referrer-Policy" in block, f"location {name} sin Referrer-Policy"
 
 
 def test_panel_static_files_served_at_studio_root(client: TestClient) -> None:

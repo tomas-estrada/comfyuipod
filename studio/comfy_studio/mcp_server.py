@@ -249,7 +249,7 @@ async def _call_mcp_tool(
             return await run_in_threadpool(service.production_status, production_id)
         except McpToolError:
             raise
-        except Exception as exc:  # noqa: BLE001 - tipificar hacia el cliente MCP
+        except Exception as exc:
             raise McpToolError(str(exc)) from exc
 
     belt_available = name in BELT_TOOLS_EXPOSED and ctx.tool_belt.get(name) is not None
@@ -282,7 +282,7 @@ async def _call_mcp_tool(
     )
     try:
         return await ctx.tool_belt.execute(name, args, tool_ctx)
-    except Exception as exc:  # noqa: BLE001 — ToolExecutionError y fallos de backend
+    except Exception as exc:
         raise McpToolError(str(exc)) from exc
 
 
@@ -441,7 +441,7 @@ def create_mcp_router(ctx: McpContext) -> APIRouter:
             for item in payload:
                 try:
                     single = await handle_rpc_message(item, ctx)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception("Error interno procesando batch MCP")
                     single = _rpc_error(
                         item.get("id") if isinstance(item, dict) else None,
@@ -465,7 +465,7 @@ def create_mcp_router(ctx: McpContext) -> APIRouter:
 
         try:
             response = await handle_rpc_message(payload, ctx)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("Error interno procesando mensaje MCP")
             response = _rpc_error(
                 payload.get("id"),

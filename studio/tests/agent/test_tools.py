@@ -566,10 +566,10 @@ async def test_enqueue_render_sdxl_image_prompt_only_uses_template_defaults_scr0
         project_id=pid,
         job_id="job_manual_01",
     )
-    helper_save = [n for n in helper_wf.values() if n["class_type"] == "SaveImage"][0]
-    helper_latent = [
+    helper_save = next(n for n in helper_wf.values() if n["class_type"] == "SaveImage")
+    helper_latent = next(
         n for n in helper_wf.values() if n["class_type"] == "EmptyLatentImage"
-    ][0]
+    )
     assert helper_latent["inputs"]["width"] == 1024
     assert helper_latent["inputs"]["height"] == 1024
     assert (

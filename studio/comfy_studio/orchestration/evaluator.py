@@ -126,7 +126,7 @@ def make_template_reselector(
                     try:
                         adapted = sel.adapt(cand.template_id, intent)
                         target_layer.params.update(adapted)
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         pass
                     return True
         return False

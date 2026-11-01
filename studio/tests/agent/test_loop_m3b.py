@@ -88,9 +88,9 @@ async def test_update_plan_creates_updates_and_cierra_plan(env) -> None:
     ctx = ToolContext(
         project_id=project["id"],
         store=store,
-        comfyui_client=_agent._comfyui_client,  # noqa: SLF001
+        comfyui_client=_agent._comfyui_client,
         broker=_broker,
-        config=_agent._config,  # noqa: SLF001
+        config=_agent._config,
     )
 
     created = await belt.execute(
@@ -151,12 +151,12 @@ async def test_active_plan_and_summary_are_injected_into_system_message(env) -> 
 async def test_llm_call_budget_stops_tool_loop(env) -> None:
     _store, _broker, project, stub_llm, _agent = env
     agent = StudioAgent(
-        config=_agent._config,  # noqa: SLF001
+        config=_agent._config,
         store=_store,
-        comfyui_client=_agent._comfyui_client,  # noqa: SLF001
+        comfyui_client=_agent._comfyui_client,
         broker=_broker,
         llm_client=OpenAICompatibleLLMClient(
-            config=_agent._config,  # noqa: SLF001
+            config=_agent._config,
             stub_client=stub_llm,
         ),
         max_llm_calls_per_turn=2,
@@ -227,9 +227,9 @@ async def test_delegate_role_unavailable_without_runner(env) -> None:
     ctx = ToolContext(
         project_id=project["id"],
         store=_store,
-        comfyui_client=agent._comfyui_client,  # noqa: SLF001
+        comfyui_client=agent._comfyui_client,
         broker=_broker,
-        config=agent._config,  # noqa: SLF001
+        config=agent._config,
         delegate_runner=None,
     )
     with pytest.raises(ToolExecutionError):
