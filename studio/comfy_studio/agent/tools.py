@@ -26,6 +26,7 @@ from ..templates import (
 TemplateIdLiteral = Literal[
     "vace_inpaint",
     "vace_restyle",
+    "vace_swap",
     "wan_flf2v",
     "wan_i2v",
     "wan_t2v",
@@ -36,6 +37,7 @@ TemplateIdLiteral = Literal[
 VALID_TEMPLATES: tuple[str, ...] = (
     "vace_inpaint",
     "vace_restyle",
+    "vace_swap",
     "wan_flf2v",
     "wan_i2v",
     "wan_t2v",
@@ -205,7 +207,7 @@ class EnqueueRenderArgs(BaseModel):
         ...,
         description=(
             "Identificador de la plantilla API-format a ejecutar: "
-            "vace_inpaint, vace_restyle, wan_flf2v, wan_i2v, wan_t2v, "
+            "vace_inpaint, vace_restyle, vace_swap, wan_flf2v, wan_i2v, wan_t2v, "
             "sdxl_image o hunyuan3d_image_to_3d."
         ),
     )
@@ -1591,7 +1593,8 @@ def create_default_tool_belt() -> ToolBelt:
             name="enqueue_render",
             description=(
                 "Encola y ejecuta un render de vídeo o imagen en ComfyUI a partir de una "
-                "plantilla curada (vace_inpaint, vace_restyle, wan_flf2v, wan_i2v, wan_t2v, "
+                "plantilla curada (vace_inpaint, vace_restyle, vace_swap, "
+                "wan_flf2v, wan_i2v, wan_t2v, "
                 "sdxl_image). Valida los parámetros antes de enviar a ComfyUI."
             ),
             args_model=EnqueueRenderArgs,

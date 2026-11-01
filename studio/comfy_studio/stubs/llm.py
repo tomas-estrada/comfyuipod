@@ -248,6 +248,7 @@ class StubLLMClient:
             "wan_flf2v",
             "vace_inpaint",
             "vace_restyle",
+            "vace_swap",
             "sdxl_image",
             "render",
             "genera un vídeo",
@@ -261,6 +262,8 @@ class StubLLMClient:
                 template_id = "vace_inpaint"
             elif "vace_restyle" in lower or "restyle" in lower:
                 template_id = "vace_restyle"
+            elif "vace_swap" in lower or "swap" in lower or "intercambio" in lower:
+                template_id = "vace_swap"
             elif "wan_flf2v" in lower or "flf2v" in lower:
                 template_id = "wan_flf2v"
             elif "wan_i2v" in lower or "i2v" in lower:
