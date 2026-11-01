@@ -56,7 +56,25 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.3 `wan_flf2v` — Wan 2.2 14B First-Last-Frame to Video (FLF2V)
+### 2.3 `vace_swap` — VACE 14B Intercambio de Personaje con Identidad de Referencia
+
+- **Archivo**: [`studio/comfy_studio/templates/data/vace_swap.json`](../studio/comfy_studio/templates/data/vace_swap.json)
+- **Uso**: Sustituir al personaje u objeto de un vídeo base por el sujeto concreto de una imagen de referencia (por ejemplo, un niño o un coche específicos) conservando el movimiento, la cámara y el fondo originales. Conecta la imagen de referencia a `reference_image` y una máscara opcional (repetida temporalmente con `RepeatImageBatch` y convertida con `ImageToMask`) a `control_masks` en `WanVaceToVideo` para delimitar la zona editable.
+- **Modelos requeridos**:
+  - `wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors`
+  - `wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors`
+  - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `wan_2.1_vae.safetensors`
+- **Entradas principales (`inputs`)**:
+  - `prompt` (*string*, obligatorio): descripción del sujeto de referencia y del resultado del intercambio.
+  - `video_asset_id` / `video_input` (*string*): vídeo fuente cuyo movimiento y escena se preservan (`control_video`).
+  - `image_asset_id` / `image_input` (*string*): foto del sujeto concreto a insertar, conectada a `reference_image` en `WanVaceToVideo`.
+  - `mask_asset_id` / `mask_input` (*string*, opcional): máscara en blanco y negro que delimita la región editable (`control_masks`).
+  - `strength` (*number*, `0.0`–`1.0`): fidelidad de la identidad respecto al vídeo base (`0.95` por defecto).
+- **Defaults de rendimiento**: `832x480` (`480p`), `81` frames (`16` fps), `steps=4`, `cfg=1.0`, `strength=0.95`, `offload=true`, `fp8_scaled`.
+
+---
+
+### 2.4 `wan_flf2v` — Wan 2.2 14B First-Last-Frame to Video (FLF2V)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_flf2v.json`](../studio/comfy_studio/templates/data/wan_flf2v.json)
 - **Uso**: Generar una transición de vídeo continua y coherente entre un fotograma inicial (`first_frame`) y un fotograma final (`last_frame`) mediante el nodo nativo `WanFirstLastFrameToVideo`. Ideal para unir cortes del montaje o interpolar entre dos keyframes generados con `sdxl_image`.
@@ -72,7 +90,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.4 `wan_i2v` — Wan 2.2 14B Image-to-Video (I2V Lightning 4-step)
+### 2.5 `wan_i2v` — Wan 2.2 14B Image-to-Video (I2V Lightning 4-step)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_i2v.json`](../studio/comfy_studio/templates/data/wan_i2v.json)
 - **Uso**: Animar un fotograma clave o retrato estático (`image_asset_id` / `image_input`) convirtiéndolo en un plano de vídeo de 5 segundos con preservación de identidad y composición mediante `WanImageToVideo` y `CLIPVisionEncode`.
@@ -87,7 +105,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.5 `wan_t2v_5b` — Wan 2.2 TI2V 5B Texto a Video Ligero (720p Turbo 4-paso, 24 fps)
+### 2.6 `wan_t2v_5b` — Wan 2.2 TI2V 5B Texto a Video Ligero (720p Turbo 4-paso, 24 fps)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v_5b.json`](../studio/comfy_studio/templates/data/wan_t2v_5b.json)
 - **Uso**: Borradores rápidos, previews y planos a 720p cuando se itera deprisa o la VRAM es justa: un único modelo TI2V 5B fp16 (~10 GiB) con LoRA Turbo rank-64 en `KSampler` de etapa única (sin par MoE high/low noise).
@@ -102,7 +120,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.6 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
+### 2.7 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v.json`](../studio/comfy_studio/templates/data/wan_t2v.json)
 - **Uso**: Generar planos de vídeo B-roll, secuencias de establecimiento o escenas completas directamente desde texto (`EmptyHunyuanLatentVideo` + doble `KSamplerAdvanced` MoE).
@@ -117,7 +135,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.7 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
+### 2.8 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_image.json`](../studio/comfy_studio/templates/data/sdxl_image.json)
 - **Uso**: Generar imágenes fotorrealistas de alta resolución (`1024x1024`), storyboards, personajes de referencia o primeros/últimos fotogramas para nutrir `wan_i2v`, `wan_flf2v` y `vace_restyle`.
@@ -133,7 +151,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.8 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
+### 2.9 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_ipadapter.json`](../studio/comfy_studio/templates/data/sdxl_ipadapter.json)
 - **Uso**: Generar nuevas tomas o keyframes de un mismo personaje, mascota u objeto a partir de una foto de referencia del proyecto (`image_asset_id` / `image_input`), manteniendo la identidad visual con IP-Adapter SDXL ViT-H (`IPAdapterModelLoader` + `IPAdapterApply` sobre el modelo Juggernaut XI).
@@ -148,7 +166,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.9 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
+### 2.10 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
 
 - **Archivo**: [`studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json`](../studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json)
 - **Uso**: Convertir cualquier imagen del proyecto (render `sdxl_image`, keyframe de vídeo o foto subida) en una malla 3D texturizable en formato `GLB`, lista para Blender/Unreal. Pipeline 100% nativo de comfy-core (`ImageOnlyCheckpointLoader` + `ModelSamplingAuraFlow` + `CLIPVisionEncode` + `Hunyuan3Dv2Conditioning` + `KSampler` + `VAEDecodeHunyuan3D` + `VoxelToMesh` + `SaveGLB`), sin custom nodes.

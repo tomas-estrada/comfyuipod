@@ -1,0 +1,438 @@
+{
+  "id": "vace_swap",
+  "name": "Wan 2.2 VACE 14B — Intercambio de Personaje con Identidad de Referencia (480p + Offload)",
+  "category": "video_edit",
+  "output_kind": "video",
+  "summary": "Reemplazo de personaje u objeto en un vídeo base por la identidad concreta de una imagen de referencia mediante Wan 2.2 Fun VACE 14B fp8_scaled, con máscara opcional de región a 480p con offload.",
+  "description": "Sustituye al personaje u objeto presente en un vídeo base por el sujeto concreto de una imagen de referencia (por ejemplo, un niño o un coche específicos) conservando el movimiento, la cámara y el resto de la escena. Conecta la imagen de referencia a reference_image y una máscara opcional a control_masks en WanVaceToVideo para delimitar la zona editable. Opera por defecto a 480p (832x480) en fp8_scaled con offload entre expertos.",
+  "performance_defaults": {
+    "precision": "fp8_scaled",
+    "resolution": "480p",
+    "width": 832,
+    "height": 480,
+    "frames": 81,
+    "steps": 4,
+    "cfg": 1.0,
+    "strength": 0.95,
+    "offload": true,
+    "vram_pair_gib": 32.2
+  },
+  "models": [
+    "wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors",
+    "wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan_2.1_vae.safetensors"
+  ],
+  "required_nodes": [
+    "UNETLoader",
+    "CLIPLoader",
+    "VAELoader",
+    "VHS_LoadVideo",
+    "LoadImage",
+    "CLIPTextEncode",
+    "WanVaceToVideo",
+    "KSamplerAdvanced",
+    "VAEDecode",
+    "VHS_VideoCombine",
+    "RepeatImageBatch",
+    "ImageToMask"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción del sujeto de referencia y del resultado deseado del intercambio."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "borroso, baja calidad, parpadeo temporal, artefactos, distorsión",
+      "description": "Elementos visuales no deseados a evitar durante el restyle."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 832,
+      "min": 256,
+      "max": 1280,
+      "description": "Ancho en píxeles (832 por defecto para 480p 16:9)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 480,
+      "min": 256,
+      "max": 1280,
+      "description": "Alto en píxeles (480 por defecto para ejecución estable en 32 GiB de VRAM)."
+    },
+    "frames": {
+      "type": "integer",
+      "required": false,
+      "default": 81,
+      "min": 1,
+      "max": 241,
+      "description": "Número de fotogramas a transformar (81 frames ≈ 5 s a 16 fps)."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 4,
+      "min": 1,
+      "max": 50,
+      "description": "Pasos totales de muestreo dividido entre experto high-noise y low-noise."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 1.0,
+      "min": 1.0,
+      "max": 15.0,
+      "description": "Escala de guía CFG."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista de muestreo."
+    },
+    "strength": {
+      "type": "number",
+      "required": false,
+      "default": 0.95,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Fidelidad del intercambio VACE respecto al vídeo original (0.0 a 1.0)."
+    },
+    "offload": {
+      "type": "boolean",
+      "required": false,
+      "default": true,
+      "description": "Descarga secuencial de expertos en VRAM (activado por defecto)."
+    },
+    "video_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "video",
+      "description": "ID del asset de vídeo de entrada en el proyecto."
+    },
+    "image_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "image",
+      "description": "ID del asset de imagen de referencia con la identidad del sujeto a insertar (obligatorio para el intercambio)."
+    },
+    "video_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_video.mp4",
+      "description": "Archivo de vídeo en ComfyUI input (rellenado automáticamente desde video_asset_id)."
+    },
+    "image_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_reference.png",
+      "description": "Archivo de imagen de referencia en ComfyUI input (rellenado desde image_asset_id)."
+    },
+    "mask_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "image",
+      "description": "ID del asset de máscara en blanco y negro en el proyecto que delimita la zona editable."
+    },
+    "mask_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_mask.png",
+      "description": "Nombre del archivo de máscara en la carpeta input de ComfyUI (se rellena automáticamente al usar mask_asset_id)."
+    }
+  },
+  "docs": {
+    "uso": "Úsalo para poner a una persona u objeto concreto (dado por imagen de referencia) dentro de un vídeo existente manteniendo la coreografía, cámara y fondo del metraje original.",
+    "inputs": [
+      "prompt (obligatorio): descripción del sujeto de referencia y de la acción a conservar.",
+      "image_asset_id / image_input (obligatorio para identidad): foto del sujeto concreto a insertar, conectada a reference_image.",
+      "video_asset_id / video_input: clip de vídeo original cuyo movimiento y escena se preservan.",
+      "mask_asset_id / mask_input (opcional): máscara en blanco y negro que delimita la zona editable.",
+      "strength (0.95 por defecto): fidelidad de la identidad respecto al vídeo original."
+    ],
+    "defaults": {
+      "resolution": "832x480 (480p 16:9)",
+      "frames": 81,
+      "steps": 4,
+      "cfg": 1.0,
+      "strength": 0.95,
+      "offload": true,
+      "precision": "fp8_scaled"
+    },
+    "notas_rendimiento": "Utiliza los pesos Wan 2.2 Fun VACE 14B fp8_scaled (32.2 GiB el par) con resolución 480p y offload de modelos activo por defecto para ejecutarse con holgura en RTX 5090 (32 GB)."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors",
+        "weight_dtype": "fp8_e4m3fn"
+      },
+      "_meta": {
+        "title": "Cargar VACE 14B High Noise (fp8)"
+      }
+    },
+    "2": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors",
+        "weight_dtype": "fp8_e4m3fn"
+      },
+      "_meta": {
+        "title": "Cargar VACE 14B Low Noise (fp8)"
+      }
+    },
+    "3": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "wan"
+      },
+      "_meta": {
+        "title": "Cargar UMT5 XXL fp8"
+      }
+    },
+    "4": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "wan_2.1_vae.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Wan VAE"
+      }
+    },
+    "5": {
+      "class_type": "VHS_LoadVideo",
+      "inputs": {
+        "video": "{{video_input}}",
+        "force_rate": 16,
+        "custom_width": "{{width}}",
+        "custom_height": "{{height}}",
+        "frame_load_cap": "{{frames}}",
+        "skip_first_frames": 0,
+        "select_every_nth": 1
+      },
+      "_meta": {
+        "title": "Cargar Vídeo Base para Restyle"
+      }
+    },
+    "6": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "{{image_input}}"
+      },
+      "_meta": {
+        "title": "Cargar Imagen de Referencia"
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{prompt}}",
+        "clip": [
+          "3",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "Prompt Positivo"
+      }
+    },
+    "8": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "{{mask_input}}"
+      },
+      "_meta": {
+        "title": "Cargar Máscara de Región (Opcional)"
+      }
+    },
+    "9": {
+      "class_type": "RepeatImageBatch",
+      "inputs": {
+        "image": [
+          "8",
+          0
+        ],
+        "amount": "{{frames}}"
+      },
+      "_meta": {
+        "title": "Repetir Máscara Espacial a Longitud Temporal"
+      }
+    },
+    "10": {
+      "class_type": "ImageToMask",
+      "inputs": {
+        "image": [
+          "9",
+          0
+        ],
+        "channel": "red"
+      },
+      "_meta": {
+        "title": "Convertir Canal RGB de Máscara Blanco/Negro"
+      }
+    },
+    "11": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": [
+          "3",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "Prompt Negativo"
+      }
+    },
+    "12": {
+      "class_type": "WanVaceToVideo",
+      "inputs": {
+        "positive": [
+          "7",
+          0
+        ],
+        "negative": [
+          "11",
+          0
+        ],
+        "vae": [
+          "4",
+          0
+        ],
+        "control_video": [
+          "5",
+          0
+        ],
+        "reference_image": [
+          "6",
+          0
+        ],
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "length": "{{frames}}",
+        "batch_size": 1,
+        "strength": "{{strength}}",
+        "control_masks": [
+          "10",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "Codificación VACE Swap con Identidad (480p)"
+      }
+    },
+    "13": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "add_noise": "enable",
+        "noise_seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "uni_pc",
+        "scheduler": "simple",
+        "start_at_step": 0,
+        "end_at_step": 2,
+        "return_with_leftover_noise": "enable",
+        "model": [
+          "1",
+          0
+        ],
+        "positive": [
+          "12",
+          0
+        ],
+        "negative": [
+          "12",
+          1
+        ],
+        "latent_image": [
+          "12",
+          2
+        ]
+      },
+      "_meta": {
+        "title": "Muestreo Experto High-Noise (Offload)"
+      }
+    },
+    "14": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "add_noise": "disable",
+        "noise_seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "uni_pc",
+        "scheduler": "simple",
+        "start_at_step": 2,
+        "end_at_step": "{{steps}}",
+        "return_with_leftover_noise": "disable",
+        "model": [
+          "2",
+          0
+        ],
+        "positive": [
+          "12",
+          0
+        ],
+        "negative": [
+          "12",
+          1
+        ],
+        "latent_image": [
+          "13",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "Muestreo Experto Low-Noise (Offload)"
+      }
+    },
+    "15": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "14",
+          0
+        ],
+        "vae": [
+          "4",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "Decodificar Latente a Fotogramas"
+      }
+    },
+    "16": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "images": [
+          "15",
+          0
+        ],
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "{{output_prefix}}",
+        "format": "video/h264-mp4",
+        "pingpong": false,
+        "save_output": true
+      },
+      "_meta": {
+        "title": "Guardar Vídeo en Galería del Proyecto"
+      }
+    }
+  }
+}
