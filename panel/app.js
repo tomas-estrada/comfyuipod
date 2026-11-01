@@ -1294,6 +1294,7 @@
                 params.video_asset_id = selectedAssetId;
             } else if (
                 templateId === "wan_i2v" ||
+                templateId === "wan_i2v_5b" ||
                 templateId === "sdxl_ipadapter"
             ) {
                 params.image_asset_id = selectedAssetId;

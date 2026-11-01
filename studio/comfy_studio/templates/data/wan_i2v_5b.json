@@ -1,0 +1,295 @@
+{
+  "id": "wan_i2v_5b",
+  "name": "Wan 2.2 TI2V 5B — Imagen a Video Ligero (720p Turbo, 24 fps)",
+  "category": "video_generation",
+  "output_kind": "video",
+  "summary": "Animación rápida de una imagen de referencia a video con el modelo híbrido Wan 2.2 TI2V 5B fp16 + LoRA Turbo rank-64, a 720p (1280x720) y 24 fps, condicionando con CLIP Vision y start_image.",
+  "description": "Variante ligera de imagen a video: el mismo modelo TI2V 5B fp16 (~10 GiB) de `wan_t2v_5b` pero alimentado con una imagen de referencia del proyecto (`image_asset_id` → `image_input`) vía `WanImageToVideo` (start_image + clip_vision_output) y acelerado con la LoRA Turbo de 4 pasos. Ideal para dar movimiento a keyframes de `sdxl_image`/`sdxl_ipadapter` en borradores rápidos a 720p.",
+  "performance_defaults": {
+    "precision": "fp16",
+    "resolution": "720p",
+    "width": 1280,
+    "height": 720,
+    "frames": 97,
+    "steps": 4,
+    "cfg": 5.0,
+    "lora_turbo_5b": true,
+    "fps": 24,
+    "offload": false
+  },
+  "models": [
+    "wan2.2_ti2v_5B_fp16.safetensors",
+    "Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "clip_vision_h.safetensors",
+    "wan2.2_vae.safetensors"
+  ],
+  "required_nodes": [
+    "UNETLoader",
+    "LoraLoaderModelOnly",
+    "CLIPLoader",
+    "CLIPVisionLoader",
+    "VAELoader",
+    "LoadImage",
+    "CLIPVisionEncode",
+    "CLIPTextEncode",
+    "WanImageToVideo",
+    "KSampler",
+    "VAEDecode",
+    "VHS_VideoCombine"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción del movimiento del sujeto, ambiente y cámara partiendo de la imagen de referencia."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "borroso, baja calidad, estático, deformación facial, artefactos, parpadeo",
+      "description": "Defectos o elementos visuales a evitar en la animación."
+    },
+    "image_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "image",
+      "description": "ID del asset de imagen inicial en el proyecto (keyframe de sdxl_image/sdxl_ipadapter o foto subida)."
+    },
+    "image_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_reference.png",
+      "description": "Nombre del archivo de imagen inicial en ComfyUI input (se rellena automáticamente desde image_asset_id)."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 1280,
+      "min": 256,
+      "max": 1920,
+      "description": "Ancho del video en píxeles (1280 por defecto para 720p horizontal; usar 720 para 9:16 vertical)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 720,
+      "min": 256,
+      "max": 1920,
+      "description": "Alto del video en píxeles (720 por defecto para 720p horizontal; usar 1280 para 9:16 vertical)."
+    },
+    "frames": {
+      "type": "integer",
+      "required": false,
+      "default": 97,
+      "min": 1,
+      "max": 241,
+      "description": "Duración en fotogramas a 24 fps (97 frames ≈ 4 s, cadencia nativa del modelo 5B)."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 4,
+      "min": 1,
+      "max": 50,
+      "description": "Pasos de muestreo (4 por defecto con la LoRA Turbo rank-64)."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 5.0,
+      "min": 1.0,
+      "max": 20.0,
+      "description": "Escala CFG (5.0 por defecto para TI2V 5B con LoRA Turbo)."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista de muestreo."
+    },
+    "lora_strength": {
+      "type": "number",
+      "required": false,
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Intensidad de la LoRA Turbo sobre el modelo 5B (1.0 = efecto completo de 4 pasos)."
+    }
+  },
+  "docs": {
+    "uso": "Convierte cualquier keyframe, retrato o imagen generada en el proyecto (sdxl_image, sdxl_ipadapter) en un clip animado de ~4 s a 720p manteniendo la identidad y composición del fotograma inicial, con el coste ligero del modelo 5B.",
+    "inputs": [
+      "prompt (obligatorio): acción del sujeto y movimiento de cámara a partir de la imagen inicial.",
+      "image_asset_id / image_input: imagen de partida subida o generada en el proyecto.",
+      "frames (97 por defecto): longitud del clip a 24 fps.",
+      "lora_strength (1.0): baja a 0.5-0.8 si el resultado queda sobre-destilado con la LoRA Turbo."
+    ],
+    "defaults": {
+      "resolution": "1280x720 (720p 16:9)",
+      "frames": 97,
+      "fps": 24,
+      "steps": 4,
+      "cfg": 5.0,
+      "lora_turbo_5b": true,
+      "sampler": "euler",
+      "scheduler": "simple"
+    },
+    "notas_rendimiento": "El TI2V 5B fp16 (~10 GiB) con LoRA Turbo rank-64 anima 720p@24fps en una fracción del tiempo del par 14B I2V. Usa KSampler de etapa única con condicionamiento WanImageToVideo (start_image + CLIP Vision); la VAE es wan2.2_vae (16x16x4), obligatoria para el 5B."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_ti2v_5B_fp16.safetensors",
+        "weight_dtype": "default"
+      },
+      "_meta": {
+        "title": "Cargar Wan 2.2 TI2V 5B fp16"
+      }
+    },
+    "2": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "model": ["1", 0],
+        "lora_name": "Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors",
+        "strength_model": "{{lora_strength}}"
+      },
+      "_meta": {
+        "title": "LoRA Turbo 5B rank-64"
+      }
+    },
+    "3": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "wan"
+      },
+      "_meta": {
+        "title": "Cargar UMT5 XXL fp8"
+      }
+    },
+    "4": {
+      "class_type": "CLIPVisionLoader",
+      "inputs": {
+        "clip_name": "clip_vision_h.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar CLIP Vision H"
+      }
+    },
+    "5": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "wan2.2_vae.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Wan 2.2 VAE"
+      }
+    },
+    "6": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "{{image_input}}"
+      },
+      "_meta": {
+        "title": "Cargar Imagen Inicial"
+      }
+    },
+    "7": {
+      "class_type": "CLIPVisionEncode",
+      "inputs": {
+        "clip_vision": ["4", 0],
+        "image": ["6", 0],
+        "crop": "center"
+      },
+      "_meta": {
+        "title": "Codificar Imagen con CLIP Vision"
+      }
+    },
+    "8": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{prompt}}",
+        "clip": ["3", 0]
+      },
+      "_meta": {
+        "title": "Prompt Positivo"
+      }
+    },
+    "9": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["3", 0]
+      },
+      "_meta": {
+        "title": "Prompt Negativo"
+      }
+    },
+    "10": {
+      "class_type": "WanImageToVideo",
+      "inputs": {
+        "positive": ["8", 0],
+        "negative": ["9", 0],
+        "vae": ["5", 0],
+        "clip_vision_output": ["7", 0],
+        "start_image": ["6", 0],
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "length": "{{frames}}",
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "Acondicionamiento Wan 5B Image-to-Video"
+      }
+    },
+    "11": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1.0,
+        "model": ["2", 0],
+        "positive": ["10", 0],
+        "negative": ["10", 1],
+        "latent_image": ["10", 2]
+      },
+      "_meta": {
+        "title": "Muestreo KSampler 5B (etapa única)"
+      }
+    },
+    "12": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["11", 0],
+        "vae": ["5", 0]
+      },
+      "_meta": {
+        "title": "Decodificar Latente"
+      }
+    },
+    "13": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "images": ["12", 0],
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "{{output_prefix}}",
+        "format": "video/h264-mp4",
+        "pingpong": false,
+        "save_output": true
+      },
+      "_meta": {
+        "title": "Guardar Video en Galería del Proyecto"
+      }
+    }
+  }
+}

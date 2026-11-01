@@ -1,6 +1,6 @@
 # Registro de Plantillas de Comfy Studio (`templates-registry`)
 
-Este documento describe las **9 plantillas curadas** (hitos M2 + ampliaciones) incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de rendimiento en una **RTX 5090 (32 GB GDDR7)**, el validador estructural y los endpoints HTTP expuestos por `studio-server` (`127.0.0.1:18190`).
+Este documento describe las **10 plantillas curadas** (hitos M2 + ampliaciones) incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de rendimiento en una **RTX 5090 (32 GB GDDR7)**, el validador estructural y los endpoints HTTP expuestos por `studio-server` (`127.0.0.1:18190`).
 
 ---
 
@@ -13,7 +13,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
    - Se fija resolución base **`832x480` (`480p` 16:9)**, **`81` fotogramas** (~5 s a 16 fps) y **`offload: true`** para mantener margen térmico y de memoria al encadenar ambos expertos MoE (`high_noise` + `low_noise`).
 2. **Wan 2.2 14B MoE + LoRA LightX2V 4-step (`steps=4`, `cfg=1.0`)**:
    - Las plantillas de generación de vídeo (`wan_flf2v`, `wan_i2v`, `wan_t2v`) emplean los modelos **Wan 2.2 14B `fp8_scaled`** combinados con los LoRAs de destilación **LightX2V 4-step** (`high_noise` pasos `0→2`, `low_noise` pasos `2→4`, `cfg=1.0`, `euler` + `simple`), mientras que las plantillas de edición `vace_inpaint` y `vace_restyle` ejecutan los expertos dedicados **Wan 2.2 Fun VACE 14B `fp8_scaled`** en `2+2` pasos (`uni_pc` + `simple`).
-   - `wan_t2v_5b` usa el modelo híbrido **Wan 2.2 TI2V 5B `fp16`** con la **LoRA Turbo rank-64** como motor ligero para borradores rápidos a **720p (1280x720) y 24 fps** (cadencia nativa del 5B) con `KSampler` de etapa única; no es el motor principal de producción (sin MoE de doble experto), pero cabe en ~10 GiB de VRAM.
+   - `wan_t2v_5b` y `wan_i2v_5b` usan el modelo híbrido **Wan 2.2 TI2V 5B `fp16`** con la **LoRA Turbo rank-64** como motor ligero para borradores rápidos a **720p (1280x720) y 24 fps** (cadencia nativa del 5B) con `KSampler` de etapa única; no son el motor principal de producción (sin MoE de doble experto), pero caben en ~10 GiB de VRAM. El variante `wan_i2v_5b` anima una imagen de referencia vía `WanImageToVideo` (start_image + CLIP Vision).
 3. **Generación de imagen base con `Juggernaut-XI-byRunDiffusion.safetensors` (`sdxl_image`)**:
    - Para keyframes, storyboards y referencias visuales (que después alimentan `wan_i2v`, `wan_flf2v` o `vace_restyle`), se emplea SDXL Juggernaut XI a **`1024x1024`**, **`25` pasos**, **`cfg=6.0`** con sampler `dpmpp_2m_sde` + `karras`.
    - `sdxl_ipadapter` reutiliza ese mismo pipeline añadiendo **IP-Adapter SDXL ViT-H** para fijar la identidad (cara/personaje/objeto) de una imagen de referencia del proyecto.
@@ -72,7 +72,22 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.4 `wan_i2v` — Wan 2.2 14B Image-to-Video (I2V Lightning 4-step)
+### 2.4 `wan_i2v_5b` — Wan 2.2 TI2V 5B Imagen a Video Ligero (720p Turbo, 24 fps)
+
+- **Archivo**: [`studio/comfy_studio/templates/data/wan_i2v_5b.json`](../studio/comfy_studio/templates/data/wan_i2v_5b.json)
+- **Uso**: Animar un keyframe o retrato del proyecto (`image_asset_id` / `image_input`) a 720p con el modelo híbrido TI2V 5B fp16 + LoRA Turbo, condicionando con `WanImageToVideo` (`start_image` + `clip_vision_output`) y `KSampler` de etapa única.
+- **Modelos requeridos**:
+  - `wan2.2_ti2v_5B_fp16.safetensors` + `Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors`
+  - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `clip_vision_h.safetensors`, `wan2.2_vae.safetensors`
+- **Entradas principales (`inputs`)**:
+  - `prompt` (*string*, obligatorio): acción del sujeto y movimiento de cámara desde la imagen inicial.
+  - `image_asset_id` / `image_input` (*string*): imagen inicial del plano (keyframe de `sdxl_image`/`sdxl_ipadapter` o foto subida).
+  - `frames` (*integer*, `97` por defecto): longitud a 24 fps (cadencia nativa del 5B).
+- **Defaults de rendimiento**: `1280x720` (`720p`), `97` frames (`24` fps), `steps=4`, `cfg=5.0`, sampler `euler` + `simple`.
+
+---
+
+### 2.5 `wan_i2v` — Wan 2.2 14B Image-to-Video (I2V Lightning 4-step)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_i2v.json`](../studio/comfy_studio/templates/data/wan_i2v.json)
 - **Uso**: Animar un fotograma clave o retrato estático (`image_asset_id` / `image_input`) convirtiéndolo en un plano de vídeo de 5 segundos con preservación de identidad y composición mediante `WanImageToVideo` y `CLIPVisionEncode`.
@@ -87,7 +102,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.5 `wan_t2v_5b` — Wan 2.2 TI2V 5B Texto a Video Ligero (720p Turbo 4-paso, 24 fps)
+### 2.6 `wan_t2v_5b` — Wan 2.2 TI2V 5B Texto a Video Ligero (720p Turbo 4-paso, 24 fps)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v_5b.json`](../studio/comfy_studio/templates/data/wan_t2v_5b.json)
 - **Uso**: Borradores rápidos, previews y planos a 720p cuando se itera deprisa o la VRAM es justa: un único modelo TI2V 5B fp16 (~10 GiB) con LoRA Turbo rank-64 en `KSampler` de etapa única (sin par MoE high/low noise).
@@ -102,7 +117,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.6 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
+### 2.7 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v.json`](../studio/comfy_studio/templates/data/wan_t2v.json)
 - **Uso**: Generar planos de vídeo B-roll, secuencias de establecimiento o escenas completas directamente desde texto (`EmptyHunyuanLatentVideo` + doble `KSamplerAdvanced` MoE).
@@ -117,7 +132,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.7 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
+### 2.8 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_image.json`](../studio/comfy_studio/templates/data/sdxl_image.json)
 - **Uso**: Generar imágenes fotorrealistas de alta resolución (`1024x1024`), storyboards, personajes de referencia o primeros/últimos fotogramas para nutrir `wan_i2v`, `wan_flf2v` y `vace_restyle`.
@@ -133,7 +148,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.8 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
+### 2.9 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_ipadapter.json`](../studio/comfy_studio/templates/data/sdxl_ipadapter.json)
 - **Uso**: Generar nuevas tomas o keyframes de un mismo personaje, mascota u objeto a partir de una foto de referencia del proyecto (`image_asset_id` / `image_input`), manteniendo la identidad visual con IP-Adapter SDXL ViT-H (`IPAdapterModelLoader` + `IPAdapterApply` sobre el modelo Juggernaut XI).
@@ -148,7 +163,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.9 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
+### 2.10 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
 
 - **Archivo**: [`studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json`](../studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json)
 - **Uso**: Convertir cualquier imagen del proyecto (render `sdxl_image`, keyframe de vídeo o foto subida) en una malla 3D texturizable en formato `GLB`, lista para Blender/Unreal. Pipeline 100% nativo de comfy-core (`ImageOnlyCheckpointLoader` + `ModelSamplingAuraFlow` + `CLIPVisionEncode` + `Hunyuan3Dv2Conditioning` + `KSampler` + `VAEDecodeHunyuan3D` + `VoxelToMesh` + `SaveGLB`), sin custom nodes.
@@ -178,7 +193,7 @@ python -m comfy_studio.templates
 1. **Metadatos y documentación en español**: presencia de `id`, `name`, `category`, `output_kind`, `performance_defaults`, `parameters` y `docs` (`uso`, `inputs`, `defaults`, `notas_rendimiento`).
 2. **Defaults de rendimiento obligatorios**:
    - `vace_*` y `wan_*` 14B: `height == 480`, `width == 832`, `steps == 4`, `offload == True`, `weight_dtype == "fp8_scaled"`.
-   - `wan_t2v_5b`: `width == 1280`, `height == 720`, `steps == 4`, `fp16` + LoRA Turbo.
+   - `wan_t2v_5b` y `wan_i2v_5b`: `width == 1280`, `height == 720`, `steps == 4`, `fp16` + LoRA Turbo. La variante `wan_i2v_5b` declara además `WanImageToVideo` con `start_image` + `clip_vision_output`.
    - `sdxl_image` y `sdxl_ipadapter`: `width == 1024`, `height == 1024`, `steps == 25`.
 3. **Integridad del grafo ComfyUI API-format y contratos pinneados**:
    - Todos los `class_type` pertenecen al catálogo `KNOWN_NODE_SPECS`, declaran todas sus entradas obligatorias (`required_inputs`, incluyendo `pingpong` en `VHS_VideoCombine`) sin valores `null` desconectados y rechazan cualquier entrada no declarada en `required_inputs ∪ optional_inputs` del nodo pinneado (p. ej. `clip_vision_output` o `control_mask` singular en `WanVaceToVideo`, u `offload` en `KSamplerAdvanced`).
@@ -195,7 +210,7 @@ python -m comfy_studio.templates
 
 | Método y Ruta | Descripción |
 |---|---|
-| `GET /studio/api/templates` | Lista las 9 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
+| `GET /studio/api/templates` | Lista las 10 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
 | `GET /studio/api/templates/{template_id}` | Devuelve el detalle completo de una plantilla incluyendo su grafo `workflow` en formato API (`404` si no existe). |
 | `POST /studio/api/templates/{template_id}/submit` | Valida `params` contra el schema de la plantilla (`422` con detalle si hay campos inválidos, fuera de rango o desconocidos, sin encolar en ComfyUI), sube a ComfyUI los `*_asset_id` referenciados del proyecto, crea el job en `studio.db`, ejecuta el workflow contra ComfyUI, descarga las salidas vía `/view` y las registra en la galería del proyecto (`category="outputs"`). |
 | `GET /studio/api/projects/{project_id}/gallery` | Lista los assets generados en la galería del proyecto enriquecidos con `preview_url`, `download_url` y `view_url`. |
