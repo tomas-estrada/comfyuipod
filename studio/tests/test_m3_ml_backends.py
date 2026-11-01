@@ -270,3 +270,68 @@ def test_worker_clip_embed_text_subprocess():
     emb = parsed["payload"]["embedding"]
     assert len(emb) == 768
 
+
+
+def test_worker_faces_detect_falls_back_to_simulated_without_weights(tmp_path: Path):
+    """El worker intenta el backend real y cae a simulación etiquetada sin pesos."""
+    worker = str(Path(__file__).resolve().parent.parent / "comfy_studio" / "ml" / "worker.py")
+    env = {k: v for k, v in os.environ.items() if k in ML_ENV_ALLOWLIST}
+    env["COMFY_DATA_DIR"] = str(tmp_path)  # sin pesos insightface -> real no disponible
+    img = tmp_path / "frame.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")  # PNG mínimo; el backend real lo rechaza
+    res = subprocess.run(
+        [sys.executable, worker, "faces_detect"],
+        input=json.dumps({"image_path": str(img)}),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        env=env,
+    )
+    assert res.returncode == 0, f"worker faces_detect falló: {res.stderr}"
+    parsed = json.loads(res.stdout)
+    assert parsed["ok"] is True
+    # Sin pesos reales en COMFY_DATA_DIR, el payload debe declararse simulado.
+    assert parsed["payload"]["simulated"] is True
+    assert parsed["payload"]["dim"] == 512
+    assert parsed["payload"]["faces"] == []
+
+
+def test_worker_asr_and_diarize_fall_back_to_simulated_without_media():
+    """ASR y diarize sin audio_path devuelven payload simulado etiquetado."""
+    worker = str(Path(__file__).resolve().parent.parent / "comfy_studio" / "ml" / "worker.py")
+    env = {k: v for k, v in os.environ.items() if k in ML_ENV_ALLOWLIST}
+    for sub, expected_keys in [
+        ("asr_transcribe", ["text", "segments", "language"]),
+        ("diarize", ["speakers", "turns", "by_speaker"]),
+    ]:
+        res = subprocess.run(
+            [sys.executable, worker, sub],
+            input=json.dumps({}),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            env=env,
+        )
+        assert res.returncode == 0, f"worker {sub} falló: {res.stderr}"
+        parsed = json.loads(res.stdout)
+        assert parsed["ok"] is True
+        assert parsed["payload"]["simulated"] is True
+        for key in expected_keys:
+            assert key in parsed["payload"]
+
+
+def test_backends_module_returns_none_without_real_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Los backends reales devuelven None (no lanzan) si faltan pesos/libs."""
+    monkeypatch.setenv("COMFY_DATA_DIR", str(tmp_path))
+    from comfy_studio.ml import backends
+
+    # En un tmp_path sin modelos ni librerías reales: siempre None o payload real;
+    # lo determinista es que nunca lance.
+    assert backends.clip_embed_text("hola") in (None, {"simulated": False})
+    assert backends.faces_detect(tmp_path / "no.png") is None
+    assert backends.asr_transcribe(tmp_path / "no.wav") is None
+    assert backends.diarize(tmp_path / "no.wav") is None
