@@ -1,6 +1,6 @@
 name: Build, Validate and Publish ComfyUI Vast.ai Image (GHCR)
 
-on:
+"on":
   push:
     branches:
       - main
@@ -349,9 +349,17 @@ jobs:
           python3 -m venv /tmp/studio-ci-venv
           /tmp/studio-ci-venv/bin/pip install --no-cache-dir --upgrade pip
           /tmp/studio-ci-venv/bin/pip install --no-cache-dir -e "./studio[dev]"
-          /tmp/studio-ci-venv/bin/ruff check studio panel
+          /tmp/studio-ci-venv/bin/ruff check studio panel scripts config/probes
           /tmp/studio-ci-venv/bin/pytest studio/tests -q
           /tmp/studio-ci-venv/bin/python -m comfy_studio.templates
+          python3 -m json.tool config/models-studio.json > /dev/null
+          python3 -m json.tool scripts/triage_patterns.json > /dev/null
+          for f in config/portal/index.html config/_starting.html comfyctl/src/status_html.html; do
+            if grep -qiE 'src="https?://|<link[^>]+href="https?://' "$f"; then
+              echo "::error::CDN externo en $f"
+              exit 1
+            fi
+          done
           rm -rf /tmp/studio-ci-venv
 
       - name: Verificar helper Mac tools/mac/comfy en seco y ciclo de STUDIO_LLM_KEY (VAL-SERVER-005 / VAL-CROSS-004)
