@@ -41,7 +41,7 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
     body = resp.json()
     assert "templates" in body
     templates = body["templates"]
-    assert len(templates) == 10
+    assert len(templates) == 11
 
     by_id = {tpl["id"]: tpl for tpl in templates}
     assert set(by_id.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
@@ -120,7 +120,7 @@ def test_structural_validator_passes_all_builtin_templates() -> None:
     """Todas las plantillas en comfy_studio/templates/data/ pasan el validador estructural."""
     registry = get_default_registry()
     results = validate_all_templates(registry.data_dir)
-    assert len(results) == 10
+    assert len(results) == 11
     assert set(results.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
 
     # Verificar que todos los modelos referenciados existen en el catálogo del pod
@@ -130,7 +130,15 @@ def test_structural_validator_passes_all_builtin_templates() -> None:
     # ViT-H-14 del grupo ipadapter_sdxl se guarda como directorio en models/clip_vision.
     known_pod_models = (
         manifest_filenames
-        | {"Juggernaut-XI-byRunDiffusion.safetensors", "CLIP-ViT-H-14-laion2B-s32B-b79K"}
+        | {
+            "Juggernaut-XI-byRunDiffusion.safetensors",
+            "CLIP-ViT-H-14-laion2B-s32B-b79K",
+            # Restauración facial y detectores facexlib: Fase 1 de download-models.sh.
+            "codeformer-v0.1.0.pth",
+            "GFPGANv1.4.pth",
+            "detection_Resnet50_Final.pth",
+            "parsing_parsenet.pth",
+        }
     )
 
     for tpl_id in EXPECTED_M2_TEMPLATE_IDS:
@@ -763,7 +771,7 @@ def test_hunyuan3d_is_offered_when_three_d_weights_opt_in(
         c.auth = ("admin", "changeme-test-pass-42")
 
         templates = c.get("/studio/api/templates").json()["templates"]
-        assert len(templates) == 10
+        assert len(templates) == 11
         by_id = {tpl["id"]: tpl for tpl in templates}
         assert by_id["hunyuan3d_image_to_3d"]["available"] is True
 

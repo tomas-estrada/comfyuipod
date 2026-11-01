@@ -1,0 +1,175 @@
+{
+  "id": "face_fix",
+  "name": "ReActor Restore Face — Restauración Facial de Vídeo (CodeFormer / GFPGAN)",
+  "category": "video_edit",
+  "output_kind": "video",
+  "summary": "Post-proceso de restauración facial sobre un vídeo generado o real: re-dibuja los rostros detectados con CodeFormer o GFPGAN y los recompone en el fotograma original.",
+  "description": "Recorre un vídeo de entrada, detecta los rostros de cada fotograma (retinaface_resnet50), los restaura con el modelo de restauración elegido (codeformer-v0.1.0 por defecto, GFPGANv1.4 disponible) y los pega de vuelta en su posición original, preservando el resto del encuadre. Pensado para arreglar caras pequeñas o degradadas en salidas de generación de vídeo (p. ej. tras vace_swap o wan_i2v) sin regenerar el clip.",
+  "performance_defaults": {
+    "resolution": "source",
+    "frames": 81,
+    "restore_model": "codeformer-v0.1.0.pth",
+    "visibility": 1.0,
+    "codeformer_weight": 0.5,
+    "vram_pair_gib": 1.5
+  },
+  "models": [
+    "codeformer-v0.1.0.pth",
+    "GFPGANv1.4.pth",
+    "detection_Resnet50_Final.pth",
+    "parsing_parsenet.pth"
+  ],
+  "required_nodes": [
+    "VHS_LoadVideo",
+    "ReActorRestoreFace",
+    "VHS_VideoCombine",
+    "SaveImage"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción breve del propósito de la restauración (p. ej. \"restaurar el rostro del niño en el clip intercambiado\"). No condiciona el grafo; es registro editorial."
+    },
+    "video_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "video",
+      "description": "ID del asset de vídeo a restaurar en el proyecto (típicamente una salida previa de vace_swap o wan_i2v)."
+    },
+    "video_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_video.mp4",
+      "description": "Archivo de vídeo en ComfyUI input (rellenado automáticamente desde video_asset_id)."
+    },
+    "restore_model": {
+      "type": "string",
+      "required": false,
+      "default": "codeformer-v0.1.0.pth",
+      "description": "Modelo de restauración facial: codeformer-v0.1.0.pth o GFPGANv1.4.pth (ambos descargados en Fase 1)."
+    },
+    "visibility": {
+      "type": "number",
+      "required": false,
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Visibilidad de la cara restaurada respecto a la original (1.0 reemplaza por completo)."
+    },
+    "codeformer_weight": {
+      "type": "number",
+      "required": false,
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Balance fidelidad/calidad de CodeFormer (0.0 = máxima fidelidad al rostro degradado, 1.0 = máxima calidad)."
+    },
+    "frames": {
+      "type": "integer",
+      "required": false,
+      "default": 81,
+      "min": 1,
+      "max": 241,
+      "description": "Número de fotogramas a procesar (0 podría usarse vía frame_load_cap en VHS; aquí limitado a un máximo de 241)."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 832,
+      "min": 256,
+      "max": 1280,
+      "description": "Ancho de reescalado opcional del vídeo al cargarlo (0 mantiene el original; por defecto 832 para 480p 16:9)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 480,
+      "min": 256,
+      "max": 1280,
+      "description": "Alto de reescalado opcional del vídeo al cargarlo (por defecto 480)."
+    }
+  },
+  "docs": {
+    "uso": "Úsalo como post-proceso sobre un vídeo con rostros pequeños o degradados (salidas de VACE/Wan donde la cara sale mal dibujada). No regenera el vídeo: solo detecta, restaura y recompone los rostros, manteniendo intacto el resto del metraje.",
+    "inputs": [
+      "video_asset_id / video_input (obligatorio en la práctica): vídeo a restaurar.",
+      "restore_model: codeformer-v0.1.0.pth (por defecto) o GFPGANv1.4.pth.",
+      "visibility (1.0): cuánto de la cara restaurada sustituye a la original.",
+      "codeformer_weight (0.5): solo aplica a CodeFormer; 0.5 equilibra fidelidad y calidad."
+    ],
+    "defaults": {
+      "restore_model": "codeformer-v0.1.0.pth",
+      "visibility": 1.0,
+      "codeformer_weight": 0.5,
+      "resolution": "source (832x480 por defecto al recargar)"
+    },
+    "notas_rendimiento": "Pesos ligeros (~1.5 GiB en total incluyendo detectores facexlib); corre en VRAM mínima comparado con los modelos de vídeo y es apto para RTX 4090/5090 sin offload."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "VHS_LoadVideo",
+      "inputs": {
+        "video": "{{video_input}}",
+        "force_rate": 16,
+        "custom_width": "{{width}}",
+        "custom_height": "{{height}}",
+        "frame_load_cap": "{{frames}}",
+        "skip_first_frames": 0,
+        "select_every_nth": 1
+      },
+      "_meta": {
+        "title": "Cargar Vídeo a Restaurar"
+      }
+    },
+    "2": {
+      "class_type": "ReActorRestoreFace",
+      "inputs": {
+        "image": [
+          "1",
+          0
+        ],
+        "facedetection": "retinaface_resnet50",
+        "model": "{{restore_model}}",
+        "visibility": "{{visibility}}",
+        "codeformer_weight": "{{codeformer_weight}}"
+      },
+      "_meta": {
+        "title": "Restaurar Rostros (CodeFormer/GFPGAN)"
+      }
+    },
+    "3": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "images": [
+          "2",
+          0
+        ],
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "{{output_prefix}}",
+        "format": "video/h264-mp4",
+        "pingpong": false,
+        "save_output": true
+      },
+      "_meta": {
+        "title": "Guardar Vídeo Restaurado en Galería del Proyecto"
+      }
+    },
+    "4": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": [
+          "2",
+          0
+        ],
+        "filename_prefix": "{{output_prefix}}_preview"
+      },
+      "_meta": {
+        "title": "Preview del Primer Fotograma Restaurado"
+      }
+    }
+  }
+}
