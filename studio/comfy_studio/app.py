@@ -1378,7 +1378,7 @@ def create_app(
     ) -> dict[str, Any]:
         active_registry: TemplateRegistry = request.app.state.template_registry
         active_cfg: StudioConfig = request.app.state.config
-        # El registro HTTP expone SIEMPRE las 7 plantillas; cada entrada declara
+        # El registro HTTP expone SIEMPRE todas las plantillas; cada entrada declara
         # `available`/`unavailable_reason` (gating por pesos 3D, VAL-UNREAL-004)
         # y es el panel quien no ofrece las no disponibles.
         return {

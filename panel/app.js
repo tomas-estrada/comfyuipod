@@ -1292,7 +1292,10 @@
         if (selectedAssetId) {
             if (templateId === "vace_inpaint" || templateId === "vace_restyle") {
                 params.video_asset_id = selectedAssetId;
-            } else if (templateId === "wan_i2v") {
+            } else if (
+                templateId === "wan_i2v" ||
+                templateId === "sdxl_ipadapter"
+            ) {
                 params.image_asset_id = selectedAssetId;
             } else if (templateId === "wan_flf2v") {
                 params.first_frame_asset_id = selectedAssetId;

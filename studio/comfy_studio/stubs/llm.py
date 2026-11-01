@@ -249,6 +249,10 @@ class StubLLMClient:
             "vace_inpaint",
             "vace_restyle",
             "sdxl_image",
+            "sdxl_ipadapter",
+            "ipadapter",
+            "ip-adapter",
+            "5b",
             "render",
             "genera un vídeo",
             "genera un video",
@@ -265,8 +269,12 @@ class StubLLMClient:
                 template_id = "wan_flf2v"
             elif "wan_i2v" in lower or "i2v" in lower:
                 template_id = "wan_i2v"
+            elif "sdxl_ipadapter" in lower or "ipadapter" in lower or "ip-adapter" in lower:
+                template_id = "sdxl_ipadapter"
             elif "sdxl_image" in lower or "sdxl" in lower:
                 template_id = "sdxl_image"
+            elif "5b" in lower:
+                template_id = "wan_t2v_5b"
             else:
                 template_id = "wan_t2v"
 

@@ -247,6 +247,26 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": ("audio", "meta_batch", "vae"),
         "outputs": 1,
     },
+    # --- IP-Adapter Plus (ComfyUI_IPAdapter_plus a0f451a): identidad por imagen ---
+    "IPAdapterModelLoader": {
+        "required_inputs": ("ipadapter_file",),
+        "optional_inputs": (),
+        "outputs": 1,  # IPADAPTER
+    },
+    "IPAdapterApply": {
+        "required_inputs": (
+            "ipadapter",
+            "model",
+            "clip_vision",
+            "image",
+            "weight",
+            "weight_type",
+            "start_at",
+            "end_at",
+        ),
+        "optional_inputs": ("attn_mask",),
+        "outputs": 1,  # MODEL
+    },
 }
 
 

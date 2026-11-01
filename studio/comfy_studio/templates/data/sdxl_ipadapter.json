@@ -1,0 +1,251 @@
+{
+  "id": "sdxl_ipadapter",
+  "name": "SDXL Juggernaut XI + IP-Adapter — Imagen con Identidad Fijada por Referencia",
+  "category": "image_generation",
+  "output_kind": "image",
+  "summary": "Generación de imágenes SDXL 1024x1024 con la identidad visual (cara, personaje u objeto) fijada por una imagen de referencia mediante IP-Adapter SDXL ViT-H.",
+  "description": "Igual que `sdxl_image` (Juggernaut XI, 1024x1024, 25 pasos dpmpp_2m_sde karras) pero añade IP-Adapter SDXL ViT-H: la imagen de referencia se codifica con CLIP ViT-H-14 y se inyecta en el modelo vía IPAdapterModelLoader + IPAdapterApply, de modo que el sujeto de la foto conserve su apariencia en la nueva escena descrita por el prompt. La referencia entra como `image_asset_id` del proyecto (o `image_input` directo en ComfyUI).",
+  "performance_defaults": {
+    "precision": "fp16",
+    "resolution": "1024x1024",
+    "width": 1024,
+    "height": 1024,
+    "steps": 25,
+    "cfg": 6.0,
+    "ipadapter_weight": 0.8,
+    "offload": false
+  },
+  "models": [
+    "Juggernaut-XI-byRunDiffusion.safetensors",
+    "ip-adapter_sdxl_vit-h.safetensors",
+    "CLIP-ViT-H-14-laion2B-s32B-b79K"
+  ],
+  "required_nodes": [
+    "CheckpointLoaderSimple",
+    "CLIPTextEncode",
+    "LoadImage",
+    "CLIPVisionLoader",
+    "IPAdapterModelLoader",
+    "IPAdapterApply",
+    "EmptyLatentImage",
+    "KSampler",
+    "VAEDecode",
+    "SaveImage"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción fotográfica de la escena deseada; el sujeto será el de la imagen de referencia."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "borroso, baja calidad, marca de agua, texto, manos deformadas, CGI artificial, cara distinta a la referencia",
+      "description": "Elementos visuales a evitar en la imagen generada."
+    },
+    "image_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "image",
+      "description": "ID del asset de imagen de referencia en el proyecto cuya identidad (cara/personaje/objeto) se debe conservar."
+    },
+    "image_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_reference.png",
+      "description": "Nombre del archivo de imagen de referencia en ComfyUI input (se rellena automáticamente desde image_asset_id)."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 1024,
+      "min": 512,
+      "max": 2048,
+      "description": "Ancho de la imagen en píxeles (1024 por defecto; 1344x768 para 16:9)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 1024,
+      "min": 512,
+      "max": 2048,
+      "description": "Alto de la imagen en píxeles (1024 por defecto; 768x1344 para 9:16)."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 25,
+      "min": 1,
+      "max": 100,
+      "description": "Pasos de muestreo (25 por defecto con dpmpp_2m_sde + karras)."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 6.0,
+      "min": 1.0,
+      "max": 20.0,
+      "description": "Escala CFG del sampler (6.0 por defecto para Juggernaut XI)."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista de muestreo."
+    },
+    "ipadapter_weight": {
+      "type": "number",
+      "required": false,
+      "default": 0.8,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Peso del condicionamiento IP-Adapter (0.8 por defecto; 1.0 fija la identidad al máximo, 0.3-0.5 solo guía el estilo)."
+    }
+  },
+  "docs": {
+    "uso": "Generar nuevas tomas, keyframes o escenas de un mismo personaje, mascota u objeto a partir de una foto de referencia, manteniendo la identidad visual exactamente. Es el complemento de `sdxl_image` para consistency de sujeto entre planos, y nutre después a `wan_i2v`, `wan_flf2v`, `vace_restyle` y `vace_swap`.",
+    "inputs": [
+      "prompt (obligatorio): escena y acción deseadas; la apariencia del sujeto viene de la referencia.",
+      "image_asset_id / image_input: foto de referencia con la identidad a conservar (cara de persona, producto, vehículo).",
+      "ipadapter_weight (0.8 por defecto): sube a 0.9-1.0 para máxima fidelidad de cara, baja a 0.4-0.6 si solo quieres guiar el estilo.",
+      "width / height (1024x1024 por defecto), steps (25) y cfg (6.0): iguales que en sdxl_image."
+    ],
+    "defaults": {
+      "resolution": "1024x1024",
+      "steps": 25,
+      "cfg": 6.0,
+      "sampler": "dpmpp_2m_sde",
+      "scheduler": "karras",
+      "ipadapter_weight": 0.8
+    },
+    "notas_rendimiento": "Añade ~1.5 GiB de VRAM (IP-Adapter ViT-H + CLIP ViT-H-14) sobre los ~6.6 GiB de Juggernaut XI; en RTX 5090/4090 sigue sobrando. Los pesos ip-adapter_sdxl_vit-h.safetensors y el encoder CLIP-ViT-H-14 ya vienen en el perfil studio (grupo ipadapter_sdxl)."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {
+        "ckpt_name": "Juggernaut-XI-byRunDiffusion.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Checkpoint Juggernaut XI SDXL"
+      }
+    },
+    "2": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{prompt}}",
+        "clip": ["1", 1]
+      },
+      "_meta": {
+        "title": "Prompt Positivo SDXL"
+      }
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["1", 1]
+      },
+      "_meta": {
+        "title": "Prompt Negativo SDXL"
+      }
+    },
+    "4": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "{{image_input}}"
+      },
+      "_meta": {
+        "title": "Cargar Imagen de Referencia (Identidad)"
+      }
+    },
+    "5": {
+      "class_type": "CLIPVisionLoader",
+      "inputs": {
+        "clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K"
+      },
+      "_meta": {
+        "title": "Cargar CLIP ViT-H-14 (IP-Adapter)"
+      }
+    },
+    "6": {
+      "class_type": "IPAdapterModelLoader",
+      "inputs": {
+        "ipadapter_file": "ip-adapter_sdxl_vit-h.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar IP-Adapter SDXL ViT-H"
+      }
+    },
+    "7": {
+      "class_type": "IPAdapterApply",
+      "inputs": {
+        "ipadapter": ["6", 0],
+        "model": ["1", 0],
+        "clip_vision": ["5", 0],
+        "image": ["4", 0],
+        "weight": "{{ipadapter_weight}}",
+        "weight_type": "standard",
+        "start_at": 0.0,
+        "end_at": 1.0
+      },
+      "_meta": {
+        "title": "Aplicar Identidad de Referencia (IP-Adapter)"
+      }
+    },
+    "8": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "Latente SDXL (1024x1024)"
+      }
+    },
+    "9": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "dpmpp_2m_sde",
+        "scheduler": "karras",
+        "denoise": 1.0,
+        "model": ["7", 0],
+        "positive": ["2", 0],
+        "negative": ["3", 0],
+        "latent_image": ["8", 0]
+      },
+      "_meta": {
+        "title": "Muestreador KSampler SDXL + IP-Adapter"
+      }
+    },
+    "10": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["9", 0],
+        "vae": ["1", 2]
+      },
+      "_meta": {
+        "title": "Decodificar Imagen SDXL"
+      }
+    },
+    "11": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "filename_prefix": "{{output_prefix}}",
+        "images": ["10", 0]
+      },
+      "_meta": {
+        "title": "Guardar Imagen en Galería del Proyecto"
+      }
+    }
+  }
+}
