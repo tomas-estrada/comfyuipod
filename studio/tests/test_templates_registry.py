@@ -30,7 +30,7 @@ MODELS_STUDIO_MANIFEST = REPO_ROOT / "config" / "models-studio.json"
 def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defaults(
     client: TestClient,
 ) -> None:
-    """GET /studio/api/templates lista las 7 plantillas del registro con schemas y docs.
+    """GET /studio/api/templates lista las 9 plantillas del registro con schemas y docs.
 
     Hunyuan3D figura con `available: false` cuando faltan sus pesos (perfil `studio`
     sin `STUDIO_INCLUDE_3D`): el panel no la ofrece (VAL-UNREAL-004), pero el
@@ -41,7 +41,7 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
     body = resp.json()
     assert "templates" in body
     templates = body["templates"]
-    assert len(templates) == 7
+    assert len(templates) == 9
 
     by_id = {tpl["id"]: tpl for tpl in templates}
     assert set(by_id.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
@@ -120,14 +120,18 @@ def test_structural_validator_passes_all_builtin_templates() -> None:
     """Todas las plantillas en comfy_studio/templates/data/ pasan el validador estructural."""
     registry = get_default_registry()
     results = validate_all_templates(registry.data_dir)
-    assert len(results) == 7
+    assert len(results) == 9
     assert set(results.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
 
     # Verificar que todos los modelos referenciados existen en el catálogo del pod
     manifest_data = json.loads(MODELS_STUDIO_MANIFEST.read_text(encoding="utf-8"))
     manifest_filenames = {item["filename"] for item in manifest_data["models"]}
-    # Juggernaut-XI se descarga en Fase 2 de download-models.sh
-    known_pod_models = manifest_filenames | {"Juggernaut-XI-byRunDiffusion.safetensors"}
+    # Juggernaut-XI se descarga en Fase 2 de download-models.sh; el encoder CLIP
+    # ViT-H-14 del grupo ipadapter_sdxl se guarda como directorio en models/clip_vision.
+    known_pod_models = (
+        manifest_filenames
+        | {"Juggernaut-XI-byRunDiffusion.safetensors", "CLIP-ViT-H-14-laion2B-s32B-b79K"}
+    )
 
     for tpl_id in EXPECTED_M2_TEMPLATE_IDS:
         raw_def = registry.get_raw_definition(tpl_id)
@@ -567,7 +571,7 @@ def test_submit_template_invalid_params_returns_4xx_without_enqueuing(
 
 
 def test_render_template_workflow_helper_for_all_six_templates() -> None:
-    """render_template_workflow renderiza las 7 plantillas con defaults sin dejar placeholders."""
+    """render_template_workflow renderiza las 9 plantillas con defaults sin dejar placeholders."""
     for tpl_id in EXPECTED_M2_TEMPLATE_IDS:
         params: dict = {"prompt": f"Prueba de render para {tpl_id}"}
         if tpl_id == "hunyuan3d_image_to_3d":
@@ -759,7 +763,7 @@ def test_hunyuan3d_is_offered_when_three_d_weights_opt_in(
         c.auth = ("admin", "changeme-test-pass-42")
 
         templates = c.get("/studio/api/templates").json()["templates"]
-        assert len(templates) == 7
+        assert len(templates) == 9
         by_id = {tpl["id"]: tpl for tpl in templates}
         assert by_id["hunyuan3d_image_to_3d"]["available"] is True
 

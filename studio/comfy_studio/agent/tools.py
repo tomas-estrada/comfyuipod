@@ -29,7 +29,9 @@ TemplateIdLiteral = Literal[
     "wan_flf2v",
     "wan_i2v",
     "wan_t2v",
+    "wan_t2v_5b",
     "sdxl_image",
+    "sdxl_ipadapter",
     "hunyuan3d_image_to_3d",
 ]
 
@@ -39,7 +41,9 @@ VALID_TEMPLATES: tuple[str, ...] = (
     "wan_flf2v",
     "wan_i2v",
     "wan_t2v",
+    "wan_t2v_5b",
     "sdxl_image",
+    "sdxl_ipadapter",
     "hunyuan3d_image_to_3d",
 )
 
@@ -205,8 +209,8 @@ class EnqueueRenderArgs(BaseModel):
         ...,
         description=(
             "Identificador de la plantilla API-format a ejecutar: "
-            "vace_inpaint, vace_restyle, wan_flf2v, wan_i2v, wan_t2v, "
-            "sdxl_image o hunyuan3d_image_to_3d."
+            "vace_inpaint, vace_restyle, wan_flf2v, wan_i2v, wan_t2v, wan_t2v_5b, "
+            "sdxl_image, sdxl_ipadapter o hunyuan3d_image_to_3d."
         ),
     )
     params: RenderTemplateParams = Field(
@@ -1592,7 +1596,8 @@ def create_default_tool_belt() -> ToolBelt:
             description=(
                 "Encola y ejecuta un render de vídeo o imagen en ComfyUI a partir de una "
                 "plantilla curada (vace_inpaint, vace_restyle, wan_flf2v, wan_i2v, wan_t2v, "
-                "sdxl_image). Valida los parámetros antes de enviar a ComfyUI."
+                "wan_t2v_5b, sdxl_image, sdxl_ipadapter). Valida los parámetros antes de "
+                "enviar a ComfyUI."
             ),
             args_model=EnqueueRenderArgs,
             handler=_handle_enqueue_render,

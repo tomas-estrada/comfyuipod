@@ -1,0 +1,244 @@
+{
+  "id": "wan_t2v_5b",
+  "name": "Wan 2.2 TI2V 5B — Texto a Video Ligero (Turbo 4-Paso, 720p)",
+  "category": "video_generation",
+  "output_kind": "video",
+  "summary": "Generación rápida de video desde texto con el modelo híbrido Wan 2.2 TI2V 5B fp16 y LoRA Turbo rank-64 de 4 pasos, a 720p (1280x720) y 24 fps con KSampler de etapa única.",
+  "description": "Variante ligera de texto a video: un único modelo TI2V 5B (text+image-to-video) en fp16 (~10 GiB) acelerado con la LoRA Turbo de 64 rangos, sin par de expertos MoE. Pensada para borradores rápidos, previews y 720p en GPUs con poca VRAM. Usa la VAE wan2.2_vae (16x16x4) y 24 fps, la cadencia nativa del modelo 5B.",
+  "performance_defaults": {
+    "precision": "fp16",
+    "resolution": "720p",
+    "width": 1280,
+    "height": 720,
+    "frames": 97,
+    "steps": 4,
+    "cfg": 5.0,
+    "lora_turbo_5b": true,
+    "fps": 24,
+    "offload": false
+  },
+  "models": [
+    "wan2.2_ti2v_5B_fp16.safetensors",
+    "Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan2.2_vae.safetensors"
+  ],
+  "required_nodes": [
+    "UNETLoader",
+    "LoraLoaderModelOnly",
+    "CLIPLoader",
+    "VAELoader",
+    "CLIPTextEncode",
+    "EmptyHunyuanLatentVideo",
+    "KSampler",
+    "VAEDecode",
+    "VHS_VideoCombine"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción cinematográfica del plano de video a generar (sujeto, acción, luz, lente y movimiento de cámara)."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "borroso, baja calidad, artefactos, anatomía deformada, texto sobreimpreso, parpadeo",
+      "description": "Elementos no deseados a suprimir durante la síntesis de video."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 1280,
+      "min": 256,
+      "max": 1920,
+      "description": "Ancho del video en píxeles (1280 por defecto para 720p horizontal; usar 720 para 9:16 vertical)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 720,
+      "min": 256,
+      "max": 1920,
+      "description": "Alto del video en píxeles (720 por defecto para 720p horizontal; usar 1280 para 9:16 vertical)."
+    },
+    "frames": {
+      "type": "integer",
+      "required": false,
+      "default": 97,
+      "min": 1,
+      "max": 241,
+      "description": "Número de fotogramas a generar (97 frames ≈ 4 s a 24 fps, cadencia nativa del modelo 5B)."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 4,
+      "min": 1,
+      "max": 50,
+      "description": "Pasos de muestreo (4 por defecto con la LoRA Turbo rank-64)."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 5.0,
+      "min": 1.0,
+      "max": 20.0,
+      "description": "Escala CFG del sampler (5.0 por defecto para TI2V 5B con LoRA Turbo)."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista de muestreo."
+    },
+    "lora_strength": {
+      "type": "number",
+      "required": false,
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Intensidad de la LoRA Turbo sobre el modelo 5B (1.0 = efecto completo de 4 pasos)."
+    }
+  },
+  "docs": {
+    "uso": "Borradores rápidos, previews de planos y generación a 720p cuando se necesita iterar deprisa o la VRAM es limitada: el modelo 5B fp16 ocupa ~10 GiB frente a los 32.2 GiB del par VACE 14B fp8.",
+    "inputs": [
+      "prompt (obligatorio): descripción detallada de la escena, movimiento y estilo de cámara.",
+      "width / height (1280x720 por defecto): dimensiones del plano 720p (invertir a 720x1280 para 9:16).",
+      "frames (97 por defecto): longitud en fotogramas a 24 fps.",
+      "lora_strength (1.0): baja a 0.5-0.8 si el resultado queda sobre-destilado con la LoRA Turbo."
+    ],
+    "defaults": {
+      "resolution": "1280x720 (720p 16:9)",
+      "frames": 97,
+      "fps": 24,
+      "steps": 4,
+      "cfg": 5.0,
+      "lora_turbo_5b": true,
+      "sampler": "euler",
+      "scheduler": "simple"
+    },
+    "notas_rendimiento": "El TI2V 5B fp16 (~10 GiB) con LoRA Turbo rank-64 genera 720p@24fps en una fracción del tiempo del par 14B. Usa KSampler de etapa única (no MoE high/low noise) y la VAE wan2.2_vae; a diferencia de los 14B, la LoRA Lightning 4-step no aplica aquí (es la Turbo 5B la que acelera)."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_ti2v_5B_fp16.safetensors",
+        "weight_dtype": "default"
+      },
+      "_meta": {
+        "title": "Cargar Wan 2.2 TI2V 5B fp16"
+      }
+    },
+    "2": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "model": ["1", 0],
+        "lora_name": "Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors",
+        "strength_model": "{{lora_strength}}"
+      },
+      "_meta": {
+        "title": "LoRA Turbo 5B rank-64"
+      }
+    },
+    "3": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "wan"
+      },
+      "_meta": {
+        "title": "Cargar UMT5 XXL fp8"
+      }
+    },
+    "4": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "wan2.2_vae.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Wan 2.2 VAE"
+      }
+    },
+    "5": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{prompt}}",
+        "clip": ["3", 0]
+      },
+      "_meta": {
+        "title": "Prompt Positivo"
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["3", 0]
+      },
+      "_meta": {
+        "title": "Prompt Negativo"
+      }
+    },
+    "7": {
+      "class_type": "EmptyHunyuanLatentVideo",
+      "inputs": {
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "length": "{{frames}}",
+        "batch_size": 1
+      },
+      "_meta": {
+        "title": "Latente de Video Vacío (1280x720x97)"
+      }
+    },
+    "8": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 1.0,
+        "model": ["2", 0],
+        "positive": ["5", 0],
+        "negative": ["6", 0],
+        "latent_image": ["7", 0]
+      },
+      "_meta": {
+        "title": "Muestreo KSampler 5B (etapa única)"
+      }
+    },
+    "9": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["8", 0],
+        "vae": ["4", 0]
+      },
+      "_meta": {
+        "title": "Decodificar Latente"
+      }
+    },
+    "10": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "images": ["9", 0],
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "{{output_prefix}}",
+        "format": "video/h264-mp4",
+        "pingpong": false,
+        "save_output": true
+      },
+      "_meta": {
+        "title": "Guardar Video en Galería del Proyecto"
+      }
+    }
+  }
+}

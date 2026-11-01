@@ -21,7 +21,9 @@ EXPECTED_M2_TEMPLATE_IDS: tuple[str, ...] = (
     "wan_flf2v",
     "wan_i2v",
     "wan_t2v",
+    "wan_t2v_5b",
     "sdxl_image",
+    "sdxl_ipadapter",
     # M3-D: pipeline Hunyuan3D 2.1 nativo (imagen -> malla GLB)
     "hunyuan3d_image_to_3d",
 )
