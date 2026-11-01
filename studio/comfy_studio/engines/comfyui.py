@@ -91,7 +91,7 @@ class ComfyUIEngine:
         if ref:
             body["version"] = ref
         try:
-            resp = await self._client._request(  # noqa: SLF001 - ruta interna del cliente
+            resp = await self._client._request(
                 "POST", endpoint, json_body=body, timeout=600.0
             )
         except ComfyUIError as exc:
@@ -191,7 +191,7 @@ def _result_outputs(result: Any) -> list[str]:
             try:
                 paths.append(str(rel()))
                 continue
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
         p = getattr(f, "path", None) or getattr(f, "filename", None)
         if p:

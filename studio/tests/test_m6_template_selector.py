@@ -185,7 +185,7 @@ class _FakeProvider:
     def __init__(self, items):
         self._items = items
 
-    def discover(self, query, *, output_kind, limit):  # noqa: ARG002
+    def discover(self, query, *, output_kind, limit):
         return self._items
 
 
@@ -244,7 +244,7 @@ def test_discovery_provider_error_does_not_break_select(monkeypatch: pytest.Monk
     monkeypatch.setenv("STUDIO_DYNAMIC", "1")
 
     class _Boom:
-        def discover(self, query, *, output_kind, limit):  # noqa: ARG002
+        def discover(self, query, *, output_kind, limit):
             raise RuntimeError("red caída")
 
     sel = TemplateSelector(discovery_provider=_Boom())

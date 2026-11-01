@@ -39,9 +39,7 @@ class LLMToolCall:
             "type": "function",
             "function": {
                 "name": self.name,
-                "arguments": self.raw_arguments
-                if self.raw_arguments
-                else json.dumps(self.arguments, ensure_ascii=False),
+                "arguments": self.raw_arguments or json.dumps(self.arguments, ensure_ascii=False),
             },
         }
 

@@ -25,7 +25,7 @@ def main() -> None:
             )
         else:
             print(f"WARN|torch={ver} cuda={cu} cuda.is_available=False (ejecutando en modo CPU)")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"FAIL|Error importando o probando torch: {exc}")
 
 

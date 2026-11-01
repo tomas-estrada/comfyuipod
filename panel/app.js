@@ -111,9 +111,13 @@
 
     function safeUrl(u) {
         const s = String(u == null ? "" : u);
-        return s.startsWith("/") || s.startsWith("http://") || s.startsWith("https://")
-            ? s
-            : "#";
+        if (s.startsWith("/")) return s;
+        try {
+            const parsed = new URL(s, window.location.origin);
+            return parsed.protocol === "https:" ? parsed.href : "#";
+        } catch (_) {
+            return "#";
+        }
     }
 
     function formatBytes(bytes) {
@@ -760,7 +764,7 @@
                         <div class="item-meta"><code>${escapeHtml(
                             JSON.stringify(resObj).slice(0, 180)
                         )}</code></div>
-                        <div class="item-actions" style="margin-top:0.35rem;">
+                        <div class="item-actions mt-035">
                             <button type="button" class="btn btn-secondary btn-sm" data-goto-view="jobs">Ver Jobs</button>
                             <button type="button" class="btn btn-accent btn-sm" data-goto-view="gallery">Abrir en Galería</button>
                         </div>
@@ -1179,12 +1183,12 @@
         const defaultsStr = JSON.stringify(doc.defaults || tpl.performance_defaults || {});
         const availabilityNotice =
             tpl.available === false
-                ? `<div style="margin-top:0.25rem;color:#b45309;"><strong>No disponible:</strong> ${escapeHtml(tpl.unavailable_reason || "faltan pesos en este pod.")}</div>`
+                ? `<div class="mt-025 warn-text"><strong>No disponible:</strong> ${escapeHtml(tpl.unavailable_reason || "faltan pesos en este pod.")}</div>`
                 : "";
         docCard.innerHTML = `
             <div><strong>${escapeHtml(tpl.name || tpl.title || tpl.id)}</strong> (<code>${escapeHtml(tpl.category || "video")}</code>)</div>
-            <div style="margin-top:0.25rem;"><strong>Uso:</strong> ${escapeHtml(doc.uso || tpl.description || "")}</div>
-            <div style="margin-top:0.25rem;"><strong>Defaults 480p/Lightning:</strong> <code>${escapeHtml(defaultsStr)}</code></div>
+            <div class="mt-025"><strong>Uso:</strong> ${escapeHtml(doc.uso || tpl.description || "")}</div>
+            <div class="mt-025"><strong>Defaults 480p/Lightning:</strong> <code>${escapeHtml(defaultsStr)}</code></div>
             ${availabilityNotice}
         `;
     }
@@ -1233,8 +1237,8 @@
 
                 return `
                 <div class="item-card" data-job-card="${escapeHtml(job.id)}">
-                    <div class="item-main" style="flex:1 1 280px;">
-                        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                    <div class="item-main flex-1-280">
+                        <div class="row-center-gap05">
                             <span class="item-title">Job <code>${escapeHtml(job.id)}</code></span>
                             <span class="status-pill ${statusClass}">${escapeHtml(job.status)} (${pct}%)</span>
                             ${
@@ -1248,7 +1252,7 @@
                             Nodo: <code>${escapeHtml(job.current_node || "completado")}</code>
                         </span>
                         <div class="progress-track" aria-label="Progreso del job ${escapeHtml(job.id)}">
-                            <div class="progress-fill" style="width: ${pct}%;"></div>
+                            <div class="progress-fill" style="width:${pct}%;"></div>
                         </div>
                     </div>
                     <div class="item-actions">
@@ -1394,12 +1398,12 @@
                 return `
                 <div class="gallery-card ${isSelected ? "active-item" : ""}" data-gallery-card="${escapeHtml(asset.id)}">
                     <div>
-                        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.4rem;">
+                        <div class="row-between-gap04">
                             <span class="code-badge">${escapeHtml(String(asset.kind || "").toUpperCase())}</span>
                             <span class="code-badge">${escapeHtml(asset.category)}</span>
                         </div>
-                        <div class="item-title" style="margin-top:0.45rem;">${escapeHtml(displayName)}</div>
-                        <div class="item-meta" style="margin-top:0.2rem;">
+                        <div class="item-title mt-045">${escapeHtml(displayName)}</div>
+                        <div class="item-meta mt-02">
                             ID: <code>${escapeHtml(asset.id)}</code> · ${formatBytes(asset.size_bytes)}
                             ${tplId ? ` · Plantilla: <code>${escapeHtml(tplId)}</code>` : ""}
                         </div>
@@ -1466,7 +1470,7 @@
                 >
                     <source src="${escapeHtml(asset.view_url)}" type="${escapeHtml(asset.mime_type || "video/mp4")}">
                 </video>
-                <div class="item-meta" style="margin-top:0.35rem;">
+                <div class="item-meta mt-035">
                     Contenedor de vídeo listo (<code>${escapeHtml(asset.mime_type || "video/mp4")}</code> · ${formatBytes(asset.size_bytes)})
                 </div>
             `;
@@ -1482,7 +1486,7 @@
                     ${mediaPlayerHtml}
                 </div>
                 <div class="item-main">
-                    <h3 style="margin:0 0 0.35rem;">Vista Previa: ${escapeHtml(displayName)}</h3>
+                    <h3 class="mt-0 mb-035">Vista Previa: ${escapeHtml(displayName)}</h3>
                     <p class="item-meta">
                         <strong>Asset ID:</strong> <code>${escapeHtml(asset.id)}</code> ·
                         <strong>Categoría:</strong> <code>${escapeHtml(asset.category)}</code> ·
@@ -1496,7 +1500,7 @@
                     <p id="preview-http-verify" class="item-meta">
                         Endpoint de vista previa: <code>${escapeHtml(asset.view_url)}</code>
                     </p>
-                    <div class="item-actions" style="margin-top:0.6rem;">
+                    <div class="item-actions mt-06">
                         <a
                             id="stage-download-link"
                             href="${escapeHtml(safeUrl(asset.download_url))}"
@@ -1882,7 +1886,7 @@
                                 Hablante: <code>${escapeHtml(cut.speaker || "Locutor")}</code> ·
                                 Motivo: ${escapeHtml(cut.reason || "Selección editorial")}
                             </span>
-                            <div class="form-row" style="margin-top:0.4rem;">
+                            <div class="form-row mt-04">
                                 <div class="form-group flex-1">
                                     <label for="cut-in-${idx}">Entrada (s)</label>
                                     <input type="number" id="cut-in-${idx}" step="0.01" min="0"

@@ -327,7 +327,7 @@ class StudioAgent:
                         "upto": str(older[-1].get("created_at") or ""),
                     },
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(
                 "Resumen de historial omitido (se conserva la ventana textual): %s", exc
             )

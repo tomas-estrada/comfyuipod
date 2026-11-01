@@ -107,7 +107,7 @@ def run_worker(
             exit_code=None,
             stderr_tail=tail,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return MlWorkerResponse(
             ok=False,
             subcommand=subcommand,
@@ -119,7 +119,7 @@ def run_worker(
     # Parsear stdout JSON
     try:
         parsed = json.loads(res.stdout) if res.stdout.strip() else {}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return MlWorkerResponse(
             ok=False,
             subcommand=subcommand,

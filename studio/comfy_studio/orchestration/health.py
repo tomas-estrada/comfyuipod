@@ -30,7 +30,7 @@ def orchestration_health_report() -> dict[str, Any]:
             build_production_graph,
             langgraph_available,
         )
-    except Exception as exc:  # noqa: BLE001 — fail-closed, nunca propaga
+    except Exception as exc:
         return {
             "state": "down",
             "graph_buildable": False,
@@ -44,7 +44,7 @@ def orchestration_health_report() -> dict[str, Any]:
     note = ""
     try:
         build_production_graph()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         graph_ok = False
         note = f"grafo no construible: {type(exc).__name__}"
 

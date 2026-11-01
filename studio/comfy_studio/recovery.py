@@ -122,7 +122,7 @@ async def recover_interrupted_jobs(
                 job_id=job_id,
                 strict=False,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             store.update_job(
                 job_id,
                 status="interrupted",
@@ -180,7 +180,7 @@ async def recover_interrupted_jobs(
                 # execute_prompt_job ya marcó el job como failed vía _fail_job
                 logger.warning("Reanudación del job %s falló: %s", exec_job_id, exc)
                 return "failed"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 store.update_job(
                     exec_job_id,
                     status="interrupted",

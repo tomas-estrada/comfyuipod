@@ -106,7 +106,7 @@ def _check_imports(interpreter: str, modules: list[str]) -> tuple[bool, str]:
         if res.returncode != 0:
             return False, res.stderr.strip() or "import falló sin stderr"
         return True, ""
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
 
 
@@ -133,7 +133,7 @@ def _check_cuda(interpreter: str) -> tuple[bool, str]:
         if res.returncode != 0:
             return False, res.stderr.strip() or "cuda check falló"
         return res.stdout.strip() == "1", ""
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
 
 
@@ -222,7 +222,7 @@ def run_worker_probe(
             "exit_code": None,
             "stderr_tail": tail,
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         tail = _redact_stderr(redactor, str(exc))
         return {
             "ok": False,
@@ -245,7 +245,7 @@ def run_worker_probe(
         import json
 
         parsed = json.loads(res.stdout)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {
             "ok": False,
             "subcommand": "probe",

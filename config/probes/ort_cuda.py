@@ -21,7 +21,7 @@ def main() -> None:
             model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
             model.ir_version = 7
             model_bytes = model.SerializeToString()
-        except Exception:  # noqa: BLE001
+        except Exception:
             det_path = os.path.join(
                 os.environ.get("COMFY_DATA_DIR", "/workspace/comfyui-data"),
                 "models/insightface/models/buffalo_l/det_10g.onnx",
@@ -50,7 +50,7 @@ def main() -> None:
                     f"WARN|InferenceSession ({model_source}) sin CUDA activa; "
                     f"ORT providers activos: {active}"
                 )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"FAIL|Error en prueba de ONNX Runtime: {exc}")
 
 

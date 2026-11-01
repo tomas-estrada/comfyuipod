@@ -145,7 +145,7 @@ class StubLLMClient:
             if step.fail_with_status is not None:
                 raise RuntimeError(f"HTTP {step.fail_with_status}: {step.error_message}")
             resolved_content = (
-                step.content if step.content else ("".join(step.chunks) if step.chunks else "")
+                step.content or ("".join(step.chunks) if step.chunks else "")
             )
             return {
                 "role": "assistant",

@@ -88,9 +88,9 @@ class LLMPlannerAdapter:
     _SYSTEM = (
         "Eres un director técnico de un estudio de reels cortos. Descompón la idea "
         "en secuencias y shots de 3 a 7 segundos. Responde SOLO con JSON válido con "
-        "la forma: {\"sequences\":[{\"title\":str,\"shots\":[{\"description\":str,"
-        "\"duration_s\":number,\"depends_on\":[shot_id],\"layers\":[{\"kind\":str,"
-        "\"engine\":str,\"params\":{}}]}]}]}. Motores válidos: comfyui, blender, "
+        'la forma: {"sequences":[{"title":str,"shots":[{"description":str,'
+        '"duration_s":number,"depends_on":[shot_id],"layers":[{"kind":str,'
+        '"engine":str,"params":{}}]}]}]}. Motores válidos: comfyui, blender, '
         "heavy_video, upscaler, compositor. Sin texto fuera del JSON."
     )
 
@@ -109,7 +109,7 @@ class LLMPlannerAdapter:
         ]
         try:
             response = asyncio.run(self._llm.complete(messages, temperature=0.3))
-        except Exception as exc:  # noqa: BLE001 - nunca romper el grafo por el LLM
+        except Exception as exc:
             logger.warning("LLMPlannerAdapter: el cliente LLM falló (%s); plan mínimo.", exc)
             return self._fallback_plan(idea)
 
@@ -229,7 +229,7 @@ class EngineRunnerAdapter:
                 job_id=job.get("shot"),
                 strict=False,
             )
-        except Exception as exc:  # noqa: BLE001 - no romper el grafo; el motor reportará
+        except Exception as exc:
             logger.warning(
                 "EngineRunnerAdapter: no se pudo renderizar plantilla %r (%s).",
                 template_id,
@@ -257,7 +257,7 @@ class EngineRunnerAdapter:
         spec = EngineRunSpec(job=job, cost_cap=cost_cap)
         try:
             raw = _run_engine_sync(impl, spec)
-        except Exception as exc:  # noqa: BLE001 - tipificar, no romper el grafo
+        except Exception as exc:
             logger.warning("EngineRunnerAdapter: motor %s lanzó (%s).", engine, exc)
             return {"ok": False, "engine": engine, "error": str(exc)[:500]}
         result = _result_to_dict(raw)
@@ -302,7 +302,7 @@ class QaShotEvaluator:
         spec = EngineRunSpec(job=job, cost_cap=shot.cost_cap_usd or None)
         try:
             raw = _run_engine_sync(self._qa, spec)
-        except Exception as exc:  # noqa: BLE001 - nunca romper el lazo de evaluación
+        except Exception as exc:
             logger.warning("QaShotEvaluator: motor qa lanzó (%s).", exc)
             return {"vbench": 0.0}
         result = _result_to_dict(raw)
@@ -356,7 +356,7 @@ class EngineAssembler:
         spec = EngineRunSpec(job=job)
         try:
             raw = _run_engine_sync(self._editor, spec)
-        except Exception as exc:  # noqa: BLE001 - tipificar, no romper el grafo
+        except Exception as exc:
             logger.warning("EngineAssembler: editor lanzó (%s).", exc)
             return {"ok": False, "error": str(exc)[:500]}
         result = _result_to_dict(raw)

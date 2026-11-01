@@ -398,25 +398,25 @@ class StudioConfig:
             self.studio_data_dir = Path(self.studio_data_dir)
         if self.studio_llm_key is not None:
             cleaned_key = self.studio_llm_key.strip()
-            self.studio_llm_key = cleaned_key if cleaned_key else None
+            self.studio_llm_key = cleaned_key or None
         if self.studio_llm_fallback_key is not None:
             cleaned_fb_key = self.studio_llm_fallback_key.strip()
-            self.studio_llm_fallback_key = cleaned_fb_key if cleaned_fb_key else None
+            self.studio_llm_fallback_key = cleaned_fb_key or None
         if self.comfy_pass is not None:
             cleaned_pass = self.comfy_pass.strip()
-            self.comfy_pass = cleaned_pass if cleaned_pass else None
+            self.comfy_pass = cleaned_pass or None
         if self.vast_api_key is not None:
             cleaned_vast = self.vast_api_key.strip()
-            self.vast_api_key = cleaned_vast if cleaned_vast else None
+            self.vast_api_key = cleaned_vast or None
         if self.studio_webhook_url is not None:
             cleaned_wh_url = self.studio_webhook_url.strip()
-            self.studio_webhook_url = cleaned_wh_url if cleaned_wh_url else None
+            self.studio_webhook_url = cleaned_wh_url or None
         if self.studio_webhook_secret is not None:
             cleaned_wh_secret = self.studio_webhook_secret.strip()
-            self.studio_webhook_secret = cleaned_wh_secret if cleaned_wh_secret else None
+            self.studio_webhook_secret = cleaned_wh_secret or None
         if self.studio_api_token is not None:
             cleaned_token = self.studio_api_token.strip()
-            self.studio_api_token = cleaned_token if cleaned_token else None
+            self.studio_api_token = cleaned_token or None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> StudioConfig:

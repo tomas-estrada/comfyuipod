@@ -84,7 +84,7 @@ class MemoryCapability(BrainCapability):
             )
         try:
             conn = self._connect(db_path)
-        except Exception as exc:  # noqa: BLE001 - sqlite puede lanzar varios tipos
+        except Exception as exc:
             return BrainResult(
                 ok=False,
                 capability=self.name,

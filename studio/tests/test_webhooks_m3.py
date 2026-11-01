@@ -68,7 +68,7 @@ def _make_notifier(
     backlog: int = 128,
 ) -> WebhookNotifier:
     cfg = StudioConfig(
-        studio_data_dir=Path("."),
+        studio_data_dir=Path(),
         comfy_pass="super-secret-pass-xyz",
         studio_webhook_url="http://webhook.local/hook",
         studio_webhook_secret=secret,
@@ -227,7 +227,7 @@ def test_config_from_env_and_public_dict_mask_webhook() -> None:
         {
             "STUDIO_WEBHOOK_URL": " https://example.com/hook ",
             "STUDIO_WEBHOOK_SECRET": "whsec-abc",
-            "STUDIO_DATA_DIR": "/tmp/studio",  # noqa: S108
+            "STUDIO_DATA_DIR": "/tmp/studio",
         }
     )
     assert cfg.studio_webhook_url == "https://example.com/hook"
@@ -241,7 +241,7 @@ def test_config_from_env_and_public_dict_mask_webhook() -> None:
     redactor = cfg.redactor()
     assert "whsec-abc" not in redactor.redact("fuga whsec-abc en log")
 
-    empty = StudioConfig.from_env({"STUDIO_WEBHOOK_URL": "   ", "STUDIO_DATA_DIR": "/tmp/x"})  # noqa: S108
+    empty = StudioConfig.from_env({"STUDIO_WEBHOOK_URL": "   ", "STUDIO_DATA_DIR": "/tmp/x"})
     assert empty.studio_webhook_url is None
     assert create_webhook_notifier(empty) is None
 
@@ -346,7 +346,7 @@ async def test_notifier_does_not_retry_permanent_4xx() -> None:
         attempts["n"] += 1
         return httpx.Response(401)
 
-    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url="http://webhook.local/hook")
+    cfg = StudioConfig(studio_data_dir=Path(), studio_webhook_url="http://webhook.local/hook")
     notifier = WebhookNotifier(
         url=cfg.studio_webhook_url or "",
         redactor=cfg.redactor(),
@@ -379,7 +379,7 @@ WEBHOOK_TEST_SECRETS = {
 async def test_each_event_is_signed_and_payload_never_contains_secrets(event: str) -> None:
     state = ReceiverState()
     cfg = StudioConfig(
-        studio_data_dir=Path("."),
+        studio_data_dir=Path(),
         studio_llm_key=WEBHOOK_TEST_SECRETS["llm"],
         comfy_pass=WEBHOOK_TEST_SECRETS["pass"],
         studio_api_token=WEBHOOK_TEST_SECRETS["api"],
@@ -414,7 +414,7 @@ async def test_each_event_is_signed_and_payload_never_contains_secrets(event: st
 
 @pytest.mark.anyio
 async def test_no_webhook_url_sends_nothing() -> None:
-    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url=None)
+    cfg = StudioConfig(studio_data_dir=Path(), studio_webhook_url=None)
     assert create_webhook_notifier(cfg) is None
 
 
@@ -436,7 +436,7 @@ async def test_notifier_three_retries_with_increasing_backoff(monkeypatch) -> No
 
     monkeypatch.setattr("comfy_studio.webhooks.asyncio.sleep", fake_sleep)
 
-    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url="http://webhook.local/hook")
+    cfg = StudioConfig(studio_data_dir=Path(), studio_webhook_url="http://webhook.local/hook")
     notifier = WebhookNotifier(
         url=cfg.studio_webhook_url or "",
         redactor=cfg.redactor(),
@@ -465,7 +465,7 @@ async def test_notifier_retries_transient_4xx(transient_status: int) -> None:
             return httpx.Response(transient_status)
         return httpx.Response(200)
 
-    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url="http://webhook.local/hook")
+    cfg = StudioConfig(studio_data_dir=Path(), studio_webhook_url="http://webhook.local/hook")
     notifier = WebhookNotifier(
         url=cfg.studio_webhook_url or "",
         redactor=cfg.redactor(),
@@ -489,7 +489,7 @@ async def test_notifier_backlog_is_capped_at_128_entries() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200)
 
-    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url="http://webhook.local/hook")
+    cfg = StudioConfig(studio_data_dir=Path(), studio_webhook_url="http://webhook.local/hook")
     notifier = WebhookNotifier(
         url=cfg.studio_webhook_url or "",
         redactor=cfg.redactor(),
@@ -525,7 +525,7 @@ async def test_ssrf_guard_emits_no_http_request(bad_url: str) -> None:
         return httpx.Response(200)
 
     cfg = StudioConfig(
-        studio_data_dir=Path("."),
+        studio_data_dir=Path(),
         studio_webhook_url=bad_url,
         studio_webhook_secret="whsec-ssrf",
     )
@@ -553,7 +553,7 @@ async def test_ssrf_guard_revalidates_dns_on_each_send(monkeypatch) -> None:
         "comfy_studio.webhooks.socket.getaddrinfo",
         lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))],
     )
-    cfg = StudioConfig(studio_data_dir=Path("."), studio_webhook_url="http://rebind.example.com/hook")
+    cfg = StudioConfig(studio_data_dir=Path(), studio_webhook_url="http://rebind.example.com/hook")
     notifier = WebhookNotifier(
         url=cfg.studio_webhook_url or "",
         redactor=cfg.redactor(),

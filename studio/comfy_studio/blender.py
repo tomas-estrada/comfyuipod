@@ -46,7 +46,7 @@ _STUB_PNG = (
     b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 )
 _STUB_GLB_HEADER = b"glTF\x02\x00\x00\x00\x14\x00\x00\x00" + b"\x00" * 12
-_STUB_USD = b"#usda 1.0\n( defaultPrim = \"World\" )\ndef Xform \"World\" {}\n"
+_STUB_USD = b'#usda 1.0\n( defaultPrim = "World" )\ndef Xform "World" {}\n'
 _STUB_FBX = b"; FBX stub (M3-D STUDIO_STUB_BLENDER)\n"
 
 
@@ -440,14 +440,14 @@ def write_unreal_manifest(manifest: dict[str, Any], dest: Path) -> Path:
 
 
 __all__ = [
+    "BLENDER_LOG_NAME",
     "BlenderExportSpec",
     "BlenderRenderSpec",
     "BlenderResult",
-    "BLENDER_LOG_NAME",
-    "classify_blender_failure",
     "build_export_script",
     "build_render_script",
     "build_unreal_manifest",
+    "classify_blender_failure",
     "find_blender_bin",
     "is_stub_mode",
     "run_blender_spec",

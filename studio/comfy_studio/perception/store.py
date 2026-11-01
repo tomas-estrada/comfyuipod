@@ -27,8 +27,8 @@ class PerceptionUnavailableError(RuntimeError):
 def load_sqlite_vec() -> Any:
     """Importa `sqlite_vec` de forma perezosa y traduce cualquier fallo a un error tipado."""
     try:
-        import sqlite_vec  # noqa: PLC0415
-    except Exception as exc:  # noqa: BLE001 - cualquier fallo de import degrada percepción
+        import sqlite_vec
+    except Exception as exc:
         raise PerceptionUnavailableError(
             f"sqlite-vec no está disponible en este entorno: {type(exc).__name__}: {exc}"
         ) from exc

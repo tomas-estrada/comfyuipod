@@ -87,7 +87,7 @@ def fetch_head_size(url: str, timeout: float = 20.0, retries: int = 3) -> tuple[
                 if attempt < retries:
                     time.sleep(1.5 * attempt)
                 continue
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last_err = exc
             if attempt < retries:
                 time.sleep(1.5 * attempt)
@@ -254,7 +254,7 @@ def validate_manifest_data(
             expected = item["bytes"]
             try:
                 _status, remote_size = head_fn(url)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 return f"HEAD fallo para {url}: {exc}"
             if remote_size != expected:
                 return (
