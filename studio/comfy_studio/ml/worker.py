@@ -51,6 +51,7 @@ from comfy_studio import SIMULATED_ML_NOTICE  # noqa: E402
 from comfy_studio.config import SecretRedactor  # noqa: E402
 from comfy_studio.ml import (  # noqa: E402
     ML_ENV_ALLOWLIST,
+    backends,  # noqa: E402
     probe_capabilities,
 )
 
@@ -100,85 +101,142 @@ def cmd_probe(_payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def cmd_clip_embed_text(payload: dict[str, Any]) -> dict[str, Any]:
-    _ = payload.get("text", "")
+    text = str(payload.get("text", ""))
+    real = backends.clip_embed_text(text)
+    if real is None:
+        _stderr("CLIP real no disponible; usando simulación determinista")
+        return {
+            "ok": True,
+            "subcommand": "clip_embed_text",
+            "payload": {
+                "embedding": _redact([0.0] * 768),
+                "dim": 768,
+                "model": "openai/clip-vit-large-patch14",
+                "simulated": True,
+                "simulation_notice": SIMULATED_ML_NOTICE,
+            },
+            "error": None,
+            "stderr_tail": None,
+        }
     return {
         "ok": True,
         "subcommand": "clip_embed_text",
-        "payload": {
-            "embedding": _redact([0.0] * 768),
-            "dim": 768,
-            "model": "openai/clip-vit-large-patch14",
-            "simulated": True,
-            "simulation_notice": SIMULATED_ML_NOTICE,
-        },
+        "payload": _redact(real),
         "error": None,
         "stderr_tail": None,
     }
 
 
 def cmd_clip_embed_image(payload: dict[str, Any]) -> dict[str, Any]:
+    image_path = str(payload.get("image_path", ""))
+    real = backends.clip_embed_image(image_path) if image_path else None
+    if real is None:
+        _stderr("CLIP real no disponible; usando simulación determinista")
+        return {
+            "ok": True,
+            "subcommand": "clip_embed_image",
+            "payload": {
+                "embedding": _redact([0.0] * 768),
+                "dim": 768,
+                "model": "openai/clip-vit-large-patch14",
+                "simulated": True,
+                "simulation_notice": SIMULATED_ML_NOTICE,
+            },
+            "error": None,
+            "stderr_tail": None,
+        }
     return {
         "ok": True,
         "subcommand": "clip_embed_image",
-        "payload": {
-            "embedding": _redact([0.0] * 768),
-            "dim": 768,
-            "model": "openai/clip-vit-large-patch14",
-            "simulated": True,
-            "simulation_notice": SIMULATED_ML_NOTICE,
-        },
+        "payload": _redact(real),
         "error": None,
         "stderr_tail": None,
     }
 
 
 def cmd_faces_detect(payload: dict[str, Any]) -> dict[str, Any]:
+    image_path = payload.get("image_path") or None
+    real = backends.faces_detect(image_path) if image_path else None
+    if real is None:
+        _stderr("InsightFace real no disponible; usando simulación determinista")
+        return {
+            "ok": True,
+            "subcommand": "faces_detect",
+            "payload": {
+                "faces": [],
+                "model_pack": "buffalo_l",
+                "dim": 512,
+                "simulated": True,
+                "simulation_notice": SIMULATED_ML_NOTICE,
+            },
+            "error": None,
+            "stderr_tail": None,
+        }
     return {
         "ok": True,
         "subcommand": "faces_detect",
-        "payload": {
-            "faces": [],
-            "model_pack": "buffalo_l",
-            "dim": 512,
-            "simulated": True,
-            "simulation_notice": SIMULATED_ML_NOTICE,
-        },
+        "payload": _redact(real),
         "error": None,
         "stderr_tail": None,
     }
 
 
 def cmd_asr_transcribe(payload: dict[str, Any]) -> dict[str, Any]:
+    audio_path = (
+        payload.get("audio_path") or payload.get("asset_path") or payload.get("media_path")
+    )
+    language = payload.get("language") or None
+    real = backends.asr_transcribe(audio_path, language=language) if audio_path else None
+    if real is None:
+        _stderr("faster-whisper real no disponible; usando simulación determinista")
+        return {
+            "ok": True,
+            "subcommand": "asr_transcribe",
+            "payload": {
+                "text": "",
+                "segments": [],
+                "words": [],
+                "language": "es",
+                "backend": "faster-whisper",
+                "model": "large-v3",
+                "simulated": True,
+                "simulation_notice": SIMULATED_ML_NOTICE,
+            },
+            "error": None,
+            "stderr_tail": None,
+        }
     return {
         "ok": True,
         "subcommand": "asr_transcribe",
-        "payload": {
-            "text": "",
-            "segments": [],
-            "words": [],
-            "language": "es",
-            "backend": "faster-whisper",
-            "model": "large-v3",
-            "simulated": True,
-            "simulation_notice": SIMULATED_ML_NOTICE,
-        },
+        "payload": _redact(real),
         "error": None,
         "stderr_tail": None,
     }
 
 
 def cmd_diarize(payload: dict[str, Any]) -> dict[str, Any]:
+    audio_path = payload.get("audio_path") or payload.get("media_path")
+    real = backends.diarize(audio_path) if audio_path else None
+    if real is None:
+        _stderr("FunASR cam++ real no disponible; usando simulación determinista")
+        return {
+            "ok": True,
+            "subcommand": "diarize",
+            "payload": {
+                "speakers": [],
+                "turns": [],
+                "by_speaker": {},
+                "backend": "funasr_campplus",
+                "simulated": True,
+                "simulation_notice": SIMULATED_ML_NOTICE,
+            },
+            "error": None,
+            "stderr_tail": None,
+        }
     return {
         "ok": True,
         "subcommand": "diarize",
-        "payload": {
-            "speakers": [],
-            "turns": [],
-            "by_speaker": {},
-            "backend": "funasr_campplus",
-            "simulated": True,
-            "simulation_notice": SIMULATED_ML_NOTICE,
-        },
+        "payload": _redact(real),
         "error": None,
         "stderr_tail": None,
     }
