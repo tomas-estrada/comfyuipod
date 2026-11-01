@@ -49,7 +49,12 @@ def test_panel_has_no_inline_styles_or_scripts() -> None:
 def test_nginx_sends_csp_on_every_location() -> None:
     """Cada location de config/nginx.conf debe llevar Content-Security-Policy."""
     conf = (REPO_ROOT / "config" / "nginx.conf").read_text(encoding="utf-8")
-    assert "server_tokens off;" in conf
+    http_block = re.search(r"^http\s*\{", conf, re.M)
+    assert http_block, "nginx.conf debe tener bloque http"
+    close = re.search(r"^\}", conf[http_block.end():], re.M)
+    assert close, "bloque http sin cierre"
+    http_body = conf[http_block.end(): http_block.end() + close.start()]
+    assert "server_tokens off;" in http_body, "server_tokens off debe estar dentro del bloque http"
     tokens = list(re.finditer(r"location\s+(\S+)\s*\{|[{}]", conf))
     stack: list[dict] = []
     blocks: list[tuple[str, str]] = []
