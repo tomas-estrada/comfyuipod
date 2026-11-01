@@ -74,9 +74,10 @@ def test_default_belt_registers_m3b_tools() -> None:
 async def test_list_templates_returns_curated_registry(tool_context: ToolContext) -> None:
     belt = create_default_tool_belt()
     result = await belt.execute("list_templates", {}, tool_context)
-    assert result["count"] == 12
+    assert result["count"] == 13
     ids = {t["id"] for t in result["templates"]}
     assert ids == {
+        "face_fix",
         "vace_inpaint",
         "vace_restyle",
         "vace_swap",

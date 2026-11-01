@@ -234,6 +234,17 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": (),
         "outputs": 0,
     },
+    "ReActorRestoreFace": {
+        "required_inputs": (
+            "image",
+            "facedetection",
+            "model",
+            "visibility",
+            "codeformer_weight",
+        ),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
     "VHS_VideoCombine": {
         "required_inputs": (
             "images",
