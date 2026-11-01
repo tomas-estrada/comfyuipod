@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sonda de ONNX Runtime (InferenceSession real con modelo Identity) invocada por `comfyctl diag` (§4.1)."""
+"""Sonda de ONNX Runtime (InferenceSession real) invocada por `comfyctl diag` (§4.1)."""
 
 import os
 
