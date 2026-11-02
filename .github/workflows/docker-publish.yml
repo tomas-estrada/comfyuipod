@@ -1144,7 +1144,11 @@ jobs:
           assert expected_tpls, "EXPECTED_M2_TEMPLATE_IDS llegó vacío desde el contenedor"
           assert tpl_ids == expected_tpls, f"Unexpected templates: {tpl_ids} != {expected_tpls}"
           unavailable = {i["id"] for i in tpl_items if i.get("available") is False}
-          assert unavailable == {"hunyuan3d_image_to_3d"}, f"Unexpected unavailable: {unavailable}"
+          # 3D y Animate son grupos opt-in (STUDIO_INCLUDE_3D / STUDIO_INCLUDE_ANIMATE):
+          # sin sus pesos se declaran unavailable con reason, el resto disponibles.
+          assert unavailable == {"hunyuan3d_image_to_3d", "wan_animate"}, (
+            f"Unexpected unavailable: {unavailable}"
+          )
           api = json.loads(os.environ["ST_API"])
           st_svc = (api.get("services") or {}).get("studio_server") or {}
           assert st_svc == {"enabled": True, "running": True, "port": 18190}, f"Unexpected studio_server service: {st_svc}"
