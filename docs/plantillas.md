@@ -169,7 +169,25 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.10 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
+### 2.10 `wan_animate` — Wan 2.2 Animate 14B Transferencia de Movimiento (Pose + Identidad)
+
+- **Archivo**: [`studio/comfy_studio/templates/data/wan_animate.json`](../studio/comfy_studio/templates/data/wan_animate.json)
+- **Uso**: Transferir el movimiento de un vídeo guía (coreografía, gestos, acción — p. ej. saltar a un coche y conducir rápido) al sujeto concreto de una imagen de referencia, conservando su identidad vía `WanAnimateToVideo` (`pose_video` + `reference_image`/`clip_vision_output`).
+- **Modelos requeridos** (grupo opt-in `animate_opt_in`):
+  - `wan2.2_animate_14B_int8_convrot.safetensors` (+17.15 GiB, se descarga con `STUDIO_INCLUDE_ANIMATE=1`)
+  - `umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `clip_vision_h.safetensors`, `wan_2.1_vae.safetensors`
+- **Entradas principales (`inputs`)**:
+  - `prompt` (*string*, obligatorio): descripción del sujeto y la acción a conservar.
+  - `image_asset_id` / `image_input` (*string*): imagen del sujeto concreto (identidad, CLIP Vision).
+  - `video_asset_id` / `video_input` (*string*): vídeo guía cuyo movimiento se transfiere (`pose_video`).
+  - `frames` (*integer*, `77` por defecto): longitud a 16 fps.
+  - `steps` (*integer*, `20`), `cfg` (*number*, `5.0`): muestreo estándar, sin LoRA Lightning.
+- **Defaults de rendimiento**: `832x480` (`480p`), `77` frames (`16` fps), `steps=20`, `cfg=5.0`, `denoise=1.0`, `int8_convrot`.
+- **Disponibilidad (gating por pesos)**: solo se ofrece y acepta submits con `STUDIO_INCLUDE_ANIMATE=1`; sin esos pesos, `available=false` con instrucciones en `unavailable_reason` (igual que el grupo 3D).
+
+---
+
+### 2.11 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v.json`](../studio/comfy_studio/templates/data/wan_t2v.json)
 - **Uso**: Generar planos de vídeo B-roll, secuencias de establecimiento o escenas completas directamente desde texto (`EmptyHunyuanLatentVideo` + doble `KSamplerAdvanced` MoE).
@@ -184,7 +202,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.11 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
+### 2.12 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_image.json`](../studio/comfy_studio/templates/data/sdxl_image.json)
 - **Uso**: Generar imágenes fotorrealistas de alta resolución (`1024x1024`), storyboards, personajes de referencia o primeros/últimos fotogramas para nutrir `wan_i2v`, `wan_flf2v` y `vace_restyle`.
@@ -200,7 +218,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.12 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
+### 2.13 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_ipadapter.json`](../studio/comfy_studio/templates/data/sdxl_ipadapter.json)
 - **Uso**: Generar nuevas tomas o keyframes de un mismo personaje, mascota u objeto a partir de una foto de referencia del proyecto (`image_asset_id` / `image_input`), manteniendo la identidad visual con IP-Adapter SDXL ViT-H (`IPAdapterModelLoader` + `IPAdapterApply` sobre el modelo Juggernaut XI).
@@ -215,7 +233,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.13 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
+### 2.14 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
 
 - **Archivo**: [`studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json`](../studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json)
 - **Uso**: Convertir cualquier imagen del proyecto (render `sdxl_image`, keyframe de vídeo o foto subida) en una malla 3D texturizable en formato `GLB`, lista para Blender/Unreal. Pipeline 100% nativo de comfy-core (`ImageOnlyCheckpointLoader` + `ModelSamplingAuraFlow` + `CLIPVisionEncode` + `Hunyuan3Dv2Conditioning` + `KSampler` + `VAEDecodeHunyuan3D` + `VoxelToMesh` + `SaveGLB`), sin custom nodes.

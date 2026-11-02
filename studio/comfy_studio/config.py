@@ -583,6 +583,16 @@ class StudioConfig:
     def masked_comfy_pass_status(self) -> str:
         return "<definida>" if self.comfy_pass else "<no definida>"
 
+    def animate_weights_available(self) -> bool:
+        """
+        ¿Están previstos los pesos del grupo Animate (Wan 2.2 Animate 14B)?
+
+        `STUDIO_INCLUDE_ANIMATE=1` hace que `download-models.sh` descargue
+        `wan2.2_animate_14B_int8_convrot.safetensors` (+17.15 GiB); sin él la
+        plantilla `wan_animate` no se ofrece ni acepta submits.
+        """
+        return bool(self.studio_include_animate)
+
     def three_d_weights_available(self) -> bool:
         """¿Están previstos los pesos del grupo 3D (Hunyuan3D) en este pod?
 

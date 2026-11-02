@@ -25,6 +25,7 @@ EXPECTED_M2_TEMPLATE_IDS: tuple[str, ...] = (
     "wan_i2v_5b",
     "wan_s2v",
     "wan_t2v",
+    "wan_animate",
     "wan_t2v_5b",
     "sdxl_image",
     "sdxl_ipadapter",
@@ -52,6 +53,31 @@ THREE_D_WEIGHTS_UNAVAILABLE = (
     "que no están presentes en este pod. Descárgalos con STUDIO_INCLUDE_3D=1 "
     "(o MODEL_PROFILE=unreal) y reinicia el pod."
 )
+
+
+ANIMATE_TEMPLATE_IDS: frozenset[str] = frozenset({"wan_animate"})
+ANIMATE_WEIGHTS_UNAVAILABLE = (
+    "La plantilla 'wan_animate' requiere los pesos de Wan 2.2 Animate 14B "
+    "(wan2.2_animate_14B_int8_convrot.safetensors, +17.15 GiB), que no están "
+    "presentes en este pod. Descárgalos con STUDIO_INCLUDE_ANIMATE=1 y "
+    "reinicia el pod."
+)
+
+
+def template_requires_animate(tpl: dict[str, Any]) -> bool:
+    """
+    ¿La plantilla necesita el grupo Animate de pesos (Wan 2.2 Animate)?
+    """
+    return str(tpl.get("id")) in ANIMATE_TEMPLATE_IDS
+
+
+def template_weights_unavailable_reason(tpl: dict[str, Any]) -> str | None:
+    """Razón de indisponibilidad por pesos opt-in (3D o Animate), si aplica."""
+    if template_requires_animate(tpl):
+        return ANIMATE_WEIGHTS_UNAVAILABLE
+    if template_requires_three_d(tpl):
+        return THREE_D_WEIGHTS_UNAVAILABLE
+    return None
 
 
 def template_requires_three_d(tpl: dict[str, Any]) -> bool:
@@ -258,9 +284,13 @@ class TemplateRegistry:
         *,
         include_workflow: bool = False,
         three_d_available: bool = True,
+        animate_available: bool = True,
     ) -> dict[str, Any]:
         params_schema = build_json_schema_from_parameters(tpl["id"], tpl["parameters"])
-        available = not template_requires_three_d(tpl) or three_d_available
+        weights_reason = template_weights_unavailable_reason(tpl)
+        available = weights_reason is None or (
+            template_requires_animate(tpl) and animate_available
+        ) or (template_requires_three_d(tpl) and three_d_available)
         entry: dict[str, Any] = {
             "id": tpl["id"],
             "name": tpl["name"],
@@ -275,7 +305,7 @@ class TemplateRegistry:
             "params_schema": params_schema,
             "docs": copy.deepcopy(tpl["docs"]),
             "available": available,
-            "unavailable_reason": None if available else THREE_D_WEIGHTS_UNAVAILABLE,
+            "unavailable_reason": None if available else weights_reason,
         }
         if include_workflow:
             entry["workflow"] = copy.deepcopy(tpl["workflow"])
@@ -286,6 +316,7 @@ class TemplateRegistry:
         *,
         include_workflow: bool = False,
         three_d_available: bool = True,
+        animate_available: bool = True,
         include_unavailable: bool = True,
     ) -> list[dict[str, Any]]:
         entries = [
@@ -293,6 +324,7 @@ class TemplateRegistry:
                 self._templates[tid],
                 include_workflow=include_workflow,
                 three_d_available=three_d_available,
+                animate_available=animate_available,
             )
             for tid in self.list_ids()
         ]
@@ -306,12 +338,14 @@ class TemplateRegistry:
         *,
         include_workflow: bool = True,
         three_d_available: bool = True,
+        animate_available: bool = True,
     ) -> dict[str, Any]:
         raw = self.get_raw_definition(template_id)
         return self._format_entry(
             raw,
             include_workflow=include_workflow,
             three_d_available=three_d_available,
+            animate_available=animate_available,
         )
 
     def validate_params(
@@ -409,12 +443,17 @@ class TemplateRegistry:
         broker: ProgressBroker | None = None,
         strict: bool = True,
         three_d_available: bool = True,
+        animate_available: bool = True,
     ) -> dict[str, Any]:
         """Valida params, sube assets de entrada, encola job y registra salidas en galería."""
         tpl = self.get_raw_definition(template_id)
-        if template_requires_three_d(tpl) and not three_d_available:
+        weights_reason = template_weights_unavailable_reason(tpl)
+        weights_ok = (
+            template_requires_animate(tpl) and animate_available
+        ) or (template_requires_three_d(tpl) and three_d_available)
+        if weights_reason is not None and not weights_ok:
             raise TemplateParamError(
-                THREE_D_WEIGHTS_UNAVAILABLE,
+                weights_reason,
                 errors=[
                     {"field": "template_id", "reason": "value_error.weights_missing"}
                 ],

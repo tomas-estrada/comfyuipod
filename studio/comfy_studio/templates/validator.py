@@ -153,6 +153,29 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         ),
         "outputs": 3,  # positive, negative, latent
     },
+    "WanAnimateToVideo": {
+        "required_inputs": (
+            "positive",
+            "negative",
+            "vae",
+            "width",
+            "height",
+            "length",
+            "batch_size",
+        ),
+        "optional_inputs": (
+            "clip_vision_output",
+            "reference_image",
+            "face_video",
+            "pose_video",
+            "continue_motion_max_frames",
+            "background_video",
+            "character_mask",
+            "continue_motion",
+            "video_frame_offset",
+        ),
+        "outputs": 6,
+    },
     "KSampler": {
         "required_inputs": (
             "seed",
