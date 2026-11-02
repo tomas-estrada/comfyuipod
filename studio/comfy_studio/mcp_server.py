@@ -56,6 +56,7 @@ BELT_TOOLS_EXPOSED: tuple[str, ...] = (
     "enqueue_render",
     "job_status",
     "export_edl",
+    "assemble_long_video",
     "system_status",
     "tag_asset",
 )
