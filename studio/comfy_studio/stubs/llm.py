@@ -282,6 +282,8 @@ class StubLLMClient:
                 template_id = "wan_s2v"
             elif "wan_i2v_5b" in lower or "i2v_5b" in lower:
                 template_id = "wan_i2v_5b"
+            elif "wan_animate" in lower or "animate" in lower:
+                template_id = "wan_animate"
             elif "wan_i2v" in lower or "i2v" in lower:
                 template_id = "wan_i2v"
             elif "sdxl_ipadapter" in lower or "ipadapter" in lower or "ip-adapter" in lower:

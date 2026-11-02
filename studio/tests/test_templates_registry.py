@@ -41,16 +41,19 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
     body = resp.json()
     assert "templates" in body
     templates = body["templates"]
-    assert len(templates) == 13
+    assert len(templates) == 14
 
     by_id = {tpl["id"]: tpl for tpl in templates}
     assert set(by_id.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
 
-    # Disponibilidad declarada por entrada: solo la 3D está bloqueada sin pesos.
+    # Disponibilidad declarada por entrada: 3D y Animate están bloqueadas sin
+    # pesos opt-in (STUDIO_INCLUDE_3D / STUDIO_INCLUDE_ANIMATE).
     assert by_id["hunyuan3d_image_to_3d"]["available"] is False
     assert "STUDIO_INCLUDE_3D" in by_id["hunyuan3d_image_to_3d"]["unavailable_reason"]
+    assert by_id["wan_animate"]["available"] is False
+    assert "STUDIO_INCLUDE_ANIMATE" in by_id["wan_animate"]["unavailable_reason"]
     for tpl_id, tpl in by_id.items():
-        if tpl_id != "hunyuan3d_image_to_3d":
+        if tpl_id not in ("hunyuan3d_image_to_3d", "wan_animate"):
             assert tpl["available"] is True
             assert tpl["unavailable_reason"] is None
 
@@ -120,7 +123,7 @@ def test_structural_validator_passes_all_builtin_templates() -> None:
     """Todas las plantillas en comfy_studio/templates/data/ pasan el validador estructural."""
     registry = get_default_registry()
     results = validate_all_templates(registry.data_dir)
-    assert len(results) == 13
+    assert len(results) == 14
     assert set(results.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
 
     # Verificar que todos los modelos referenciados existen en el catálogo del pod
@@ -771,7 +774,7 @@ def test_hunyuan3d_is_offered_when_three_d_weights_opt_in(
         c.auth = ("admin", "changeme-test-pass-42")
 
         templates = c.get("/studio/api/templates").json()["templates"]
-        assert len(templates) == 13
+        assert len(templates) == 14
         by_id = {tpl["id"]: tpl for tpl in templates}
         assert by_id["hunyuan3d_image_to_3d"]["available"] is True
 
