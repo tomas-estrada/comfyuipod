@@ -647,6 +647,56 @@ class AssembleLongVideoArgs(BaseModel):
     )
 
 
+class ListEnginesArgs(BaseModel):
+    """Argumentos para la herramienta `list_engines`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class InstallEngineArgs(BaseModel):
+    """Argumentos para la herramienta `install_engine`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    engine_name: str = Field(
+        ...,
+        min_length=1,
+        description="Nombre del motor a instalar (p. ej. 'capture3d', 'heavy_video').",
+    )
+    warm_attempted: bool = Field(
+        default=False,
+        description="Si el set caliente ya se intentó y falló para esta tarea.",
+    )
+    task_value: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Valor estimado de la tarea (misma unidad que el coste de GPU ociosa).",
+    )
+    est_idle_cost: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Coste estimado de GPU ociosa durante la instalación.",
+    )
+    source: str = Field(
+        default="",
+        description="Origen de la instalación (repo/paquete) para el registro.",
+    )
+
+
+class DownloadModelArgs(BaseModel):
+    """Argumentos para la herramienta `download_model`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_group: str = Field(
+        ...,
+        description=(
+            "Grupo de pesos opt-in a descargar: 'animate' (STUDIO_INCLUDE_ANIMATE=1, "
+            "+17.15 GiB) o 'three_d' (STUDIO_INCLUDE_3D=1)."
+        ),
+    )
+
+
 class ExportSubtitlesArgs(BaseModel):
     """Argumentos para la herramienta `export_subtitles`."""
 
@@ -1421,6 +1471,92 @@ async def _handle_assemble_long_video(
     return await run_in_threadpool(_do_assemble)
 
 
+async def _handle_list_engines(
+    _args: ListEnginesArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..engines.registry import build_default_registry
+
+    registry = build_default_registry()
+    desc = registry.describe()
+    return {
+        "status": "ok",
+        "project_id": context.project_id,
+        "dynamic_enabled": bool(desc.get("dynamic", False)),
+        "engines": desc,
+    }
+
+
+def _is_dynamic_enabled() -> bool:
+    from ..engines import is_dynamic_enabled
+
+    return bool(is_dynamic_enabled())
+
+
+async def _handle_install_engine(
+    args: InstallEngineArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..engines.install_gate import InstallRequest, decide_install
+    from ..engines.registry import build_default_registry
+
+    registry = build_default_registry()
+    req = InstallRequest(
+        engine_name=args.engine_name,
+        warm_attempted=args.warm_attempted,
+        task_value=args.task_value,
+        est_idle_cost=args.est_idle_cost,
+        sandbox_safe=True,
+        source=args.source,
+    )
+    decision = decide_install(req, registry)
+    return {
+        "status": "allowed" if decision.allowed else "denied",
+        "project_id": context.project_id,
+        "engine_name": args.engine_name,
+        "decision": decision.to_dict(),
+    }
+
+
+async def _handle_download_model(
+    args: DownloadModelArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    group = (args.model_group or "").strip().lower()
+    cfg = context.config
+    if group == "animate":
+        available = bool(cfg.animate_weights_available())
+        reason = None if available else (
+            "Los pesos de Wan 2.2 Animate 14B se descargan con "
+            "STUDIO_INCLUDE_ANIMATE=1 y reinicio del pod (+17.15 GiB)."
+        )
+        return {
+            "status": "available" if available else "unavailable",
+            "project_id": context.project_id,
+            "model_group": "animate",
+            "templates": ["wan_animate"],
+            "available": available,
+            "reason": reason,
+        }
+    if group in ("three_d", "3d"):
+        available = bool(cfg.three_d_weights_available())
+        reason = None if available else (
+            "Los pesos de Hunyuan3D 2.1 se descargan con "
+            "STUDIO_INCLUDE_3D=1 (o MODEL_PROFILE=unreal) y reinicio del pod."
+        )
+        return {
+            "status": "available" if available else "unavailable",
+            "project_id": context.project_id,
+            "model_group": "three_d",
+            "templates": ["hunyuan3d_image_to_3d"],
+            "available": available,
+            "reason": reason,
+        }
+    raise ToolExecutionError(
+        f"Grupo de pesos desconocido: {group!r}. Grupos válidos: animate, three_d."
+    )
+
+
 async def _handle_export_edl(
     args: ExportEdlArgs,
     context: ToolContext,
@@ -1831,6 +1967,45 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=SystemStatusArgs,
             handler=_handle_system_status,
+            parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="list_engines",
+            description=(
+                "Lista el roster de motores del estudio (resident/warm/installable) con "
+                "su estado de cableado y notas. Úsalo para descubrir qué motores hay "
+                "disponibles antes de intentar una tarea que ninguno cubre."
+            ),
+            args_model=ListEnginesArgs,
+            handler=_handle_list_engines,
+            parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="install_engine",
+            description=(
+                "Solicita instalar un motor nuevo cuando el set caliente falló la tarea. "
+                "Aplica la puerta de decisión de instalación (STUDIO_DYNAMIC=1, set "
+                "caliente intentado, valor > coste de GPU ociosa, sandbox) y devuelve la "
+                "decisión con sus razones. No instala por accidente."
+            ),
+            args_model=InstallEngineArgs,
+            handler=_handle_install_engine,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="download_model",
+            description=(
+                "Consulta los grupos de pesos opt-in (animate, three_d): disponibilidad, "
+                "plantillas que los requieren e instrucciones de descarga "
+                "(STUDIO_INCLUDE_ANIMATE=1 / STUDIO_INCLUDE_3D=1 + reinicio del pod)."
+            ),
+            args_model=DownloadModelArgs,
+            handler=_handle_download_model,
             parallel_safe=True,
         )
     )
