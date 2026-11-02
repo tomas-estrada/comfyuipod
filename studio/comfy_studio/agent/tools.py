@@ -615,6 +615,38 @@ class ExportEdlArgs(BaseModel):
     )
 
 
+class AssembleLongVideoArgs(BaseModel):
+    """Argumentos para la herramienta `assemble_long_video`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_asset_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "IDs de los chunks de vídeo en orden temporal (chunk 1, 2, 3...). "
+            "Cada chunk es la salida de un render de ventana (vace_swap, wan_animate, "
+            "wan_i2v...) con solapamiento de fotogramas entre consecutivos."
+        ),
+    )
+    crossfade_sec: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Duración del crossfade entre chunks consecutivos en segundos "
+            "(0 = unión directa sin fundido)."
+        ),
+    )
+    audio_source_asset_id: str | None = Field(
+        default=None,
+        description=(
+            "ID del asset de vídeo fuente cuyo audio se restaura en el resultado final "
+            "(típicamente el vídeo original cuya escena se regeneró por ventanas)."
+        ),
+    )
+
+
 class ExportSubtitlesArgs(BaseModel):
     """Argumentos para la herramienta `export_subtitles`."""
 
@@ -1366,6 +1398,29 @@ async def _handle_system_status(
     }
 
 
+async def _handle_assemble_long_video(
+    args: AssembleLongVideoArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..edl.windowed import WindowedAssemblyError, assemble_windowed_video
+
+    def _do_assemble() -> dict[str, Any]:
+        try:
+            return assemble_windowed_video(
+                context.store,
+                context.project_id,
+                chunk_asset_ids=[str(a) for a in args.chunk_asset_ids],
+                crossfade_sec=args.crossfade_sec,
+                audio_source_asset_id=args.audio_source_asset_id,
+                ffmpeg_timeout_s=context.config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=context.config.studio_ffmpeg_timeout_s,
+            )
+        except WindowedAssemblyError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+
+    return await run_in_threadpool(_do_assemble)
+
+
 async def _handle_export_edl(
     args: ExportEdlArgs,
     context: ToolContext,
@@ -1777,6 +1832,19 @@ def create_default_tool_belt() -> ToolBelt:
             args_model=SystemStatusArgs,
             handler=_handle_system_status,
             parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="assemble_long_video",
+            description=(
+                "Ensambla chunks de vídeo consecutivos (salidas de renders por ventanas "
+                "de vace_swap/wan_animate/wan_i2v) en un clip largo: normaliza cada "
+                "chunk, aplica crossfade en la zona de solapamiento y restaura el audio "
+                "del vídeo fuente original. Registra el resultado en la galería."
+            ),
+            args_model=AssembleLongVideoArgs,
+            handler=_handle_assemble_long_video,
         )
     )
     belt.register(

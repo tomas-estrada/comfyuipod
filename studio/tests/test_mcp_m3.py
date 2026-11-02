@@ -312,6 +312,7 @@ MCP_EXPECTED_TOOL_NAMES = {
     "enqueue_render",
     "job_status",
     "export_edl",
+    "assemble_long_video",
     "system_status",
     "tag_asset",
     "list_projects",

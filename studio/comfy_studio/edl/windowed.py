@@ -1,0 +1,358 @@
+"""Ensamblador de clips largos por ventanas (M4): crossfade + audio original.
+
+Los modelos de vídeo del estudio generan como máximo ~81-97 fotogramas por
+job (≈5-6 s). Para secuencias largas se generan *chunks* consecutivos con
+solapamiento de fotogramas (p. ej. las 9 últimas salidas de una ventana se
+inyectan como `continue_motion`/`reference` de la siguiente) y este módulo
+los ensambla:
+
+- Normaliza cada chunk a un contenedor común (H.264 + AAC/silencio).
+- Realiza un crossfade (`xfade`) en la zona de solapamiento entre chunks.
+- Restaura el audio del vídeo fuente original (mapa `-map 1:a`) cuando se
+  proporciona `audio_source_asset_id`, recortado a la duración ensamblada.
+- Registra el resultado en la galería del proyecto (`outputs/`) con
+  verificación real de `ffprobe` (nunca metadatos fabricados).
+
+Cumple las mismas cotas defensivas que el ejecutor EDL: tamaño máximo de
+salida y timeouts proporcionales a la duración.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from ..perception.keyframes import probe_media_info
+from ..projects import ProjectStore
+from .ffmpeg_edl import (
+    DEFAULT_FFMPEG_TIMEOUT_S,
+    DEFAULT_FFPROBE_TIMEOUT_S,
+    MAX_EDL_OUTPUT_BYTES,
+    cut_subprocess_timeout,
+)
+
+# M4-SCR-001: cotas del ensamblador de ventanas.
+MAX_WINDOW_CHUNKS = 32
+MIN_CROSSFADE_SEC = 0.0
+MAX_CROSSFADE_SEC = 2.0
+
+
+class WindowedAssemblyError(RuntimeError):
+    """Error de validación o ejecución del ensamblador de ventanas."""
+
+
+def _resolve_asset_path(
+    store: ProjectStore,
+    project_id: str,
+    asset_id: str,
+    *,
+    expected_kind: str = "video",
+) -> Path:
+    asset = store.get_asset(project_id, asset_id)
+    if asset is None:
+        raise WindowedAssemblyError(f"Asset no encontrado: {asset_id!r}")
+    if asset.get("kind") != expected_kind:
+        raise WindowedAssemblyError(
+            f"El asset {asset_id!r} no es un {expected_kind} (kind={asset.get('kind')!r})."
+        )
+    path = store.get_asset_path(project_id, asset_id)
+    if path is None or not path.is_file():
+        raise WindowedAssemblyError(f"El asset {asset_id!r} no tiene archivo físico.")
+    return path
+
+
+def assemble_windowed_video(
+    store: ProjectStore,
+    project_id: str,
+    *,
+    chunk_asset_ids: list[str],
+    crossfade_sec: float = 0.5,
+    audio_source_asset_id: str | None = None,
+    ffmpeg_timeout_s: float = DEFAULT_FFMPEG_TIMEOUT_S,
+    ffprobe_timeout_s: float = DEFAULT_FFPROBE_TIMEOUT_S,
+) -> dict[str, Any]:
+    """Ensambla chunks consecutivos en un clip largo con crossfade y audio.
+
+    Los `chunk_asset_ids` deben estar en orden temporal (chunk 1, 2, 3...);
+    cada par consecutivo se funde con `xfade` durante `crossfade_sec`
+    (0 desactiva el fundido: concat demuxer). El audio del
+    `audio_source_asset_id` se recorta a la duración final y sustituye al
+    de los chunks.
+    """
+    if not chunk_asset_ids:
+        raise WindowedAssemblyError("La lista de chunk_asset_ids está vacía.")
+    if len(chunk_asset_ids) > MAX_WINDOW_CHUNKS:
+        raise WindowedAssemblyError(
+            f"Se recibieron {len(chunk_asset_ids)} chunks; máximo: {MAX_WINDOW_CHUNKS}."
+        )
+    crossfade = round(float(crossfade_sec), 3)
+    if crossfade < MIN_CROSSFADE_SEC or crossfade > MAX_CROSSFADE_SEC:
+        raise WindowedAssemblyError(
+            f"crossfade_sec debe estar entre {MIN_CROSSFADE_SEC} y {MAX_CROSSFADE_SEC}."
+        )
+
+    project = store.get_project(project_id)
+    if project is None:
+        raise WindowedAssemblyError(f"Proyecto no encontrado: {project_id!r}")
+
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        raise WindowedAssemblyError("No se encontró `ffmpeg` en el PATH para ensamblar.")
+
+    chunk_paths = [
+        _resolve_asset_path(store, project_id, aid) for aid in chunk_asset_ids
+    ]
+    audio_path: Path | None = None
+    if audio_source_asset_id:
+        audio_path = _resolve_asset_path(store, project_id, audio_source_asset_id)
+
+    with tempfile.TemporaryDirectory(prefix="comfy_windowed_") as tmp_str:
+        tmp_dir = Path(tmp_str)
+
+        # 1. Normalizar chunks: H.264 + AAC (silencio si el chunk no trae audio)
+        norm_paths: list[Path] = []
+        chunk_durations: list[float] = []
+        for idx, src in enumerate(chunk_paths):
+            norm = tmp_dir / f"chunk_{idx:03d}.mp4"
+            timeout = cut_subprocess_timeout(30.0, base_s=ffmpeg_timeout_s)
+            cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(src),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-r",
+                "16",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                "-movflags",
+                "+faststart",
+                str(norm),
+            ]
+            try:
+                proc = subprocess.run(
+                    cmd, check=False, capture_output=True, timeout=timeout
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise WindowedAssemblyError(
+                    f"ffmpeg excedió el timeout al normalizar el chunk #{idx + 1}."
+                ) from exc
+            if proc.returncode != 0 or not norm.is_file():
+                err = proc.stderr.decode("utf-8", errors="replace").strip()
+                raise WindowedAssemblyError(
+                    f"Error de ffmpeg al normalizar chunk #{idx + 1}: {err}"
+                )
+            probe = probe_media_info(norm, timeout_s=ffprobe_timeout_s)
+            dur = float(probe.get("duration_sec") or 0.0)
+            if dur <= 0:
+                raise WindowedAssemblyError(
+                    f"El chunk #{idx + 1} no pudo verificarse con ffprobe (duración 0)."
+                )
+            chunk_durations.append(dur)
+            norm_paths.append(norm)
+
+        # 2. Ensamblar con crossfade (xfade) o concat si crossfade == 0
+        current = norm_paths[0]
+        current_dur = chunk_durations[0]
+        applied_fades: list[dict[str, Any]] = []
+        for idx in range(1, len(norm_paths)):
+            nxt = norm_paths[idx]
+            nxt_dur = chunk_durations[idx]
+            fade = min(crossfade, current_dur / 2.0, nxt_dur / 2.0)
+            merged = tmp_dir / f"merged_{idx:03d}.mp4"
+            if fade <= 0.01:
+                # Concat demuxer sin recodificar (rápido, sin fundido)
+                list_path = tmp_dir / f"concat_{idx:03d}.txt"
+                list_path.write_text(
+                    f"file '{current.as_posix()}'\nfile '{nxt.as_posix()}'\n",
+                    encoding="utf-8",
+                )
+                cmd = [
+                    ffmpeg_bin,
+                    "-y",
+                    "-v",
+                    "error",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(list_path),
+                    "-c",
+                    "copy",
+                    str(merged),
+                ]
+                new_dur = current_dur + nxt_dur
+            else:
+                offset = max(0.0, current_dur - fade)
+                cmd = [
+                    ffmpeg_bin,
+                    "-y",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(current),
+                    "-i",
+                    str(nxt),
+                    "-filter_complex",
+                    f"[0:v][1:v]xfade=transition=fade:duration={fade:.3f}:"
+                    f"offset={offset:.3f}[v];"
+                    f"[0:a][1:a]acrossfade=d={fade:.3f}[a]",
+                    "-map",
+                    "[v]",
+                    "-map",
+                    "[a]",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    str(merged),
+                ]
+                new_dur = current_dur + nxt_dur - fade
+            timeout = cut_subprocess_timeout(new_dur, base_s=ffmpeg_timeout_s)
+            try:
+                proc = subprocess.run(
+                    cmd, check=False, capture_output=True, timeout=timeout
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise WindowedAssemblyError(
+                    f"ffmpeg excedió el timeout al fundir el chunk #{idx + 1}."
+                ) from exc
+            if proc.returncode != 0 or not merged.is_file():
+                err = proc.stderr.decode("utf-8", errors="replace").strip()
+                raise WindowedAssemblyError(
+                    f"Error de ffmpeg al fundir chunk #{idx + 1}: {err}"
+                )
+            applied_fades.append(
+                {
+                    "chunk_index": idx,
+                    "crossfade_sec": round(fade, 3),
+                    "offset_sec": round(max(0.0, current_dur - fade), 3),
+                }
+            )
+            current = merged
+            current_dur = new_dur
+
+        # 3. Restaurar audio del vídeo fuente (mapa completo, recortado)
+        if audio_path is not None:
+            with_audio = tmp_dir / "with_audio.mp4"
+            cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(current),
+                "-i",
+                str(audio_path),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                # El audio fuente puede ser más corto o más largo que el vídeo
+                # ensamblado: apad + -t recorta/rellena al largo exacto del vídeo.
+                "-af",
+                "apad",
+                "-t",
+                f"{current_dur:.3f}",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                str(with_audio),
+            ]
+            timeout = cut_subprocess_timeout(current_dur, base_s=ffmpeg_timeout_s)
+            try:
+                proc = subprocess.run(
+                    cmd, check=False, capture_output=True, timeout=timeout
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise WindowedAssemblyError(
+                    "ffmpeg excedió el timeout al restaurar el audio original."
+                ) from exc
+            if proc.returncode != 0 or not with_audio.is_file():
+                err = proc.stderr.decode("utf-8", errors="replace").strip()
+                raise WindowedAssemblyError(f"Error al restaurar el audio: {err}")
+            current = with_audio
+
+        # 4. Verificación real con ffprobe (nunca metadatos fabricados)
+        probe_info = probe_media_info(current, timeout_s=ffprobe_timeout_s)
+        if not bool(probe_info.get("probe_ok")):
+            raise WindowedAssemblyError(
+                "El vídeo ensamblado no pudo verificarse con ffprobe (probe_ok=false)."
+            )
+        mp4_bytes = current.read_bytes()
+        if len(mp4_bytes) > MAX_EDL_OUTPUT_BYTES:
+            raise WindowedAssemblyError(
+                f"El MP4 ensamblado ({len(mp4_bytes)} bytes) supera el límite de "
+                f"{MAX_EDL_OUTPUT_BYTES} bytes."
+            )
+
+    out_filename = f"windowed_{len(chunk_asset_ids)}chunks.mp4"
+    output_asset = store.save_upload(
+        project_id,
+        filename=out_filename,
+        content_type="video/mp4",
+        data=mp4_bytes,
+        max_upload_bytes=MAX_EDL_OUTPUT_BYTES,
+        category="outputs",
+        metadata={
+            "windowed_assembly": True,
+            "chunk_asset_ids": list(chunk_asset_ids),
+            "chunks_count": len(chunk_asset_ids),
+            "crossfade_sec": crossfade,
+            "audio_source_asset_id": audio_source_asset_id,
+            "expected_duration_sec": round(current_dur, 3),
+            "actual_duration_sec": probe_info.get("duration_sec"),
+            "width": probe_info.get("width"),
+            "height": probe_info.get("height"),
+            "has_audio": bool(probe_info.get("has_audio")),
+            "applied_fades": applied_fades,
+        },
+    )
+
+    return {
+        "status": "assembled",
+        "project_id": project_id,
+        "output_asset": output_asset,
+        "chunks_count": len(chunk_asset_ids),
+        "crossfade_sec": crossfade,
+        "audio_source_asset_id": audio_source_asset_id,
+        "applied_fades": applied_fades,
+        "verification": {
+            "expected_duration_sec": round(current_dur, 3),
+            "actual_duration_sec": float(probe_info.get("duration_sec") or current_dur),
+            "width": int(probe_info.get("width") or 0),
+            "height": int(probe_info.get("height") or 0),
+            "has_audio": bool(probe_info.get("has_audio")),
+            "probe_ok": bool(probe_info.get("probe_ok")),
+        },
+    }
