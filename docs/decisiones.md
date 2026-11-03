@@ -263,3 +263,4 @@ Sesión de implementación 2026-10-28. Objetivo: que ninguna salida visible afir
 
 
 
+| M7-OPS-006 | Nuevo paso de CI en el job `validate`: boot real de `python -m comfy_studio.server` con stubs (venv propio, `STUDIO_DATA_DIR` en /tmp, puerto 18199) y sondeo de `/studio/api/health`, `/studio/api/templates` (assert 17) y `/studio/api/mcp/health` | pytest valida importación y rutas in-process, pero no el arranque real de uvicorn (lifespan, middleware, wiring). Verificado en local con los mismos probes: health ok, 17 templates, mcp health ok. | Adoptada |

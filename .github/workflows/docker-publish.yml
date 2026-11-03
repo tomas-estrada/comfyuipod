@@ -379,6 +379,46 @@ jobs:
           done
           rm -rf /tmp/studio-ci-venv
 
+      - name: Smoke test de arranque del studio-server (M7-OPS-006)
+        # Boot real de `python -m comfy_studio.server` (stubs, sin GPU ni red externa) y
+        # sondeo de endpoints base: detecta regresiones de cableado que solo aparecen al
+        # arrancar uvicorn, no al importar. Sin COMFY_PASS el edge auth es fail-open
+        # visible (health lo reporta como edge_auth=open).
+        env:
+          STUDIO_STUB_LLM: "1"
+          STUDIO_STUB_COMFY: "1"
+          STUDIO_STUB_BLENDER: "1"
+          STUDIO_DATA_DIR: /tmp/studio-smoke-data
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/studio-smoke-venv
+          /tmp/studio-smoke-venv/bin/pip install --no-cache-dir --upgrade pip >/dev/null
+          /tmp/studio-smoke-venv/bin/pip install --no-cache-dir -e "./studio"
+          /tmp/studio-smoke-venv/bin/python -m comfy_studio.server --host 127.0.0.1 --port 18199 &
+          server_pid=$!
+          cleanup() {
+            kill "${server_pid}" 2>/dev/null || true
+            wait "${server_pid}" 2>/dev/null || true
+            rm -rf /tmp/studio-smoke-venv /tmp/studio-smoke-data
+          }
+          trap cleanup EXIT
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl -fsS --max-time 2 http://127.0.0.1:18199/studio/api/health >/tmp/smoke-health.json 2>/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "${ready}" != "1" ]; then
+            echo "::error::studio-server no respondió /studio/api/health en 30s"
+            exit 1
+          fi
+          python3 -c "import json; d=json.load(open('/tmp/smoke-health.json')); assert d['status']=='ok', d; print('health ok:', d['status'], '| edge_auth:', d['edge_auth'], '| comfyui:', d['comfyui'])"
+          curl -fsS --max-time 5 http://127.0.0.1:18199/studio/api/templates | python3 -c "import json,sys; d=json.load(sys.stdin); n=len(d['templates']); print('templates:', n); assert n == 17, n"
+          curl -fsS --max-time 5 http://127.0.0.1:18199/studio/api/mcp/health | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['status']=='ok', d; print('mcp health ok:', d['server'], d['version'])"
+          echo "studio-server smoke OK"
+
       - name: Verificar helper Mac tools/mac/comfy en seco y ciclo de STUDIO_LLM_KEY (VAL-SERVER-005 / VAL-CROSS-004)
         run: |
           set -euo pipefail
