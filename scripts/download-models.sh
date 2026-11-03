@@ -101,7 +101,11 @@ log() {
 # espacio libre >= tamaño esperado + margen, para fallar seguro (y reintentable)
 # en vez de quedarse a mitad de un rename() o de un WAL checkpoint de SQLite.
 # ------------------------------------------------------------------------------
-DISK_SAFETY_MARGIN_BYTES=$((10 * 1024 * 1024 * 1024))  # 10 GiB
+# Margen configurable: HF_DISK_MARGIN_BYTES (bytes). HF_DISK_GUARD=0 desactiva el
+# cortacircuitos por completo (dry-runs de CI con HF_CLI simulado, que no escriben
+# datos reales y no deben depender del espacio libre del runner).
+DISK_SAFETY_MARGIN_BYTES="${HF_DISK_MARGIN_BYTES:-$((10 * 1024 * 1024 * 1024))}"  # 10 GiB por defecto
+HF_DISK_GUARD="${HF_DISK_GUARD:-1}"
 
 disk_free_bytes() {
     df -Pk "$1" 2>/dev/null | awk 'NR==2 {print $4}'
@@ -109,6 +113,7 @@ disk_free_bytes() {
 
 # require_disk_space <path> [expected_bytes] -> 0 si hay sitio, 1 si no.
 require_disk_space() {
+    [ "${HF_DISK_GUARD}" = "1" ] || return 0
     local path="$1"
     local expected="${2:-0}"
     local free

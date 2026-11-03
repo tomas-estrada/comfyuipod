@@ -109,6 +109,9 @@ jobs:
       - name: Ejecutar download-models.sh en seco con HF_CLI simulado y contrastar formato con parser (R-01 / R-08 / S-01 / S-02 / VAL-PROFILE-002 / VAL-UNREAL-003)
         run: |
           set -euo pipefail
+          # Dry-run con hf simulado: no escribe datos reales; el cortacircuitos de
+          # disco no debe depender del espacio libre del runner.
+          export HF_DISK_GUARD=0
           tmp_root="$(mktemp -d)"
           trap 'rm -rf "$tmp_root"' EXIT
           mkdir -p "$tmp_root/bin" "$tmp_root/data"
