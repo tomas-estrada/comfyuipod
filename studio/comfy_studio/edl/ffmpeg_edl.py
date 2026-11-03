@@ -209,6 +209,10 @@ def execute_edl_ffmpeg(
                 probed_sources[src_path] = probe_media_info(
                     src_path, timeout_s=ffprobe_timeout_s
                 )
+                if not bool(probed_sources[src_path].get("probe_ok")):
+                    raise RuntimeError(
+                        f"El video fuente del corte #{idx + 1} no pudo verificarse con ffprobe."
+                    )
             src_has_audio = bool(probed_sources[src_path].get("has_audio"))
             if src_has_audio:
                 any_has_audio = True
