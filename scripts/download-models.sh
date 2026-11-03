@@ -411,13 +411,16 @@ cats = meta.get("categories") or {}
 anim = (cats.get("animate_opt_in") or {}).get("bytes", 0)
 three_d = (cats.get("three_d_opt_in") or {}).get("bytes", 0)
 mmx = (cats.get("minimax_h3_opt_in") or {}).get("bytes", 0)
+mmx_n = (cats.get("minimax_h3_opt_in") or {}).get("entries", 0)
 base_bytes = meta.get("default_bytes", 0)
 print(sum(1 for m in models if not m.get("opt_in")))
+print(mmx_n)
 print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in; +%.2f GB MiniMax-H3 opt-in" % (base_bytes / 1e9, anim / 1e9, three_d / 1e9, mmx / 1e9))
 ' | tr -d '\r'
     )"
     phase3_base="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '1p')"
-    phase3_sizes="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '2p')"
+    phase3_mmx_n="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '2p')"
+    phase3_sizes="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '3p')"
     if ! [[ "${phase3_base}" =~ ^[0-9]+$ ]]; then
         log "ERROR: No se pudo derivar el plan de Fase 3 de ${STUDIO_MANIFEST}"
         return 1
@@ -430,7 +433,7 @@ print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in; +%.2f GB MiniM
         phase3_planned=$((phase3_planned + 1))
     fi
     if [ "${include_minimax}" = "1" ]; then
-        phase3_planned=$((phase3_planned + 5))
+        phase3_planned=$((phase3_planned + phase3_mmx_n))
     fi
 
     log "======================================================================"
