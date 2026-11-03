@@ -1386,6 +1386,7 @@ def create_app(
                 include_workflow=include_workflow,
                 three_d_available=active_cfg.three_d_weights_available(),
                 animate_available=active_cfg.animate_weights_available(),
+                minimax_available=active_cfg.minimax_weights_available(),
             )
         }
 
@@ -1402,6 +1403,7 @@ def create_app(
                 include_workflow=True,
                 three_d_available=active_cfg.three_d_weights_available(),
                 animate_available=active_cfg.animate_weights_available(),
+                minimax_available=active_cfg.minimax_weights_available(),
             )
         except TemplateNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1451,6 +1453,7 @@ def create_app(
                 strict=True,
                 three_d_available=active_cfg.three_d_weights_available(),
                 animate_available=active_cfg.animate_weights_available(),
+                minimax_available=active_cfg.minimax_weights_available(),
             )
         except TemplateNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

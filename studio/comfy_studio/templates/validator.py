@@ -268,6 +268,48 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": (),
         "outputs": 1,
     },
+    "MiniMaxH3ReferenceToVideo": {
+        "required_inputs": (
+            "clip",
+            "prompt",
+            "width",
+            "height",
+            "length",
+            "ref_image_size",
+        ),
+        "optional_inputs": ("vae", "audio_vae", "ref_image_1"),
+        "outputs": 2,  # CONDITIONING (positive), LATENT (AV)
+    },
+    "KSamplerSelect": {
+        "required_inputs": ("sampler_name",),
+        "optional_inputs": (),
+        "outputs": 1,  # SAMPLER
+    },
+    "BasicScheduler": {
+        "required_inputs": ("model", "scheduler", "steps", "denoise"),
+        "optional_inputs": (),
+        "outputs": 1,  # SIGMAS
+    },
+    "BasicGuider": {
+        "required_inputs": ("model", "conditioning"),
+        "optional_inputs": (),
+        "outputs": 1,  # GUIDER
+    },
+    "RandomNoise": {
+        "required_inputs": ("noise_seed",),
+        "optional_inputs": (),
+        "outputs": 1,  # NOISE
+    },
+    "SamplerCustomAdvanced": {
+        "required_inputs": ("noise", "guider", "sampler", "sigmas", "latent_image"),
+        "optional_inputs": (),
+        "outputs": 2,  # output_0 (LATENT), output_1 (LATENT noise)
+    },
+    "VAEDecodeAudio": {
+        "required_inputs": ("samples", "vae"),
+        "optional_inputs": (),
+        "outputs": 1,  # AUDIO
+    },
     "LatentSyncNode": {
         "required_inputs": (
             "images",

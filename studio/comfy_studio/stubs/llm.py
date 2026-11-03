@@ -251,6 +251,7 @@ class StubLLMClient:
             "vace_swap",
             "face_fix",
             "latentsync",
+            "minimax_r2v",
             "sdxl_image",
             "sdxl_ipadapter",
             "ipadapter",
@@ -275,6 +276,10 @@ class StubLLMClient:
                 template_id = "vace_restyle"
             elif "vace_swap" in lower or "swap" in lower or "intercambio" in lower:
                 template_id = "vace_swap"
+            elif (
+                "minimax" in lower or "hailuo" in lower or "r2v" in lower
+            ):
+                template_id = "minimax_r2v"
             elif "wan_animate_cont" in lower or "continua el animate" in lower:
                 template_id = "wan_animate_cont"
             elif (

@@ -105,7 +105,29 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.6 `wan_flf2v` — Wan 2.2 14B First-Last-Frame to Video (FLF2V)
+### 2.6 `minimax_r2v` — MiniMax H3 (Hailuo 3.0) Reference to Video Local con Audio Estéreo Nativo
+
+- **Archivo**: [`studio/comfy_studio/templates/data/minimax_r2v.json`](../studio/comfy_studio/templates/data/minimax_r2v.json)
+- **Uso**: Generación **local** (sin API) de vídeo 768p/24 fps con **audio estéreo nativo** — voz, efectos y música modelados en la misma pasada del difusor — condicionada por una imagen de referencia que fija la identidad del sujeto (`<Picture 1>` en el prompt). Alternativa local al motor `heavy_video` usando los pesos abiertos de MiniMax H3.
+- **Modelos requeridos** (grupo opt-in `minimax_h3_opt_in`, `STUDIO_INCLUDE_MINIMAX=1`, +42.03 GB):
+  - `minimax_h3_ref2va_pruned_int8_convrot.safetensors` (DiT 19.5 GiB, `models/diffusion_models/`)
+  - `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` (text encoder 14.6 GiB, `models/text_encoders/`)
+  - `minimax_h3_video_vae_int8_convrot.safetensors` + `minimax_h3_audio_vae_fp32.safetensors` (`models/vae/`)
+  - `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors` (LoRA turbo 4 pasos, `models/loras/`)
+- **Grafo**: `UNETLoader → LoraLoaderModelOnly(turbo 4-step) → MiniMaxH3ReferenceToVideo(clip=Qwen3-VL nvfp4, ref_image_1) → KSamplerSelect(res_multistep) + BasicScheduler(4 pasos) + BasicGuider + RandomNoise → SamplerCustomAdvanced (latent AV conjunto) → VAEDecode + VAEDecodeAudio → VHS_VideoCombine` (audio nativo muxeado a 24 fps).
+- **Entradas principales (`inputs`)**:
+  - `prompt` (*string*, obligatorio): escena + etiqueta `<Picture 1>` + descripción del audio deseado.
+  - `image_asset_id` / `image_input` (*string*): foto de referencia del sujeto (identidad).
+  - `frames` (*integer*, `124`): retícula 17k+5 a 24 fps (124-362 ≈ 5-15 s).
+  - `steps` (*integer*, `4` con el LoRA turbo), `ref_image_size` (`'match'` rápido / `'max'` máxima identidad).
+- **Defaults de rendimiento**: `1344x768` (768p 16:9), `frames=124`, `steps=4`, `res_multistep`, audio estéreo 32 kHz. El pruned-int8 con offload dinámico corre en 32 GB VRAM (RTX 5090 Blackwell).
+- **Variante Singularity V2** (finetune comunitario de WarmBloodAban/AIGC-Singularity, Apache-2.0): `diffusion_model` = `Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors` (mismo grupo opt-in, mismo slot, ~19.5 GiB). Aporta más dinamismo en escenas rápidas/de acción, mejor adherencia al prompt y estilo visual reforzado.
+- **Protocolo A/B** (base vs Singularity V2): ambos int8 pruned, baja resolución (`864x480` = 0.4 MP), `steps=20`, `lora_strength=0.0` (sin turbo), **mismo seed y prompt** con escenas de acción — automatizable con la herramienta `ab_compare_models`, que etiqueta ambos renders (`ab_label`/`ab_seed`/`ab_steps`) y los deja listos para `vision_check`.
+- **Licencia**: MiniMax H3 Community License (uso no comercial); Singularity V2 es Apache-2.0.
+
+---
+
+### 2.7 `wan_flf2v` — Wan 2.2 14B First-Last-Frame to Video (FLF2V)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_flf2v.json`](../studio/comfy_studio/templates/data/wan_flf2v.json)
 - **Uso**: Generar una transición de vídeo continua y coherente entre un fotograma inicial (`first_frame`) y un fotograma final (`last_frame`) mediante el nodo nativo `WanFirstLastFrameToVideo`. Ideal para unir cortes del montaje o interpolar entre dos keyframes generados con `sdxl_image`.
@@ -121,7 +143,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.7 `wan_i2v_5b` — Wan 2.2 TI2V 5B Imagen a Video Ligero (720p Turbo, 24 fps)
+### 2.8 `wan_i2v_5b` — Wan 2.2 TI2V 5B Imagen a Video Ligero (720p Turbo, 24 fps)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_i2v_5b.json`](../studio/comfy_studio/templates/data/wan_i2v_5b.json)
 - **Uso**: Animar un keyframe o retrato del proyecto (`image_asset_id` / `image_input`) a 720p con el modelo híbrido TI2V 5B fp16 + LoRA Turbo, condicionando con `WanImageToVideo` (`start_image` + `clip_vision_output`) y `KSampler` de etapa única.
@@ -136,7 +158,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.8 `wan_i2v` — Wan 2.2 14B Image-to-Video (I2V Lightning 4-step)
+### 2.9 `wan_i2v` — Wan 2.2 14B Image-to-Video (I2V Lightning 4-step)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_i2v.json`](../studio/comfy_studio/templates/data/wan_i2v.json)
 - **Uso**: Animar un fotograma clave o retrato estático (`image_asset_id` / `image_input`) convirtiéndolo en un plano de vídeo de 5 segundos con preservación de identidad y composición mediante `WanImageToVideo` y `CLIPVisionEncode`.
@@ -151,7 +173,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.9 `wan_s2v` — Wan 2.2 S2V 14B Avatar Hablado desde Imagen + Audio en Español (480p)
+### 2.10 `wan_s2v` — Wan 2.2 S2V 14B Avatar Hablado desde Imagen + Audio en Español (480p)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_s2v.json`](../studio/comfy_studio/templates/data/wan_s2v.json)
 - **Uso**: Generar un video de avatar parlante a partir de un retrato del proyecto (`image_asset_id`) y una pista de audio **en español** (`audio_asset_id`), con sincronía labial dirigida por el audio. Pipeline nativo de comfy-core: `LoadAudio` + `AudioEncoderLoader` (**wav2vec2-large-xlsr-53-spanish**, encoder monolingüe español) + `AudioEncoderEncode` → `WanSoundImageToVideo` (`audio_encoder_output` + `ref_image`) + `KSampler` + `VAEDecode` + `VHS_VideoCombine` con `audio` muxado. Todo el habla del proyecto es español: el encoder xlsr-53-spanish ofrece mejor sincronía labial en español que el encoder inglés.
@@ -168,7 +190,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.10 `wan_animate_cont` — Wan 2.2 Animate 14B Continuación Sin Costura (continue_motion)
+### 2.11 `wan_animate_cont` — Wan 2.2 Animate 14B Continuación Sin Costura (continue_motion)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_animate_cont.json`](../studio/comfy_studio/templates/data/wan_animate_cont.json)
 - **Uso**: Variante de `wan_animate` para ventanas 2..N de un clip largo **sin costuras**: `continue_motion` recibe los últimos fotogramas del vídeo de salida del chunk anterior y `video_frame_offset` posiciona la búsqueda en los vídeos de entrada (pose/face/background) donde terminó la ventana previa — continuidad nativa del nodo `WanAnimateToVideo`, sin crossfade ni flicker.
@@ -179,7 +201,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.11 `wan_t2v_5b` — Wan 2.2 TI2V 5B Texto a Video Ligero (720p Turbo 4-paso, 24 fps)
+### 2.12 `wan_t2v_5b` — Wan 2.2 TI2V 5B Texto a Video Ligero (720p Turbo 4-paso, 24 fps)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v_5b.json`](../studio/comfy_studio/templates/data/wan_t2v_5b.json)
 - **Uso**: Borradores rápidos, previews y planos a 720p cuando se itera deprisa o la VRAM es justa: un único modelo TI2V 5B fp16 (~10 GiB) con LoRA Turbo rank-64 en `KSampler` de etapa única (sin par MoE high/low noise).
@@ -194,7 +216,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.12 `wan_animate` — Wan 2.2 Animate 14B Transferencia de Movimiento (Pose + Identidad)
+### 2.13 `wan_animate` — Wan 2.2 Animate 14B Transferencia de Movimiento (Pose + Identidad)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_animate.json`](../studio/comfy_studio/templates/data/wan_animate.json)
 - **Uso**: Transferir el movimiento de un vídeo guía (coreografía, gestos, acción — p. ej. saltar a un coche y conducir rápido) al sujeto concreto de una imagen de referencia, conservando su identidad vía `WanAnimateToVideo` (`pose_video` + `reference_image`/`clip_vision_output`).
@@ -212,7 +234,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.13 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
+### 2.14 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v.json`](../studio/comfy_studio/templates/data/wan_t2v.json)
 - **Uso**: Generar planos de vídeo B-roll, secuencias de establecimiento o escenas completas directamente desde texto (`EmptyHunyuanLatentVideo` + doble `KSamplerAdvanced` MoE).
@@ -227,7 +249,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.14 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
+### 2.15 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_image.json`](../studio/comfy_studio/templates/data/sdxl_image.json)
 - **Uso**: Generar imágenes fotorrealistas de alta resolución (`1024x1024`), storyboards, personajes de referencia o primeros/últimos fotogramas para nutrir `wan_i2v`, `wan_flf2v` y `vace_restyle`.
@@ -243,7 +265,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.15 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
+### 2.16 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_ipadapter.json`](../studio/comfy_studio/templates/data/sdxl_ipadapter.json)
 - **Uso**: Generar nuevas tomas o keyframes de un mismo personaje, mascota u objeto a partir de una foto de referencia del proyecto (`image_asset_id` / `image_input`), manteniendo la identidad visual con IP-Adapter SDXL ViT-H (`IPAdapterModelLoader` + `IPAdapterApply` sobre el modelo Juggernaut XI).
@@ -258,7 +280,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.16 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
+### 2.17 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
 
 - **Archivo**: [`studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json`](../studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json)
 - **Uso**: Convertir cualquier imagen del proyecto (render `sdxl_image`, keyframe de vídeo o foto subida) en una malla 3D texturizable en formato `GLB`, lista para Blender/Unreal. Pipeline 100% nativo de comfy-core (`ImageOnlyCheckpointLoader` + `ModelSamplingAuraFlow` + `CLIPVisionEncode` + `Hunyuan3Dv2Conditioning` + `KSampler` + `VAEDecodeHunyuan3D` + `VoxelToMesh` + `SaveGLB`), sin custom nodes.

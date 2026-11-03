@@ -32,6 +32,7 @@ EXPECTED_M2_TEMPLATE_IDS: tuple[str, ...] = (
     # M3-D: pipeline Hunyuan3D 2.1 nativo (imagen -> malla GLB)
     "hunyuan3d_image_to_3d",
     "latentsync",
+    "minimax_r2v",
     "wan_animate_cont",
 )
 
@@ -59,6 +60,13 @@ THREE_D_WEIGHTS_UNAVAILABLE = (
 
 
 ANIMATE_TEMPLATE_IDS: frozenset[str] = frozenset({"wan_animate", "wan_animate_cont"})
+MINIMAX_TEMPLATE_IDS: frozenset[str] = frozenset({"minimax_r2v"})
+MINIMAX_WEIGHTS_UNAVAILABLE = (
+    "La plantilla 'minimax_r2v' requiere los pesos de MiniMax H3 (Hailuo 3.0) "
+    "Ref2VA pruned-int8 (+42.03 GB: DiT 19.5 GiB, Qwen3-VL nvfp4 14.6 GiB, VAEs "
+    "y LoRA turbo), que no están presentes en este pod. Descárgalos con "
+    "STUDIO_INCLUDE_MINIMAX=1 y reinicia el pod."
+)
 ANIMATE_WEIGHTS_UNAVAILABLE = (
     "La plantilla 'wan_animate' requiere los pesos de Wan 2.2 Animate 14B "
     "(wan2.2_animate_14B_int8_convrot.safetensors, +17.15 GiB), que no están "
@@ -74,8 +82,17 @@ def template_requires_animate(tpl: dict[str, Any]) -> bool:
     return str(tpl.get("id")) in ANIMATE_TEMPLATE_IDS
 
 
+def template_requires_minimax(tpl: dict[str, Any]) -> bool:
+    """
+    ¿La plantilla necesita el grupo de pesos MiniMax H3 (opt-in)?
+    """
+    return str(tpl.get("id")) in MINIMAX_TEMPLATE_IDS
+
+
 def template_weights_unavailable_reason(tpl: dict[str, Any]) -> str | None:
-    """Razón de indisponibilidad por pesos opt-in (3D o Animate), si aplica."""
+    """Razón de indisponibilidad por pesos opt-in (3D/Animate/MiniMax), si aplica."""
+    if template_requires_minimax(tpl):
+        return MINIMAX_WEIGHTS_UNAVAILABLE
     if template_requires_animate(tpl):
         return ANIMATE_WEIGHTS_UNAVAILABLE
     if template_requires_three_d(tpl):
@@ -288,12 +305,15 @@ class TemplateRegistry:
         include_workflow: bool = False,
         three_d_available: bool = True,
         animate_available: bool = True,
+        minimax_available: bool = True,
     ) -> dict[str, Any]:
         params_schema = build_json_schema_from_parameters(tpl["id"], tpl["parameters"])
         weights_reason = template_weights_unavailable_reason(tpl)
         available = weights_reason is None or (
             template_requires_animate(tpl) and animate_available
-        ) or (template_requires_three_d(tpl) and three_d_available)
+        ) or (template_requires_three_d(tpl) and three_d_available) or (
+            template_requires_minimax(tpl) and minimax_available
+        )
         entry: dict[str, Any] = {
             "id": tpl["id"],
             "name": tpl["name"],
@@ -320,6 +340,7 @@ class TemplateRegistry:
         include_workflow: bool = False,
         three_d_available: bool = True,
         animate_available: bool = True,
+        minimax_available: bool = True,
         include_unavailable: bool = True,
     ) -> list[dict[str, Any]]:
         entries = [
@@ -328,6 +349,7 @@ class TemplateRegistry:
                 include_workflow=include_workflow,
                 three_d_available=three_d_available,
                 animate_available=animate_available,
+                minimax_available=minimax_available,
             )
             for tid in self.list_ids()
         ]
@@ -342,6 +364,7 @@ class TemplateRegistry:
         include_workflow: bool = True,
         three_d_available: bool = True,
         animate_available: bool = True,
+        minimax_available: bool = True,
     ) -> dict[str, Any]:
         raw = self.get_raw_definition(template_id)
         return self._format_entry(
@@ -349,6 +372,7 @@ class TemplateRegistry:
             include_workflow=include_workflow,
             three_d_available=three_d_available,
             animate_available=animate_available,
+            minimax_available=minimax_available,
         )
 
     def validate_params(
@@ -447,13 +471,16 @@ class TemplateRegistry:
         strict: bool = True,
         three_d_available: bool = True,
         animate_available: bool = True,
+        minimax_available: bool = True,
     ) -> dict[str, Any]:
         """Valida params, sube assets de entrada, encola job y registra salidas en galería."""
         tpl = self.get_raw_definition(template_id)
         weights_reason = template_weights_unavailable_reason(tpl)
         weights_ok = (
-            template_requires_animate(tpl) and animate_available
-        ) or (template_requires_three_d(tpl) and three_d_available)
+            (template_requires_animate(tpl) and animate_available)
+            or (template_requires_three_d(tpl) and three_d_available)
+            or (template_requires_minimax(tpl) and minimax_available)
+        )
         if weights_reason is not None and not weights_ok:
             raise TemplateParamError(
                 weights_reason,
