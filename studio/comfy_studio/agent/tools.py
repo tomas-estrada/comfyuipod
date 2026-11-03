@@ -647,6 +647,135 @@ class AssembleLongVideoArgs(BaseModel):
     )
 
 
+class PlanLongRenderArgs(BaseModel):
+    """Argumentos para la herramienta `plan_long_render`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_duration_sec: float = Field(
+        ...,
+        gt=0.0,
+        le=600.0,
+        description="Duración total del clip largo objetivo en segundos.",
+    )
+    chunk_frames: int = Field(
+        default=81,
+        ge=5,
+        le=241,
+        description="Fotogramas por ventana (81 ≈ 5s a 16 fps para VACE/Wan).",
+    )
+    fps: int = Field(
+        default=16,
+        ge=1,
+        le=60,
+        description="Cadencia de los chunks generados.",
+    )
+    overlap_frames: int = Field(
+        default=9,
+        ge=0,
+        le=240,
+        description="Fotogramas de solapamiento entre ventanas consecutivas (crossfade).",
+    )
+
+
+class GenerateMusicArgs(BaseModel):
+    """Argumentos para la herramienta `generate_music`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        description="Descripción de la música (género, instrumentos, ánimo).",
+    )
+    duration_s: float = Field(
+        default=15.0,
+        ge=1.0,
+        le=300.0,
+        description="Duración de la pieza en segundos.",
+    )
+    bpm: int = Field(
+        default=0,
+        ge=0,
+        le=400,
+        description="Tempo; 0 lo deja libre.",
+    )
+
+
+class GenerateSpeechArgs(BaseModel):
+    """Argumentos para la herramienta `generate_speech`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(
+        ...,
+        min_length=1,
+        description="Texto a sintetizar en voz.",
+    )
+    reference_audio_asset_id: str = Field(
+        default="",
+        description=(
+            "ID del asset de audio cuya voz (timbre) clonar; vacío usa la voz "
+            "base del modelo TTS."
+        ),
+    )
+    pitch_shift: float = Field(
+        default=0.0,
+        ge=-24.0,
+        le=24.0,
+        description="Desplazamiento de tono en semitonos.",
+    )
+
+
+class VisionCheckArgs(BaseModel):
+    """Argumentos para la herramienta `vision_check`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(
+        ...,
+        min_length=1,
+        description="ID del asset (vídeo o imagen) a inspeccionar visualmente.",
+    )
+    question: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Pregunta concreta sobre lo visible (p. ej. '¿se conserva la identidad "
+            "del rostro del niño en todos los planos?')."
+        ),
+    )
+    max_frames: int = Field(
+        default=8,
+        ge=1,
+        le=8,
+        description="Máximo de keyframes a inspeccionar (lotes de ≤8 por petición).",
+    )
+
+
+class RegisterIdentityArgs(BaseModel):
+    """Argumentos para la herramienta `register_identity`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        description="Nombre de la persona a registrar (p. ej. 'Kid A').",
+    )
+    reference_asset_id: str = Field(
+        ...,
+        min_length=1,
+        description="ID del asset de imagen con la foto de referencia del rostro.",
+    )
+
+
+class ListIdentitiesArgs(BaseModel):
+    """Argumentos para la herramienta `list_identities`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ListEnginesArgs(BaseModel):
     """Argumentos para la herramienta `list_engines`."""
 
@@ -1471,6 +1600,279 @@ async def _handle_assemble_long_video(
     return await run_in_threadpool(_do_assemble)
 
 
+async def _handle_plan_long_render(
+    args: PlanLongRenderArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..edl.windowed import WindowedAssemblyError, plan_generation_windows
+
+    try:
+        plan = plan_generation_windows(
+            args.total_duration_sec,
+            chunk_frames=args.chunk_frames,
+            fps=args.fps,
+            overlap_frames=args.overlap_frames,
+        )
+    except WindowedAssemblyError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    plan["status"] = "planned"
+    plan["project_id"] = context.project_id
+    plan["next_step"] = (
+        "Renderiza una ventana por elemento (enqueue_render con skip_first_frames "
+        "del plan) y únelas con assemble_long_video (crossfade_sec del plan)."
+    )
+    return plan
+
+
+async def _handle_generate_music(
+    args: GenerateMusicArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..engines import EngineRunSpec
+    from ..engines.music_gen import MusicGenEngine
+
+    def _do_generate() -> dict[str, Any]:
+        import tempfile
+        from pathlib import Path
+
+        engine = MusicGenEngine()
+        with tempfile.TemporaryDirectory(prefix="comfy_music_") as tmp:
+            out_path = Path(tmp) / "music.wav"
+            result = engine.run(
+                EngineRunSpec(
+                    job={
+                        "prompt": args.prompt,
+                        "output_path": str(out_path),
+                        "duration_s": args.duration_s,
+                        "bpm": args.bpm,
+                    }
+                )
+            )
+            if not result.ok:
+                raise ToolExecutionError(
+                    f"music_gen falló: {result.error or 'error desconocido'}"
+                )
+            asset = context.store.save_upload(
+                context.project_id,
+                filename="generated_music.wav",
+                content_type="audio/wav",
+                data=out_path.read_bytes(),
+                max_upload_bytes=512 * 1024 * 1024,
+                category="outputs",
+                metadata={
+                    "engine": "music_gen",
+                    "prompt": args.prompt,
+                    "duration_s": args.duration_s,
+                    "bpm": args.bpm,
+                    "simulated": bool(result.simulated),
+                },
+            )
+            return {
+                "status": "generated",
+                "project_id": context.project_id,
+                "output_asset": asset,
+                "simulated": bool(result.simulated),
+            }
+
+    return await run_in_threadpool(_do_generate)
+
+
+async def _handle_generate_speech(
+    args: GenerateSpeechArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..engines import EngineRunSpec
+    from ..engines.voice_clone import VoiceCloneEngine
+
+    def _do_generate() -> dict[str, Any]:
+        import tempfile
+        from pathlib import Path
+
+        ref_path = None
+        if args.reference_audio_asset_id:
+            ref_path = context.store.get_asset_path(
+                context.project_id, args.reference_audio_asset_id
+            )
+            if ref_path is None:
+                raise ToolExecutionError(
+                    f"Asset de audio de referencia no encontrado: "
+                    f"{args.reference_audio_asset_id!r}"
+                )
+
+        engine = VoiceCloneEngine()
+        with tempfile.TemporaryDirectory(prefix="comfy_voice_") as tmp:
+            out_path = Path(tmp) / "speech.wav"
+            job: dict[str, Any] = {
+                "op": "tts",
+                "output_path": str(out_path),
+                "reference_audio": str(ref_path or out_path.with_name("ref.wav")),
+                "text": args.text,
+                "pitch_shift": args.pitch_shift,
+            }
+            if ref_path is None:
+                # voz base: sample de referencia sintético mínimo para el contrato
+                job["reference_audio"] = str(out_path.with_name("ref.wav"))
+                Path(job["reference_audio"]).write_bytes(
+                    b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 16
+                )
+            result = engine.run(EngineRunSpec(job=job))
+            if not result.ok:
+                raise ToolExecutionError(
+                    f"voice_clone falló: {result.error or 'error desconocido'}"
+                )
+            asset = context.store.save_upload(
+                context.project_id,
+                filename="generated_speech.wav",
+                content_type="audio/wav",
+                data=out_path.read_bytes(),
+                max_upload_bytes=512 * 1024 * 1024,
+                category="voice",
+                metadata={
+                    "engine": "voice_clone",
+                    "text": args.text,
+                    "pitch_shift": args.pitch_shift,
+                    "reference_audio_asset_id": args.reference_audio_asset_id or None,
+                    "simulated": bool(result.simulated),
+                },
+            )
+            return {
+                "status": "generated",
+                "project_id": context.project_id,
+                "output_asset": asset,
+                "simulated": bool(result.simulated),
+            }
+
+    return await run_in_threadpool(_do_generate)
+
+
+async def _handle_vision_check(
+    args: VisionCheckArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..agent.llm import OpenAICompatibleLLMClient, build_vision_content_part
+    from ..perception.keyframes import extract_video_keyframes
+
+    asset = context.store.get_asset(context.project_id, args.asset_id)
+    if asset is None:
+        raise ToolExecutionError(f"Asset no encontrado: {args.asset_id!r}")
+
+    frames: list[dict[str, Any]] = []
+    if asset.get("kind") == "video":
+        def _do_extract() -> list[dict[str, Any]]:
+            return extract_video_keyframes(
+                context.store,
+                context.project_id,
+                args.asset_id,
+                interval_sec=1.0,
+                max_keyframes=args.max_frames,
+                replace_existing=False,
+            )
+
+        frames = await run_in_threadpool(_do_extract)
+    # Imágenes: usar el propio asset como frame único
+    content_parts: list[dict[str, Any]] = []
+    if frames:
+        for kf in frames[: args.max_frames]:
+            kf_id = str(kf.get("id") or kf.get("asset_id") or "")
+            if not kf_id:
+                continue
+            kf_path = context.store.get_asset_path(context.project_id, kf_id)
+            if kf_path is None:
+                continue
+            content_parts.append(
+                build_vision_content_part(kf_path.read_bytes(), "image/png")
+            )
+    else:
+        asset_path = context.store.get_asset_path(context.project_id, args.asset_id)
+        if asset_path is None:
+            raise ToolExecutionError("El asset no tiene archivo físico.")
+        mime = "image/png" if asset.get("kind") == "image" else "video/mp4"
+        if asset.get("kind") != "image":
+            raise ToolExecutionError(
+                "vision_check requiere un asset de vídeo o imagen."
+            )
+        content_parts.append(
+            build_vision_content_part(asset_path.read_bytes(), mime)
+        )
+
+    if not content_parts:
+        raise ToolExecutionError(
+            "No se pudieron extraer keyframes del asset para la inspección visual."
+        )
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": (
+                "Eres un control de calidad visual de un estudio de vídeo. "
+                "Responde de forma concisa y factual en español."
+            ),
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": args.question},
+                *content_parts,
+            ],
+        },
+    ]
+    llm = OpenAICompatibleLLMClient(context.config)
+    response = await llm.complete(messages, temperature=0.1)
+    return {
+        "status": "checked",
+        "project_id": context.project_id,
+        "asset_id": args.asset_id,
+        "question": args.question,
+        "frames_inspected": len(content_parts),
+        "answer": response.content,
+        "simulated": getattr(response, "simulated", False) or context.config.studio_stub_llm,
+    }
+
+
+async def _handle_register_identity(
+    args: RegisterIdentityArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..perception.face_index import InsightFaceIndex
+
+    vec_store = _get_vector_store(context)
+    face_idx = InsightFaceIndex(context.store, vec_store)
+
+    def _do_register() -> dict[str, Any]:
+        try:
+            identity = face_idx.register_identity(
+                context.project_id,
+                name=args.name,
+                reference_asset_id=args.reference_asset_id,
+            )
+        except ValueError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return {
+            "status": "registered",
+            "project_id": context.project_id,
+            "identity": identity,
+            "next_step": (
+                "Usa find_shots_face para localizar a esta persona en el material, "
+                "y reference_asset_id en vace_swap/wan_animate para generar con su identidad."
+            ),
+        }
+
+    return await run_in_threadpool(_do_register)
+
+
+async def _handle_list_identities(
+    _args: ListIdentitiesArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    identities = context.store.list_identities(context.project_id)
+    return {
+        "status": "ok",
+        "project_id": context.project_id,
+        "count": len(identities),
+        "identities": identities,
+    }
+
+
 async def _handle_list_engines(
     _args: ListEnginesArgs,
     context: ToolContext,
@@ -1967,6 +2369,79 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=SystemStatusArgs,
             handler=_handle_system_status,
+            parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="plan_long_render",
+            description=(
+                "Planifica las ventanas de render para un clip largo: divide la duración "
+                "objetivo en chunks (81 frames ≈ 5s) con solapamiento, devolviendo por "
+                "ventana el start/end, frames, skip_first_frames para VHS_LoadVideo y el "
+                "crossfade para assemble_long_video."
+            ),
+            args_model=PlanLongRenderArgs,
+            handler=_handle_plan_long_render,
+            parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="generate_music",
+            description=(
+                "Genera música incidental (MusicGen) a partir de una descripción "
+                "(género, ánimo, instrumentos) y la registra en la galería del proyecto."
+            ),
+            args_model=GenerateMusicArgs,
+            handler=_handle_generate_music,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="generate_speech",
+            description=(
+                "Sintetiza voz hablada (TTS/voice_clone RVC) desde un texto, "
+                "opcionalmente clonando el timbre de un audio de referencia del "
+                "proyecto. Registra el WAV en la categoría voice."
+            ),
+            args_model=GenerateSpeechArgs,
+            handler=_handle_generate_speech,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="vision_check",
+            description=(
+                "Inspección visual con el LLM de visión: extrae keyframes del asset "
+                "(lotes de ≤8) y responde una pregunta concreta sobre lo visible — "
+                "p. ej. si la identidad de un rostro se conservó tras un swap."
+            ),
+            args_model=VisionCheckArgs,
+            handler=_handle_vision_check,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="register_identity",
+            description=(
+                "Registra una persona con nombre y foto de referencia en el índice "
+                "facial (InsightFace): luego find_shots_face la localiza en el material "
+                "y su reference_asset_id condiciona vace_swap/wan_animate."
+            ),
+            args_model=RegisterIdentityArgs,
+            handler=_handle_register_identity,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="list_identities",
+            description=(
+                "Lista las identidades faciales registradas en el proyecto actual con "
+                "su asset de referencia."
+            ),
+            args_model=ListIdentitiesArgs,
+            handler=_handle_list_identities,
             parallel_safe=True,
         )
     )

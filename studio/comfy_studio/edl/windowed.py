@@ -356,3 +356,76 @@ def assemble_windowed_video(
             "probe_ok": bool(probe_info.get("probe_ok")),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Planificador de ventanas (M4): cuántos chunks renderizar y con qué solape
+# ---------------------------------------------------------------------------
+
+def plan_generation_windows(
+    total_duration_sec: float,
+    *,
+    chunk_frames: int = 81,
+    fps: int = 16,
+    overlap_frames: int = 9,
+    max_windows: int = MAX_WINDOW_CHUNKS,
+) -> dict[str, Any]:
+    """Planifica las ventanas de render para un clip largo.
+
+    Divide `total_duration_sec` en ventanas de `chunk_frames` fotogramas con
+    `overlap_frames` de solapamiento entre consecutivas (para crossfade o
+    `continue_motion`). Cada ventana lleva su offset de inicio en el vídeo
+    fuente (`skip_first_frames` para `VHS_LoadVideo`).
+
+    La última ventana se recorta a los fotogramas restantes; nunca genera
+    ventanas vacías ni pasa de `max_windows`.
+    """
+    total_sec = round(float(total_duration_sec), 3)
+    if total_sec <= 0:
+        raise WindowedAssemblyError("total_duration_sec debe ser > 0.")
+    if chunk_frames < 5 or chunk_frames > 241:
+        raise WindowedAssemblyError("chunk_frames debe estar entre 5 y 241.")
+    if fps < 1 or fps > 60:
+        raise WindowedAssemblyError("fps debe estar entre 1 y 60.")
+    if overlap_frames < 0 or overlap_frames >= chunk_frames:
+        raise WindowedAssemblyError(
+            "overlap_frames debe estar en [0, chunk_frames)."
+        )
+    chunk_sec = chunk_frames / float(fps)
+    overlap_sec = overlap_frames / float(fps)
+    effective_sec = chunk_sec - overlap_sec  # avance neto por ventana
+
+    windows: list[dict[str, Any]] = []
+    start_sec = 0.0
+    while start_sec < total_sec - 1e-6:
+        remaining_sec = total_sec - start_sec
+        frames = min(chunk_frames, max(5, int(round(remaining_sec * fps))))
+        windows.append(
+            {
+                "index": len(windows),
+                "start_sec": round(start_sec, 3),
+                "end_sec": round(min(total_sec, start_sec + frames / fps), 3),
+                "frames": frames,
+                "skip_first_frames": int(round(start_sec * fps)),
+                "crossfade_sec": round(overlap_sec, 3) if len(windows) > 0 else 0.0,
+            }
+        )
+        start_sec += effective_sec
+        if len(windows) >= max_windows:
+            raise WindowedAssemblyError(
+                f"El clip requiere más de {max_windows} ventanas; acorta la duración "
+                "o aumenta chunk_frames."
+            )
+
+    planned_sec = sum(w["frames"] / fps for w in windows) - sum(
+        w["crossfade_sec"] for w in windows if w["index"] > 0
+    )
+    return {
+        "total_duration_sec": total_sec,
+        "fps": int(fps),
+        "chunk_frames": int(chunk_frames),
+        "overlap_frames": int(overlap_frames),
+        "windows_count": len(windows),
+        "estimated_assembled_sec": round(planned_sec, 3),
+        "windows": windows,
+    }

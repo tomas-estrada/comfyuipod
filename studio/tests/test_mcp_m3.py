@@ -313,6 +313,8 @@ MCP_EXPECTED_TOOL_NAMES = {
     "job_status",
     "export_edl",
     "assemble_long_video",
+    "plan_long_render",
+    "list_identities",
     "system_status",
     "tag_asset",
     "list_projects",
