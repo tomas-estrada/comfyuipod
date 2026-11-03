@@ -790,20 +790,47 @@ class GenerateSpeechArgs(BaseModel):
     text: str = Field(
         ...,
         min_length=1,
-        description="Texto a sintetizar en voz.",
+        description="Texto a sintetizar en voz (español).",
+    )
+    voice_id: str = Field(
+        default="ef_dora",
+        description=(
+            "Voz Kokoro en español: 'ef_dora' (mujer) o 'em_alex' (hombre) por defecto; "
+            "cualquier voz *_es de Kokoro."
+        ),
     )
     reference_audio_asset_id: str = Field(
         default="",
         description=(
-            "ID del asset de audio cuya voz (timbre) clonar; vacío usa la voz "
-            "base del modelo TTS."
+            "ID del asset de audio cuya voz (timbre) clonar vía RVC tras el TTS; "
+            "si el clonador no está disponible (fairseq no horneado), el TTS se "
+            "entrega igual con voice_clone_skipped y el motivo."
         ),
     )
     pitch_shift: float = Field(
         default=0.0,
         ge=-24.0,
         le=24.0,
-        description="Desplazamiento de tono en semitonos.",
+        description="Desplazamiento de tono en semitonos (solo con clonación RVC).",
+    )
+
+
+class LipsyncVideoArgs(BaseModel):
+    """Argumentos para la herramienta `lipsync_video`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    video_asset_id: str = Field(
+        ...,
+        min_length=1,
+        description="ID del asset de vídeo con el sujeto hablante.",
+    )
+    audio_asset_id: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "ID del asset de audio con el habla (p. ej. salida de generate_speech)."
+        ),
     )
 
 
@@ -1942,67 +1969,165 @@ async def _handle_generate_speech(
     context: ToolContext,
 ) -> dict[str, Any]:
     from ..engines import EngineRunSpec
+    from ..engines.audio import AudioEngine
     from ..engines.voice_clone import VoiceCloneEngine
 
     def _do_generate() -> dict[str, Any]:
         import tempfile
         from pathlib import Path
 
-        ref_path = None
-        if args.reference_audio_asset_id:
-            ref_path = context.store.get_asset_path(
-                context.project_id, args.reference_audio_asset_id
+        # TTS real: Kokoro (español) horneado en el pod vía AudioEngine op=tts.
+        audio_engine = AudioEngine()
+        with tempfile.TemporaryDirectory(prefix="comfy_speech_") as tmp:
+            tts_path = Path(tmp) / "speech.wav"
+            tts_result = audio_engine.run(
+                EngineRunSpec(
+                    job={
+                        "op": "tts",
+                        "output_path": str(tts_path),
+                        "text": args.text,
+                        "voice_id": args.voice_id,
+                    }
+                )
             )
-            if ref_path is None:
+            if not tts_result.ok:
                 raise ToolExecutionError(
-                    f"Asset de audio de referencia no encontrado: "
-                    f"{args.reference_audio_asset_id!r}"
+                    f"TTS falló: {tts_result.error or 'error desconocido'}"
                 )
+            final_path = tts_path
+            voice_clone_applied = False
+            voice_clone_skipped_reason: str | None = None
 
-        engine = VoiceCloneEngine()
-        with tempfile.TemporaryDirectory(prefix="comfy_voice_") as tmp:
-            out_path = Path(tmp) / "speech.wav"
-            job: dict[str, Any] = {
-                "op": "tts",
-                "output_path": str(out_path),
-                "reference_audio": str(ref_path or out_path.with_name("ref.wav")),
-                "text": args.text,
-                "pitch_shift": args.pitch_shift,
-            }
-            if ref_path is None:
-                # voz base: sample de referencia sintético mínimo para el contrato
-                job["reference_audio"] = str(out_path.with_name("ref.wav"))
-                Path(job["reference_audio"]).write_bytes(
-                    b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 16
+            # Clonación de timbre opcional (RVC): conversión de la salida TTS
+            # al timbre del audio de referencia. Si RVC/fairseq no está
+            # disponible en el pod, degradación honesta: se entrega el TTS.
+            if args.reference_audio_asset_id:
+                ref_path = context.store.get_asset_path(
+                    context.project_id, args.reference_audio_asset_id
                 )
-            result = engine.run(EngineRunSpec(job=job))
-            if not result.ok:
-                raise ToolExecutionError(
-                    f"voice_clone falló: {result.error or 'error desconocido'}"
+                if ref_path is None:
+                    raise ToolExecutionError(
+                        f"Asset de audio de referencia no encontrado: "
+                        f"{args.reference_audio_asset_id!r}"
+                    )
+                cloned_path = Path(tmp) / "speech_cloned.wav"
+                vc_engine = VoiceCloneEngine()
+                vc_result = vc_engine.run(
+                    EngineRunSpec(
+                        job={
+                            "op": "clone",
+                            "output_path": str(cloned_path),
+                            "reference_audio": str(ref_path),
+                            "source_audio": str(tts_path),
+                            "pitch_shift": args.pitch_shift,
+                        }
+                    )
                 )
+                if vc_result.ok and cloned_path.is_file():
+                    final_path = cloned_path
+                    voice_clone_applied = True
+                else:
+                    voice_clone_skipped_reason = (
+                        f"clonación de voz no disponible: "
+                        f"{vc_result.error or 'error desconocido'}"
+                    )
+
             asset = context.store.save_upload(
                 context.project_id,
                 filename="generated_speech.wav",
                 content_type="audio/wav",
-                data=out_path.read_bytes(),
+                data=final_path.read_bytes(),
                 max_upload_bytes=512 * 1024 * 1024,
                 category="voice",
                 metadata={
-                    "engine": "voice_clone",
+                    "engine": "audio_tts_kokoro",
                     "text": args.text,
+                    "voice_id": args.voice_id,
                     "pitch_shift": args.pitch_shift,
                     "reference_audio_asset_id": args.reference_audio_asset_id or None,
-                    "simulated": bool(result.simulated),
+                    "voice_clone_applied": voice_clone_applied,
+                    "voice_clone_skipped_reason": voice_clone_skipped_reason,
+                    "simulated": bool(tts_result.simulated),
                 },
             )
             return {
                 "status": "generated",
                 "project_id": context.project_id,
                 "output_asset": asset,
-                "simulated": bool(result.simulated),
+                "voice_id": args.voice_id,
+                "voice_clone_applied": voice_clone_applied,
+                "voice_clone_skipped_reason": voice_clone_skipped_reason,
+                "simulated": bool(tts_result.simulated),
             }
 
     return await run_in_threadpool(_do_generate)
+
+
+async def _handle_lipsync_video(
+    args: LipsyncVideoArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..engines import EngineRunSpec
+    from ..engines.lipsync import LipsyncEngine
+
+    def _do_lipsync() -> dict[str, Any]:
+        import tempfile
+        from pathlib import Path
+
+        video_asset = context.store.get_asset(context.project_id, args.video_asset_id)
+        audio_asset = context.store.get_asset(context.project_id, args.audio_asset_id)
+        if video_asset is None or video_asset.get("kind") != "video":
+            raise ToolExecutionError(
+                f"Asset de vídeo no encontrado o inválido: {args.video_asset_id!r}"
+            )
+        if audio_asset is None or audio_asset.get("kind") != "audio":
+            raise ToolExecutionError(
+                f"Asset de audio no encontrado o inválido: {args.audio_asset_id!r}"
+            )
+        video_path = context.store.get_asset_path(context.project_id, args.video_asset_id)
+        audio_path = context.store.get_asset_path(context.project_id, args.audio_asset_id)
+        if video_path is None or audio_path is None:
+            raise ToolExecutionError("Los assets no tienen archivo físico.")
+
+        engine = LipsyncEngine()
+        with tempfile.TemporaryDirectory(prefix="comfy_lipsync_") as tmp:
+            out_path = Path(tmp) / "lipsync.mp4"
+            result = engine.run(
+                EngineRunSpec(
+                    job={
+                        "input_video": str(video_path),
+                        "input_audio": str(audio_path),
+                        "output_path": str(out_path),
+                    }
+                )
+            )
+            if not result.ok:
+                raise ToolExecutionError(
+                    f"lipsync falló: {result.error or 'error desconocido'}"
+                )
+            stem = Path(video_asset.get("filename") or "video").stem
+            out_asset = context.store.save_upload(
+                context.project_id,
+                filename=f"{stem}_lipsync.mp4",
+                content_type="video/mp4",
+                data=out_path.read_bytes(),
+                max_upload_bytes=2 * 1024 * 1024 * 1024,
+                category="outputs",
+                metadata={
+                    "engine": "lipsync_wav2lip",
+                    "lipsync_from_video_asset_id": args.video_asset_id,
+                    "lipsync_from_audio_asset_id": args.audio_asset_id,
+                    "simulated": bool(result.simulated),
+                },
+            )
+            return {
+                "status": "lipsynced",
+                "project_id": context.project_id,
+                "output_asset": out_asset,
+                "simulated": bool(result.simulated),
+            }
+
+    return await run_in_threadpool(_do_lipsync)
 
 
 async def _handle_vision_check(
@@ -2692,6 +2817,19 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=GenerateSpeechArgs,
             handler=_handle_generate_speech,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="lipsync_video",
+            description=(
+                "Sincroniza los labios de un vídeo con un audio mediante el motor "
+                "wav2lip horneado (offline, sin ComfyUI): vídeo + audio -> vídeo con "
+                "boca articulada. Alternativa al template latentsync para lotes "
+                "rápidos; registra la salida en la galería con linaje."
+            ),
+            args_model=LipsyncVideoArgs,
+            handler=_handle_lipsync_video,
         )
     )
     belt.register(

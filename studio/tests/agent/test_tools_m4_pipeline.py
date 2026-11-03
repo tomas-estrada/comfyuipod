@@ -28,6 +28,7 @@ def pipeline_tool_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> To
     # stubs de motores para no requerir modelos reales
     monkeypatch.setenv("STUDIO_STUB_MUSIC_GEN", "1")
     monkeypatch.setenv("STUDIO_STUB_VOICE_CLONE", "1")
+    monkeypatch.setenv("STUDIO_STUB_AUDIO", "1")
     monkeypatch.setenv("STUDIO_STUB_LLM", "1")
     cfg = StudioConfig.from_env()
     assert cfg.studio_stub_llm is True
@@ -125,15 +126,20 @@ async def test_generate_speech_registers_voice_asset(
     belt = create_default_tool_belt()
     result = await belt.execute(
         "generate_speech",
-        {"text": "¡Vamos, sube al coche!", "pitch_shift": 2.0},
+        {"text": "¡Vamos, sube al coche!", "voice_id": "em_alex"},
         pipeline_tool_context,
     )
     assert result["status"] == "generated"
     asset = result["output_asset"]
     assert asset["kind"] == "audio"
     meta = asset.get("metadata") or {}
-    assert meta.get("engine") == "voice_clone"
+    assert meta.get("engine") == "audio_tts_kokoro"
     assert meta.get("text") == "¡Vamos, sube al coche!"
+    assert meta.get("voice_id") == "em_alex"
+    assert result["voice_id"] == "em_alex"
+    # Sin audio de referencia no se intenta la clonación
+    assert result["voice_clone_applied"] is False
+    assert result["voice_clone_skipped_reason"] is None
 
 
 @pytest.mark.anyio
@@ -145,6 +151,83 @@ async def test_generate_speech_missing_reference_fails(
         await belt.execute(
             "generate_speech",
             {"text": "hola", "reference_audio_asset_id": "no-existe"},
+            pipeline_tool_context,
+        )
+
+
+@pytest.mark.anyio
+async def test_generate_speech_voice_clone_degrades_honestly(
+    pipeline_tool_context: ToolContext,
+) -> None:
+    belt = create_default_tool_belt()
+    # referencia válida (cualquier asset de audio): la clonación RVC en stub
+    # marca voice_clone_applied o degrada con motivo explícito.
+    ref = pipeline_tool_context.store.save_upload(
+        pipeline_tool_context.project_id,
+        filename="ref.wav",
+        content_type="audio/wav",
+        data=b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 16,
+        max_upload_bytes=8 * 1024 * 1024,
+        category="voice",
+        metadata={},
+    )
+    result = await belt.execute(
+        "generate_speech",
+        {"text": "hola mundo", "reference_audio_asset_id": str(ref["id"])},
+        pipeline_tool_context,
+    )
+    assert result["status"] == "generated"
+    assert (
+        result["voice_clone_applied"] is True
+        or result["voice_clone_skipped_reason"] is not None
+    )
+
+
+@pytest.mark.anyio
+async def test_lipsync_video_with_stub_engine(
+    pipeline_tool_context: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_STUB_LIPSYNC", "1")
+    belt = create_default_tool_belt()
+    vid = pipeline_tool_context.store.save_upload(
+        pipeline_tool_context.project_id,
+        filename="clip.mp4",
+        content_type="video/mp4",
+        data=b"\x00\x00\x00 ftypisom" + b"\x00" * 32,
+        max_upload_bytes=64 * 1024 * 1024,
+        category="outputs",
+        metadata={},
+    )
+    aud = pipeline_tool_context.store.save_upload(
+        pipeline_tool_context.project_id,
+        filename="speech.wav",
+        content_type="audio/wav",
+        data=b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 16,
+        max_upload_bytes=8 * 1024 * 1024,
+        category="voice",
+        metadata={},
+    )
+    result = await belt.execute(
+        "lipsync_video",
+        {"video_asset_id": str(vid["id"]), "audio_asset_id": str(aud["id"])},
+        pipeline_tool_context,
+    )
+    assert result["status"] == "lipsynced"
+    asset = result["output_asset"]
+    assert asset["kind"] == "video"
+    meta = asset.get("metadata") or {}
+    assert meta.get("engine") == "lipsync_wav2lip"
+    assert meta.get("lipsync_from_audio_asset_id") == aud["id"]
+    assert "_lipsync" in asset["filename"]
+
+
+@pytest.mark.anyio
+async def test_lipsync_video_rejects_bad_assets(pipeline_tool_context: ToolContext) -> None:
+    belt = create_default_tool_belt()
+    with pytest.raises(ToolExecutionError, match="no encontrado o inválido"):
+        await belt.execute(
+            "lipsync_video",
+            {"video_asset_id": "no-existe", "audio_asset_id": "tampoco"},
             pipeline_tool_context,
         )
 
