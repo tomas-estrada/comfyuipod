@@ -268,6 +268,17 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": (),
         "outputs": 1,
     },
+    "LatentSyncNode": {
+        "required_inputs": (
+            "images",
+            "audio",
+            "seed",
+            "lips_expression",
+            "inference_steps",
+        ),
+        "optional_inputs": (),
+        "outputs": 2,  # IMAGE, AUDIO
+    },
     "VHS_VideoCombine": {
         "required_inputs": (
             "images",
