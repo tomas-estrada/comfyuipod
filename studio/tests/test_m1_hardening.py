@@ -285,6 +285,7 @@ def test_parallel_safe_defaults_to_serial_and_readonly_tools_opt_in() -> None:
         "download_model",
         "plan_long_render",
         "list_identities",
+        "list_review_pins",
     }
     spec_default = type(belt.get("tag_asset")).__dataclass_fields__["parallel_safe"]
     assert spec_default.default is False

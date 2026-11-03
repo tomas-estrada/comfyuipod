@@ -11,14 +11,14 @@ import secrets
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from python_multipart.multipart import parse_options_header
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData, Headers
@@ -62,6 +62,7 @@ from comfy_studio.perception import (
 from comfy_studio.progress import ProgressBroker, format_sse_event
 from comfy_studio.projects import MediaValidationError, ProjectStore, sanitize_filename
 from comfy_studio.recovery import recover_interrupted_jobs
+from comfy_studio.review_pins import open_pin_summary
 from comfy_studio.stubs.llm import StubLLMClient
 from comfy_studio.subtitles import render_subtitles, subtitle_filename
 from comfy_studio.templates import (
@@ -250,6 +251,48 @@ class EdlBuildRequest(BaseModel):
     def resolved_aspect_ratios(self) -> list[str]:
         """Lista efectiva de variantes (vacía ⇒ una sola con `aspect_ratio`)."""
         return list(self.aspect_ratios)
+
+
+class ReviewPinCreateRequest(BaseModel):
+    """Payload de creación de un review pin anclado a una versión de EDL (M3-RVP-001)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    edl_version: int = Field(..., ge=1, description="Versión del EDL revisado.")
+    t_start: float = Field(
+        ..., ge=0.0, description="Segundo de inicio del pin en el timeline renderizado."
+    )
+    t_end: float = Field(
+        ..., ge=0.0, description="Segundo de fin del pin (>= t_start)."
+    )
+    severity: Literal["note", "issue", "blocker"] = Field(
+        default="note", description="Severidad del feedback."
+    )
+    body: str = Field(
+        ..., min_length=1, max_length=2000, description="Comentario del revisor."
+    )
+
+    @model_validator(mode="after")
+    def _check_window(self) -> ReviewPinCreateRequest:
+        if self.t_end < self.t_start:
+            raise ValueError(
+                f"t_end ({self.t_end}) no puede ser menor que t_start ({self.t_start})."
+            )
+        return self
+
+
+class ReviewPinUpdateRequest(BaseModel):
+    """Payload de actualización de un review pin (M3-RVP-001)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    t_start: float | None = Field(default=None, ge=0.0)
+    t_end: float | None = Field(default=None, ge=0.0)
+    status: Literal["open", "resolved", "discarded"] | None = None
+    resolution_note: str | None = Field(
+        default=None, max_length=1000,
+        description="Nota opcional de resolución; solo aplica con status != open."
+    )
 
 
 def _verify_basic_auth(
@@ -2534,6 +2577,144 @@ def create_app(
             body=req_body,
             request=request,
         )
+
+    @app.post("/studio/api/projects/{project_id}/pins", status_code=201)
+    async def create_review_pin_endpoint(
+        project_id: str,
+        body: ReviewPinCreateRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Crea un review pin anclado a una versión de EDL (M3-RVP-001)."""
+        active_store: ProjectStore = request.app.state.store
+        active_broker: ProgressBroker = request.app.state.broker
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        edl = active_store.get_edl_version(project_id, body.edl_version)
+        if edl is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Versión de EDL no encontrada: {body.edl_version}",
+            )
+        try:
+            pin = active_store.create_review_pin(
+                project_id,
+                edl_version=body.edl_version,
+                t_start=body.t_start,
+                t_end=body.t_end,
+                severity=body.severity,
+                body=body.body,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        active_broker.publish(
+            "review_pin",
+            {
+                "project_id": project_id,
+                "pin_id": pin["id"],
+                "edl_version": pin["edl_version"],
+                "t_start": pin["t_start"],
+                "t_end": pin["t_end"],
+                "severity": pin["severity"],
+                "status": pin["status"],
+                "action": "added",
+            },
+        )
+        return pin
+
+    @app.get("/studio/api/projects/{project_id}/pins")
+    async def list_review_pins_endpoint(
+        project_id: str,
+        request: Request,
+        edl_version: int | None = Query(default=None, ge=1),
+        status: str | None = Query(default=None, pattern=r"^(open|resolved|discarded)$"),
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        try:
+            pins = active_store.list_review_pins(
+                project_id,
+                edl_version=edl_version,
+                status=status,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"pins": pins, "count": len(pins)}
+
+    @app.get("/studio/api/projects/{project_id}/pins/summary")
+    async def review_pins_summary_endpoint(
+        project_id: str,
+        request: Request,
+        edl_version: int | None = Query(default=None, ge=1),
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        pins = active_store.list_review_pins(
+            project_id,
+            edl_version=edl_version,
+            status=None,
+        )
+        return {"summary": open_pin_summary(pins), "total": len(pins)}
+
+    @app.patch("/studio/api/projects/{project_id}/pins/{pin_id}")
+    async def update_review_pin_endpoint(
+        project_id: str,
+        pin_id: str,
+        body: ReviewPinUpdateRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        active_broker: ProgressBroker = request.app.state.broker
+        current = active_store.get_review_pin(project_id, pin_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="Pin no encontrado")
+        try:
+            updated = active_store.update_review_pin(
+                project_id,
+                pin_id,
+                t_start=body.t_start,
+                t_end=body.t_end,
+                status=body.status,
+                resolution_note=body.resolution_note,
+                resolved_by="reviewer",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if updated is None:  # pragma: no cover - cubierto por el 404 previo
+            raise HTTPException(status_code=404, detail="Pin no encontrado")
+        if body.status is not None and body.status != "open":
+            active_broker.publish(
+                "review_pin",
+                {
+                    "project_id": project_id,
+                    "pin_id": updated["id"],
+                    "edl_version": updated["edl_version"],
+                    "t_start": updated["t_start"],
+                    "t_end": updated["t_end"],
+                    "severity": updated["severity"],
+                    "status": updated["status"],
+                    "action": "resolved",
+                },
+            )
+        return updated
+
+    @app.delete("/studio/api/projects/{project_id}/pins/{pin_id}")
+    async def delete_review_pin_endpoint(
+        project_id: str,
+        pin_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        try:
+            deleted = active_store.delete_review_pin(project_id, pin_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Pin no encontrado")
+        return {"deleted": True, "pin_id": pin_id}
 
     @app.get("/studio/api/progress")
     async def sse_progress(

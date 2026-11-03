@@ -765,6 +765,35 @@ a:focus-visible {
     color: var(--text-secondary);
 }
 
+.track-segment-pin {
+    background: rgba(250, 204, 21, 0.12);
+    border-color: rgba(250, 204, 21, 0.55);
+    color: var(--text-secondary);
+    cursor: default;
+}
+
+.track-segment-pin.pin-sev-issue {
+    background: rgba(251, 146, 60, 0.14);
+    border-color: rgba(251, 146, 60, 0.55);
+}
+
+.track-segment-pin.pin-sev-blocker {
+    background: rgba(248, 113, 113, 0.16);
+    border-color: rgba(248, 113, 113, 0.6);
+    color: var(--text-primary);
+}
+
+.track-segment-pin.pin-closed {
+    opacity: 0.55;
+    text-decoration: line-through;
+}
+
+.pin-item .item-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
 .track-empty {
     font-size: 0.82rem;
     color: var(--text-muted);

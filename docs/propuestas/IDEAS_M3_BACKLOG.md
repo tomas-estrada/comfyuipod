@@ -74,6 +74,7 @@ Los cuatro subsistemas de percepción/transcripción del batch M3 son **simulaci
 - **M3-IDEA-035** — Extender el health check S11 `studio_health` con una sonda de percepción: disponibilidad real de ffprobe/ffmpeg, `sqlite_vec` importable, y modo simulación activo — visible en el status server para detectar pods degradados antes de usarlos.
 - **M3-IDEA-036** — Render por lotes multi-aspecto: un solo `POST edl/{version}/render` con lista de presets (`ASPECT_DIMENSIONS` ya define 16:9, 9:16, 1:1, 4:5 en `ffmpeg_edl.py:22`) encolando N jobs, con eventos de webhook por variante.
 - **M3-IDEA-037** — Superficie de `delegate_role` en el panel: mostrar qué sub-agente (director/editor/artist3d) ejecutó cada herramienta en el stream de eventos del chat (los `ROLE_TOOL_SUBSETS` ya existen en `tools.py:602`).
+- **M3-RVP-001** — **Review Pins**: capa de feedback anclado a un timecode de una versión de EDL. Tabla `review_pins` (schema v2), API REST `POST/GET/PATCH/DELETE /studio/api/projects/{id}/pins` + `GET pins/summary`, herramientas de agente `list_review_pins` (con corte del EDL emparejado por máximo solapamiento) y `resolve_review_pin`, eventos SSE/webhook `review_pin_added`/`review_pin_resolved`, y UI en el panel (timeline «R1 · Pins de Revisión» + lista con resolver/descartar/eliminar). Cierra el ciclo revisor → agente: los pins abiertos alimentan la siguiente `edl.vN+1`.
 
 ## 8. Estado resuelto (verificado en código, 2026-11-03)
 
@@ -86,6 +87,7 @@ Los cuatro subsistemas de percepción/transcripción del batch M3 son **simulaci
 | M3-IDEA-017 (sqlite_vec duro) | ✅ resuelto | `perception/store.py` eleva `PerceptionUnavailableError` degradable en vez de tumbar el servidor (ver comentario en `store.py:17` y `app.py` health S13). |
 | M3-IDEA-020 (tests endpoints identities/faces) | ✅ resuelto | `tests/test_m1_endpoints.py` cubre CRUD de `identities` y `faces/index` + `search/combined`; `tests/agent/test_tools_m4_pipeline.py` cubre registro de identidad. |
 | M3-IDEA-001..004 (backends ML reales) | ◐ parcial | `ml/backends.py` implementa backends reales con probe y fallback etiquetado (`STUDIO_PERCEPTION_BACKEND`); el índice CLIP del panel (`perception/clip_index.py`) sigue siendo el extractor determinista local (documentado en README). |
+| M3-RVP-001 (Review Pins) | ✅ implementado | Migración schema v2 (`SCHEMA_V2_SQL` en `projects.py`), dominio en `review_pins.py`, endpoints en `app.py`, herramientas `list_review_pins`/`resolve_review_pin` en `tools.py`, mapeo webhook en `webhooks.py`, UI en `panel/` (timeline + lista); tests en `tests/test_review_pins.py` y `tests/agent/test_tools_review_pins.py`. |
 | M3-IDEA-010..016, 018, 021, 022, OPS-001..004, SEC-003 tests EDL | ⏳ pendiente | Sin cambios desde la redacción del backlog. |
 
 ## 7. Priorización sugerida
