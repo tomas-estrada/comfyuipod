@@ -137,6 +137,15 @@ RUN pip3 install --upgrade --ignore-installed pip setuptools wheel \
         diffusers \
         pytorch-lightning
 
+# M7-OPS-003: registrar los flags de VRAM que soporta EXACTAMENTE el SHA fijado de
+# ComfyUI en nodes.lock, para que operadores y triage usen flags reales (no docs
+# desactualizadas). Falla el build si el SHA no expone ningun flag *vram*.
+# Verificado contra bdc63e72 (2026-11): --reserve-vram, --vram-headroom,
+# --disable-dynamic-vram, --enable-dynamic-vram, --highvram/--lowvram/--novram.
+RUN grep -ohE '\-\-[a-z0-9-]*vram[a-z0-9-]*' /opt/ComfyUI/comfy/cli_args.py \
+        | sort -u | tee /etc/comfyui/comfyui-vram-flags.txt \
+    && test -s /etc/comfyui/comfyui-vram-flags.txt
+
 # 4. Preinstalar los 12 Custom Nodes fijados por SHA en config/nodes.lock (REP-01 / MED-03 / CRIT-02)
 #    - Soporta tanto requirements.txt como requirements-no-cupy.txt (ComfyUI-Frame-Interpolation).
 #    - Filtra paquetes que pisan PyTorch/OpenCV/ONNX/NumPy o sam2 (ya instalado por SHA en paso 3).

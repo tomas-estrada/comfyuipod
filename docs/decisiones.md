@@ -263,3 +263,4 @@ Sesión de implementación 2026-10-28. Objetivo: que ninguna salida visible afir
 
 
 
+| M7-OPS-003 | El Dockerfile registra en `/etc/comfyui/comfyui-vram-flags.txt` los flags `*vram*` que soporta exactamente el SHA fijado de ComfyUI (`grep` sobre `comfy/cli_args.py`; el build falla si queda vacío) y el smoke test de CI lo imprime. El triage `cuda-oom` recomienda primero `--vram-headroom 2` (knob de DynamicVRAM) además de `--reserve-vram 2`. | Verificado contra el SHA fijado `bdc63e72` vía GitHub API (2026-11): `cli_args.py` define `--reserve-vram` (→ `EXTRA_RESERVED_VRAM` en `model_management.py:883-885`, usado por `minimum_inference_memory`), `--vram-headroom` y `--disable-dynamic-vram`; DynamicVRAM está activo por defecto (`enables_dynamic_vram()`). Así el runbook de OOM usa flags reales del SHA desplegado y un bump de `nodes.lock` que los cambie se detecta en el build. | Adoptada |
