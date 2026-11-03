@@ -85,8 +85,10 @@ Los cuatro subsistemas de percepción/transcripción del batch M3 son **simulaci
 | M3-IDEA-005 (etiquetar simulación) | ✅ resuelto | Cada respuesta simulada lleva `simulated: true` + `simulation_notice`; el panel muestra aviso persistente; README/walkthrough actualizados a `STUDIO_PERCEPTION_BACKEND=auto|real|sim`. |
 | M3-IDEA-017 (sqlite_vec duro) | ✅ resuelto | `perception/store.py` eleva `PerceptionUnavailableError` degradable en vez de tumbar el servidor (ver comentario en `store.py:17` y `app.py` health S13). |
 | M3-IDEA-020 (tests endpoints identities/faces) | ✅ resuelto | `tests/test_m1_endpoints.py` cubre CRUD de `identities` y `faces/index` + `search/combined`; `tests/agent/test_tools_m4_pipeline.py` cubre registro de identidad. |
+| M3-IDEA-010 (ffprobe EDL) | ✅ resuelto | El renderer rechaza fuentes y salidas EDL que ffprobe no puede verificar; regresión cubierta en `tests/test_m1_hardening.py` (PR #44). |
+| M3-OPS-004 (documentar configuración Studio) | ✅ resuelto | README y guía de producción describen recuperación/webhooks; `comfy rent studio` reenvía las cuatro opciones y enmascara URL/secreto en `--dry-run`. |
 | M3-IDEA-001..004 (backends ML reales) | ◐ parcial | `ml/backends.py` implementa backends reales con probe y fallback etiquetado (`STUDIO_PERCEPTION_BACKEND`); el índice CLIP del panel (`perception/clip_index.py`) sigue siendo el extractor determinista local (documentado en README). |
-| M3-IDEA-010..016, 018, 021, 022, OPS-001..004, SEC-003 tests EDL | ⏳ pendiente | Sin cambios desde la redacción del backlog. |
+| M3-IDEA-011..016, 018, 021, 022, OPS-001..003, SEC-003 tests EDL | ⏳ pendiente | Revisar contra el código antes de elegir tareas; varias sugerencias originales ya están implementadas. |
 
 ## 7. Priorización sugerida
 
