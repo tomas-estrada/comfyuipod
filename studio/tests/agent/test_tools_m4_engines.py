@@ -123,7 +123,7 @@ async def test_download_model_rejects_unknown_group(engine_tool_context: ToolCon
     from comfy_studio.agent.tools import ToolExecutionError
 
     with pytest.raises(ToolExecutionError, match="Grupo de pesos desconocido"):
-        await belt.execute("download_model", {"model_group": "minimax"}, engine_tool_context)
+        await belt.execute("download_model", {"model_group": "sd15"}, engine_tool_context)
 
 
 def test_engine_tools_registered_with_safety_flags() -> None:

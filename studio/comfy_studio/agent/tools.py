@@ -26,6 +26,7 @@ from ..templates import (
 TemplateIdLiteral = Literal[
     "face_fix",
     "latentsync",
+    "minimax_r2v",
     "vace_inpaint",
     "vace_restyle",
     "vace_swap",
@@ -45,6 +46,7 @@ TemplateIdLiteral = Literal[
 VALID_TEMPLATES: tuple[str, ...] = (
     "face_fix",
     "latentsync",
+    "minimax_r2v",
     "vace_inpaint",
     "vace_restyle",
     "vace_swap",
@@ -223,7 +225,8 @@ class EnqueueRenderArgs(BaseModel):
         ...,
         description=(
             "Identificador de la plantilla API-format a ejecutar: "
-            "face_fix, latentsync, vace_inpaint, vace_restyle, vace_swap, wan_flf2v, wan_i2v, "
+            "face_fix, latentsync, minimax_r2v, vace_inpaint, vace_restyle, "
+            "vace_swap, wan_flf2v, wan_i2v, "
             "wan_i2v_5b, wan_s2v, wan_t2v, wan_t2v_5b, sdxl_image, sdxl_ipadapter "
             "o hunyuan3d_image_to_3d."
         ),
@@ -936,7 +939,8 @@ class DownloadModelArgs(BaseModel):
         ...,
         description=(
             "Grupo de pesos opt-in a descargar: 'animate' (STUDIO_INCLUDE_ANIMATE=1, "
-            "+17.15 GiB) o 'three_d' (STUDIO_INCLUDE_3D=1)."
+            "+17.15 GiB), 'minimax' (STUDIO_INCLUDE_MINIMAX=1, +42.03 GB, Hailuo 3.0 "
+            "local) o 'three_d' (STUDIO_INCLUDE_3D=1)."
         ),
     )
 
@@ -2372,6 +2376,21 @@ async def _handle_download_model(
             "available": available,
             "reason": reason,
         }
+    if group == "minimax":
+        available = bool(cfg.minimax_weights_available())
+        reason = None if available else (
+            "Los pesos de MiniMax H3 (Hailuo 3.0) Ref2VA pruned-int8 se descargan "
+            "con STUDIO_INCLUDE_MINIMAX=1 y reinicio del pod (+42.03 GB: DiT 19.5 "
+            "GiB + Qwen3-VL nvfp4 14.6 GiB + VAEs + LoRA turbo 4-step)."
+        )
+        return {
+            "status": "available" if available else "unavailable",
+            "project_id": context.project_id,
+            "model_group": "minimax",
+            "templates": ["minimax_r2v"],
+            "available": available,
+            "reason": reason,
+        }
     if group in ("three_d", "3d"):
         available = bool(cfg.three_d_weights_available())
         reason = None if available else (
@@ -2387,7 +2406,7 @@ async def _handle_download_model(
             "reason": reason,
         }
     raise ToolExecutionError(
-        f"Grupo de pesos desconocido: {group!r}. Grupos válidos: animate, three_d."
+        f"Grupo de pesos desconocido: {group!r}. Grupos válidos: animate, minimax, three_d."
     )
 
 
@@ -2631,7 +2650,8 @@ def create_default_tool_belt() -> ToolBelt:
             name="enqueue_render",
             description=(
                 "Encola y ejecuta un render de vídeo o imagen en ComfyUI a partir de una "
-                "plantilla curada (face_fix, latentsync, vace_inpaint, vace_restyle, vace_swap, "
+                "plantilla curada (face_fix, latentsync, minimax_r2v, "
+                "vace_inpaint, vace_restyle, vace_swap, "
                 "wan_flf2v, wan_i2v, wan_i2v_5b, wan_s2v, wan_t2v, wan_t2v_5b, "
                 "sdxl_image, sdxl_ipadapter). Valida los parámetros antes de "
                 "enviar a ComfyUI."

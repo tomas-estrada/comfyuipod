@@ -370,6 +370,7 @@ class StudioConfig:
     studio_stub_llm: bool = False
     studio_include_animate: bool = False
     studio_include_3d: bool = False
+    studio_include_minimax: bool = False
     comfy_user: str = "admin"
     comfy_pass: str | None = field(default=None, repr=False)
     vast_api_key: str | None = field(default=None, repr=False)
@@ -516,6 +517,9 @@ class StudioConfig:
             studio_include_3d=_parse_bool(
                 source.get("STUDIO_INCLUDE_3D"), default=include_3d_default
             ),
+            studio_include_minimax=_parse_bool(
+                source.get("STUDIO_INCLUDE_MINIMAX"), default=False
+            ),
             comfy_user=(
                 source.get("COMFY_USER", "").strip()
                 or source.get("STUDIO_AUTH_USER", "").strip()
@@ -583,6 +587,17 @@ class StudioConfig:
     def masked_comfy_pass_status(self) -> str:
         return "<definida>" if self.comfy_pass else "<no definida>"
 
+    def minimax_weights_available(self) -> bool:
+        """
+        ¿Están previstos los pesos del grupo MiniMax H3 (Hailuo 3.0)?
+
+        `STUDIO_INCLUDE_MINIMAX=1` hace que `download-models.sh` descargue el
+        set local Ref2VA pruned-int8 (+42.03 GB: DiT 19.5 GiB + Qwen3-VL nvfp4
+        14.6 GiB + VAEs + LoRA turbo); sin él la plantilla `minimax_r2v` no se
+        ofrece ni acepta submits.
+        """
+        return bool(self.studio_include_minimax)
+
     def animate_weights_available(self) -> bool:
         """
         ¿Están previstos los pesos del grupo Animate (Wan 2.2 Animate 14B)?
@@ -620,6 +635,7 @@ class StudioConfig:
             "STUDIO_STUB_LLM": "1" if self.studio_stub_llm else "0",
             "STUDIO_INCLUDE_ANIMATE": "1" if self.studio_include_animate else "0",
             "STUDIO_INCLUDE_3D": "1" if self.studio_include_3d else "0",
+            "STUDIO_INCLUDE_MINIMAX": "1" if self.studio_include_minimax else "0",
             "COMFY_USER": self.comfy_user,
             "COMFY_PASS": self.masked_comfy_pass_status(),
             "VAST_API_KEY": "<definida>" if self.vast_api_key else "<no definida>",

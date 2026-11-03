@@ -28,6 +28,7 @@
 #   - campplus          :  3 archivos |      28,037,453 B (  0.03 GB /   0.03 GiB) | Apache-2.0
 #   - TOTAL FASE 3 BASE : 77 archivos | 146,049,867,640 B (146.05 GB / 136.02 GiB)
 #   - animate_opt_in    : +1 archivo  | +18,413,068,672 B (+18.41 GB / +17.15 GiB) | Apache-2.0 (STUDIO_INCLUDE_ANIMATE=1)
+#   - minimax_h3_opt_in : +5 archivos | +42,030,035,159 B (+42.03 GB / +39.13 GiB) | minimax-h3-community (STUDIO_INCLUDE_MINIMAX=1)
 #   - three_d_opt_in    : +1 archivo  | +7,365,943,290 B (+7.37 GB / +6.86 GiB) | Tencent Hunyuan Community License (STUDIO_INCLUDE_3D=1 o MODEL_PROFILE=unreal)
 #
 # Perfiles soportados vía variable de entorno MODEL_PROFILE (por defecto 'all'):
@@ -46,6 +47,9 @@
 #   - HF_HUB_DISABLE_XET     : Si se define a "1", desactiva el motor Rust hf_xet y usa
 #                              descarga HTTP clásica (útil si el host tiene HostBuffer
 #                              limitado o si hf_xet consume demasiada RAM).
+#   - STUDIO_INCLUDE_MINIMAX  : Si se define a "1", añade MiniMax H3 (Hailuo 3.0)
+#                               Ref2VA pruned-int8 + Qwen3-VL nvfp4 + VAVs + LoRA turbo
+#                               (+42.03 GB) para generación local con audio estéreo.
 #   - STUDIO_INCLUDE_ANIMATE : Si se define a "1" en perfil 'studio', añade el modelo
 #                              base wan2.2_animate_14B_int8_convrot (+18.41 GB; requiere
 #                              alquiler de disco ≥ 250 GB).
@@ -386,6 +390,7 @@ run_phase3() {
     fi
 
     local include_animate="${STUDIO_INCLUDE_ANIMATE:-0}"
+    local include_minimax="${STUDIO_INCLUDE_MINIMAX:-0}"
     # M3-D: el perfil 'unreal' implica el grupo 3D (Hunyuan3D 2.1) salvo renuncia explícita
     local include_3d="${STUDIO_INCLUDE_3D:-0}"
     if [ "${MODEL_PROFILE}" = "unreal" ] && [ -z "${STUDIO_INCLUDE_3D:-}" ]; then
@@ -405,9 +410,10 @@ meta = data.get("meta") or {}
 cats = meta.get("categories") or {}
 anim = (cats.get("animate_opt_in") or {}).get("bytes", 0)
 three_d = (cats.get("three_d_opt_in") or {}).get("bytes", 0)
+mmx = (cats.get("minimax_h3_opt_in") or {}).get("bytes", 0)
 base_bytes = meta.get("default_bytes", 0)
 print(sum(1 for m in models if not m.get("opt_in")))
-print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in" % (base_bytes / 1e9, anim / 1e9, three_d / 1e9))
+print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in; +%.2f GB MiniMax-H3 opt-in" % (base_bytes / 1e9, anim / 1e9, three_d / 1e9, mmx / 1e9))
 ' | tr -d '\r'
     )"
     phase3_base="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '1p')"
@@ -423,10 +429,13 @@ print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in" % (base_bytes 
     if [ "${include_3d}" = "1" ]; then
         phase3_planned=$((phase3_planned + 1))
     fi
+    if [ "${include_minimax}" = "1" ]; then
+        phase3_planned=$((phase3_planned + 5))
+    fi
 
     log "======================================================================"
     log "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: ${MODEL_PROFILE})"
-    log "PLAN FASE 3: ${phase3_planned} archivos (${MODEL_PROFILE}, STUDIO_INCLUDE_ANIMATE=${include_animate}, STUDIO_INCLUDE_3D=${include_3d})"
+    log "PLAN FASE 3: ${phase3_planned} archivos (${MODEL_PROFILE}, STUDIO_INCLUDE_ANIMATE=${include_animate}, STUDIO_INCLUDE_3D=${include_3d}, STUDIO_INCLUDE_MINIMAX=${include_minimax})"
     log "Manifiesto: ${STUDIO_MANIFEST} (${phase3_sizes})."
     log "======================================================================"
 
@@ -456,17 +465,20 @@ print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in" % (base_bytes 
 
         hf_fetch "${repo_id}" "${remote_path}" "${resolved_dir}" "${filename}" || true
     done < <(
-        STUDIO_MANIFEST_PATH="${STUDIO_MANIFEST}" STUDIO_INCLUDE_ANIMATE_FLAG="${include_animate}" STUDIO_INCLUDE_3D_FLAG="${include_3d}" \
+        STUDIO_MANIFEST_PATH="${STUDIO_MANIFEST}" STUDIO_INCLUDE_ANIMATE_FLAG="${include_animate}" STUDIO_INCLUDE_3D_FLAG="${include_3d}" STUDIO_INCLUDE_MINIMAX_FLAG="${include_minimax}" \
         python3 -c '
 import json, os
 data = json.load(open(os.environ["STUDIO_MANIFEST_PATH"], encoding="utf-8"))
 inc_anim = os.environ.get("STUDIO_INCLUDE_ANIMATE_FLAG", "0") == "1"
 inc_3d = os.environ.get("STUDIO_INCLUDE_3D_FLAG", "0") == "1"
+inc_mmx = os.environ.get("STUDIO_INCLUDE_MINIMAX_FLAG", "0") == "1"
 for m in data["models"]:
     opt = m.get("opt_in")
     if opt == "STUDIO_INCLUDE_ANIMATE" and not inc_anim:
         continue
     if opt == "STUDIO_INCLUDE_3D" and not inc_3d:
+        continue
+    if opt == "STUDIO_INCLUDE_MINIMAX" and not inc_mmx:
         continue
     print("\t".join([m["repo_id"], m["remote_path"], m["target_dir"], m["filename"], str(m["bytes"])]))
 '
