@@ -1151,24 +1151,43 @@
             if (!resp.ok) return;
             const data = await resp.json();
             state.templates = Array.isArray(data.templates) ? data.templates : [];
-            pruneUnavailableTemplateOptions();
+            syncTemplateOptions(state.templates);
             renderTemplateDoc();
         } catch (_err) {
             // Ignorar error inicial
         }
     }
 
-    function pruneUnavailableTemplateOptions() {
-        // No ofrecer plantillas cuyos pesos no están en el pod (p. ej. Hunyuan3D
-        // sin STUDIO_INCLUDE_3D=1 ni MODEL_PROFILE=unreal).
+    function syncTemplateOptions(templates) {
+        // Reconstruye el <select> completo desde el registro de la API: así las
+        // plantillas nuevas añadidas al backend aparecen solas en el panel, y las
+        // que no tienen pesos en este pod (available === false, p. ej. Hunyuan3D
+        // sin STUDIO_INCLUDE_3D=1) se excluyen.
         const selectEl = document.getElementById("template-select");
         if (!selectEl) return;
-        for (const option of Array.from(selectEl.options)) {
-            const tpl = state.templates.find((t) => t.id === option.value);
-            if (tpl && tpl.available === false) {
-                option.remove();
-            }
+        const available = (templates || []).filter((t) => t && t.id && t.available !== false);
+        const prevValue = selectEl.value;
+        selectEl.innerHTML = "";
+        for (const tpl of available) {
+            const opt = document.createElement("option");
+            opt.value = tpl.id;
+            opt.textContent = `${tpl.id} — ${tpl.name || tpl.id}`;
+            selectEl.appendChild(opt);
         }
+        if (available.some((t) => t.id === prevValue)) {
+            selectEl.value = prevValue;
+        } else if (available.length > 0) {
+            selectEl.value = available[0].id;
+        }
+        const badge = document.getElementById("template-count-badge");
+        if (badge) {
+            badge.textContent = `${available.length} plantillas parametrizadas`;
+        }
+    }
+
+    function pruneUnavailableTemplateOptions() {
+        // Compatibilidad: reconstruye el selector con las plantillas disponibles.
+        syncTemplateOptions(state.templates);
     }
 
     function renderTemplateDoc() {
@@ -1294,18 +1313,33 @@
             prompt: promptText,
             steps: stepsVal,
         };
+        // Plantillas cuyo parámetro principal es vídeo / imagen / audio.
+        const VIDEO_PRIMARY = new Set([
+            "vace_inpaint", "vace_restyle", "vace_swap", "face_fix", "latentsync", "wan_animate_cont",
+        ]);
+        const IMAGE_PRIMARY = new Set([
+            "wan_i2v", "wan_i2v_5b", "sdxl_ipadapter", "wan_s2v", "minimax_r2v", "wan_animate",
+            "hunyuan3d_image_to_3d",
+        ]);
+        const AUDIO_PARAM = new Set(["wan_s2v", "latentsync"]);
         if (selectedAssetId) {
-            if (templateId === "vace_inpaint" || templateId === "vace_restyle" || templateId === "vace_swap") {
+            const asset = (state.assets || []).find((a) => a.id === selectedAssetId);
+            const kind = asset && asset.kind ? String(asset.kind) : "";
+            if (kind === "audio" && AUDIO_PARAM.has(templateId)) {
+                params.audio_asset_id = selectedAssetId;
+            } else if (kind === "video" && VIDEO_PRIMARY.has(templateId)) {
                 params.video_asset_id = selectedAssetId;
-            } else if (
-                templateId === "wan_i2v" ||
-                templateId === "wan_i2v_5b" ||
-                templateId === "sdxl_ipadapter" ||
-                templateId === "wan_s2v"
-            ) {
+            } else if (kind === "image" && IMAGE_PRIMARY.has(templateId)) {
                 params.image_asset_id = selectedAssetId;
-            } else if (templateId === "wan_flf2v") {
-                params.first_frame_asset_id = selectedAssetId;
+            } else if (!kind) {
+                // Sin metadatos de kind: usar el parámetro principal de la plantilla.
+                if (VIDEO_PRIMARY.has(templateId)) {
+                    params.video_asset_id = selectedAssetId;
+                } else if (templateId === "wan_flf2v") {
+                    params.first_frame_asset_id = selectedAssetId;
+                } else if (IMAGE_PRIMARY.has(templateId)) {
+                    params.image_asset_id = selectedAssetId;
+                }
             }
         }
         if (templateId === "wan_flf2v" && selectedLastFrameId) {
