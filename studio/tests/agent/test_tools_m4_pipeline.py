@@ -401,3 +401,55 @@ async def test_upscale_asset_rejects_non_image(pipeline_tool_context: ToolContex
     belt = create_default_tool_belt()
     with pytest.raises(ToolExecutionError, match="no encontrado"):
         await belt.execute("upscale_asset", {"asset_id": "no-existe"}, pipeline_tool_context)
+
+
+# --- generate_speech tts_engine=indextts (zero-shot clone) -------------------
+
+
+@pytest.mark.anyio
+async def test_generate_speech_indextts_zero_shot_clone(
+    pipeline_tool_context: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_STUB_INDEXTTS", "1")
+    belt = create_default_tool_belt()
+    ref = pipeline_tool_context.store.save_upload(
+        pipeline_tool_context.project_id,
+        filename="kid_voice.wav",
+        content_type="audio/wav",
+        data=b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 16,
+        max_upload_bytes=8 * 1024 * 1024,
+        category="voice",
+        metadata={},
+    )
+    result = await belt.execute(
+        "generate_speech",
+        {
+            "text": "¡Vamos, es mi coche favorito!",
+            "tts_engine": "indextts",
+            "reference_audio_asset_id": str(ref["id"]),
+        },
+        pipeline_tool_context,
+    )
+    assert result["status"] == "generated"
+    assert result["voice_clone_applied"] is True
+    assert result["voice_clone_skipped_reason"] is None
+    asset = result["output_asset"]
+    meta = asset.get("metadata") or {}
+    assert meta.get("engine") == "indextts25"
+    assert meta.get("reference_audio_asset_id") == ref["id"]
+
+
+@pytest.mark.anyio
+async def test_generate_speech_indextts_requires_reference(
+    pipeline_tool_context: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_STUB_INDEXTTS", "1")
+    belt = create_default_tool_belt()
+    from comfy_studio.agent.tools import ToolExecutionError
+
+    with pytest.raises(ToolExecutionError, match="requiere reference_audio_asset_id"):
+        await belt.execute(
+            "generate_speech",
+            {"text": "hola", "tts_engine": "indextts"},
+            pipeline_tool_context,
+        )

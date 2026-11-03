@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""Adaptador CLI `indextts25` para el motor indextts del estudio.
+
+El motor (`IndexttsEngine._run_model`) invoca este binario con la interfaz
+fija:
+
+    indextts25 --model-dir DIR --reference REF.wav --text "..." \
+        --output OUT.wav [--lang es] [--emotion-text "..."]
+
+IndexTTS-2.5 (index-tts/index-tts, SHA fijado) hace clonación de voz
+zero-shot desde texto: sintetiza el texto con el timbre del audio de
+referencia, sin entrenamiento por hablante y sin fairseq (a diferencia de
+RVC, que además es conversión de voz, no síntesis).
+
+El paquete NO se hornea en el entorno principal del pod: sus pines
+(torch==2.8, numpy==2.2.6, transformers==4.52.1, keras, tensorboard)
+clavarían el pod. Sigue el patrón del propio Dockerfile (Chatterbox/
+CosyVoice3): vive en un VENV AISLADO creado en runtime bajo
+`${COMFY_DATA_DIR}/venvs/indextts` (persistente en el volumen), igual que
+VBench (nivel 2 de QA).
+
+Los PESOS (grupo `indextts`, 22 archivos, 5.11 GiB) ya viven en
+`--model-dir` (descargados por download-models.sh). Los modelos auxiliares
+(w2v-bert-2.0, semantic_codec, campplus, bigvgan) los descarga el propio
+paquete a `{model_dir}/hf_cache` en el primer uso, cacheados en el volumen.
+
+Fallos TIPADOS con salida != 0: sin venv, sin pesos, sin referencia o
+inferencia errónea. Nunca se finge audio.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import venv
+from pathlib import Path
+
+#: SHA pinneado del repo index-tts/index-tts (infer_v2_5.IndexTTS2).
+_INDEX_TTS_REF = "d9e41aac89fd00b3d71497fddb287b7f24613712"
+
+_VENV_ENV = "STUDIO_INDEXTTS_VENV"
+_DEFAULT_VENV_SUBDIR = "venvs/indextts"
+
+
+def _fail(msg: str, code: int) -> int:
+    sys.stderr.write(f"indextts25: {msg}\n")
+    return code
+
+
+def _resolve_venv_dir() -> Path:
+    explicit = (os.environ.get(_VENV_ENV) or "").strip()
+    if explicit:
+        return Path(explicit)
+    data_dir = (os.environ.get("COMFY_DATA_DIR") or "/workspace/comfyui-data").strip()
+    return Path(data_dir) / _DEFAULT_VENV_SUBDIR
+
+
+def _ensure_venv(venv_dir: Path) -> Path:
+    """Crea (una sola vez) el venv aislado con index-tts pinneado.
+
+    Persiste en el volumen: el coste de instalar se paga una vez por pod.
+    """
+    py = venv_dir / "bin" / "python"
+    marker = venv_dir / ".indextts_installed"
+    if marker.is_file() and py.is_file():
+        return py
+    venv_dir.mkdir(parents=True, exist_ok=True)
+    venv.create(venv_dir, with_pip=True, clear=False)
+    # torch: paquete pesado con pin propio (2.8.*) — se instala en el venv,
+    # aislado del torch 2.9+cu128 del pod. CPU por defecto; CUDA via
+    # --extra-index-url si el operador lo define en STUDIO_INDEXTTS_PIP_EXTRA.
+    extra = (os.environ.get("STUDIO_INDEXTTS_PIP_EXTRA") or "").strip()
+    base_cmd = [str(py), "-m", "pip", "install", "--no-cache-dir"]
+    cmds = [
+        base_cmd
+        + ["--upgrade", "pip", "setuptools", "wheel"],
+        base_cmd
+        + [f"git+https://github.com/index-tts/index-tts@{_INDEX_TTS_REF}"]
+        + (extra.split() if extra else []),
+    ]
+    for cmd in cmds:
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            sys.stderr.write(res.stderr[-2000:])
+            raise RuntimeError(
+                f"pip falló en el venv indextts: {' '.join(cmd[:6])}..."
+            )
+    marker.write_text(_INDEX_TTS_REF, encoding="utf-8")
+    return py
+
+
+_SYNTH_PY = r"""
+import sys
+
+args = dict(item.split("=", 1) for item in sys.argv[1:])
+from indextts.infer_v2_5 import IndexTTS2
+
+tts = IndexTTS2(
+    cfg_path=f"{args['model_dir']}/config.yaml",
+    model_dir=args["model_dir"],
+    use_qwen_emo=bool(args.get("emotion_text")),
+)
+infer_kwargs = {}
+if args.get("emotion_text"):
+    infer_kwargs.update({"use_emo_text": True, "emo_text": args["emotion_text"]})
+tts.infer(
+    args["reference"],
+    args["text"],
+    args["output"],
+    args.get("lang", "es"),
+    **infer_kwargs,
+)
+print(f"OK {args['output']}")
+"""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="indextts25", add_help=True)
+    parser.add_argument("--model-dir", required=True)
+    parser.add_argument("--reference", required=True)
+    parser.add_argument("--text", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--lang", default="es")
+    parser.add_argument("--emotion-text", default="")
+    parser.add_argument(
+        "--timeout", type=float, default=900.0, help="Timeout de inferencia (s)."
+    )
+    args = parser.parse_args()
+
+    model_dir = Path(args.model_dir)
+    if not (model_dir / "config.yaml").is_file() or not (model_dir / "gpt.pth").is_file():
+        return _fail(
+            f"pesos IndexTTS-2.5 ausentes en {model_dir}; "
+            "descárgalos con la fase indextts de download-models.sh",
+            3,
+        )
+    ref = Path(args.reference)
+    if not ref.is_file():
+        return _fail(f"audio de referencia inexistente: {ref}", 4)
+
+    try:
+        venv_py = _ensure_venv(_resolve_venv_dir())
+    except Exception as exc:  # noqa: BLE001
+        return _fail(f"venv indextts no disponible: {exc}", 5)
+
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        str(venv_py),
+        "-c",
+        _SYNTH_PY,
+        f"model_dir={model_dir}",
+        f"reference={ref}",
+        f"text={args.text}",
+        f"output={out}",
+        f"lang={args.lang}",
+        f"emotion_text={args.emotion_text}",
+    ]
+    try:
+        res = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", timeout=args.timeout
+        )
+    except subprocess.TimeoutExpired:
+        return _fail(f"inferencia excedió {args.timeout:.0f}s", 6)
+    if res.returncode != 0 or not out.is_file():
+        sys.stderr.write((res.stderr or "")[-2000:])
+        return _fail(f"inferencia falló (rc={res.returncode})", 7)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

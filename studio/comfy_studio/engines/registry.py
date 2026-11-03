@@ -127,7 +127,21 @@ def build_default_registry() -> EngineRegistry:
             "voice_clone",
             EngineTier.WARM,
             wired=True,
-            note="RVC: clonar/sintetizar voz; modelo pinned en imagen",
+            note=(
+                "RVC: conversión de voz; requiere fairseq (NO horneado) — "
+                "para clonación usable ver 'indextts'"
+            ),
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "indextts",
+            EngineTier.WARM,
+            wired=True,
+            note=(
+                "IndexTTS-2.5: clonación zero-shot texto+referencia->voz; "
+                "pesos grupo indextts (5.11 GiB) descargados; venv aislado runtime"
+            ),
         )
     )
     reg.register(
