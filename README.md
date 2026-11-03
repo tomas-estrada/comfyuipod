@@ -156,6 +156,7 @@ Todos los tamaños han sido verificados contra la cabecera `x-linked-size` de Hu
 | `HF_TOKEN` | *(Vacío)* | Token opcional de HuggingFace (leído automáticamente del entorno por `hf` sin exponerse en argumentos de proceso ni en `/report.md`). |
 | `COMFY_DATA_DIR` | `/workspace/comfyui-data` | Ruta donde se almacenan `models/`, `input/`, `output/` y `user/` (actualiza automáticamente `extra_model_paths.yaml`). |
 | `COMFYUI_EXTRA_ARGS` | *(Vacío)* | Flags adicionales para `python3 main.py` de ComfyUI. Ejemplo útil en RTX 5090 ante errores `HostBuffer` / OOM inesperados: `--disable-pinned-memory` (ver sección 5.7). |
+| `PYTORCH_CUDA_ALLOC_CONF` | `expandable_segments:True` (fijado en la imagen) | Config del allocator de CUDA de PyTorch aplicada por defecto a ComfyUI y al studio-server (M7-OPS-001): mitiga los OOM por fragmentación en sesiones largas con cargas mixtas (sección 5.7). Sobrescribe con `-e PYTORCH_CUDA_ALLOC_CONF=...`; pon `-e PYTORCH_CUDA_ALLOC_CONF=` (vacío) para desactivarla. |
 | `COMFY_MAX_RESTARTS` | `5` | Número máximo de reinicios automáticos de ComfyUI ante caídas antes de pasar a estado `exhausted` (manteniendo Nginx, `/home` y `/status` activos para diagnóstico). |
 | `COMFY_RESTART_DELAY` | `5` | Segundos de espera entre caídas de ComfyUI antes de que el supervisor relance `main.py`. |
 | `COMFY_HEALTHY_UPTIME` | `600` | Segundos de funcionamiento continuo tras los cuales el supervisor resetea `restarts` a `0` e incrementa `healthy_resets`. |
@@ -342,7 +343,7 @@ Cuando alquilas con `comfy rent studio` y abres `comfy studio` (`/studio/`), pue
 ### 7. OOM o `HostBuffer.read_file_slice failed` en RTX 5090 con modelos grandes
 - **Síntoma**: Con Wan, FLUX.2 u otros modelos pesados, ComfyUI falla en todas las generaciones con un error de CUDA que menciona `HostBuffer`, o se queda sin memoria aunque la VRAM no esté llena. Son fallos conocidos de la gestión dinámica de VRAM y de la memoria *pinned* en Blackwell (ComfyUI issues #15255 y #14250, 2026), reportados a NVIDIA.
 - **Primer intento**: añade `-e COMFYUI_EXTRA_ARGS=--disable-pinned-memory` a las Docker Options de la plantilla y reinicia la instancia. Si tienes varias GPU en el host, `--cuda-device 0` también está documentado como alternativa.
-- **Sesiones largas en RTX 5090 con cargas mixtas** (imagen + vídeo + upscaling seguidos): la VRAM se fragmenta con el tiempo. Puedes añadir `-e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` a las Docker Options para mitigar la fragmentación del allocator de CUDA (opcional; no afecta a cargas cortas).
+- **Sesiones largas en RTX 5090 con cargas mixtas** (imagen + vídeo + upscaling seguidos): la VRAM se fragmenta con el tiempo. La imagen ya trae activo `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` por defecto (M7-OPS-001), que mitiga la fragmentación del allocator de CUDA; si lo desactivas con `-e PYTORCH_CUDA_ALLOC_CONF=` y aparecen OOM con VRAM libre, vuelve a activarlo.
 - **Si el contenedor se reinicia o se apaga solo**: es un OOM de **RAM del sistema** (el kernel mata a `python3` con código 137). Elige un host con más RAM (≥ 32 GB con `MODEL_PROFILE=all`), o usa un perfil menor para que la Fase 2 no coincida con la carga de FLUX.
 
 ### 8. La Fase 2 se queda colgada o devuelve muchos errores 503
