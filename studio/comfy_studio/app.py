@@ -8,6 +8,7 @@ import binascii
 import logging
 import os
 import secrets
+import shutil
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
@@ -1026,6 +1027,15 @@ def create_app(
                 "simulated": getattr(request.app.state, "perception_backend", "sim") == "sim",
                 "stale": bool(getattr(request.app.state, "perception_stale", False)),
                 "probe": getattr(request.app.state, "perception_probe_result", None),
+            },
+            # Runtime media prerequisites are resolved through PATH so operators can
+            # diagnose degraded EDL/keyframe features consistently on any host OS.
+            "media_tools": {
+                "ffmpeg_available": shutil.which("ffmpeg") is not None,
+                "ffprobe_available": shutil.which("ffprobe") is not None,
+                "sqlite_vec_available": perception_available,
+                "perception_backend": getattr(request.app.state, "perception_backend", "sim"),
+                "simulated": getattr(request.app.state, "perception_backend", "sim") == "sim",
             },
             "schema_version": active_store.get_schema_version(),
             # M5-F7: estado por motor del roster (ready/stub/unwired) para que el
