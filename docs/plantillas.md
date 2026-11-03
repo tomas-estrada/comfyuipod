@@ -1,6 +1,6 @@
 # Registro de Plantillas de Comfy Studio (`templates-registry`)
 
-Este documento describe las **13 plantillas curadas** (hitos M2 + ampliaciones) incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de rendimiento en una **RTX 5090 (32 GB GDDR7)**, el validador estructural y los endpoints HTTP expuestos por `studio-server` (`127.0.0.1:18190`).
+Este documento describe las **17 plantillas curadas** (hitos M2 + ampliaciones) incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de rendimiento en una **RTX 5090 (32 GB GDDR7)**, el validador estructural y los endpoints HTTP expuestos por `studio-server` (`127.0.0.1:18190`).
 
 ---
 
@@ -327,7 +327,7 @@ python -m comfy_studio.templates
 
 | Método y Ruta | Descripción |
 |---|---|
-| `GET /studio/api/templates` | Lista las 13 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
+| `GET /studio/api/templates` | Lista las 17 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
 | `GET /studio/api/templates/{template_id}` | Devuelve el detalle completo de una plantilla incluyendo su grafo `workflow` en formato API (`404` si no existe). |
 | `POST /studio/api/templates/{template_id}/submit` | Valida `params` contra el schema de la plantilla (`422` con detalle si hay campos inválidos, fuera de rango o desconocidos, sin encolar en ComfyUI), sube a ComfyUI los `*_asset_id` referenciados del proyecto, crea el job en `studio.db`, ejecuta el workflow contra ComfyUI, descarga las salidas vía `/view` y las registra en la galería del proyecto (`category="outputs"`). |
 | `GET /studio/api/projects/{project_id}/gallery` | Lista los assets generados en la galería del proyecto enriquecidos con `preview_url`, `download_url` y `view_url`. |

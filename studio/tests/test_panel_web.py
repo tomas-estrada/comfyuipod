@@ -1526,11 +1526,12 @@ def test_panel_render_template_doc_uses_api_template_schema(
 
 
 def test_panel_does_not_offer_templates_without_weights(client: TestClient) -> None:
-    """VAL-UNREAL-004: sin pesos 3D el panel retira Hunyuan3D del selector.
+    """VAL-UNREAL-004: el panel reconstruye el selector desde la API y excluye
+    plantillas sin pesos (Hunyuan3D sin STUDIO_INCLUDE_3D).
 
-    Ejecuta el `panel/app.js` real en Node: `loadTemplates()`/`pruneUnavailableTemplateOptions()`
-    eliminan del `<select>` la opción cuya plantilla viene con `available: false` y
-    conservan las disponibles.
+    Ejecuta el `panel/app.js` real en Node: `loadTemplates()`/`syncTemplateOptions()`
+    pueblan el `<select>` con TODAS las plantillas de GET /studio/api/templates
+    salvo las que vienen con `available: false`.
     """
     templates = client.get("/studio/api/templates").json()["templates"]
     by_id = {tpl["id"]: tpl for tpl in templates}
@@ -1561,9 +1562,11 @@ def test_panel_does_not_offer_templates_without_weights(client: TestClient) -> N
 
     assert result["optionsBefore"] == options_before
     assert "hunyuan3d_image_to_3d" not in result["optionsAfter"]
-    assert result["optionsAfter"] == [
-        option for option in options_before if option != "hunyuan3d_image_to_3d"
-    ]
+    # El selector queda poblado con todas las plantillas DISPONIBLES de la API,
+    # no solo con las opciones hardcodeadas iniciales.
+    expected_after = [t["id"] for t in templates_payload if t.get("available") is not False]
+    assert result["optionsAfter"] == expected_after
+    assert len(result["optionsAfter"]) > len(options_before) - 1
     # La tarjeta de documentación muestra la plantilla seleccionada (disponible).
-    assert "wan_t2v" in result["docCardText"] or "Wan" in result["docCardText"]
+    assert result["optionsAfter"][0] in result["docCardText"] or "Wan" in result["docCardText"]
 
