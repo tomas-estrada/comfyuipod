@@ -28,8 +28,11 @@ from comfy_studio.orchestration.state import (
     Shot,
 )
 
-#: umbral VBench por defecto que un shot debe superar para aceptarse.
+#: umbrales por defecto que un shot debe superar para aceptarse: la QA
+#: técnica (VBench/FFmpeg) y la QA de CONTENIDO (LLM de visión del evaluador
+#: semántico). Un shot se acepta solo si pasa AMBAS.
 DEFAULT_VBENCH_MIN = float(os.environ.get("STUDIO_ORCH_VBENCH_MIN", "0.55"))
+DEFAULT_SEMANTIC_MIN = float(os.environ.get("STUDIO_ORCH_SEMANTIC_MIN", "0.6"))
 
 #: duración objetivo de un shot (dentro del rango 3–7 s del plan maestro).
 DEFAULT_SHOT_SECONDS = 5.0
@@ -92,6 +95,7 @@ def plan_production(
     llm: PlannerLLM | None = None,
     *,
     vbench_min: float = DEFAULT_VBENCH_MIN,
+    semantic_min: float = DEFAULT_SEMANTIC_MIN,
 ) -> ProductionState:
     """Puebla `state` con la jerarquía del plan (nodo `plan` del grafo).
 
@@ -112,7 +116,7 @@ def plan_production(
             shot = Shot(
                 description=str(sh_d.get("description", state.idea))[:200],
                 duration_s=float(sh_d.get("duration_s", DEFAULT_SHOT_SECONDS)),
-                acceptance={"vbench_min": vbench_min},
+                acceptance={"vbench_min": vbench_min, "semantic_min": semantic_min},
                 depends_on=list(sh_d.get("depends_on", [])),
             )
             shot.layers = [

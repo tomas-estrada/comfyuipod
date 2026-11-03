@@ -397,7 +397,14 @@ def build_server_collaborators(
         if engines
         else None
     )
-    evaluator = QaShotEvaluator(qa_engine) if qa_engine is not None else None
+    # Evaluador combinado: QA técnica del motor + QA de CONTENIDO del LLM de
+    # visión. Con llm_client el shot debe pasar AMBAS (vbench_min y
+    # semantic_min); sin llm_client queda la QA técnica sola.
+    evaluator = (
+        SemanticQaEvaluator(qa_engine, llm_client)
+        if qa_engine is not None
+        else None
+    )
     assembler = (
         EngineAssembler(editor_engine, compositor_engine=compositor_engine)
         if editor_engine is not None
@@ -416,3 +423,157 @@ def build_server_collaborators(
         replan_shot=_replan if planner is not None else None,
         assembler=assembler,
     )
+
+
+# ---------------------------------------------------------------------------
+# 6) Evaluador semántico: la QA técnica del motor + la QA de CONTENIDO del LLM
+#    de visión. Cierra el lazo adaptativo de verdad: un shot puede ser
+#    técnicamente limpio (VBench/FFmpeg) y aún así mostrar otra cosa que la
+#    descrita por el plan. Con 'semantic' en el score, el escalón de replan se
+#    dispara también por desajuste de contenido, no solo por frames negros.
+# ---------------------------------------------------------------------------
+
+
+def _extract_keyframes_sync(
+    video_path: str, *, max_frames: int = 8, timeout_s: float = 60.0
+) -> list[bytes]:
+    """Extrae hasta `max_frames` keyframes JPEG de un vídeo con ffmpeg.
+
+    Síncrono a propósito: el grafo corre en un hilo sin bucle de eventos.
+    Falla blanda: sin ffmpeg o vídeo ilegible devuelve [] (el evaluador
+    tratará la ausencia de frames como fallo tipado, no como crash).
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return []
+    with tempfile.TemporaryDirectory(prefix="orch_semqa_") as tmp:
+        out_dir = Path(tmp)
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            video_path,
+            "-vf",
+            f"thumbnail={max_frames}",
+            "-frames:v",
+            str(max_frames),
+            str(out_dir / "kf_%02d.jpg"),
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False)
+        except subprocess.TimeoutExpired:
+            return []
+        frames: list[bytes] = []
+        for jf in sorted(out_dir.glob("kf_*.jpg")):
+            frames.append(jf.read_bytes())
+            if len(frames) >= max_frames:
+                break
+        return frames
+
+
+class VisionShotEvaluator:
+    """`ShotEvaluator` de CONTENIDO respaldado por el LLM de visión del estudio.
+
+    Extrae keyframes del `output_path` del shot y pregunta al LLM de visión si
+    muestran lo que la descripción del shot pide. Devuelve {'semantic': 0..1}.
+    Fail-closed: sin vídeo, sin frames, sin LLM o sin JSON legible el score es
+    0.0 — NUNCA se acepta un shot que no se pudo verificar semánticamente.
+    """
+
+    _SYSTEM = (
+        "Eres el control de calidad de contenido de un estudio de vídeo. "
+        "Se te muestran keyframes de un plano renderizado y la descripción "
+        "que el director pidió. Juzga SOLO si el contenido visual cumple la "
+        "descripción (acción, sujeto, escena). Responde EXCLUSIVAMENTE con "
+        "JSON válido: {\"semantic\": <0.0..1.0>, \"reason\": \"<motivo breve>\"}. "
+        "1.0 = cumple completamente; 0.0 = no corresponde."
+    )
+
+    def __init__(self, llm_client: Any, *, max_frames: int = 8, timeout_s: float = 90.0) -> None:
+        self._llm = llm_client
+        self._max_frames = max_frames
+        self._timeout_s = timeout_s
+
+    def evaluate(self, shot: Shot) -> dict[str, float]:
+        from comfy_studio.agent.llm import build_vision_content_part
+
+        if not shot.output_path:
+            return {"semantic": 0.0}
+        frames = _extract_keyframes_sync(
+            shot.output_path, max_frames=self._max_frames
+        )
+        if not frames:
+            return {"semantic": 0.0}
+        content: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": (
+                    f"Descripción pedida del plano: {shot.description}\n"
+                    "¿Los keyframes muestran lo descrito? Responde SOLO el JSON."
+                ),
+            }
+        ]
+        for jpegb in frames:
+            content.append(build_vision_content_part(jpegb, "image/jpeg"))
+        messages = [
+            {"role": "system", "content": self._SYSTEM},
+            {"role": "user", "content": content},
+        ]
+        try:
+            response = asyncio.run(
+                asyncio.wait_for(
+                    self._llm.complete(messages, temperature=0.1),
+                    timeout=self._timeout_s,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("VisionShotEvaluator: LLM de visión falló (%s).", exc)
+            return {"semantic": 0.0}
+        score = _parse_semantic_json(getattr(response, "content", "") or "")
+        return {"semantic": score}
+
+
+def _parse_semantic_json(text: str) -> float:
+    """Extrae {'semantic': x} del texto del LLM; falla a 0.0 (fail-closed)."""
+    import re
+
+    match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            value = float(data.get("semantic", 0.0))
+            return max(0.0, min(1.0, value))
+        except (ValueError, TypeError):
+            pass
+    return 0.0
+
+
+class SemanticQaEvaluator:
+    """Combinación: métrica técnica (QaShotEvaluator) + semántica (visión).
+
+    Devuelve {'vbench': <técnica>, 'semantic': <contenido>}; el
+    `_passes_acceptance` del evaluador comprueba cada umbral `*_min` del
+    acceptance del shot, de modo que un plan con {'vbench_min': 0.55,
+    'semantic_min': 0.6} exige AMBAS dimensiones para aceptar. Sin LLM de
+    visión (o con stub), semantic=0.0 falla cerrado — el shot replanifica o
+    falla, nunca se acepta a ciegas.
+    """
+
+    def __init__(self, qa_engine: Any, llm_client: Any | None = None) -> None:
+        self._tech = QaShotEvaluator(qa_engine)
+        self._vision = VisionShotEvaluator(llm_client) if llm_client is not None else None
+
+    def evaluate(self, shot: Shot) -> dict[str, float]:
+        scores = dict(self._tech.evaluate(shot))
+        if self._vision is not None:
+            scores.update(self._vision.evaluate(shot))
+        else:
+            scores["semantic"] = 0.0
+        return scores

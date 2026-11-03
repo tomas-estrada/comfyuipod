@@ -50,19 +50,34 @@ class ProductionService:
         *,
         checkpointer: ProductionCheckpointer | None = None,
         collaborators: Collaborators | None = None,
+        store: Any | None = None,
     ) -> None:
         self.checkpointer = checkpointer or ProductionCheckpointer()
         self.collaborators = collaborators or Collaborators()
+        # Proyecto de la galería donde se registran las salidas (None = sin
+        # registrar; CI/stubs). Los renders de una producción aprobada pasan a
+        # ser assets de primera clase: buscables, descargables, vision_check.
+        self.store = store
         # puertas de storyboard por producción (serializadas junto al estado).
         self._gates: dict[str, StoryboardGate] = {}
 
     # -- tool: plan_production ----------------------------------------------
 
     def plan_production(
-        self, idea: str, *, cost_cap_usd: float = 0.0
+        self,
+        idea: str,
+        *,
+        cost_cap_usd: float = 0.0,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         """Planifica (barato) y deja la producción esperando aprobación humana."""
         state = ProductionState(idea=idea, cost_cap_usd=cost_cap_usd)
+        if project_id:
+            # fail-closed: un proyecto inexistente se rechaza al planificar,
+            # no al aprobar (cuando ya se gastó la aprobación humana).
+            if self.store is not None and self.store.get_project(project_id) is None:
+                raise LookupError(f"Proyecto {project_id!r} no encontrado")
+            state.metadata["project_id"] = project_id
         _plan(state, self.collaborators.planner)
         # el plan es el "borrador barato": se somete a la puerta.
         gate = StoryboardGate()
@@ -124,11 +139,13 @@ class ProductionService:
             collaborators=self.collaborators,
         )
         final = graph.run(state)
+        registered = self._register_outputs_in_gallery(final)
         self.checkpointer.save(final)
         return {
             "production_id": production_id,
             "phase": final.phase,
             "final_output_path": final.final_output_path,
+            "output_asset_ids": registered,
             "status": self._status_dict(final),
         }
 
@@ -139,6 +156,79 @@ class ProductionService:
         return self._status_dict(state)
 
     # -- helpers -------------------------------------------------------------
+
+    def _register_outputs_in_gallery(self, state: ProductionState) -> list[str]:
+        """Registra las salidas de la producción como assets de la galería.
+
+        Cada shot aceptado y el reel final (si existen físicamente) pasan a ser
+        assets del proyecto con linaje completo (production_id, shot_id,
+        secuencia). Tolerante: sin store, archivo inexistente o fallo de
+        registro, se omite ESE asset y se registra el evento — la producción
+        nunca se cae por el registro de galería.
+        """
+        project_id = state.metadata.get("project_id")
+        if not project_id or self.store is None:
+            return []
+        from pathlib import Path
+
+        registered: list[str] = []
+        for shot in state.all_shots():
+            if shot.status is not ShotStatus.ACCEPTED or not shot.output_path:
+                continue
+            path = Path(shot.output_path)
+            if not path.is_file():
+                state.record(
+                    "gallery_skip", shot=shot.id, reason="output inexistente"
+                )
+                continue
+            try:
+                asset = self.store.save_upload(
+                    project_id,
+                    filename=f"prod_{state.id[:8]}_{shot.id[:12]}.mp4",
+                    content_type="video/mp4",
+                    data=path.read_bytes(),
+                    max_upload_bytes=2 * 1024 * 1024 * 1024,
+                    category="outputs",
+                    metadata={
+                        "production_render": True,
+                        "production_id": state.id,
+                        "shot_id": shot.id,
+                        "shot_description": shot.description,
+                        "production_phase": str(state.phase),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                state.record(
+                    "gallery_error", shot=shot.id, error=str(exc)[:300]
+                )
+                continue
+            registered.append(str(asset["id"]))
+        # reel final
+        if state.final_output_path:
+            reel = Path(state.final_output_path)
+            if reel.is_file():
+                try:
+                    asset = self.store.save_upload(
+                        project_id,
+                        filename=f"prod_{state.id[:8]}_reel.mp4",
+                        content_type="video/mp4",
+                        data=reel.read_bytes(),
+                        max_upload_bytes=2 * 1024 * 1024 * 1024,
+                        category="outputs",
+                        metadata={
+                            "production_render": True,
+                            "production_id": state.id,
+                            "is_final_reel": True,
+                            "production_phase": str(state.phase),
+                        },
+                    )
+                    registered.append(str(asset["id"]))
+                except Exception as exc:  # noqa: BLE001
+                    state.record("gallery_error", error=str(exc)[:300])
+        state.metadata["output_asset_ids"] = registered
+        if registered:
+            state.record("gallery_registered", assets=len(registered))
+        return registered
 
     def _load(self, production_id: str) -> ProductionState:
         state = self.checkpointer.load(production_id)
@@ -157,10 +247,12 @@ class ProductionService:
             "production_id": state.id,
             "phase": state.phase,
             "idea": state.idea,
+            "project_id": state.metadata.get("project_id"),
             "shots_total": len(shots),
             "shots_accepted": accepted,
             "shots_by_status": by_status,
             "storyboard_approved": state.storyboard_approved,
             "final_output_path": state.final_output_path,
+            "output_asset_ids": state.metadata.get("output_asset_ids") or [],
             "complete": state.is_complete(),
         }
