@@ -643,6 +643,28 @@ def _require_perception(request: Request) -> None:
     )
 
 
+async def _run_render_job_task(app: FastAPI, job_id: str) -> None:
+    """Ejecuta en segundo plano un job render encolado por el endpoint de submit (M7-SCR-001).
+
+    Con semáforo acotado (`STUDIO_MAX_CONCURRENT_RENDERS`); ComfyUI serializa la
+    ejecución real. Si el servidor se apaga a mitad, el job queda en estado en
+    vuelo y `recovery.py` lo marca `interrupted` (y lo reanuda una vez) al arrancar.
+    """
+    registry: TemplateRegistry = app.state.template_registry
+    store: ProjectStore = app.state.store
+    client: ComfyUIClient = app.state.comfyui_client
+    broker: ProgressBroker = app.state.broker
+    try:
+        async with app.state.render_semaphore:
+            await registry.execute_render_job(
+                job_id, store=store, comfyui_client=client, broker=broker
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Render en segundo plano del job %s falló", job_id)
+
+
 def create_app(
     config: StudioConfig | None = None,
     *,
@@ -726,6 +748,18 @@ def create_app(
                 await webhook_dispatcher.stop()
             if webhook_notifier is not None:
                 await webhook_notifier.stop()
+            # M7-SCR-001: cancelar los renders en segundo plano pendientes; los jobs
+            # quedan en estado en vuelo y `recovery.py` los reconcilia al arrancar.
+            render_tasks = list(getattr(_app.state, "render_tasks", set()))
+            for render_task in render_tasks:
+                render_task.cancel()
+            if render_tasks:
+                await asyncio.gather(*render_tasks, return_exceptions=True)
+                logger.info(
+                    "STUDIO: %d render(s) en segundo plano cancelados por el apagado "
+                    "(se recuperan al arrancar).",
+                    len(render_tasks),
+                )
 
     app = FastAPI(
         title="Comfy Studio Server",
@@ -748,6 +782,9 @@ def create_app(
         broker=broker,
         redactor=redactor,
     )
+    # M7-SCR-001: tareas de render en segundo plano (submit async) y su semáforo.
+    app.state.render_tasks = set()
+    app.state.render_semaphore = asyncio.Semaphore(cfg.max_concurrent_renders)
     # (El ProductionService se arma más abajo, tras construir app.state.llm_client,
     # porque el cableado de motores reales lo necesita — M6-AGT-001.)
     # M1.2: la construcción de la percepción vectorial NO puede tumbar la app. Si
@@ -1424,6 +1461,7 @@ def create_app(
         template_id: str,
         request: Request,
         project_id: str | None = None,
+        wait: bool = Query(default=False),
     ):
         active_registry: TemplateRegistry = request.app.state.template_registry
         active_store: ProjectStore = request.app.state.store
@@ -1453,7 +1491,7 @@ def create_app(
             raw_params = {k: v for k, v in payload.items() if k != "project_id"}
 
         try:
-            result = await active_registry.submit_render(
+            enqueued = await active_registry.enqueue_render(
                 template_id,
                 raw_params,
                 project_id=eff_project_id,
@@ -1485,7 +1523,45 @@ def create_app(
                 detail=active_redactor.redact(exc.message),
             ) from exc
 
-        return active_redactor.redact_value(result)
+        # M7-SCR-001: por defecto el submit es ASÍNCRONO (202 Accepted): el render corre
+        # en segundo plano y el resultado se sigue con GET /studio/api/jobs/{job_id} y
+        # por SSE /studio/api/progress (evita que un render largo agoste el timeout del
+        # proxy de borde). `?wait=1` recupera el comportamiento síncrono (200 + result).
+        if wait:
+            try:
+                result = await active_registry.execute_render_job(
+                    enqueued["job_id"],
+                    store=active_store,
+                    comfyui_client=active_comfyui,
+                    broker=active_broker,
+                )
+            except LookupError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except ComfyUIError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code or 502,
+                    detail=active_redactor.redact(exc.message),
+                ) from exc
+            return active_redactor.redact_value(result)
+
+        job_id = enqueued["job_id"]
+        render_task = asyncio.create_task(_run_render_job_task(request.app, job_id))
+        request.app.state.render_tasks.add(render_task)
+        render_task.add_done_callback(request.app.state.render_tasks.discard)
+        return JSONResponse(
+            status_code=202,
+            content=active_redactor.redact_value(
+                {
+                    "status": "queued",
+                    "async": True,
+                    "job_id": job_id,
+                    "project_id": enqueued["project_id"],
+                    "template_id": enqueued["template_id"],
+                    "location": f"/studio/api/jobs/{job_id}",
+                    "progress_url": "/studio/api/progress",
+                }
+            ),
+        )
 
     @app.delete("/studio/api/projects/{project_id}/assets/{asset_id}")
     @app.delete("/studio/api/projects/{project_id}/media/{asset_id}")

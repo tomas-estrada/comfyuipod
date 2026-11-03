@@ -29,6 +29,9 @@ DEFAULT_STUDIO_RECOVERY_DRAIN_S = 10.0
 # lo que hacía fallar cualquier EDL con clips largos. Ahora son configurables.
 DEFAULT_STUDIO_FFMPEG_TIMEOUT_S = 60.0
 DEFAULT_STUDIO_FFPROBE_TIMEOUT_S = 20.0
+# M7-SCR-001: techo de renders en segundo plano ejecutándose a la vez contra ComfyUI
+# (ComfyUI serializa la ejecución, pero cada tarea en vuelo retiene su sondeo WS/poll).
+DEFAULT_MAX_CONCURRENT_RENDERS = 2
 
 _HF_TOKEN_RE = re.compile(r"hf_[A-Za-z0-9]{12,}")
 _SK_TOKEN_RE = re.compile(r"sk-[A-Za-z0-9._\-]{8,}")
@@ -385,6 +388,7 @@ class StudioConfig:
     studio_recovery_drain_s: float = DEFAULT_STUDIO_RECOVERY_DRAIN_S
     studio_ffmpeg_timeout_s: float = DEFAULT_STUDIO_FFMPEG_TIMEOUT_S
     studio_ffprobe_timeout_s: float = DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
+    max_concurrent_renders: int = DEFAULT_MAX_CONCURRENT_RENDERS
     studio_api_token: str | None = field(default=None, repr=False)
     studio_enable_mcp: bool = True
     # M3.1: protocolo de workers de ML en subprocesso (ComfyUI interpreter).
@@ -543,6 +547,9 @@ class StudioConfig:
             studio_ffprobe_timeout_s=_positive_float(
                 "STUDIO_FFPROBE_TIMEOUT_S", DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
             ),
+            max_concurrent_renders=_positive_int(
+                "STUDIO_MAX_CONCURRENT_RENDERS", DEFAULT_MAX_CONCURRENT_RENDERS
+            ),
             studio_api_token=source.get("STUDIO_API_TOKEN", "").strip() or None,
             studio_enable_mcp=_parse_bool(source.get("STUDIO_ENABLE_MCP"), default=True),
             # M3.1: binario Python del worker (ComfyUI interpreter por defecto).
@@ -648,6 +655,7 @@ class StudioConfig:
             "STUDIO_RECOVERY_DRAIN_S": str(self.studio_recovery_drain_s),
             "STUDIO_FFMPEG_TIMEOUT_S": str(self.studio_ffmpeg_timeout_s),
             "STUDIO_FFPROBE_TIMEOUT_S": str(self.studio_ffprobe_timeout_s),
+            "STUDIO_MAX_CONCURRENT_RENDERS": str(self.max_concurrent_renders),
             "STUDIO_UPLOAD_MAX_TOTAL_MB": str(self.upload_max_total_bytes // (1024 * 1024)),
             "STUDIO_API_TOKEN": "<definido>" if self.studio_api_token else "<no definido>",
             "STUDIO_ENABLE_MCP": "1" if self.studio_enable_mcp else "0",

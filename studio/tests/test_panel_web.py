@@ -388,7 +388,7 @@ def test_panel_wan_flf2v_launcher_uses_registered_first_and_last_frame_params(
     last_asset = last_up.json()
 
     submit_resp = client.post(
-        "/studio/api/templates/wan_flf2v/submit",
+        "/studio/api/templates/wan_flf2v/submit?wait=1",
         json={
             "project_id": project_id,
             "params": {
