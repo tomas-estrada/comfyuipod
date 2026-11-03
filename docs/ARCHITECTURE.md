@@ -142,6 +142,10 @@ returned by any public endpoint** — they appear only as `<definida>` / `<no de
 | `STUDIO_RESUME_JOBS` | `true` (`config.py:382`) | pod env → `recovery.py` boot reconciliation | Not a secret |
 | `STUDIO_RESUME_DELAY_S` | `30.0` | pod env → recovery start delay | Not a secret |
 | `STUDIO_RECOVERY_DRAIN_S` | `10.0` | pod env → shutdown drain | Not a secret |
+| `STUDIO_RECONCILE_INTERVAL_S` | `30.0` (0 = off) | pod env → live watchdog reconciling jobs vs ComfyUI `/queue`+`/history` (`recovery.py`, `app.py` lifespan) | Not a secret |
+| `COMFY_IDLE_TIMEOUT_S` | `3600` (0 = off) | pod env → `comfyctl` idle watchdog (`comfyctl/src/idle.rs`): ComfyUI queue empty + `jobs_active==0` + no `download-models.sh` running | Not a secret |
+| `COMFY_IDLE_ACTION` | `warn` (`stop` = write `/run/comfyui-idle-stop` + `vastai stop instance` if `VAST_INSTANCE_ID` + `VAST_API_KEY` + `vastai` CLI present) | pod env → idle watchdog action | Not a secret; `VAST_API_KEY` itself stays **secret** (env-only, never argv/logs) |
+| `VAST_INSTANCE_ID` | unset | pod env → target of `COMFY_IDLE_ACTION=stop` | Not a secret |
 | `STUDIO_INCLUDE_ANIMATE` | `false` (opt-in Wan 2.2 Animate 14B int8, +18.41 GB, needs ≥ 250 GB disk) | pod env → Phase 3 manifest | Not a secret |
 | `STUDIO_INCLUDE_3D` | `true` iff `MODEL_PROFILE=unreal`, else `false` | pod env → Phase 3 manifest | Not a secret |
 | `STUDIO_INCLUDE_MINIMAX` | `false` | pod env → Phase 3 manifest | Not a secret |

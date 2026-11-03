@@ -8,6 +8,7 @@ import binascii
 import logging
 import os
 import secrets
+import shutil
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
@@ -300,6 +301,46 @@ def _is_media_upload_request(request: Request) -> bool:
     return len(parts) == 2 and f"/{parts[1]}" in _UPLOAD_MEDIA_SUFFIXES
 
 
+# Margen de seguridad en el volumen de datos antes de aceptar una subida:
+# cubre WAL de SQLite, spools temporales y escrituras concurrentes de ffmpeg.
+_DISK_SAFETY_MARGIN_BYTES = 1024**3  # 1 GiB
+
+
+def _check_upload_free_disk(
+    headers: Headers,
+    data_dir: Path,
+    margin_bytes: int = _DISK_SAFETY_MARGIN_BYTES,
+) -> None:
+    """507 si el volumen de datos no tiene sitio para el cuerpo declarado.
+
+    nginx tiene `client_max_body_size 0`, así que el límite de bytes lo pone la app;
+    este guard añade el límite de *espacio libre real* para que una subida grande
+    no llene el volumen que comparten studio.db, index.db y el staging de la Fase 3.
+    Sin cabecera Content-Length (chunked) no se puede estimar: se omite aquí y el
+    parser acotado por stream sigue aplicando los techos por archivo y totales.
+    """
+    raw_cl = headers.get("Content-Length", "").strip()
+    try:
+        content_length = int(raw_cl) if raw_cl else 0
+    except ValueError:
+        return
+    if content_length <= 0:
+        return
+    try:
+        free = shutil.disk_usage(data_dir).free
+    except OSError:
+        return
+    if free < content_length + margin_bytes:
+        raise HTTPException(
+            status_code=507,
+            detail=(
+                "Espacio insuficiente en el volumen de datos: "
+                f"libres={free} bytes, la subida declara {content_length} bytes "
+                f"(+ margen {margin_bytes}). Libera espacio o divide la subida."
+            ),
+        )
+
+
 def _check_upload_content_length(
     headers: Headers,
     max_upload_bytes: int,
@@ -532,6 +573,7 @@ class _BoundedUploadAPIRoute(APIRoute):
                 active_cfg: StudioConfig = request.app.state.config
                 limit = active_cfg.max_upload_bytes
                 _check_upload_content_length(request.headers, limit)
+                _check_upload_free_disk(request.headers, active_cfg.studio_data_dir)
                 _install_bounded_form_parser(
                     request,
                     limit,
@@ -701,9 +743,49 @@ def create_app(
                 logger.exception("Error en la recuperación de jobs interrumpidos")
 
         recovery_task: asyncio.Task[None] = asyncio.create_task(_run_job_recovery())
+
+        async def _run_reconcile_loop() -> None:
+            """Watchdog periódico: reconcilia jobs en vuelo contra /queue+/history de ComfyUI.
+
+            Si ComfyUI se reinició (OOM CUDA exit 137) y un prompt desapareció, el job
+            queda `interrupted`/reencolado en vivo en vez de esperar al siguiente arranque
+            de Studio o al timeout de poll. Con `STUDIO_RECONCILE_INTERVAL_S=0` está off.
+            """
+            interval = float(getattr(cfg, "studio_reconcile_interval_s", 30.0))
+            if interval <= 0:
+                return
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    report = await recover_interrupted_jobs(
+                        store=store,
+                        comfyui_client=_app.state.comfyui_client,
+                        broker=broker,
+                        resume=cfg.studio_resume_jobs,
+                        start_delay_s=0.0,
+                        watchdog=True,
+                    )
+                    if any(
+                        report.get(k) for k in ("requeued", "attached", "interrupted", "failed")
+                    ):
+                        logger.info("Reconciliación en vivo de jobs vs ComfyUI: %s", report)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Error en la reconciliación periódica de jobs")
+
+        reconcile_task: asyncio.Task[None] | None = None
+        if float(getattr(cfg, "studio_reconcile_interval_s", 30.0)) > 0:
+            reconcile_task = asyncio.create_task(_run_reconcile_loop())
         try:
             yield
         finally:
+            if reconcile_task is not None:
+                reconcile_task.cancel()
+                try:
+                    await reconcile_task
+                except asyncio.CancelledError:
+                    pass
             # M1.6: drenar la recuperación acotadamente en vez de cancelarla en seco. Un
             # resume a mitad de `execute_prompt_job` quedaba en estado no terminal sin
             # reconciliación; ahora se le da `STUDIO_RECOVERY_DRAIN_S` y, si no termina,
@@ -1028,6 +1110,12 @@ def create_app(
                 "probe": getattr(request.app.state, "perception_probe_result", None),
             },
             "schema_version": active_store.get_schema_version(),
+            # Jobs en vuelo (queued/running/cancelling/fetching): lo usa el watchdog de
+            # idle de comfyctl para decidir si el pod está realmente inactivo.
+            "jobs_active": sum(
+                len(active_store.list_jobs(status=s))
+                for s in ("queued", "running", "cancelling", "fetching")
+            ),
             # M5-F7: estado por motor del roster (ready/stub/unwired) para que el
             # strict-check del supervisor observe cada motor, no solo que el studio vive.
             "engines": health_report(build_default_registry()),

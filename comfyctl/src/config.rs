@@ -96,6 +96,10 @@ pub struct RuntimeConfig {
     pub comfy_max_restarts: u32,
     pub comfy_restart_delay_s: u64,
     pub comfy_healthy_uptime_s: u64,
+    /// `COMFY_IDLE_TIMEOUT_S`: segundos de inactividad antes de alertar/detener (0 = off).
+    pub comfy_idle_timeout_s: u64,
+    /// `COMFY_IDLE_ACTION`: `warn` (defecto) o `stop`.
+    pub comfy_idle_action: String,
     pub log_max_mb: u64,
     pub enable_web_terminal: bool,
     pub hf_hub_disable_xet: Option<String>,
@@ -313,6 +317,8 @@ impl RuntimeConfig {
             comfy_max_restarts: get_u32("COMFY_MAX_RESTARTS", 5),
             comfy_restart_delay_s: get_u64("COMFY_RESTART_DELAY", 5),
             comfy_healthy_uptime_s: get_u64("COMFY_HEALTHY_UPTIME", 600),
+            comfy_idle_timeout_s: get_u64("COMFY_IDLE_TIMEOUT_S", 3600),
+            comfy_idle_action: get("COMFY_IDLE_ACTION").unwrap_or("warn").to_string(),
             log_max_mb: get_u64("LOG_MAX_MB", 200),
             enable_web_terminal: get("ENABLE_WEB_TERMINAL").unwrap_or("0") == "1",
             hf_hub_disable_xet: get("HF_HUB_DISABLE_XET").map(ToString::to_string),

@@ -94,6 +94,37 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [MODELS] $*"
 }
 
+# ------------------------------------------------------------------------------
+# Cortacircuitos de disco (disk circuit-breaker): la Fase 3 stinea hasta 146 GB
+# en STAGE_DIR_PHASE3 sobre el MISMO volumen /workspace que studio.db, index.db,
+# los spools de subida y las salidas de ComfyUI. Antes de cada descarga se exige
+# espacio libre >= tamaño esperado + margen, para fallar seguro (y reintentable)
+# en vez de quedarse a mitad de un rename() o de un WAL checkpoint de SQLite.
+# ------------------------------------------------------------------------------
+DISK_SAFETY_MARGIN_BYTES=$((10 * 1024 * 1024 * 1024))  # 10 GiB
+
+disk_free_bytes() {
+    df -Pk "$1" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+# require_disk_space <path> [expected_bytes] -> 0 si hay sitio, 1 si no.
+require_disk_space() {
+    local path="$1"
+    local expected="${2:-0}"
+    local free
+    free="$(disk_free_bytes "${path}")"
+    if ! [[ "${free}" =~ ^[0-9]+$ ]]; then
+        log "WARN: no se pudo leer el espacio libre de ${path}; se continúa la descarga."
+        return 0
+    fi
+    local needed=$(( expected + DISK_SAFETY_MARGIN_BYTES ))
+    if [ "${free}" -lt "${needed}" ]; then
+        log "ERROR: espacio insuficiente en el volumen de ${path}: libres=${free} bytes, necesarios=${needed} bytes (descarga=${expected} + margen=${DISK_SAFETY_MARGIN_BYTES}). Se aborta esta descarga para no corromper el staging ni el estado."
+        return 1
+    fi
+    return 0
+}
+
 # Validar MODEL_PROFILE (BAJA-04)
 case "${MODEL_PROFILE}" in
     all|general|realistic|anime|minimal|studio|unreal)
@@ -122,11 +153,13 @@ elif ! command -v "${HF_CLI}" >/dev/null 2>&1; then
 fi
 
 # ------------------------------------------------------------------------------
-# hf_fetch <repo_id> <remote_path> <target_dir> <local_filename> [repo_type]
+# hf_fetch <repo_id> <remote_path> <target_dir> <local_filename> [repo_type] [expected_bytes]
 # - SEC-04: No pasa HF_TOKEN por argumentos de CLI; huggingface_hub lee HF_TOKEN
 #           automáticamente desde la variable de entorno.
 # - REL-04: 3 intentos con backoff (2s, 5s, 10s) y registro en FAILED_MODELS.
 # - §11   : Registra INICIO y aplica timeout por intento (HF_FETCH_TIMEOUT=3600s).
+# - DISK  : Cortacircuitos de espacio libre antes de cada intento (expected_bytes +
+#           DISK_SAFETY_MARGIN_BYTES); falla seguro en vez de quedarse a mitad.
 # ------------------------------------------------------------------------------
 hf_fetch() {
     local repo_id="$1"
@@ -134,6 +167,7 @@ hf_fetch() {
     local target_dir="$3"
     local local_filename="$4"
     local repo_type="${5:-model}"
+    local expected_bytes="${6:-0}"
     local dest_file="${target_dir}/${local_filename}"
 
     mkdir -p "${target_dir}" "${STAGE_DIR}"
@@ -150,6 +184,11 @@ hf_fetch() {
     local backoff=2
 
     while [ "${attempt}" -le "${max_attempts}" ]; do
+        if ! require_disk_space "${STAGE_DIR}" "${expected_bytes}"; then
+            log "ERROR: ${local_filename} omitido por falta de espacio en disco (reintentable en el siguiente arranque)."
+            FAILED_MODELS+=("${local_filename} (${repo_id}/${remote_path}) [sin espacio en disco]")
+            return 1
+        fi
         log "Descargando ${local_filename} desde ${repo_id} (intento ${attempt}/${max_attempts})..."
 
         local dl_rc=0
@@ -466,7 +505,7 @@ print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in; +%.2f GB MiniM
                 ;;
         esac
 
-        hf_fetch "${repo_id}" "${remote_path}" "${resolved_dir}" "${filename}" || true
+        hf_fetch "${repo_id}" "${remote_path}" "${resolved_dir}" "${filename}" model "${_expected_bytes}" || true
     done < <(
         STUDIO_MANIFEST_PATH="${STUDIO_MANIFEST}" STUDIO_INCLUDE_ANIMATE_FLAG="${include_animate}" STUDIO_INCLUDE_3D_FLAG="${include_3d}" STUDIO_INCLUDE_MINIMAX_FLAG="${include_minimax}" \
         python3 -c '
