@@ -205,13 +205,12 @@ def test_synthetic_keyframe_is_excluded_from_clip_index(
     assert asset["id"] not in {s.get("keyframe_asset_id") for s in result["shots"]}
 
 
-def test_unverifiable_edl_output_fails_instead_of_reporting_fake_metadata(
+def test_unverifiable_edl_source_fails_before_rendering(
     monkeypatch: pytest.MonkeyPatch,
     studio_data_dir: Path,
     tmp_path: Path,
 ) -> None:
-    """M1.7 (M3-IDEA-010): un MP4 que ffprobe no puede verificar no puede registrarse
-    como entregable verificado con duración/dimensiones inventadas."""
+    """M3-IDEA-010: un EDL no debe tratar metadatos de fuente inventados como reales."""
     import shutil as _shutil
     import subprocess
 
@@ -246,18 +245,30 @@ def test_unverifiable_edl_output_fails_instead_of_reporting_fake_metadata(
         max_upload_bytes=16 * 1024 * 1024,
         category="uploads",
     )
-    monkeypatch.setattr(
-        ffmpeg_edl,
-        "probe_media_info",
-        lambda *a, **k: {
-            "duration_sec": 0.0,
+    def fake_probe(*args: object, **kwargs: object) -> dict[str, object]:
+        result = probe_results.pop(0)
+        return {
+            "duration_sec": 1.0 if result else 0.0,
             "width": 320,
             "height": 180,
             "has_video": True,
             "has_audio": False,
-            "probe_ok": False,
-        },
-    )
+            "probe_ok": result,
+        }
+
+    probe_results = [False]
+    monkeypatch.setattr(ffmpeg_edl, "probe_media_info", fake_probe)
+    with pytest.raises(RuntimeError, match="video fuente.*no pudo verificarse"):
+        ffmpeg_edl.execute_edl_ffmpeg(
+            store,
+            project["id"],
+            source_asset_id=fake["id"],
+            cuts=[{"in_sec": 0.0, "out_sec": 1.0, "reason": "test"}],
+        )
+
+    # A valid source must still be processed, but an unverifiable render must not
+    # be registered as a verified deliverable.
+    probe_results = [True, False]
     with pytest.raises(RuntimeError, match="no pudo verificarse"):
         ffmpeg_edl.execute_edl_ffmpeg(
             store,
