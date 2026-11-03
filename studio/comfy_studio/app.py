@@ -98,6 +98,13 @@ class ProductionPlanRequest(BaseModel):
 
     idea: str = Field(..., min_length=1, max_length=4000)
     cost_cap_usd: float = Field(default=0.0, ge=0.0, le=1000.0)
+    project_id: str | None = Field(
+        default=None,
+        description=(
+            "Proyecto de la galería donde se registran las salidas de la "
+            "producción (shots aceptados + reel final) con linaje."
+        ),
+    )
 
 
 class JobCreateRequest(BaseModel):
@@ -895,7 +902,9 @@ def create_app(
                 redactor.redact(str(exc)),
             )
             orch_collaborators = None
-    app.state.production_service = ProductionService(collaborators=orch_collaborators)
+    app.state.production_service = ProductionService(
+        collaborators=orch_collaborators, store=store
+    )
 
     mcp_ctx = McpContext(
         store=store,
@@ -1147,6 +1156,7 @@ def create_app(
                 service.plan_production,
                 body.idea,
                 cost_cap_usd=body.cost_cap_usd,
+                project_id=body.project_id,
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

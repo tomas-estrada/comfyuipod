@@ -41,14 +41,29 @@ class _FakeLLMResponse:
 
 
 class _FakeLLMClient:
-    """Cliente LLM async falso: devuelve un JSON de plan fijo."""
+    """Cliente LLM async falso: plan JSON para el planner, semántico para visión.
 
-    def __init__(self, content: str) -> None:
+    Si el mensaje lleva partes de imagen (evaluador semántico) responde el JSON
+    de veredicto {'semantic': 0.9}; si no, el contenido con el que se construyó
+    (el plan del planner).
+    """
+
+    def __init__(self, content: str, *, semantic: str = '{"semantic": 0.9}') -> None:
         self._content = content
+        self._semantic = semantic
         self.calls = 0
 
-    async def complete(self, messages: Any, *, temperature: float = 0.2) -> _FakeLLMResponse:
+    async def complete(
+        self, messages: Any, *, temperature: float = 0.2
+    ) -> _FakeLLMResponse:
         self.calls += 1
+        for msg in messages or []:
+            content = (msg or {}).get("content")
+            if isinstance(content, list) and any(
+                isinstance(p, dict) and p.get("type") == "image_url"
+                for p in content
+            ):
+                return _FakeLLMResponse(self._semantic)
         return _FakeLLMResponse(self._content)
 
 
@@ -342,7 +357,18 @@ def test_assembler_builds_job_in_editor_timeline_shape():
 # --------------------------------------------------------------------------
 
 
-def test_server_collaborators_run_full_graph_to_done(tmp_path):
+def test_server_collaborators_run_full_graph_to_done(tmp_path, monkeypatch):
+    # El motor falso no escribe archivos reales: extraer keyframes del
+    # output_path fallaría (fail-closed semántico). Se inyecta un extractor
+    # de keyframes falso para ejercer la QA de contenido completa (LLM de
+    # visión con partes de imagen) sin depender de ffmpeg en este test.
+    import comfy_studio.orchestration.adapters as orch_adapters
+
+    monkeypatch.setattr(
+        orch_adapters,
+        "_extract_keyframes_sync",
+        lambda video_path, **kw: [b"\xff\xd8fake-jpeg"],
+    )
     content = (
         '{"sequences":[{"title":"s","shots":['
         '{"description":"shot a","layers":[{"kind":"gen","engine":"comfyui","params":{}}]}'
@@ -364,3 +390,8 @@ def test_server_collaborators_run_full_graph_to_done(tmp_path):
     assert final.final_output_path == "/out/editor.mp4"
     shots = final.all_shots()
     assert all(s.status == ShotStatus.ACCEPTED for s in shots)
+    # doble puerta: cada shot aceptado pasó la QA técnica Y la semántica
+    for s in shots:
+        assert s.last_score is not None
+        assert s.last_score.get("vbench", 0.0) >= 0.5
+        assert s.last_score.get("semantic", 0.0) >= 0.6

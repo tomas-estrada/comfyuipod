@@ -110,6 +110,13 @@ _EXTRA_TOOLS_SCHEMA: list[dict[str, Any]] = [
                     "type": "number",
                     "description": "Tope de coste total en USD a repartir por shot (opcional).",
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": (
+                        "Proyecto de la galería donde se registran las salidas "
+                        "(shots aceptados + reel final) tras la aprobación."
+                    ),
+                },
             },
             "required": ["idea"],
         },
@@ -241,8 +248,12 @@ async def _call_mcp_tool(
                 if not idea:
                     raise McpToolError("plan_production requiere 'idea'.")
                 cost_cap = float(args.get("cost_cap_usd", 0.0) or 0.0)
+                project_id = str(args.get("project_id") or "").strip() or None
                 return await run_in_threadpool(
-                    service.plan_production, idea, cost_cap_usd=cost_cap
+                    service.plan_production,
+                    idea,
+                    cost_cap_usd=cost_cap,
+                    project_id=project_id,
                 )
             production_id = str(args.get("production_id") or "").strip()
             if not production_id:

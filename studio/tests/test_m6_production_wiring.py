@@ -134,7 +134,7 @@ def test_real_engines_flag_wires_live_collaborators(
     from comfy_studio.orchestration.adapters import (
         EngineAssembler,
         EngineRunnerAdapter,
-        QaShotEvaluator,
+        SemanticQaEvaluator,
     )
 
     monkeypatch.setenv("STUDIO_ORCH_REAL_ENGINES", "1")
@@ -142,7 +142,9 @@ def test_real_engines_flag_wires_live_collaborators(
     collab = app.state.production_service.collaborators
     # planner, runner, evaluator y assembler deben ser los adaptadores reales.
     assert isinstance(collab.runner, EngineRunnerAdapter)
-    assert isinstance(collab.evaluator, QaShotEvaluator)
+    assert isinstance(collab.evaluator, SemanticQaEvaluator)
+    # la QA de contenido (visión) y la técnica viajan juntas
+    assert collab.evaluator._vision is not None  # noqa: SLF001
     assert isinstance(collab.assembler, EngineAssembler)
     assert collab.planner is not None
     assert collab.reselect_template is not None
