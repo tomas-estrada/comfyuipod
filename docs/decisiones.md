@@ -263,3 +263,9 @@ Sesión de implementación 2026-10-28. Objetivo: que ninguna salida visible afir
 
 
 
+
+## 4. Ciclo M7 — hardening del pod (2026-11)
+
+| ID | Decisión | Motivación | Estado |
+|---|---|---|---|
+| M7-OPS-001 | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` fijado por defecto en el `ENV` del Dockerfile (sobrescribible con `-e PYTORCH_CUDA_ALLOC_CONF=...`, desactivable con valor vacío) | La sección 5.7 documentaba OOM/`HostBuffer` por fragmentación en sesiones largas con cargas mixtas; el flag solo actúa si se fija antes de importar torch, así que no debe depender de que el operador lo recuerde. `comfyctl` hereda el entorno del contenedor salvo `COMFY_PASS` (`supervisor.rs` usa `env_remove` selectivo), así que ComfyUI y el studio-server lo reciben sin tocar Rust. Validación: benchmark de workflow fijo 3× con/sin la variable comparando `nvidia-smi` y `torch.cuda.memory_summary()` en RTX 4090 (24 GB) y RTX 5090 (32 GB). | Adoptada |
