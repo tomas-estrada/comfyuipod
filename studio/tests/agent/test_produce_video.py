@@ -155,3 +155,63 @@ def test_produce_video_registered_serialized() -> None:
     assert spec is not None
     assert spec.parallel_safe is False
     assert "produce_video" in {t for t in belt.list_names()}
+
+
+# --- ab_compare_models -------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_ab_compare_models_runs_both_arms(
+    produce_context: ToolContext,
+) -> None:
+    belt = create_default_tool_belt()
+    result = await belt.execute(
+        "ab_compare_models",
+        {
+            "prompt": "un coche de carreras derrapa a toda velocidad en una curva cerrada",
+            "template_id": "minimax_r2v",
+            "seed": 1234,
+            "steps": 20,
+            "width": 864,
+            "height": 480,
+        },
+        produce_context,
+    )
+    assert result["status"] == "compared"
+    assert result["protocol"]["seed"] == 1234
+    assert result["protocol"]["steps"] == 20
+    assert result["protocol"]["resolution"] == "864x480"
+    assert len(result["arms"]) == 2
+    assert result["arms"][0]["label"] == "base"
+    assert result["arms"][1]["label"] == "singularity_v2"
+    # mismos settings, distinto DiT
+    assert result["arms"][0]["diffusion_model"] != result["arms"][1]["diffusion_model"]
+    # trazabilidad: los assets quedan etiquetados con su brazo
+    for arm in result["arms"]:
+        asset = produce_context.store.get_asset(produce_context.project_id, arm["asset_id"])
+        meta = asset.get("metadata") or {}
+        assert meta.get("ab_comparison") is True
+        assert meta.get("ab_label") == arm["label"]
+        assert meta.get("ab_seed") == 1234
+        assert meta.get("ab_steps") == 20
+    assert "vision_check" in result["next_step"]
+
+
+@pytest.mark.anyio
+async def test_ab_compare_models_fail_closed_on_bad_template(
+    produce_context: ToolContext,
+) -> None:
+    belt = create_default_tool_belt()
+    with pytest.raises(ToolExecutionError, match="brazo 'base'"):
+        await belt.execute(
+            "ab_compare_models",
+            {"prompt": "acción", "template_id": "plantilla_inexistente"},
+            produce_context,
+        )
+
+
+def test_ab_compare_models_registered_serialized() -> None:
+    belt = create_default_tool_belt()
+    spec = belt.get("ab_compare_models")
+    assert spec is not None
+    assert spec.parallel_safe is False

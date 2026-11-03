@@ -670,6 +670,84 @@ class UpscaleAssetArgs(BaseModel):
     )
 
 
+class AbCompareModelsArgs(BaseModel):
+    """Argumentos para la herramienta `ab_compare_models`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Prompt IDÉNTICO para ambos brazos del A/B (p. ej. una escena de "
+            "acción rápida). Usa <Picture 1> si se pasa imagen de referencia."
+        ),
+    )
+    template_id: str = Field(
+        default="minimax_r2v",
+        description=(
+            "Plantilla base del A/B (debe exponer el parámetro 'diffusion_model'; "
+            "por defecto minimax_r2v)."
+        ),
+    )
+    model_a: str = Field(
+        default="minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        description="DiT del brazo A (por defecto: MiniMax H3 base pruned-int8).",
+    )
+    model_b: str = Field(
+        default="Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
+        description=(
+            "DiT del brazo B (por defecto: Singularity V2 pruned-int8, finetune "
+            "de WarmBloodAban/AIGC-Singularity para escenas de acción)."
+        ),
+    )
+    label_a: str = Field(default="base", description="Etiqueta del brazo A.")
+    label_b: str = Field(default="singularity_v2", description="Etiqueta del brazo B.")
+    seed: int = Field(
+        default=42,
+        ge=0,
+        le=2147483647,
+        description="Semilla IDÉNTICA para ambos brazos (comparación justa).",
+    )
+    steps: int = Field(
+        default=20,
+        ge=1,
+        le=50,
+        description="Pasos para ambos brazos (20 en el protocolo A/B sin turbo).",
+    )
+    lora_strength: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fuerza del LoRA turbo para ambos brazos: 0.0 en el protocolo A/B "
+            "(sin turbo, comparación del modelo puro)."
+        ),
+    )
+    width: int = Field(
+        default=864,
+        ge=256,
+        le=2048,
+        description="Ancho común (864 = baja resolución 0.4 MP para el A/B).",
+    )
+    height: int = Field(
+        default=480,
+        ge=256,
+        le=2048,
+        description="Alto común (480 = baja resolución 0.4 MP para el A/B).",
+    )
+    frames: int = Field(
+        default=124,
+        ge=5,
+        le=362,
+        description="Fotogramas comunes (124 ≈ 5 s a 24 fps).",
+    )
+    image_asset_id: str = Field(
+        default="",
+        description="ID del asset de imagen de referencia común a ambos brazos (opcional).",
+    )
+
+
 class ProduceVideoArgs(BaseModel):
     """Argumentos para la herramienta `produce_video`."""
 
@@ -1717,6 +1795,96 @@ async def _handle_assemble_long_video(
             raise ToolExecutionError(str(exc)) from exc
 
     return await run_in_threadpool(_do_assemble)
+
+
+async def _handle_ab_compare_models(
+    args: AbCompareModelsArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..templates import TemplateNotFoundError, TemplateParamError, get_default_registry
+
+    registry = get_default_registry()
+    shared: dict[str, Any] = {
+        "prompt": args.prompt,
+        "seed": args.seed,
+        "steps": args.steps,
+        "lora_strength": args.lora_strength,
+        "width": args.width,
+        "height": args.height,
+        "frames": args.frames,
+    }
+    if args.image_asset_id:
+        shared["image_asset_id"] = args.image_asset_id
+
+    arms: list[dict[str, Any]] = []
+    for label, diffusion_model in ((args.label_a, args.model_a), (args.label_b, args.model_b)):
+        params = {**shared, "diffusion_model": diffusion_model}
+        try:
+            submission = await registry.submit_render(
+                args.template_id,
+                params,
+                project_id=context.project_id,
+                store=context.store,
+                comfyui_client=context.comfyui_client,
+                broker=context.broker,
+                strict=True,
+            )
+        except (TemplateNotFoundError, TemplateParamError, LookupError) as exc:
+            raise ToolExecutionError(
+                f"ab_compare_models falló en el brazo {label!r}: {exc}"
+            ) from exc
+        video_assets = [
+            a
+            for a in submission.get("gallery_assets") or []
+            if a.get("kind") == "video"
+        ]
+        if str(submission.get("status")) != "done" or not video_assets:
+            raise ToolExecutionError(
+                f"ab_compare_models: el brazo {label!r} no completó "
+                f"(estado={submission.get('status')!r}); abortando la comparación."
+            )
+        chosen = video_assets[0]
+        # Etiquetar el asset del brazo para trazabilidad del A/B
+        context.store.update_asset_metadata(
+            context.project_id,
+            str(chosen["id"]),
+            metadata={
+                "ab_comparison": True,
+                "ab_label": label,
+                "ab_diffusion_model": diffusion_model,
+                "ab_seed": args.seed,
+                "ab_steps": args.steps,
+                "ab_lora_strength": args.lora_strength,
+                "ab_resolution": f"{args.width}x{args.height}",
+            },
+        )
+        arms.append(
+            {
+                "label": label,
+                "diffusion_model": diffusion_model,
+                "job_id": submission.get("job_id"),
+                "asset_id": chosen["id"],
+                "filename": chosen.get("filename"),
+            }
+        )
+
+    return {
+        "status": "compared",
+        "project_id": context.project_id,
+        "template_id": args.template_id,
+        "protocol": {
+            "seed": args.seed,
+            "steps": args.steps,
+            "lora_strength": args.lora_strength,
+            "resolution": f"{args.width}x{args.height}",
+            "frames": args.frames,
+        },
+        "arms": arms,
+        "next_step": (
+            "Usa vision_check sobre ambos assets con la misma pregunta (p. ej. "
+            "'¿qué brazo muestra más dinamismo en la acción?') para cerrar el A/B."
+        ),
+    }
 
 
 async def _handle_produce_video(
@@ -2822,6 +2990,21 @@ def create_default_tool_belt() -> ToolBelt:
             args_model=SystemStatusArgs,
             handler=_handle_system_status,
             parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="ab_compare_models",
+            description=(
+                "Comparación A/B justa de dos DiT (p. ej. MiniMax H3 base vs "
+                "Singularity V2 de WarmBloodAban) sobre la misma plantilla: "
+                "idéntico prompt, seed, pasos, resolución y LoRA; solo cambia el "
+                "modelo de difusión. Protocolo por defecto: int8 pruned, 864x480 "
+                "(baja resolución), 20 pasos sin turbo. Etiqueta ambos renders "
+                "con su brazo para el análisis con vision_check."
+            ),
+            args_model=AbCompareModelsArgs,
+            handler=_handle_ab_compare_models,
         )
     )
     belt.register(

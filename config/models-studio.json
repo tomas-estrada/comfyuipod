@@ -4,8 +4,8 @@
  "meta": {
   "default_entries": 79,
   "default_bytes": 163706792041,
-  "opt_in_entries": 7,
-  "opt_in_bytes": 67809047121,
+  "opt_in_entries": 8,
+  "opt_in_bytes": 88776694577,
   "phase2_sdxl_checkpoint": {
    "repo_id": "RunDiffusion/Juggernaut-XI-v11",
    "remote_path": "Juggernaut-XI-byRunDiffusion.safetensors",
@@ -79,8 +79,8 @@
     "license": "Tencent Hunyuan Community License"
    },
    "minimax_h3_opt_in": {
-    "entries": 5,
-    "bytes": 42030035159
+    "entries": 6,
+    "bytes": 62997682615
    }
   }
  },
@@ -1115,6 +1115,18 @@
    "filename": "minimax_h3_audio_vae_fp32.safetensors",
    "dest_path": "models/vae/minimax_h3_audio_vae_fp32.safetensors",
    "license": "minimax-h3-community-license",
+   "opt_in": "STUDIO_INCLUDE_MINIMAX"
+  },
+  {
+   "category": "minimax_h3_opt_in",
+   "repo_id": "WarmBloodAban/Minimax-h3_Singularity",
+   "remote_path": "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
+   "url": "https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity/resolve/main/Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
+   "bytes": 20967647456,
+   "target_dir": "models/diffusion_models",
+   "filename": "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
+   "dest_path": "models/diffusion_models/Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
+   "license": "apache-2.0",
    "opt_in": "STUDIO_INCLUDE_MINIMAX"
   }
  ]

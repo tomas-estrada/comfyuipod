@@ -121,7 +121,9 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
   - `frames` (*integer*, `124`): retícula 17k+5 a 24 fps (124-362 ≈ 5-15 s).
   - `steps` (*integer*, `4` con el LoRA turbo), `ref_image_size` (`'match'` rápido / `'max'` máxima identidad).
 - **Defaults de rendimiento**: `1344x768` (768p 16:9), `frames=124`, `steps=4`, `res_multistep`, audio estéreo 32 kHz. El pruned-int8 con offload dinámico corre en 32 GB VRAM (RTX 5090 Blackwell).
-- **Licencia**: MiniMax H3 Community License (uso no comercial).
+- **Variante Singularity V2** (finetune comunitario de WarmBloodAban/AIGC-Singularity, Apache-2.0): `diffusion_model` = `Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors` (mismo grupo opt-in, mismo slot, ~19.5 GiB). Aporta más dinamismo en escenas rápidas/de acción, mejor adherencia al prompt y estilo visual reforzado.
+- **Protocolo A/B** (base vs Singularity V2): ambos int8 pruned, baja resolución (`864x480` = 0.4 MP), `steps=20`, `lora_strength=0.0` (sin turbo), **mismo seed y prompt** con escenas de acción — automatizable con la herramienta `ab_compare_models`, que etiqueta ambos renders (`ab_label`/`ab_seed`/`ab_steps`) y los deja listos para `vision_check`.
+- **Licencia**: MiniMax H3 Community License (uso no comercial); Singularity V2 es Apache-2.0.
 
 ---
 

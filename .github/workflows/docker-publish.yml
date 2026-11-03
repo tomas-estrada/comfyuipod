@@ -241,9 +241,10 @@ jobs:
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors" ]
           echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio, ${plan_base} base + opt-in Animate + reanudación tras --phase2) verificado en seco (S-01 / VAL-PROFILE-002)"
 
-          # S-01 (M5): opt-in MiniMax H3 — STUDIO_INCLUDE_MINIMAX=1 añade los 5 archivos del
-          # grupo minimax_h3_opt_in (Ref2VA pruned-int8 + Qwen3-VL nvfp4 + VAEs + LoRA turbo).
-          plan_minimax="$((plan_base + 5))"
+          # S-01 (M5): opt-in MiniMax H3 — STUDIO_INCLUDE_MINIMAX=1 añade los 6 archivos del
+          # grupo minimax_h3_opt_in (Ref2VA pruned-int8 + Singularity V2 pruned-int8 +
+          # Qwen3-VL nvfp4 + VAEs + LoRA turbo).
+          plan_minimax="$((plan_base + 6))"
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_MINIMAX=1 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_mmx.log" 2>"$tmp_root/dl_studio_mmx.err" || { cat "$tmp_root/dl_studio_mmx.log"; cat "$tmp_root/dl_studio_mmx.err"; exit 1; }
           grep -q "PLAN FASE 3: ${plan_minimax} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=1)" "$tmp_root/dl_studio_mmx.log"
@@ -254,7 +255,8 @@ jobs:
           [ -s "$tmp_root/studio_data/models/vae/minimax_h3_video_vae_int8_convrot.safetensors" ]
           [ -s "$tmp_root/studio_data/models/vae/minimax_h3_audio_vae_fp32.safetensors" ]
           [ -s "$tmp_root/studio_data/models/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors" ]
-          echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio + STUDIO_INCLUDE_MINIMAX=1: 5 archivos H3) verificado en seco (S-01)"
+          [ -s "$tmp_root/studio_data/models/diffusion_models/Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors" ]
+          echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio + STUDIO_INCLUDE_MINIMAX=1: 6 archivos H3) verificado en seco (S-01)"
 
           # VAL-UNREAL-003 (M3-D): el perfil 'unreal' implica STUDIO_INCLUDE_3D=1 (Hunyuan3D 2.1:
           # PLAN FASE 3 = base + 1 3D archivos, destino models/checkpoints/hunyuan_3d_v2.1.safetensors)

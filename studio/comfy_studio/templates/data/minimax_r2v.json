@@ -3,7 +3,7 @@
   "name": "MiniMax H3 (Hailuo 3.0) — Reference to Video Local con Audio Estéreo Nativo",
   "category": "video_generation",
   "output_kind": "video",
-  "summary": "Generación local de vídeo con audio estéreo nativo (una sola pasada) condicionada por referencias: la imagen de referencia fija la identidad del sujeto y el prompt dirige la escena — Ref2VA pruned-int8 en la GPU local (32 GB Blackwell) con el LoRA turbo de 4 pasos.",
+  "summary": "Generación local de vídeo con audio estéreo nativo (una sola pasada) condicionada por referencias: la imagen de referencia fija la identidad del sujeto y el prompt dirige la escena — Ref2VA pruned-int8 en la GPU local (32 GB Blackwell) con el LoRA turbo de 4 pasos. Soporta el finetune Singularity V2 (WarmBloodAban) vía diffusion_model.",
   "description": "MiniMax H3 es el modelo omni-modal de la línea Hailuo, abierto desde 2026-08-03 y soportado nativamente por ComfyUI (#15224). Este template usa la variante Ref2VA pruned-int8-convrot (19.5 GiB de DiT) con el text encoder Qwen3-VL-32B nvfp4 (14.6 GiB): cabe y corre en una RTX 5090 de 32 GB con el offload dinámico de ComfyUI. Genera vídeo 768p a 24 fps con AUDIO ESTÉREO NATIVO (voz, efectos, música modelados en la misma pasada, no añadidos después), condicionado por una imagen de referencia que fija la identidad del sujeto (<Picture 1> en el prompt). El LoRA turbo de 4 pasos (oficial v0.1) reduce el muestreo a 4 pasos res_multistep. Licencia: MiniMax H3 Community License (uso no comercial).",
   "performance_defaults": {
     "precision": "pruned_int8_convrot",
@@ -23,7 +23,8 @@
     "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
     "minimax_h3_video_vae_int8_convrot.safetensors",
     "minimax_h3_audio_vae_fp32.safetensors",
-    "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+    "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+    "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors"
   ],
   "required_nodes": [
     "UNETLoader",
@@ -91,7 +92,7 @@
       "default": 4,
       "min": 4,
       "max": 50,
-      "description": "Pasos de muestreo (4 con el LoRA turbo; 20 sin él)."
+      "description": "Pasos de muestreo: 4 con el LoRA turbo (lora_strength=1.0); 20 sin turbo (lora_strength=0.0) — protocolo de comparación A/B."
     },
     "seed": {
       "type": "integer",
@@ -106,6 +107,20 @@
       "required": false,
       "default": "match",
       "description": "'match' escala la referencia a la resolución de generación (rápido); 'max' mantiene hasta 2048px de lado corto para máxima fidelidad de identidad (más lento)."
+    },
+    "diffusion_model": {
+      "type": "string",
+      "required": false,
+      "default": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "description": "DiT a usar (slot UNETLoader, ambos pruned-int8 ~19.5 GiB): 'minimax_h3_ref2va_pruned_int8_convrot.safetensors' (base) o 'Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors' (finetune Singularity V2 de WarmBloodAban/AIGC-Singularity — escenas rápidas/más dinámicas, mejor adherencia al prompt y estilo visual; Apache-2.0)."
+    },
+    "lora_strength": {
+      "type": "number",
+      "required": false,
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Fuerza del LoRA turbo. 1.0 = turbo 4-step (producción rápida). 0.0 = sin turbo: para A/B del modelo base (20 pasos, res_multistep/simple), comparación justa base vs finetune."
     }
   },
   "docs": {
@@ -114,7 +129,8 @@
       "prompt (obligatorio): escena + etiqueta <Picture 1> + descripción del audio deseado.",
       "image_asset_id / image_input: foto de referencia del sujeto (identidad).",
       "frames (124): retícula 17k+5 a 24 fps (124-362 ≈ 5-15 s).",
-      "steps (4) con el LoRA turbo oficial; ref_image_size 'match' por velocidad, 'max' por identidad."
+      "steps (4) con el LoRA turbo oficial; ref_image_size 'match' por velocidad, 'max' por identidad.",
+      "diffusion_model: base vs Singularity V2 (WarmBloodAban) — el finetune aporta dinamismo en escenas de acción, mejor adherencia al prompt y estilo."
     ],
     "defaults": {
       "resolution": "1344x768 (768p 16:9)",
@@ -123,13 +139,13 @@
       "sampler": "res_multistep",
       "audio": "estéreo 32 kHz nativo (VAEDecodeAudio -> VHS_VideoCombine)"
     },
-    "notas_rendimiento": "Requiere el grupo opt-in minimax_h3_opt_in (STUDIO_INCLUDE_MINIMAX=1, +42.03 GB): DiT Ref2VA pruned-int8-convrot 19.5 GiB + Qwen3-VL-32B nvfp4 14.6 GiB + VAE de vídeo int8 + VAE de audio fp32 + LoRA turbo 4-step. El pruned-int8 con offload dinámico corre en 32 GB VRAM (RTX 5090 Blackwell) sin par de expertos. Licencia: MiniMax H3 Community License (no comercial)."
+    "notas_rendimiento": "Requiere el grupo opt-in minimax_h3_opt_in (STUDIO_INCLUDE_MINIMAX=1, +42.03 GB): DiT Ref2VA pruned-int8-convrot 19.5 GiB + Qwen3-VL-32B nvfp4 14.6 GiB + VAE de vídeo int8 + VAE de audio fp32 + LoRA turbo 4-step. El pruned-int8 con offload dinámico corre en 32 GB VRAM (RTX 5090 Blackwell) sin par de expertos. Licencia: MiniMax H3 Community License (no comercial). Variante Singularity V2: Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors (mismo grupo opt-in, mismo slot, Apache-2.0). Protocolo A/B recomendado: ambos int8 pruned, baja resolución (864x480 = 0.4 MP), 20 pasos, lora_strength=0.0, mismo seed y mismo prompt con escenas de acción — comparar dinamismo y rapidez."
   },
   "workflow": {
     "1": {
       "class_type": "UNETLoader",
       "inputs": {
-        "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "unet_name": "{{diffusion_model}}",
         "weight_dtype": "default"
       },
       "_meta": {
@@ -139,9 +155,12 @@
     "2": {
       "class_type": "LoraLoaderModelOnly",
       "inputs": {
-        "model": ["1", 0],
+        "model": [
+          "1",
+          0
+        ],
         "lora_name": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
-        "strength_model": 1.0
+        "strength_model": "{{lora_strength}}"
       },
       "_meta": {
         "title": "LoRA Turbo 4-Step (oficial v0.1)"
@@ -187,15 +206,27 @@
     "7": {
       "class_type": "MiniMaxH3ReferenceToVideo",
       "inputs": {
-        "clip": ["3", 0],
-        "vae": ["4", 0],
-        "audio_vae": ["5", 0],
+        "clip": [
+          "3",
+          0
+        ],
+        "vae": [
+          "4",
+          0
+        ],
+        "audio_vae": [
+          "5",
+          0
+        ],
         "prompt": "{{prompt}}",
         "width": "{{width}}",
         "height": "{{height}}",
         "length": "{{frames}}",
         "ref_image_size": "{{ref_image_size}}",
-        "ref_image_1": ["6", 0]
+        "ref_image_1": [
+          "6",
+          0
+        ]
       },
       "_meta": {
         "title": "Ref2VA — Condicionamiento por Referencia (Picture 1)"
@@ -213,7 +244,10 @@
     "9": {
       "class_type": "BasicScheduler",
       "inputs": {
-        "model": ["2", 0],
+        "model": [
+          "2",
+          0
+        ],
         "scheduler": "simple",
         "steps": "{{steps}}",
         "denoise": 1.0
@@ -225,8 +259,14 @@
     "10": {
       "class_type": "BasicGuider",
       "inputs": {
-        "model": ["2", 0],
-        "conditioning": ["7", 0]
+        "model": [
+          "2",
+          0
+        ],
+        "conditioning": [
+          "7",
+          0
+        ]
       },
       "_meta": {
         "title": "Guider (positivo Ref2VA)"
@@ -244,11 +284,26 @@
     "12": {
       "class_type": "SamplerCustomAdvanced",
       "inputs": {
-        "noise": ["11", 0],
-        "guider": ["10", 0],
-        "sampler": ["8", 0],
-        "sigmas": ["9", 0],
-        "latent_image": ["7", 1]
+        "noise": [
+          "11",
+          0
+        ],
+        "guider": [
+          "10",
+          0
+        ],
+        "sampler": [
+          "8",
+          0
+        ],
+        "sigmas": [
+          "9",
+          0
+        ],
+        "latent_image": [
+          "7",
+          1
+        ]
       },
       "_meta": {
         "title": "Muestreo AV Conjunto (vídeo + audio)"
@@ -257,8 +312,14 @@
     "13": {
       "class_type": "VAEDecode",
       "inputs": {
-        "samples": ["12", 0],
-        "vae": ["4", 0]
+        "samples": [
+          "12",
+          0
+        ],
+        "vae": [
+          "4",
+          0
+        ]
       },
       "_meta": {
         "title": "Decodificar Vídeo"
@@ -267,8 +328,14 @@
     "14": {
       "class_type": "VAEDecodeAudio",
       "inputs": {
-        "samples": ["12", 0],
-        "vae": ["5", 0]
+        "samples": [
+          "12",
+          0
+        ],
+        "vae": [
+          "5",
+          0
+        ]
       },
       "_meta": {
         "title": "Decodificar Audio Estéreo Nativo"
@@ -277,14 +344,20 @@
     "15": {
       "class_type": "VHS_VideoCombine",
       "inputs": {
-        "images": ["13", 0],
+        "images": [
+          "13",
+          0
+        ],
         "frame_rate": 24,
         "loop_count": 0,
         "filename_prefix": "{{output_prefix}}",
         "format": "video/h264-mp4",
         "pingpong": false,
         "save_output": true,
-        "audio": ["14", 0]
+        "audio": [
+          "14",
+          0
+        ]
       },
       "_meta": {
         "title": "Guardar Vídeo con Audio en Galería del Proyecto"
