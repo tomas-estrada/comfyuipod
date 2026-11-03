@@ -792,6 +792,14 @@ class GenerateSpeechArgs(BaseModel):
         min_length=1,
         description="Texto a sintetizar en voz (español).",
     )
+    tts_engine: str = Field(
+        default="kokoro",
+        description=(
+            "Motor TTS: 'kokoro' (voces es fijadas, rápido) o 'indextts' "
+            "(clonación zero-shot: requiere reference_audio_asset_id y usa el "
+            "timbre real del audio de referencia — sin fairseq)."
+        ),
+    )
     voice_id: str = Field(
         default="ef_dora",
         description=(
@@ -1976,32 +1984,71 @@ async def _handle_generate_speech(
         import tempfile
         from pathlib import Path
 
-        # TTS real: Kokoro (español) horneado en el pod vía AudioEngine op=tts.
-        audio_engine = AudioEngine()
         with tempfile.TemporaryDirectory(prefix="comfy_speech_") as tmp:
             tts_path = Path(tmp) / "speech.wav"
-            tts_result = audio_engine.run(
-                EngineRunSpec(
-                    job={
-                        "op": "tts",
-                        "output_path": str(tts_path),
-                        "text": args.text,
-                        "voice_id": args.voice_id,
-                    }
-                )
-            )
-            if not tts_result.ok:
-                raise ToolExecutionError(
-                    f"TTS falló: {tts_result.error or 'error desconocido'}"
-                )
             final_path = tts_path
             voice_clone_applied = False
             voice_clone_skipped_reason: str | None = None
 
+            if args.tts_engine == "indextts":
+                # IndexTTS-2.5: clonación zero-shot REAL (texto + timbre de la
+                # referencia). Requiere el audio de referencia; sin él, error
+                # tipado (no hay voz que clonar).
+                if not args.reference_audio_asset_id:
+                    raise ToolExecutionError(
+                        "tts_engine='indextts' requiere reference_audio_asset_id "
+                        "(audio cuyo timbre clonar)."
+                    )
+                from ..engines.indextts import IndexttsEngine
+
+                ref_path = context.store.get_asset_path(
+                    context.project_id, args.reference_audio_asset_id
+                )
+                if ref_path is None:
+                    raise ToolExecutionError(
+                        f"Asset de audio de referencia no encontrado: "
+                        f"{args.reference_audio_asset_id!r}"
+                    )
+                indextts_engine = IndexttsEngine()
+                tts_result = indextts_engine.run(
+                    EngineRunSpec(
+                        job={
+                            "text": args.text,
+                            "output_path": str(tts_path),
+                            "reference_audio": str(ref_path),
+                            "lang": "es",
+                        }
+                    )
+                )
+                if not tts_result.ok:
+                    raise ToolExecutionError(
+                        f"IndexTTS-2.5 falló: {tts_result.error or 'error desconocido'}"
+                    )
+                voice_clone_applied = True  # zero-shot: el timbre YA es el de la referencia
+                tts_engine_used = "indextts25"
+            else:
+                # TTS real: Kokoro (español) horneado en el pod vía AudioEngine op=tts.
+                audio_engine = AudioEngine()
+                tts_result = audio_engine.run(
+                    EngineRunSpec(
+                        job={
+                            "op": "tts",
+                            "output_path": str(tts_path),
+                            "text": args.text,
+                            "voice_id": args.voice_id,
+                        }
+                    )
+                )
+                if not tts_result.ok:
+                    raise ToolExecutionError(
+                        f"TTS falló: {tts_result.error or 'error desconocido'}"
+                    )
+                tts_engine_used = "audio_tts_kokoro"
+
             # Clonación de timbre opcional (RVC): conversión de la salida TTS
             # al timbre del audio de referencia. Si RVC/fairseq no está
             # disponible en el pod, degradación honesta: se entrega el TTS.
-            if args.reference_audio_asset_id:
+            if args.tts_engine != "indextts" and args.reference_audio_asset_id:
                 ref_path = context.store.get_asset_path(
                     context.project_id, args.reference_audio_asset_id
                 )
@@ -2040,7 +2087,7 @@ async def _handle_generate_speech(
                 max_upload_bytes=512 * 1024 * 1024,
                 category="voice",
                 metadata={
-                    "engine": "audio_tts_kokoro",
+                    "engine": tts_engine_used,
                     "text": args.text,
                     "voice_id": args.voice_id,
                     "pitch_shift": args.pitch_shift,

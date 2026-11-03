@@ -322,6 +322,19 @@ RUN git init /opt/rvc \
 #     y que el shim compila. El adaptador `musicgen` importa MusicGen de forma
 #     perezosa y falla TIPADO sin las deps o el modelo. Un SHA equivocado rompe
 #     ESTE build (el pip --no-deps y el test de presencia).
+# 5m. Clonación de voz zero-shot IndexTTS-2.5 (motor indextts). El PAQUETE NO se
+#     hornea en el env principal (sus pines torch==2.8/numpy==2.2.6/
+#     transformers==4.52.1 clavarían el pod): el adaptador `indextts25` crea un
+#     venv aislado PERSISTENTE en runtime bajo ${COMFY_DATA_DIR}/venvs/indextts
+#     (patrón VBench/Chatterbox). Los PESOS (grupo indextts, 5.11 GiB) los baja
+#     download-models.sh. Solo se hornea el adaptador CLI.
+ENV STUDIO_INDEXTTS_BIN=/usr/local/bin/indextts25 \
+    STUDIO_INDEXTTS_MODEL_DIR=/workspace/comfyui-data/indextts/checkpoints
+COPY studio/engine_bin/indextts25 /usr/local/bin/indextts25
+RUN chmod +x /usr/local/bin/indextts25 \
+    && python3 -c "import importlib.util as u; assert u.find_spec('venv'), 'venv requerido'" \
+    && pip3 freeze > /etc/comfyui/requirements.lock
+
 ENV STUDIO_MUSIC_GEN_BIN=/usr/local/bin/musicgen \
     STUDIO_MUSIC_GEN_MODEL_DIR=/workspace/comfyui-data/models/musicgen
 COPY studio/engine_bin/musicgen /opt/engine_bin/musicgen

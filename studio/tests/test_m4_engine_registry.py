@@ -71,5 +71,5 @@ def test_describe_is_serializable(monkeypatch: pytest.MonkeyPatch) -> None:
     # Debe serializar a JSON sin objetos vivos.
     blob = json.dumps(desc)
     assert '"dynamic": false' in blob
-    assert desc["count"] == 14
+    assert desc["count"] == 15
     assert all(set(e) == {"name", "tier", "wired", "note"} for e in desc["engines"])
