@@ -275,6 +275,8 @@ class StubLLMClient:
                 template_id = "vace_restyle"
             elif "vace_swap" in lower or "swap" in lower or "intercambio" in lower:
                 template_id = "vace_swap"
+            elif "wan_animate_cont" in lower or "continua el animate" in lower:
+                template_id = "wan_animate_cont"
             elif (
                 "latentsync" in lower or "labios" in lower or "lip-sync" in lower
             ):

@@ -1,0 +1,359 @@
+{
+  "id": "wan_animate_cont",
+  "name": "Wan 2.2 Animate 14B — Continuación Sin Costura (continue_motion del Chunk Anterior)",
+  "category": "video_edit",
+  "output_kind": "video",
+  "summary": "Variante de wan_animate para clips largos sin costura: cada ventana arranca con los últimos fotogramas del chunk anterior (continue_motion) y el offset de vídeo del plan, evitando el crossfade y el flicker entre chunks.",
+  "description": "Continúa una secuencia animada con Wan 2.2 Animate 14B usando el mecanismo nativo de continuidad del nodo: continue_motion recibe los últimos fotogramas del chunk anterior (cargados desde su vídeo de salida) y video_frame_offset posiciona la búsqueda en todos los vídeos de entrada (pose/face/background) exactamente donde terminó la ventana previa. El resultado se ensambla con assemble_long_video usando crossfade=0 (concat sin recodificar): la transición entre chunks es continua por construcción. Requiere los pesos opt-in del grupo animate (STUDIO_INCLUDE_ANIMATE=1).",
+  "performance_defaults": {
+    "precision": "int8_convrot",
+    "resolution": "480p",
+    "width": 832,
+    "height": 480,
+    "frames": 77,
+    "steps": 20,
+    "cfg": 5.0,
+    "continue_motion_max_frames": 5,
+    "offload": true,
+    "vram_gib": 17.15
+  },
+  "models": [
+    "wan2.2_animate_14B_int8_convrot.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "clip_vision_h.safetensors",
+    "wan_2.1_vae.safetensors"
+  ],
+  "required_nodes": [
+    "UNETLoader",
+    "CLIPLoader",
+    "CLIPVisionLoader",
+    "VAELoader",
+    "VHS_LoadVideo",
+    "LoadImage",
+    "CLIPVisionEncode",
+    "CLIPTextEncode",
+    "WanAnimateToVideo",
+    "KSampler",
+    "VAEDecode",
+    "VHS_VideoCombine"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción del sujeto y la acción de ESTA ventana (continuación de la anterior)."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "borroso, baja calidad, parpadeo temporal, costura visible entre planos, artefactos",
+      "description": "Elementos no deseados; incluye costuras para reforzar la continuidad."
+    },
+    "width": {
+      "type": "integer",
+      "required": false,
+      "default": 832,
+      "min": 256,
+      "max": 1280,
+      "description": "Ancho en píxeles (debe coincidir con el chunk anterior)."
+    },
+    "height": {
+      "type": "integer",
+      "required": false,
+      "default": 480,
+      "min": 256,
+      "max": 1280,
+      "description": "Alto en píxeles (debe coincidir con el chunk anterior)."
+    },
+    "frames": {
+      "type": "integer",
+      "required": false,
+      "default": 77,
+      "min": 5,
+      "max": 241,
+      "description": "Fotogramas de ESTA ventana (mismo valor que el chunk anterior para cadencia uniforme)."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 20,
+      "min": 4,
+      "max": 50,
+      "description": "Pasos de muestreo."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 5.0,
+      "min": 1.0,
+      "max": 15.0,
+      "description": "Escala de guía CFG."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista (misma que el chunk anterior para máxima coherencia)."
+    },
+    "denoise": {
+      "type": "number",
+      "required": false,
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0,
+      "description": "Denoise del muestreo."
+    },
+    "image_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "image",
+      "description": "ID del asset de imagen de referencia del sujeto (la misma que el chunk anterior)."
+    },
+    "image_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_reference.png",
+      "description": "Imagen de referencia en ComfyUI input (rellenada desde image_asset_id)."
+    },
+    "video_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "video",
+      "description": "ID del asset de vídeo de pose completo (la búsqueda interna usa video_frame_offset)."
+    },
+    "video_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_pose.mp4",
+      "description": "Vídeo de pose en ComfyUI input (rellenado desde video_asset_id)."
+    },
+    "continue_video_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "video",
+      "description": "ID del asset del vídeo de salida del chunk anterior (fuente de continue_motion)."
+    },
+    "continue_video_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_prev_chunk.mp4",
+      "description": "Vídeo del chunk anterior en ComfyUI input (rellenado desde continue_video_asset_id)."
+    },
+    "video_frame_offset": {
+      "type": "integer",
+      "required": false,
+      "default": 77,
+      "min": 0,
+      "max": 100000,
+      "description": "Fotograma donde terminó el chunk anterior (del plan: windows[N-1].frames acumulado); el nodo busca en los vídeos de entrada desde aquí."
+    },
+    "continue_motion_max_frames": {
+      "type": "integer",
+      "required": false,
+      "default": 5,
+      "min": 1,
+      "max": 41,
+      "description": "Fotogramas de cola del chunk anterior que alimentan la continuidad (el nodo toma los últimos N)."
+    }
+  },
+  "docs": {
+    "uso": "Úsalo para las ventanas 2..N de un clip largo con wan_animate: la ventana 1 se renderiza con wan_animate; cada siguiente ventana usa esta plantilla con video_frame_offset = fotogramas acumulados del plan y continue_video_asset_id = salida de la ventana anterior. Finalmente assemble_long_video con crossfade_sec=0 (concat sin recodificar): sin costuras por construcción.",
+    "inputs": [
+      "prompt (obligatorio): acción de esta ventana como continuación.",
+      "image_asset_id / image_input: la MISMA imagen de referencia del chunk anterior.",
+      "video_asset_id / video_input: el vídeo de pose completo; el nodo busca con video_frame_offset.",
+      "continue_video_asset_id / continue_video_input: el vídeo de salida del chunk anterior.",
+      "video_frame_offset: fotograma acumulado donde terminó el chunk anterior (del plan).",
+      "continue_motion_max_frames (5): longitud de la cola de continuidad."
+    ],
+    "defaults": {
+      "resolution": "832x480",
+      "frames": 77,
+      "steps": 20,
+      "cfg": 5.0,
+      "video_frame_offset": 77,
+      "continue_motion_max_frames": 5
+    },
+    "notas_rendimiento": "Requiere el grupo opt-in animate (STUDIO_INCLUDE_ANIMATE=1). Misma VRAM que wan_animate. El ensamblado final debe usar crossfade_sec=0: la continuidad ya está dentro de los chunks; el concat demuxer une sin recomprimir."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_animate_14B_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      },
+      "_meta": {
+        "title": "Cargar Wan 2.2 Animate 14B (int8)"
+      }
+    },
+    "2": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "wan"
+      },
+      "_meta": {
+        "title": "Cargar UMT5 XXL fp8"
+      }
+    },
+    "3": {
+      "class_type": "CLIPVisionLoader",
+      "inputs": {
+        "clip_name": "clip_vision_h.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar CLIP Vision H"
+      }
+    },
+    "4": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "wan_2.1_vae.safetensors"
+      },
+      "_meta": {
+        "title": "Cargar Wan VAE"
+      }
+    },
+    "5": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "{{image_input}}"
+      },
+      "_meta": {
+        "title": "Imagen de Referencia (Identidad)"
+      }
+    },
+    "6": {
+      "class_type": "CLIPVisionEncode",
+      "inputs": {
+        "clip_vision": ["3", 0],
+        "image": ["5", 0],
+        "crop": "none"
+      },
+      "_meta": {
+        "title": "Codificar Identidad (CLIP Vision)"
+      }
+    },
+    "7": {
+      "class_type": "VHS_LoadVideo",
+      "inputs": {
+        "video": "{{video_input}}",
+        "force_rate": 16,
+        "custom_width": "{{width}}",
+        "custom_height": "{{height}}",
+        "frame_load_cap": 0,
+        "skip_first_frames": 0,
+        "select_every_nth": 1
+      },
+      "_meta": {
+        "title": "Cargar Vídeo de Pose (Completo; el nodo busca con offset)"
+      }
+    },
+    "8": {
+      "class_type": "VHS_LoadVideo",
+      "inputs": {
+        "video": "{{continue_video_input}}",
+        "force_rate": 16,
+        "custom_width": "{{width}}",
+        "custom_height": "{{height}}",
+        "frame_load_cap": 0,
+        "skip_first_frames": 0,
+        "select_every_nth": 1
+      },
+      "_meta": {
+        "title": "Cargar Chunk Anterior (continue_motion)"
+      }
+    },
+    "9": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{prompt}}",
+        "clip": ["2", 0]
+      },
+      "_meta": {
+        "title": "Prompt Positivo (Ventana N)"
+      }
+    },
+    "10": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "{{negative_prompt}}",
+        "clip": ["2", 0]
+      },
+      "_meta": {
+        "title": "Prompt Negativo"
+      }
+    },
+    "11": {
+      "class_type": "WanAnimateToVideo",
+      "inputs": {
+        "positive": ["9", 0],
+        "negative": ["10", 0],
+        "vae": ["4", 0],
+        "width": "{{width}}",
+        "height": "{{height}}",
+        "length": "{{frames}}",
+        "batch_size": 1,
+        "clip_vision_output": ["6", 0],
+        "reference_image": ["5", 0],
+        "pose_video": ["7", 0],
+        "continue_motion": ["8", 0],
+        "continue_motion_max_frames": "{{continue_motion_max_frames}}",
+        "video_frame_offset": "{{video_frame_offset}}"
+      },
+      "_meta": {
+        "title": "Codificación Animate con Continuidad (continue_motion + offset)"
+      }
+    },
+    "12": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": "{{seed}}",
+        "steps": "{{steps}}",
+        "cfg": "{{cfg}}",
+        "sampler_name": "uni_pc",
+        "scheduler": "simple",
+        "denoise": "{{denoise}}",
+        "model": ["1", 0],
+        "positive": ["11", 0],
+        "negative": ["11", 1],
+        "latent_image": ["11", 2]
+      },
+      "_meta": {
+        "title": "Muestreo Animate (Ventana N)"
+      }
+    },
+    "13": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": ["12", 0],
+        "vae": ["4", 0]
+      },
+      "_meta": {
+        "title": "Decodificar Ventana N"
+      }
+    },
+    "14": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "images": ["13", 0],
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "{{output_prefix}}",
+        "format": "video/h264-mp4",
+        "pingpong": false,
+        "save_output": true
+      },
+      "_meta": {
+        "title": "Guardar Chunk N en Galería"
+      }
+    }
+  }
+}

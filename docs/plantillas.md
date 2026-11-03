@@ -168,7 +168,18 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.10 `wan_t2v_5b` — Wan 2.2 TI2V 5B Texto a Video Ligero (720p Turbo 4-paso, 24 fps)
+### 2.10 `wan_animate_cont` — Wan 2.2 Animate 14B Continuación Sin Costura (continue_motion)
+
+- **Archivo**: [`studio/comfy_studio/templates/data/wan_animate_cont.json`](../studio/comfy_studio/templates/data/wan_animate_cont.json)
+- **Uso**: Variante de `wan_animate` para ventanas 2..N de un clip largo **sin costuras**: `continue_motion` recibe los últimos fotogramas del vídeo de salida del chunk anterior y `video_frame_offset` posiciona la búsqueda en los vídeos de entrada (pose/face/background) donde terminó la ventana previa — continuidad nativa del nodo `WanAnimateToVideo`, sin crossfade ni flicker.
+- **Flujo recomendado**: `plan_long_render` → ventana 1 con `wan_animate` → ventanas 2+ con `wan_animate_cont` (`continue_video_asset_id` = salida anterior, `video_frame_offset` del plan) → `assemble_long_video` con `crossfade_sec=0` (concat sin recodificar).
+- **Modelos requeridos**: grupo opt-in `animate` (STUDIO_INCLUDE_ANIMATE=1) — mismo set que `wan_animate`.
+- **Entradas principales (`inputs`)**: igual que `wan_animate` más `continue_video_asset_id` / `continue_video_input` (chunk anterior), `video_frame_offset` (*integer*, fotograma acumulado del plan) y `continue_motion_max_frames` (*integer*, `5`).
+- **Defaults de rendimiento**: `832x480`, `frames=77`, `steps=20`, `cfg=5.0`, `video_frame_offset=77`, `continue_motion_max_frames=5`, `int8_convrot`.
+
+---
+
+### 2.11 `wan_t2v_5b` — Wan 2.2 TI2V 5B Texto a Video Ligero (720p Turbo 4-paso, 24 fps)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v_5b.json`](../studio/comfy_studio/templates/data/wan_t2v_5b.json)
 - **Uso**: Borradores rápidos, previews y planos a 720p cuando se itera deprisa o la VRAM es justa: un único modelo TI2V 5B fp16 (~10 GiB) con LoRA Turbo rank-64 en `KSampler` de etapa única (sin par MoE high/low noise).
@@ -183,7 +194,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.11 `wan_animate` — Wan 2.2 Animate 14B Transferencia de Movimiento (Pose + Identidad)
+### 2.12 `wan_animate` — Wan 2.2 Animate 14B Transferencia de Movimiento (Pose + Identidad)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_animate.json`](../studio/comfy_studio/templates/data/wan_animate.json)
 - **Uso**: Transferir el movimiento de un vídeo guía (coreografía, gestos, acción — p. ej. saltar a un coche y conducir rápido) al sujeto concreto de una imagen de referencia, conservando su identidad vía `WanAnimateToVideo` (`pose_video` + `reference_image`/`clip_vision_output`).
@@ -201,7 +212,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.12 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
+### 2.13 `wan_t2v` — Wan 2.2 14B Text-to-Video (T2V Lightning 4-step)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/wan_t2v.json`](../studio/comfy_studio/templates/data/wan_t2v.json)
 - **Uso**: Generar planos de vídeo B-roll, secuencias de establecimiento o escenas completas directamente desde texto (`EmptyHunyuanLatentVideo` + doble `KSamplerAdvanced` MoE).
@@ -216,7 +227,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.13 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
+### 2.14 `sdxl_image` — SDXL Juggernaut XI Generación de Imagen y Keyframes
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_image.json`](../studio/comfy_studio/templates/data/sdxl_image.json)
 - **Uso**: Generar imágenes fotorrealistas de alta resolución (`1024x1024`), storyboards, personajes de referencia o primeros/últimos fotogramas para nutrir `wan_i2v`, `wan_flf2v` y `vace_restyle`.
@@ -232,7 +243,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.14 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
+### 2.15 `sdxl_ipadapter` — SDXL Juggernaut XI + IP-Adapter (Identidad Fijada por Referencia)
 
 - **Archivo**: [`studio/comfy_studio/templates/data/sdxl_ipadapter.json`](../studio/comfy_studio/templates/data/sdxl_ipadapter.json)
 - **Uso**: Generar nuevas tomas o keyframes de un mismo personaje, mascota u objeto a partir de una foto de referencia del proyecto (`image_asset_id` / `image_input`), manteniendo la identidad visual con IP-Adapter SDXL ViT-H (`IPAdapterModelLoader` + `IPAdapterApply` sobre el modelo Juggernaut XI).
@@ -247,7 +258,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
-### 2.15 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
+### 2.16 `hunyuan3d_image_to_3d` — Hunyuan3D 2.1 Imagen a Malla 3D (GLB) *(M3-D)*
 
 - **Archivo**: [`studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json`](../studio/comfy_studio/templates/data/hunyuan3d_image_to_3d.json)
 - **Uso**: Convertir cualquier imagen del proyecto (render `sdxl_image`, keyframe de vídeo o foto subida) en una malla 3D texturizable en formato `GLB`, lista para Blender/Unreal. Pipeline 100% nativo de comfy-core (`ImageOnlyCheckpointLoader` + `ModelSamplingAuraFlow` + `CLIPVisionEncode` + `Hunyuan3Dv2Conditioning` + `KSampler` + `VAEDecodeHunyuan3D` + `VoxelToMesh` + `SaveGLB`), sin custom nodes.

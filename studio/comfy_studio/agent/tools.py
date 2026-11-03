@@ -36,6 +36,7 @@ TemplateIdLiteral = Literal[
     "wan_t2v",
     "wan_t2v_5b",
     "wan_animate",
+    "wan_animate_cont",
     "sdxl_image",
     "sdxl_ipadapter",
     "hunyuan3d_image_to_3d",
@@ -54,6 +55,7 @@ VALID_TEMPLATES: tuple[str, ...] = (
     "wan_t2v",
     "wan_t2v_5b",
     "wan_animate",
+    "wan_animate_cont",
     "sdxl_image",
     "sdxl_ipadapter",
     "hunyuan3d_image_to_3d",
@@ -662,6 +664,66 @@ class UpscaleAssetArgs(BaseModel):
     scale: int = Field(
         default=4,
         description="Factor de escala: 2 o 4 (Real-ESRGAN soporta 2x/4x).",
+    )
+
+
+class ProduceVideoArgs(BaseModel):
+    """Argumentos para la herramienta `produce_video`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    story_prompt: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Historia o acción completa del clip largo. Cada ventana se renderiza "
+            "como una continuación numerada de esta narración."
+        ),
+    )
+    total_duration_sec: float = Field(
+        ...,
+        gt=0.0,
+        le=600.0,
+        description="Duración total objetivo del clip en segundos.",
+    )
+    template_id: str = Field(
+        default="wan_t2v",
+        description=(
+            "Plantilla de generación por ventana (texto-imagen -> vídeo; "
+            "p. ej. wan_t2v o wan_t2v_5b). Para plantillas con assets de entrada "
+            "usa enqueue_render + plan_long_render manualmente."
+        ),
+    )
+    chunk_frames: int = Field(
+        default=81,
+        ge=5,
+        le=241,
+        description="Fotogramas por ventana.",
+    )
+    fps: int = Field(
+        default=16,
+        ge=1,
+        le=60,
+        description="Cadencia de las ventanas.",
+    )
+    overlap_frames: int = Field(
+        default=9,
+        ge=0,
+        le=240,
+        description="Solapamiento entre ventanas (crossfade en el ensamblado).",
+    )
+    crossfade_sec: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=2.0,
+        description="Crossfade entre chunks al ensamblar (0 = unión directa).",
+    )
+    extra_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Parámetros adicionales de la plantilla aplicados a cada ventana "
+            "(p. ej. width/height/seed); validados por la propia plantilla."
+        ),
     )
 
 
@@ -1618,6 +1680,115 @@ async def _handle_assemble_long_video(
     return await run_in_threadpool(_do_assemble)
 
 
+async def _handle_produce_video(
+    args: ProduceVideoArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..edl.windowed import (
+        WindowedAssemblyError,
+        assemble_windowed_video,
+        plan_generation_windows,
+    )
+    from ..templates import TemplateNotFoundError, TemplateParamError, get_default_registry
+
+    try:
+        plan = plan_generation_windows(
+            args.total_duration_sec,
+            chunk_frames=args.chunk_frames,
+            fps=args.fps,
+            overlap_frames=args.overlap_frames,
+        )
+    except WindowedAssemblyError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+
+    registry = get_default_registry()
+    n = plan["windows_count"]
+    chunk_assets: list[str] = []
+    windows_report: list[dict[str, Any]] = []
+
+    for window in plan["windows"]:
+        window_params: dict[str, Any] = {
+            **args.extra_params,
+            "prompt": (
+                f"{args.story_prompt.strip()} "
+                f"(parte {window['index'] + 1} de {n}; continúa la escena anterior)"
+            ),
+            "frames": int(window["frames"]),
+        }
+        try:
+            submission = await registry.submit_render(
+                args.template_id,
+                window_params,
+                project_id=context.project_id,
+                store=context.store,
+                comfyui_client=context.comfyui_client,
+                broker=context.broker,
+                strict=True,
+            )
+        except (TemplateNotFoundError, TemplateParamError, LookupError) as exc:
+            raise ToolExecutionError(
+                f"produce_video falló en la ventana {window['index'] + 1}/{n}: {exc}"
+            ) from exc
+
+        job_status = str(submission.get("status") or "")
+        video_assets = [
+            a
+            for a in submission.get("gallery_assets") or []
+            if a.get("kind") == "video"
+        ]
+        if job_status != "done" or not video_assets:
+            raise ToolExecutionError(
+                f"produce_video: la ventana {window['index'] + 1}/{n} no completó "
+                f"(estado={job_status!r}, videos={len(video_assets)}); abortando "
+                "el clip largo sin ensamblar."
+            )
+        chosen = video_assets[0]
+        chunk_assets.append(str(chosen["id"]))
+        windows_report.append(
+            {
+                "index": window["index"],
+                "job_id": submission.get("job_id"),
+                "frames": window["frames"],
+                "asset_id": chosen["id"],
+                "filename": chosen.get("filename"),
+            }
+        )
+
+    if len(chunk_assets) == 1:
+        return {
+            "status": "produced",
+            "project_id": context.project_id,
+            "template_id": args.template_id,
+            "windows": windows_report,
+            "output_asset": context.store.get_asset(
+                context.project_id, chunk_assets[0]
+            ),
+            "assembled": False,
+        }
+
+    try:
+        assembly = assemble_windowed_video(
+            context.store,
+            context.project_id,
+            chunk_asset_ids=chunk_assets,
+            crossfade_sec=args.crossfade_sec,
+            ffmpeg_timeout_s=context.config.studio_ffmpeg_timeout_s,
+            ffprobe_timeout_s=context.config.studio_ffprobe_timeout_s,
+        )
+    except WindowedAssemblyError as exc:
+        raise ToolExecutionError(f"produce_video falló al ensamblar: {exc}") from exc
+
+    return {
+        "status": "produced",
+        "project_id": context.project_id,
+        "template_id": args.template_id,
+        "windows": windows_report,
+        "assembled": True,
+        "assembly": assembly,
+        "output_asset": assembly["output_asset"],
+    }
+
+
 async def _handle_upscale_asset(
     args: UpscaleAssetArgs,
     context: ToolContext,
@@ -2459,6 +2630,19 @@ def create_default_tool_belt() -> ToolBelt:
             args_model=SystemStatusArgs,
             handler=_handle_system_status,
             parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="produce_video",
+            description=(
+                "Pipeline largo de una sola instrucción: planifica las ventanas del "
+                "clip, renderiza cada una con la plantilla dada (continuación "
+                "numerada de la historia), ensambla con crossfade y registra el "
+                "vídeo final en la galería. Fail-closed: aborta si una ventana falla."
+            ),
+            args_model=ProduceVideoArgs,
+            handler=_handle_produce_video,
         )
     )
     belt.register(

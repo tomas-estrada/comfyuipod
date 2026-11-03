@@ -1146,7 +1146,7 @@ jobs:
           unavailable = {i["id"] for i in tpl_items if i.get("available") is False}
           # 3D y Animate son grupos opt-in (STUDIO_INCLUDE_3D / STUDIO_INCLUDE_ANIMATE):
           # sin sus pesos se declaran unavailable con reason, el resto disponibles.
-          assert unavailable == {"hunyuan3d_image_to_3d", "wan_animate"}, (
+          assert unavailable == {"hunyuan3d_image_to_3d", "wan_animate", "wan_animate_cont"}, (
             f"Unexpected unavailable: {unavailable}"
           )
           api = json.loads(os.environ["ST_API"])
