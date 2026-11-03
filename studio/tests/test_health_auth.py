@@ -31,7 +31,7 @@ def test_health_reports_media_tool_capabilities(
 ) -> None:
     """Runtime media prerequisites are visible without assuming an OS-specific path."""
     monkeypatch.setattr(
-        "comfy_studio.app.shutil.which",
+        "comfy_studio.media_bins.shutil.which",
         lambda name: f"/test-bin/{name}" if name == "ffmpeg" else None,
     )
     resp = client.get("/studio/api/health")

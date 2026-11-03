@@ -34,7 +34,7 @@ def test_qa_no_ffmpeg_fails_typed(monkeypatch: pytest.MonkeyPatch) -> None:
     # Sin stub y sin ffmpeg (env vacío + which None) -> falla TIPADO, nunca lanza.
     monkeypatch.delenv("STUDIO_STUB_QA", raising=False)
     monkeypatch.delenv("STUDIO_FFMPEG_BIN", raising=False)
-    monkeypatch.setattr("comfy_studio.engines.qa.shutil.which", lambda _b: None)
+    monkeypatch.setattr("comfy_studio.media_bins.shutil.which", lambda _b: None)
     res = QaEngine().run(EngineRunSpec(job={"video_path": "/x/shot.mp4"}))
     assert res.ok is False
     assert "FFmpeg no disponible" in (res.error or "")

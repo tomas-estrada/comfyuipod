@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import SIMULATED_ML_NOTICE
+from ..media_bins import find_ffmpeg
 from ..ml import is_real_backend, require_real_payload, run_worker
 from ..perception.keyframes import probe_media_info
 from ..projects import ProjectStore
@@ -202,7 +203,7 @@ def extract_16k_mono_wav(media_path: Path | str, out_wav: Path | str) -> bool:
     if not src.is_file():
         return False
 
-    ffmpeg_bin = shutil.which("ffmpeg")
+    ffmpeg_bin = find_ffmpeg()
     if not ffmpeg_bin:
         if src.suffix.lower() == ".wav":
             shutil.copyfile(src, dst)
