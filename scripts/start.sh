@@ -4,6 +4,7 @@
 # ==============================================================================
 # 0. Inicializa logs en /var/log/{start,comfyui,supervisor,download-models}.log y diag.txt
 # 1. Muestra banner con metadatos de imagen (/etc/comfyui/image.json, §7.2) y verifica ffmpeg
+# 1b. Espera/verifica el montaje del volumen persistente en /workspace (M7-OPS-002)
 # 2. Prepara datos en COMFY_DATA_DIR (incluyendo models/configs) y enlaza /opt/ComfyUI
 # 3. Configura HTTP Basic Auth en Nginx por stdin y escribe /run/comfyui-pass (0600, §9)
 # 4. Arranca Nginx y ttyd opcional (127.0.0.1:7681) antes de ceder el control (§5.3)
@@ -107,6 +108,58 @@ fi
 if command -v nvidia-smi >/dev/null 2>&1; then
     gpu_info="$(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null || true)"
     [ -n "${gpu_info}" ] && echo "[GPU] ${gpu_info}"
+fi
+
+# ------------------------------------------------------------------------------
+# 1b. Guardia de montaje del volumen persistente (M7-OPS-002)
+#     En RunPod los Network Volumes montados en /workspace tardan 30-60s en
+#     aparecer tras arrancar el contenedor; hasta entonces, escribir en
+#     COMFY_DATA_DIR cae en el disco efimero (overlay) del contenedor y se
+#     pierde al detener el pod. Se espera a que haya un punto de montaje real
+#     (no el root overlay/tmpfs) y, si no llega, se avisa en claro; con
+#     COMFY_REQUIRE_PERSISTENT_VOLUME=1 se aborta para no perder datos en
+#     silencio. En Vast.ai /workspace ya es un montaje propio y no hay espera.
+# ------------------------------------------------------------------------------
+COMFY_VOLUME_WAIT_TRIES="${COMFY_VOLUME_WAIT_TRIES:-12}"
+COMFY_VOLUME_WAIT_SLEEP_S="${COMFY_VOLUME_WAIT_SLEEP_S:-5}"
+if ! [[ "${COMFY_VOLUME_WAIT_TRIES}" =~ ^[0-9]+$ ]]; then
+    echo "[WARN] COMFY_VOLUME_WAIT_TRIES='${COMFY_VOLUME_WAIT_TRIES}' no es un entero válido; usando 12."
+    COMFY_VOLUME_WAIT_TRIES="12"
+fi
+if ! [[ "${COMFY_VOLUME_WAIT_SLEEP_S}" =~ ^[0-9]+$ ]]; then
+    COMFY_VOLUME_WAIT_SLEEP_S="5"
+fi
+
+# Punto de montaje (campo 2 de /proc/mounts) que contiene $1, eligiendo el
+# prefijo mas largo; vacio si /proc/mounts no lo tiene.
+_mount_target_of() {
+    awk -v d="$1" 'BEGIN { best = ""; bl = 0 } { mp = $2; if (mp == "") next; if (mp == "/" || d == mp || index(d, mp "/") == 1) { if (length(mp) > bl) { best = mp; bl = length(mp) } } } END { print best }' /proc/mounts
+}
+
+if [[ "${COMFY_DATA_DIR}" == /workspace* ]]; then
+    echo "[1b/7] Verificando montaje del volumen persistente en ${COMFY_DATA_DIR}..."
+    mkdir -p "${COMFY_DATA_DIR}"
+    waited=0
+    while :; do
+        mnt="$(_mount_target_of "${COMFY_DATA_DIR}")"
+        src="$(awk -v m="${mnt}" '$2 == m { print $1; exit }' /proc/mounts 2>/dev/null || true)"
+        if [[ -n "${mnt}" && "${mnt}" != "/" && "${src}" != "overlay" && "${src}" != "tmpfs" ]]; then
+            echo "[1b/7] [OK] Volumen persistente montado en ${mnt} (fuente: ${src:-desconocida})."
+            touch "${COMFY_DATA_DIR}/.comfyui-pod-volume" 2>/dev/null || true
+            break
+        fi
+        if (( waited >= COMFY_VOLUME_WAIT_TRIES )); then
+            echo "[1b/7] [WARN] Tras $((waited * COMFY_VOLUME_WAIT_SLEEP_S))s, ${COMFY_DATA_DIR} sigue en el disco efímero del contenedor (montaje: '${mnt:-ninguno}', fuente: '${src:-overlay}'). Modelos y outputs NO persistirán al detener el pod."
+            if [[ "${COMFY_REQUIRE_PERSISTENT_VOLUME:-0}" == "1" ]]; then
+                echo "[1b/7] [FATAL] COMFY_REQUIRE_PERSISTENT_VOLUME=1 y no hay volumen montado en /workspace. Abortando para evitar pérdida silenciosa de datos."
+                exit 1
+            fi
+            break
+        fi
+        waited=$((waited + 1))
+        echo "[1b/7] Esperando montaje del volumen en /workspace (intento ${waited}/${COMFY_VOLUME_WAIT_TRIES})..."
+        sleep "${COMFY_VOLUME_WAIT_SLEEP_S}"
+    done
 fi
 
 # ------------------------------------------------------------------------------
