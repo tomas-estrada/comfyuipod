@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -37,8 +36,8 @@ from comfy_studio.engines import (
     EngineTier,
     is_stub_mode,
 )
+from comfy_studio.media_bins import find_ffmpeg
 
-_BIN_ENV = "STUDIO_FFMPEG_BIN"  # ffmpeg; ffprobe se deriva al lado
 _VBENCH_PY_ENV = "STUDIO_QA_VBENCH_PYTHON"  # intérprete del venv aislado de VBench
 _DEFAULT_TIMEOUT_S = 600.0
 
@@ -70,7 +69,7 @@ class QaEngine:
         return is_stub_mode(self.name)
 
     def _ffmpeg(self) -> str:
-        return (os.environ.get(_BIN_ENV) or shutil.which("ffmpeg") or "").strip()
+        return find_ffmpeg() or ""
 
     def _vbench_python(self) -> str:
         py = (os.environ.get(_VBENCH_PY_ENV) or "").strip()
@@ -112,7 +111,7 @@ class QaEngine:
                 "vbench": bool(self._vbench_python()),
                 "stub": self.is_stub(),
             },
-            error=None if ready else f"FFmpeg ausente ({_BIN_ENV} o PATH)",
+            error=None if ready else "FFmpeg ausente (STUDIO_FFMPEG_BIN o PATH)",
         )
 
     def run(self, spec: EngineRunSpec) -> EngineResult:
@@ -146,7 +145,7 @@ class QaEngine:
                 ok=False,
                 engine=self.name,
                 verb="run",
-                error=f"FFmpeg no disponible ({_BIN_ENV} o PATH); usa STUDIO_STUB_QA=1",
+                error="FFmpeg no disponible (STUDIO_FFMPEG_BIN o PATH); usa STUDIO_STUB_QA=1",
             )
         return self._run_qa(qa, ffmpeg, start)
 

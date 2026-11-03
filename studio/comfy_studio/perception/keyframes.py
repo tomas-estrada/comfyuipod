@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import struct
 import subprocess
 import tempfile
@@ -12,6 +11,7 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+from ..media_bins import find_ffmpeg, find_ffprobe
 from ..projects import ProjectStore
 
 _PTS_TIME_RE = re.compile(r"pts_time:\s*([0-9]+(?:\.[0-9]+)?)")
@@ -54,7 +54,7 @@ def probe_media_info(
 ) -> dict[str, Any]:
     """Obtiene duración, dimensiones y streams de un archivo multimedia con ffprobe."""
     file_path = Path(path)
-    ffprobe_bin = shutil.which("ffprobe")
+    ffprobe_bin = find_ffprobe()
     if not ffprobe_bin or not file_path.is_file():
         # M3-SCR-006: metadatos de respaldo NO verificados (probe_ok=False); los
         # consumidores no deben presentarlos como verificación real del medio.
@@ -168,7 +168,7 @@ def extract_image_rgb_signature(
     timeout_s: float = DEFAULT_FFMPEG_SIGNATURE_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Extrae estadísticos RGB (media, cuadrantes y etiquetas semánticas de color) vía ffmpeg."""
-    ffmpeg_bin = shutil.which("ffmpeg")
+    ffmpeg_bin = find_ffmpeg()
     path = Path(image_path)
     pixels: list[tuple[int, int, int]] = []
 
@@ -348,7 +348,7 @@ def extract_video_keyframes(
     width = int(info.get("width") or 320)
     height = int(info.get("height") or 180)
 
-    ffmpeg_bin = shutil.which("ffmpeg")
+    ffmpeg_bin = find_ffmpeg()
     extracted_frames: list[tuple[float, bytes]] = []
     # M1.7 (M3-SCR-007): el PNG de relleno NO es un plano real del clip. Se marca
     # para que `clip_index` lo excluya del índice CLIP: indexarlo produciría

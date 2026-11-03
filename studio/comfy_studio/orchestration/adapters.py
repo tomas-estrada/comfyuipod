@@ -443,12 +443,13 @@ def _extract_keyframes_sync(
     Falla blanda: sin ffmpeg o vídeo ilegible devuelve [] (el evaluador
     tratará la ausencia de frames como fallo tipado, no como crash).
     """
-    import shutil
     import subprocess
     import tempfile
     from pathlib import Path
 
-    ffmpeg = shutil.which("ffmpeg")
+    from comfy_studio.media_bins import find_ffmpeg
+
+    ffmpeg = find_ffmpeg()
     if not ffmpeg:
         return []
     with tempfile.TemporaryDirectory(prefix="orch_semqa_") as tmp:

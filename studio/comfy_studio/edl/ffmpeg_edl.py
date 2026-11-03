@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from ..media_bins import find_ffmpeg
 from ..perception.keyframes import probe_media_info
 from ..projects import ProjectStore
 
@@ -162,7 +163,7 @@ def execute_edl_ffmpeg(
             f"El EDL tiene {len(raw_cuts)} cortes; máximo permitido: {MAX_EDL_CUTS} (M3-SCR-005)."
         )
 
-    ffmpeg_bin = shutil.which("ffmpeg")
+    ffmpeg_bin = find_ffmpeg()
     if not ffmpeg_bin:
         raise RuntimeError("No se encontró `ffmpeg` en el PATH para ejecutar el EDL.")
 
