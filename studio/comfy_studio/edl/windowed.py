@@ -112,7 +112,12 @@ def assemble_windowed_video(
     with tempfile.TemporaryDirectory(prefix="comfy_windowed_") as tmp_str:
         tmp_dir = Path(tmp_str)
 
-        # 1. Normalizar chunks: H.264 + AAC (silencio si el chunk no trae audio)
+        # 1. Normalizar chunks: H.264 solo vídeo (el audio se restaura al final
+        #    desde audio_source si se aporta; los intermedios van sin pista).
+        #    Nota M4: los intentos con AAC intermedio + acrossfade producen
+        #    audio roto de forma no determinista en algunas builds de ffmpeg;
+        #    vídeo-only en el fundido es determinista y el caso de uso real
+        #    (restaurar el audio original) se aplica en el paso 3.
         norm_paths: list[Path] = []
         chunk_durations: list[float] = []
         for idx, src in enumerate(chunk_paths):
@@ -125,6 +130,9 @@ def assemble_windowed_video(
                 "error",
                 "-i",
                 str(src),
+                "-map",
+                "0:v:0",
+                "-an",
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -133,14 +141,6 @@ def assemble_windowed_video(
                 "yuv420p",
                 "-r",
                 "16",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                "-ar",
-                "44100",
-                "-ac",
-                "2",
                 "-movflags",
                 "+faststart",
                 str(norm),
@@ -212,22 +212,16 @@ def assemble_windowed_video(
                     str(nxt),
                     "-filter_complex",
                     f"[0:v][1:v]xfade=transition=fade:duration={fade:.3f}:"
-                    f"offset={offset:.3f}[v];"
-                    f"[0:a][1:a]acrossfade=d={fade:.3f}[a]",
+                    f"offset={offset:.3f}[v]",
                     "-map",
                     "[v]",
-                    "-map",
-                    "[a]",
+                    "-an",
                     "-c:v",
                     "libx264",
                     "-preset",
                     "ultrafast",
                     "-pix_fmt",
                     "yuv420p",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "128k",
                     str(merged),
                 ]
                 new_dur = current_dur + nxt_dur - fade
@@ -407,7 +401,11 @@ def plan_generation_windows(
                 "end_sec": round(min(total_sec, start_sec + frames / fps), 3),
                 "frames": frames,
                 "skip_first_frames": int(round(start_sec * fps)),
+                # Para variantes con continuidad nativa (wan_animate_cont):
+                # offset acumulado de fotogramas donde terminó la ventana anterior.
+                "video_frame_offset": int(round(start_sec * fps)),
                 "crossfade_sec": round(overlap_sec, 3) if len(windows) > 0 else 0.0,
+                "continue_motion_frames": overlap_frames if len(windows) > 0 else 0,
             }
         )
         start_sec += effective_sec
@@ -427,5 +425,10 @@ def plan_generation_windows(
         "overlap_frames": int(overlap_frames),
         "windows_count": len(windows),
         "estimated_assembled_sec": round(planned_sec, 3),
+        "seamless_hint": (
+            "Para wan_animate: ventana 1 con wan_animate; ventanas 2+ con "
+            "wan_animate_cont (continue_video_asset_id = salida anterior, "
+            "video_frame_offset del plan) y assemble_long_video con crossfade_sec=0."
+        ),
         "windows": windows,
     }

@@ -32,6 +32,7 @@ EXPECTED_M2_TEMPLATE_IDS: tuple[str, ...] = (
     # M3-D: pipeline Hunyuan3D 2.1 nativo (imagen -> malla GLB)
     "hunyuan3d_image_to_3d",
     "latentsync",
+    "wan_animate_cont",
 )
 
 # Mapa de parámetro *_asset_id -> parámetro de archivo en nodo ComfyUI (*_input)
@@ -42,6 +43,7 @@ ASSET_PARAM_TO_INPUT_PARAM: dict[str, tuple[str, str]] = {
     "first_frame_asset_id": ("first_frame_input", "image"),
     "last_frame_asset_id": ("last_frame_input", "image"),
     "audio_asset_id": ("audio_input", "audio"),
+    "continue_video_asset_id": ("continue_video_input", "video"),
 }
 
 
@@ -56,7 +58,7 @@ THREE_D_WEIGHTS_UNAVAILABLE = (
 )
 
 
-ANIMATE_TEMPLATE_IDS: frozenset[str] = frozenset({"wan_animate"})
+ANIMATE_TEMPLATE_IDS: frozenset[str] = frozenset({"wan_animate", "wan_animate_cont"})
 ANIMATE_WEIGHTS_UNAVAILABLE = (
     "La plantilla 'wan_animate' requiere los pesos de Wan 2.2 Animate 14B "
     "(wan2.2_animate_14B_int8_convrot.safetensors, +17.15 GiB), que no están "
