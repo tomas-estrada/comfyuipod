@@ -263,3 +263,4 @@ Sesión de implementación 2026-10-28. Objetivo: que ninguna salida visible afir
 
 
 
+| M7-OPS-005 | Request ID por petición (`X-Request-Id`, entrante seguro o uuid4, reflejado en respuesta y en un ContextVar) + `STUDIO_JSON_LOGS=1` para logs JSON en el root logger del studio-server | Sin correlación, un fallo que cruza nginx → studio → ComfyUI exige leer tres logs a mano. El middleware queda externo al de edge auth (hay X-Request-Id incluso en 401). La redacción no se relaja: `install_log_redaction` sobre root + handler nuevo, y los filtros de handler corren antes del format. Tests: `studio/tests/test_observability.py` (6). | Adoptada |
