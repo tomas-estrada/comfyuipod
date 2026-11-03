@@ -55,7 +55,11 @@ REQUIRED_CATEGORIES = {
 }
 
 # M3-D: flags opt-in válidos por entrada del manifiesto
-VALID_OPT_IN_FLAGS = frozenset({"STUDIO_INCLUDE_ANIMATE", "STUDIO_INCLUDE_3D"})
+VALID_OPT_IN_FLAGS = frozenset({
+    "STUDIO_INCLUDE_ANIMATE",
+    "STUDIO_INCLUDE_3D",
+    "STUDIO_INCLUDE_MINIMAX",
+})
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
