@@ -25,6 +25,26 @@ def test_health_returns_200_with_comfyui_ok(
     assert body["llm_key_status"] == "<definida>"
 
 
+def test_health_reports_media_tool_capabilities(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    """Runtime media prerequisites are visible without assuming an OS-specific path."""
+    monkeypatch.setattr(
+        "comfy_studio.media_bins.shutil.which",
+        lambda name: f"/test-bin/{name}" if name == "ffmpeg" else None,
+    )
+    resp = client.get("/studio/api/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    media = body["media_tools"]
+    assert media["ffmpeg_available"] is True
+    assert media["ffprobe_available"] is False
+    assert media["sqlite_vec_available"] == body["perception"]["available"]
+    assert media["perception_backend"] == body["perception"]["backend"]
+    assert media["simulated"] == body["perception"]["simulated"]
+
+
 def test_health_returns_200_degraded_when_comfyui_down(
     client: TestClient,
     stub_comfyui_state: ComfyUIStubState,

@@ -115,6 +115,25 @@ El helper te muestra el **Top 5 de ofertas RTX 5090 (o RTX 4090 si no hay 5090)*
 
 La orquestación (`studio/comfy_studio/orchestration/`) ya no se limita a ejecutar: cada shot del plan lleva un criterio de aceptación (`acceptance`, umbrales `*_min`). El evaluador (`evaluator.py`) puntúa el render (negro/parpadeo vs. su `acceptance`); si pasa → **ACCEPTED** y el shot pasa de producción a la galería del proyecto; si no, sube un intento y replanifica con otra plantilla (`template_selector.py`). Consulta el estado por shot en los eventos SSE (`evaluate`) y en `/studio/api` del proyecto. Esto cierra el bucle agente→producción→galería sin revisión manual intermedia.
 
+### 8.2 Recuperación de jobs y webhooks (opcional)
+
+`comfy rent studio` reenvía estas opciones si las exportas en la terminal **antes de alquilar**. La recuperación durable está activa por defecto: los renders elegibles interrumpidos por un reinicio se reencolan una sola vez, 30 segundos después del arranque de Studio. Para desactivarla, define `STUDIO_RESUME_JOBS=0`; `STUDIO_RESUME_DELAY_S` ajusta la espera.
+
+Para recibir eventos, configura una URL HTTPS pública y un secreto compartido antes de crear la instancia:
+
+```bash
+export STUDIO_RESUME_JOBS=1
+export STUDIO_RESUME_DELAY_S=30
+export STUDIO_WEBHOOK_URL='https://tu-receptor.example.com/comfy-events'
+read -r -s 'STUDIO_WEBHOOK_SECRET?Secreto compartido del webhook: '
+echo
+export STUDIO_WEBHOOK_SECRET
+comfy rent studio --dry-run  # confirma variables; los valores del webhook no se muestran
+comfy rent studio
+```
+
+El receptor verifica `X-Studio-Signature` como HMAC-SHA256 del cuerpo JSON usando ese secreto. Usa únicamente un endpoint de confianza: se rechazan URLs que apunten a loopback o redes privadas; no publiques el secreto en `~/.zshrc`, repositorios, capturas ni logs. El helper enmascara URL y secreto en `--dry-run`, y Comfy Studio los redacta en `/status/api` y `/report.md`. Sin webhook configurado, Studio opera normalmente sin enviar notificaciones.
+
 ### 9. Al terminar: rescatar outputs y destruir la instancia
 
 ```bash

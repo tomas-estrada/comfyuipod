@@ -42,6 +42,7 @@ from comfy_studio.engines.qa import QaEngine
 from comfy_studio.engines.registry import build_default_registry
 from comfy_studio.engines.upscaler import UpscalerEngine
 from comfy_studio.mcp_server import McpContext, create_mcp_router
+from comfy_studio.media_bins import find_ffmpeg, find_ffprobe
 from comfy_studio.ml import probe_capabilities
 from comfy_studio.orchestration.adapters import build_server_collaborators
 from comfy_studio.orchestration.health import orchestration_health_report
@@ -1026,6 +1027,15 @@ def create_app(
                 "simulated": getattr(request.app.state, "perception_backend", "sim") == "sim",
                 "stale": bool(getattr(request.app.state, "perception_stale", False)),
                 "probe": getattr(request.app.state, "perception_probe_result", None),
+            },
+            # Runtime media prerequisites are resolved through PATH so operators can
+            # diagnose degraded EDL/keyframe features consistently on any host OS.
+            "media_tools": {
+                "ffmpeg_available": find_ffmpeg() is not None,
+                "ffprobe_available": find_ffprobe() is not None,
+                "sqlite_vec_available": perception_available,
+                "perception_backend": getattr(request.app.state, "perception_backend", "sim"),
+                "simulated": getattr(request.app.state, "perception_backend", "sim") == "sim",
             },
             "schema_version": active_store.get_schema_version(),
             # M5-F7: estado por motor del roster (ready/stub/unwired) para que el

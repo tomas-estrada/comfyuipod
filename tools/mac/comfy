@@ -1087,6 +1087,13 @@ PYEOF
             check_secret_safe "${STUDIO_STUB_LLM}" "STUDIO_STUB_LLM"
             env_flags="${env_flags} -e STUDIO_STUB_LLM=\"${STUDIO_STUB_LLM}\""
         fi
+        for studio_var in STUDIO_RESUME_JOBS STUDIO_RESUME_DELAY_S STUDIO_WEBHOOK_URL STUDIO_WEBHOOK_SECRET; do
+            studio_value="${!studio_var:-}"
+            if [ -n "${studio_value}" ]; then
+                check_secret_safe "${studio_value}" "${studio_var}"
+                env_flags="${env_flags} -e ${studio_var}=\"${studio_value}\""
+            fi
+        done
     fi
 
     if [ "${dry_run}" = "1" ]; then
@@ -1098,9 +1105,13 @@ PYEOF
         [ -z "${studio_llm_key}" ] || llm_key_state="<definida>"
         local llm_fallback_key_state="<no definida>"
         [ -z "${studio_llm_fallback_key}" ] || llm_fallback_key_state="<definida>"
+        local webhook_url_state="<no definida>"
+        [ -z "${STUDIO_WEBHOOK_URL:-}" ] || webhook_url_state="<definida>"
+        local webhook_secret_state="<no definida>"
+        [ -z "${STUDIO_WEBHOOK_SECRET:-}" ] || webhook_secret_state="<definida>"
         echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, disco=${disk_gb} GB, --args)."
         echo "[DRY-RUN] Filtros aplicados: ${query}"
-        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_FALLBACK_KEY=${llm_fallback_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
+        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_FALLBACK_KEY=${llm_fallback_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', STUDIO_RESUME_JOBS='${STUDIO_RESUME_JOBS:-1}', STUDIO_RESUME_DELAY_S='${STUDIO_RESUME_DELAY_S:-30}', STUDIO_WEBHOOK_URL=${webhook_url_state}, STUDIO_WEBHOOK_SECRET=${webhook_secret_state}, COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
         return 0
     fi
 

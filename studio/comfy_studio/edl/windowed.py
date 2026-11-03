@@ -19,12 +19,12 @@ salida y timeouts proporcionales a la duración.
 
 from __future__ import annotations
 
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
 
+from ..media_bins import find_ffmpeg
 from ..perception.keyframes import probe_media_info
 from ..projects import ProjectStore
 from .ffmpeg_edl import (
@@ -98,7 +98,7 @@ def assemble_windowed_video(
     if project is None:
         raise WindowedAssemblyError(f"Proyecto no encontrado: {project_id!r}")
 
-    ffmpeg_bin = shutil.which("ffmpeg")
+    ffmpeg_bin = find_ffmpeg()
     if not ffmpeg_bin:
         raise WindowedAssemblyError("No se encontró `ffmpeg` en el PATH para ensamblar.")
 

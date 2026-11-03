@@ -16,7 +16,6 @@ mediciones reales del archivo, así que el recorte deja de depender únicamente 
 
 from __future__ import annotations
 
-import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Literal
@@ -27,6 +26,7 @@ from ..asr.whisperx import (
     extract_16k_mono_wav,
     transcribe_project_asset,
 )
+from ..media_bins import find_ffmpeg
 from ..projects import ProjectStore
 
 AspectRatioType = Literal["16:9", "9:16", "1:1", "4:5"]
@@ -52,7 +52,7 @@ def analyze_acoustic_energy(media_path: Path | str) -> dict[str, Any]:
     devuelve `available: False` y el llamador cae al comportamiento sin señal acústica.
     """
     src = Path(media_path)
-    if not src.is_file() or shutil.which("ffmpeg") is None:
+    if not src.is_file() or find_ffmpeg() is None:
         return {"available": False, "duration_sec": 0.0, "spans": []}
     with tempfile.TemporaryDirectory(prefix="comfy_hl_ac_") as tmp:
         wav = Path(tmp) / "audio_16k.wav"
