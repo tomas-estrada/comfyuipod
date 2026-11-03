@@ -250,6 +250,7 @@ class StubLLMClient:
             "vace_restyle",
             "vace_swap",
             "face_fix",
+            "latentsync",
             "sdxl_image",
             "sdxl_ipadapter",
             "ipadapter",
@@ -274,6 +275,10 @@ class StubLLMClient:
                 template_id = "vace_restyle"
             elif "vace_swap" in lower or "swap" in lower or "intercambio" in lower:
                 template_id = "vace_swap"
+            elif (
+                "latentsync" in lower or "labios" in lower or "lip-sync" in lower
+            ):
+                template_id = "latentsync"
             elif "face_fix" in lower or "restaura la cara" in lower or "restauraci" in lower:
                 template_id = "face_fix"
             elif "wan_flf2v" in lower or "flf2v" in lower:

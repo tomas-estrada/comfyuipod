@@ -74,7 +74,7 @@ def test_default_belt_registers_m3b_tools() -> None:
 async def test_list_templates_returns_curated_registry(tool_context: ToolContext) -> None:
     belt = create_default_tool_belt()
     result = await belt.execute("list_templates", {}, tool_context)
-    assert result["count"] == 14
+    assert result["count"] == 15
     ids = {t["id"] for t in result["templates"]}
     assert ids == {
         "face_fix",
@@ -91,6 +91,7 @@ async def test_list_templates_returns_curated_registry(tool_context: ToolContext
         "sdxl_image",
         "sdxl_ipadapter",
         "hunyuan3d_image_to_3d",
+        "latentsync",
     }
 
     with_wf = await belt.execute("list_templates", {"include_workflow": True}, tool_context)

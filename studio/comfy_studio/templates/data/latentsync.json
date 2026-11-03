@@ -1,0 +1,160 @@
+{
+  "id": "latentsync",
+  "name": "LatentSync 1.6 — Labios Sincronizados con Audio (Lip-Sync)",
+  "category": "video_edit",
+  "output_kind": "video",
+  "summary": "Sincroniza los labios de un vídeo con una pista de audio: re-dibuja la boca del sujeto para que hable el audio dado (p. ej. narración generada con generate_speech), conservando identidad y encuadre.",
+  "description": "Post-proceso de lip-sync con LatentSync 1.6: carga el vídeo (VHS_LoadVideo), el audio (LoadAudio — típicamente la salida de generate_speech o un voice-clone del proyecto), re-dibuja la región bucal del sujeto cuadro a cuadro para que los labios articulen el audio, y devuelve el vídeo con la pista de audio sincronizada. Pensado para hacer 'hablar' a un personaje con voz propia (RVC) o narración en español sobre metraje existente o generado.",
+  "performance_defaults": {
+    "resolution": "source",
+    "frames": 81,
+    "inference_steps": 20,
+    "lips_expression": 1.5,
+    "vram_gib": 10
+  },
+  "models": [
+    "latentsync_unet.pt"
+  ],
+  "required_nodes": [
+    "VHS_LoadVideo",
+    "LoadAudio",
+    "LatentSyncNode",
+    "VHS_VideoCombine"
+  ],
+  "parameters": {
+    "prompt": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "description": "Descripción breve del propósito del lip-sync (registro editorial; no condiciona el grafo)."
+    },
+    "video_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "video",
+      "description": "ID del asset de vídeo con el sujeto cuyo habla se sincroniza."
+    },
+    "video_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_video.mp4",
+      "description": "Archivo de vídeo en ComfyUI input (rellenado desde video_asset_id)."
+    },
+    "audio_asset_id": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "asset_kind": "audio",
+      "description": "ID del asset de audio con el habla objetivo (p. ej. salida de generate_speech)."
+    },
+    "audio_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_audio.wav",
+      "description": "Archivo de audio en ComfyUI input (rellenado desde audio_asset_id)."
+    },
+    "frames": {
+      "type": "integer",
+      "required": false,
+      "default": 81,
+      "min": 5,
+      "max": 241,
+      "description": "Fotogramas a procesar; el vídeo se recorta si excede."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 1247,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla determinista del lip-sync."
+    },
+    "inference_steps": {
+      "type": "integer",
+      "required": false,
+      "default": 20,
+      "min": 1,
+      "max": 999,
+      "description": "Pasos de inferencia por lote de fotogramas (20 por defecto)."
+    },
+    "lips_expression": {
+      "type": "number",
+      "required": false,
+      "default": 1.5,
+      "min": 1.0,
+      "max": 3.0,
+      "description": "Intensidad de la expresión labial (1.0 discreta a 3.0 exagerada)."
+    }
+  },
+  "docs": {
+    "uso": "Úsalo tras generar la voz (generate_speech / voice_clone) y el vídeo del personaje (wan_s2v, wan_animate o metraje real) para sincronizar los labios con el habla real. La identidad y el encuadre se conservan: solo se re-dibuja la boca.",
+    "inputs": [
+      "video_asset_id / video_input: vídeo con el sujeto hablante.",
+      "audio_asset_id / audio_input: pista de habla objetivo (WAV/MP3 en input).",
+      "seed (1247), inference_steps (20), lips_expression (1.5): control del lip-sync."
+    ],
+    "defaults": {
+      "frames": 81,
+      "inference_steps": 20,
+      "lips_expression": 1.5,
+      "resolution": "source"
+    },
+    "notas_rendimiento": "latentsync_unet.pt (5.07 GB, grupo latentsync ya descargado). Procesa por lotes; VRAM ~10 GB para 480p. A 16 fps el audio se mantiene sincronizado vía VHS_VideoCombine."
+  },
+  "workflow": {
+    "1": {
+      "class_type": "VHS_LoadVideo",
+      "inputs": {
+        "video": "{{video_input}}",
+        "force_rate": 16,
+        "custom_width": 0,
+        "custom_height": 0,
+        "frame_load_cap": "{{frames}}",
+        "skip_first_frames": 0,
+        "select_every_nth": 1
+      },
+      "_meta": {
+        "title": "Cargar Vídeo del Sujeto"
+      }
+    },
+    "2": {
+      "class_type": "LoadAudio",
+      "inputs": {
+        "audio": "{{audio_input}}"
+      },
+      "_meta": {
+        "title": "Cargar Audio de Habla"
+      }
+    },
+    "3": {
+      "class_type": "LatentSyncNode",
+      "inputs": {
+        "images": ["1", 0],
+        "audio": ["2", 0],
+        "seed": "{{seed}}",
+        "lips_expression": "{{lips_expression}}",
+        "inference_steps": "{{inference_steps}}"
+      },
+      "_meta": {
+        "title": "LatentSync 1.6 — Re-dibujar Labios"
+      }
+    },
+    "4": {
+      "class_type": "VHS_VideoCombine",
+      "inputs": {
+        "images": ["3", 0],
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "{{output_prefix}}",
+        "format": "video/h264-mp4",
+        "pingpong": false,
+        "save_output": true,
+        "audio": ["3", 1]
+      },
+      "_meta": {
+        "title": "Guardar Vídeo con Labios y Audio Sincronizados"
+      }
+    }
+  }
+}

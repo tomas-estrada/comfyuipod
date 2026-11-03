@@ -31,6 +31,7 @@ EXPECTED_M2_TEMPLATE_IDS: tuple[str, ...] = (
     "sdxl_ipadapter",
     # M3-D: pipeline Hunyuan3D 2.1 nativo (imagen -> malla GLB)
     "hunyuan3d_image_to_3d",
+    "latentsync",
 )
 
 # Mapa de parámetro *_asset_id -> parámetro de archivo en nodo ComfyUI (*_input)

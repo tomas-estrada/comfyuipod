@@ -288,3 +288,33 @@ def test_pipeline_tools_registered_with_safety_flags() -> None:
         spec = belt.get(name)
         assert spec is not None, name
         assert spec.parallel_safe is safe, name
+
+
+# --- upscale_asset ----------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_upscale_asset_registers_upscaled_image(
+    pipeline_tool_context: ToolContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_STUB_UPSCALER", "1")
+    belt = create_default_tool_belt()
+    asset_id = _upload_image(pipeline_tool_context)
+    result = await belt.execute(
+        "upscale_asset", {"asset_id": asset_id, "scale": 4}, pipeline_tool_context
+    )
+    assert result["status"] == "upscaled"
+    assert result["scale"] == 4
+    asset = result["output_asset"]
+    assert asset["kind"] == "image"
+    meta = asset.get("metadata") or {}
+    assert meta.get("engine") == "upscaler"
+    assert meta.get("upscaled_from_asset_id") == asset_id
+    assert "_x4_" in asset["filename"]
+
+
+@pytest.mark.anyio
+async def test_upscale_asset_rejects_non_image(pipeline_tool_context: ToolContext) -> None:
+    belt = create_default_tool_belt()
+    with pytest.raises(ToolExecutionError, match="no encontrado"):
+        await belt.execute("upscale_asset", {"asset_id": "no-existe"}, pipeline_tool_context)

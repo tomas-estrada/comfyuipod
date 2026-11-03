@@ -25,6 +25,7 @@ from ..templates import (
 
 TemplateIdLiteral = Literal[
     "face_fix",
+    "latentsync",
     "vace_inpaint",
     "vace_restyle",
     "vace_swap",
@@ -42,6 +43,7 @@ TemplateIdLiteral = Literal[
 
 VALID_TEMPLATES: tuple[str, ...] = (
     "face_fix",
+    "latentsync",
     "vace_inpaint",
     "vace_restyle",
     "vace_swap",
@@ -219,7 +221,7 @@ class EnqueueRenderArgs(BaseModel):
         ...,
         description=(
             "Identificador de la plantilla API-format a ejecutar: "
-            "face_fix, vace_inpaint, vace_restyle, vace_swap, wan_flf2v, wan_i2v, "
+            "face_fix, latentsync, vace_inpaint, vace_restyle, vace_swap, wan_flf2v, wan_i2v, "
             "wan_i2v_5b, wan_s2v, wan_t2v, wan_t2v_5b, sdxl_image, sdxl_ipadapter "
             "o hunyuan3d_image_to_3d."
         ),
@@ -644,6 +646,22 @@ class AssembleLongVideoArgs(BaseModel):
             "ID del asset de vídeo fuente cuyo audio se restaura en el resultado final "
             "(típicamente el vídeo original cuya escena se regeneró por ventanas)."
         ),
+    )
+
+
+class UpscaleAssetArgs(BaseModel):
+    """Argumentos para la herramienta `upscale_asset`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(
+        ...,
+        min_length=1,
+        description="ID del asset de imagen a reescalar (Real-ESRGAN 4x horneado).",
+    )
+    scale: int = Field(
+        default=4,
+        description="Factor de escala: 2 o 4 (Real-ESRGAN soporta 2x/4x).",
     )
 
 
@@ -1600,6 +1618,77 @@ async def _handle_assemble_long_video(
     return await run_in_threadpool(_do_assemble)
 
 
+async def _handle_upscale_asset(
+    args: UpscaleAssetArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..engines import EngineRunSpec
+    from ..engines.upscaler import UpscalerEngine
+
+    def _do_upscale() -> dict[str, Any]:
+        import tempfile
+        from pathlib import Path
+
+        asset = context.store.get_asset(context.project_id, args.asset_id)
+        if asset is None:
+            raise ToolExecutionError(f"Asset no encontrado: {args.asset_id!r}")
+        if asset.get("kind") != "image":
+            raise ToolExecutionError(
+                "upscale_asset soporta imágenes (Real-ESRGAN horneado); el upscale "
+                "de vídeo requiere el submotor SeedVR2 de ComfyUI (aún no instalado)."
+            )
+        src_path = context.store.get_asset_path(context.project_id, args.asset_id)
+        if src_path is None:
+            raise ToolExecutionError("El asset no tiene archivo físico.")
+
+        engine = UpscalerEngine()
+        with tempfile.TemporaryDirectory(prefix="comfy_upscale_") as tmp:
+            src_ext = src_path.suffix or ".png"
+            in_path = Path(tmp) / f"input{src_ext}"
+            out_path = Path(tmp) / "output.png"
+            in_path.write_bytes(src_path.read_bytes())
+            result = engine.run(
+                EngineRunSpec(
+                    job={
+                        "input_path": str(in_path),
+                        "output_path": str(out_path),
+                        "scale": args.scale,
+                        "mode": "image",
+                    }
+                )
+            )
+            if not result.ok:
+                raise ToolExecutionError(
+                    f"upscaler falló: {result.error or 'error desconocido'}"
+                )
+            suffix = f"_x{args.scale}"
+            stem = Path(asset.get("filename") or "asset").stem
+            out_asset = context.store.save_upload(
+                context.project_id,
+                filename=f"{stem}{suffix}_upscaled.png",
+                content_type="image/png",
+                data=out_path.read_bytes(),
+                max_upload_bytes=256 * 1024 * 1024,
+                category="outputs",
+                metadata={
+                    "engine": "upscaler",
+                    "upscaled_from_asset_id": args.asset_id,
+                    "scale": args.scale,
+                    "mode": "image",
+                    "simulated": bool(result.simulated),
+                },
+            )
+            return {
+                "status": "upscaled",
+                "project_id": context.project_id,
+                "output_asset": out_asset,
+                "scale": args.scale,
+                "simulated": bool(result.simulated),
+            }
+
+    return await run_in_threadpool(_do_upscale)
+
+
 async def _handle_plan_long_render(
     args: PlanLongRenderArgs,
     context: ToolContext,
@@ -2199,7 +2288,7 @@ def create_default_tool_belt() -> ToolBelt:
             name="enqueue_render",
             description=(
                 "Encola y ejecuta un render de vídeo o imagen en ComfyUI a partir de una "
-                "plantilla curada (face_fix, vace_inpaint, vace_restyle, vace_swap, "
+                "plantilla curada (face_fix, latentsync, vace_inpaint, vace_restyle, vace_swap, "
                 "wan_flf2v, wan_i2v, wan_i2v_5b, wan_s2v, wan_t2v, wan_t2v_5b, "
                 "sdxl_image, sdxl_ipadapter). Valida los parámetros antes de "
                 "enviar a ComfyUI."
@@ -2370,6 +2459,18 @@ def create_default_tool_belt() -> ToolBelt:
             args_model=SystemStatusArgs,
             handler=_handle_system_status,
             parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="upscale_asset",
+            description=(
+                "Reescala una imagen del proyecto con Real-ESRGAN horneado (2x/4x) y "
+                "registra el resultado en la galería. El upscale de vídeo requiere el "
+                "submotor SeedVR2 de ComfyUI (remediación indicada en el error)."
+            ),
+            args_model=UpscaleAssetArgs,
+            handler=_handle_upscale_asset,
         )
     )
     belt.register(
