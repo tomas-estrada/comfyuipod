@@ -263,3 +263,4 @@ Sesión de implementación 2026-10-28. Objetivo: que ninguna salida visible afir
 
 
 
+| M7-OPS-004 | `STUDIO_SERVER_WORKERS` solo admite `1`: `comfy_studio/server.py` aborta con `exit 2` y mensaje claro si se fija otro valor | El `ProgressBroker` de SSE es in-memory y hay estado por proceso (store por app); varios workers uvicorn servirían eventos de progreso a un subconjunto de clientes sin avisar. El guard convierte un despliegue roto en un fallo de arranque explícito. Tests: `studio/tests/test_server_workers_guard.py`. | Adoptada |
