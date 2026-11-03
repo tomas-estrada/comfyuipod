@@ -1,5 +1,9 @@
 # Backlog de Ideas — Hito M3 "Perfect Pod"
 
+> **Estado actualizado (2026-11-03, tras PR #29–#32 + PR de hygiene):** véase la sección
+> "8. Estado resuelto (verificado en código)" al final. Los ítems marcados ✅ ya están
+> implementados y con tests; los marcados ◐ son parciales.
+
 **Fecha:** 2026-10-28 · **Autor:** sesión de búsqueda de ideas (goal: "search for ideas. Document everything.")
 **Estado del repo al momento de redacción:** 28 archivos modificados sin commitear (+3.350/−181), 12 rutas nuevas sin seguimiento (módulos `asr/`, `edl/`, `perception/`, `recovery.py`, `webhooks.py`, tests M3, `AGENTS.md`, `AUDITORIA_AGENTE_V9.md`). Rama de trabajo documentada en `docs/decisiones.md` como `m3-percepcion-edl`.
 
@@ -71,11 +75,24 @@ Los cuatro subsistemas de percepción/transcripción del batch M3 son **simulaci
 - **M3-IDEA-036** — Render por lotes multi-aspecto: un solo `POST edl/{version}/render` con lista de presets (`ASPECT_DIMENSIONS` ya define 16:9, 9:16, 1:1, 4:5 en `ffmpeg_edl.py:22`) encolando N jobs, con eventos de webhook por variante.
 - **M3-IDEA-037** — Superficie de `delegate_role` en el panel: mostrar qué sub-agente (director/editor/artist3d) ejecutó cada herramienta en el stream de eventos del chat (los `ROLE_TOOL_SUBSETS` ya existen en `tools.py:602`).
 
+## 8. Estado resuelto (verificado en código, 2026-11-03)
+
+| ID | Estado | Evidencia |
+|---|---|---|
+| M3-SEC-001 (anti-SSRF webhook) | ✅ resuelto | `validate_webhook_url()` en `studio/comfy_studio/webhooks.py` rechaza esquemas no HTTP(S), loopback, RFC1918, link-local (incl. `169.254.169.254`) y reservadas; tests en `tests/test_webhooks_m3.py` (bloque M3-SEC-001). |
+| M3-SEC-002 (fail-open auth) | ✅ mitigado visible | Sin contraseña exigible no hay lockout, pero se loguea WARN en arranque y `/studio/api/health` reporta `edge_auth: "open"`; con `COMFY_PASS` exigible responde 401. Tests en `tests/test_health_auth.py`. |
+| M3-SEC-003 (techo total upload) | ✅ resuelto | `STUDIO_UPLOAD_MAX_TOTAL_MB` (`config.py`) restaura el límite TOTAL de la petición multipart además del por-parte; tests en `tests/test_m1_hardening.py`. |
+| M3-IDEA-005 (etiquetar simulación) | ✅ resuelto | Cada respuesta simulada lleva `simulated: true` + `simulation_notice`; el panel muestra aviso persistente; README/walkthrough actualizados a `STUDIO_PERCEPTION_BACKEND=auto|real|sim`. |
+| M3-IDEA-017 (sqlite_vec duro) | ✅ resuelto | `perception/store.py` eleva `PerceptionUnavailableError` degradable en vez de tumbar el servidor (ver comentario en `store.py:17` y `app.py` health S13). |
+| M3-IDEA-020 (tests endpoints identities/faces) | ✅ resuelto | `tests/test_m1_endpoints.py` cubre CRUD de `identities` y `faces/index` + `search/combined`; `tests/agent/test_tools_m4_pipeline.py` cubre registro de identidad. |
+| M3-IDEA-001..004 (backends ML reales) | ◐ parcial | `ml/backends.py` implementa backends reales con probe y fallback etiquetado (`STUDIO_PERCEPTION_BACKEND`); el índice CLIP del panel (`perception/clip_index.py`) sigue siendo el extractor determinista local (documentado en README). |
+| M3-IDEA-010..016, 018, 021, 022, OPS-001..004, SEC-003 tests EDL | ⏳ pendiente | Sin cambios desde la redacción del backlog. |
+
 ## 7. Priorización sugerida
 
 | Prioridad | IDs |
 |---|---|
-| **P0 (antes de merge M3)** | M3-OPS-001, M3-OPS-002, M3-IDEA-005, M3-SEC-001, M3-SEC-002 |
-| **P1 (corto plazo)** | M3-IDEA-001, M3-IDEA-010, M3-SEC-003, M3-IDEA-016, M3-IDEA-017, M3-IDEA-020/021 |
+| **P0 (antes de merge M3)** | M3-OPS-001, M3-OPS-002 (el resto de P0 ya está resuelto, ver §8) |
+| **P1 (corto plazo)** | M3-IDEA-001 (parcial), M3-IDEA-010, M3-IDEA-016, M3-IDEA-021 (SEC-003/017/020 ya resueltos, ver §8) |
 | **P2 (siguiente hito)** | M3-IDEA-002, M3-IDEA-003, M3-IDEA-004, M3-IDEA-030..037 |
 | **P3 (higiene)** | M3-IDEA-011..015, M3-IDEA-018, M3-OPS-003, M3-OPS-004, M3-IDEA-006, M3-IDEA-022 |

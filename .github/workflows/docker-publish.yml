@@ -638,6 +638,17 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
 
+      - name: Liberar disco antes del build (anti disk-full flake, M3-OPS)
+        # La imagen CUDA del perfil studio es enorme; el runner ubuntu-latest a veces
+        # queda corto entre capas. Purgar ANTES de build evita fallos "no space left
+        # on device" que luego exigen retrigger manual. En pull_request todavía no
+        # hay imagen local cargada, así que purgar aquí es seguro en todos los eventos.
+        run: |
+          df -h
+          docker buildx prune --all --force || true
+          docker system prune --all --force || true
+          df -h
+
       - name: Construir y publicar SOLO el tag candidato sha-* (ALTA-01 / H-01 / §7.2)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -647,6 +658,10 @@ jobs:
           # la imagen al docker local para que el smoke test corra igual.
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
+          # Sin attestations de provenance/SBOM: ahorran varios GB de blobs
+          # intermedios en el runner y evitan flakes de disco en el push.
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta_candidate.outputs.tags }}
           labels: ${{ steps.meta_candidate.outputs.labels }}
           build-args: |

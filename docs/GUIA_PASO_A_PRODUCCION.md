@@ -111,6 +111,10 @@ El helper te muestra el **Top 5 de ofertas RTX 5090 (o RTX 4090 si no hay 5090)*
 5. **Variables con espacios (cierra V27 / S-07) — VERIFICADO:** `comfy rent` cita **solo el valor** (`-e COMFYUI_EXTRA_ARGS="--fast --cpu"`), que es el contrato del parser de vast-cli (limpia comillas del valor, nunca de la clave), así que la clave llega intacta y V27 **pasa**. Ciérralo así: alquila con `COMFYUI_EXTRA_ARGS="--fast --cpu"` exportada y comprueba en `/status/api` que `env_masked` muestra `COMFYUI_EXTRA_ARGS` con su valor correcto.
 6. **Runbook S3 en `MODEL_PROFILE=studio` (`comfy rent studio` → `comfy studio`):** en la pestaña **Percepción & EDL** de `/studio/`, sube un clip de vídeo, extrae keyframes reales con `ffmpeg` e indexa en `sqlite-vec`, registra una identidad y busca planos por texto, cara o ambos, transcribe y diariza, genera el EDL de highlights y renderiza los entregables MP4 en `16:9` y `9:16` con `ffmpeg` (real, verificado con `ffprobe`). **La percepción y el ASR son simulaciones deterministas en esta versión** (`simulated: true`): la búsqueda semántica, la detección facial, la transcripción y la diarización no usan los modelos `CLIP`/`whisperx`/`cam++`/`buffalo_l` todavía, así que sirven para validar el flujo completo de punta a punta, no la calidad del resultado. Ten en cuenta además que, cuando se integren, `InsightFace buffalo_l` tiene **licencia no comercial [NC]**.
 
+### 8.1 Aceptación semántica de shots en producción (PR #32)
+
+La orquestación (`studio/comfy_studio/orchestration/`) ya no se limita a ejecutar: cada shot del plan lleva un criterio de aceptación (`acceptance`, umbrales `*_min`). El evaluador (`evaluator.py`) puntúa el render (negro/parpadeo vs. su `acceptance`); si pasa → **ACCEPTED** y el shot pasa de producción a la galería del proyecto; si no, sube un intento y replanifica con otra plantilla (`template_selector.py`). Consulta el estado por shot en los eventos SSE (`evaluate`) y en `/studio/api` del proyecto. Esto cierra el bucle agente→producción→galería sin revisión manual intermedia.
+
 ### 9. Al terminar: rescatar outputs y destruir la instancia
 
 ```bash
