@@ -113,6 +113,8 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ProductionNotApprovedError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ProductionAlreadyTerminalError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     @app.patch("/studio/api/productions/{production_id}/plan")
     async def update_plan_route(
         production_id: str,

@@ -44,11 +44,11 @@ class ProductionPlanNotEditableError(RuntimeError):
 
 
 class ProductionAlreadyTerminalError(RuntimeError):
-    """La producción ya terminó (done/failed/cancelled/halted): no admite cancel."""
+    """La producción ya terminó (done/simulated/failed/cancelled/halted)."""
 
 
 #: fases terminales: no admiten edición de plan ni cancelación.
-_TERMINAL_PHASES = frozenset({"done", "failed", "cancelled", "halted"})
+_TERMINAL_PHASES = frozenset({"done", "simulated", "failed", "cancelled", "halted"})
 
 
 def _gate_key(production_id: str) -> str:
@@ -68,6 +68,13 @@ class ProductionService:
     ) -> None:
         self.checkpointer = checkpointer or ProductionCheckpointer()
         self.collaborators = collaborators or Collaborators()
+        self._fully_wired = all(
+            getattr(self.collaborators, name) is not None
+            for name in (
+                "planner", "runner", "evaluator", "reselect_template",
+                "replan_shot", "assembler",
+            )
+        )
         # Proyecto de la galería donde se registran las salidas (None = sin
         # registrar; CI/stubs). Los renders de una producción aprobada pasan a
         # ser assets de primera clase: buscables, descargables, vision_check.
@@ -104,6 +111,8 @@ class ProductionService:
             if self.store is not None and self.store.get_project(project_id) is None:
                 raise LookupError(f"Proyecto {project_id!r} no encontrado")
             state.metadata["project_id"] = project_id
+        state.metadata["execution_mode"] = "real" if self._fully_wired else "simulated"
+        state.metadata["simulated"] = not self._fully_wired
         _plan(state, self.collaborators.planner)
         # el plan es el "borrador barato": se somete a la puerta.
         gate = StoryboardGate()
@@ -153,6 +162,7 @@ class ProductionService:
             state = self.checkpointer.load(pid)
             if state is None:
                 continue
+            self._ensure_artifact_semantics(state)
             if project_id and state.metadata.get("project_id") != project_id:
                 continue
             out.append(self._status_dict(state))
@@ -260,6 +270,19 @@ class ProductionService:
             raise ProductionNotApprovedError(
                 "la producción fue cancelada; no se puede aprobar"
             )
+        if state.phase in _TERMINAL_PHASES:
+            if state.phase in ("done", "simulated"):
+                registered = state.metadata.get("output_asset_ids") or []
+                return {
+                    "production_id": production_id,
+                    "phase": state.phase,
+                    "final_output_path": state.final_output_path,
+                    "output_asset_ids": registered,
+                    "status": self._status_dict(state),
+                }
+            raise ProductionAlreadyTerminalError(
+                f"la producción ya es terminal ({state.phase})"
+            )
         # hidratar la puerta: primero la de RAM; si el pod reinició, desde el
         # estado persistido en el checkpoint (M6-SCR-002).
         gate = self._gates.get(production_id)
@@ -314,6 +337,7 @@ class ProductionService:
             final = graph.run(state)
         finally:
             self._cancel_requested.discard(production_id)
+        self._finalize_artifact_status(final)
         registered = self._register_outputs_in_gallery(final)
         self.checkpointer.save(final)
         self._publish(
@@ -350,6 +374,9 @@ class ProductionService:
         registro, se omite ESE asset y se registra el evento — la producción
         nunca se cae por el registro de galería.
         """
+        if state.metadata.get("simulated"):
+            state.metadata["output_asset_ids"] = []
+            return []
         project_id = state.metadata.get("project_id")
         if not project_id or self.store is None:
             return []
@@ -414,10 +441,72 @@ class ProductionService:
             state.record("gallery_registered", assets=len(registered))
         return registered
 
+    @staticmethod
+    def _finalize_artifact_status(state: ProductionState) -> None:
+        """Only publish `done` for a fully wired run with a probeable video file."""
+        if state.phase != "done":
+            return
+        if state.metadata.get("simulated"):
+            state.final_output_path = None
+            state.phase = "simulated"
+            state.record(
+                "simulation_complete",
+                reason="se usó uno o más colaboradores stub; no hay artefacto de video afirmable",
+            )
+            return
+
+        from pathlib import Path
+
+        path = Path(state.final_output_path) if state.final_output_path else None
+        error: str | None = None
+        try:
+            if path is None or not path.is_file() or path.stat().st_size <= 0:
+                error = "el ensamblador no produjo un archivo de video no vacío"
+            else:
+                from comfy_studio.perception.keyframes import probe_media_info
+
+                probe = probe_media_info(path)
+                if not probe.get("probe_ok") or not probe.get("has_video"):
+                    error = "ffprobe no verificó un stream de video en el artefacto final"
+        except OSError:
+            error = "no se pudo leer el archivo de video ensamblado"
+        if error:
+            state.final_output_path = None
+            state.phase = "failed"
+            state.metadata["artifact_error"] = error
+            state.record(
+                "artifact_verification_failed",
+                reason=error,
+            )
+        else:
+            state.metadata["artifact_verified"] = True
+            state.record("artifact_verified")
+
+    def _ensure_artifact_semantics(self, state: ProductionState) -> None:
+        """Migrate old `done` checkpoints before exposing a path or status."""
+        if state.phase != "done" or state.metadata.get("artifact_verified"):
+            return
+        if (
+            state.metadata.get("execution_mode") == "real"
+            and not state.metadata.get("simulated")
+        ):
+            self._finalize_artifact_status(state)
+        else:
+            state.phase = "simulated"
+            state.final_output_path = None
+            state.metadata["execution_mode"] = "simulated"
+            state.metadata["simulated"] = True
+            state.record(
+                "legacy_simulation_migrated",
+                reason="el checkpoint antiguo no acredita un render real",
+            )
+        self.checkpointer.save(state)
+
     def _load(self, production_id: str) -> ProductionState:
         state = self.checkpointer.load(production_id)
         if state is None:
             raise ProductionNotFoundError(production_id)
+        self._ensure_artifact_semantics(state)
         return state
 
     @staticmethod
@@ -439,5 +528,14 @@ class ProductionService:
             "cancel_requested": bool(state.metadata.get("cancel_requested")),
             "final_output_path": state.final_output_path,
             "output_asset_ids": state.metadata.get("output_asset_ids") or [],
-            "complete": state.is_complete(),
+            "execution_mode": state.metadata.get("execution_mode", "unknown"),
+            "simulated": bool(state.metadata.get("simulated")),
+            "artifact_error": state.metadata.get("artifact_error"),
+            "artifact_ready": (
+                state.phase == "done"
+                and bool(state.final_output_path)
+                and bool(state.metadata.get("artifact_verified"))
+            ),
+            "shots_complete": state.is_complete(),
+            "complete": state.phase in ("done", "simulated") and state.is_complete(),
         }

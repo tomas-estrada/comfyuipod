@@ -3,7 +3,7 @@
 Verifica SIN GPU (colaboradores stub por defecto) el cableado de la fase 17:
 
   - rutas HTTP públicas: plan -> awaiting_approval, get, status, approve corre
-    el lazo caro y llega a `done`;
+    el lazo stub pero lo informa como `simulated`, sin artefacto descargable;
   - la puerta de gasto: approve de un id inexistente da 404;
   - GOBERNANZA (M6-AGT-001): el agente (MCP) puede planear/leer/estado pero
     `approve_plan` NO está en el catálogo MCP ni es invocable por el agente.
@@ -60,7 +60,7 @@ def test_get_and_status_routes(client: TestClient) -> None:
     assert status.json()["phase"] == "awaiting_approval"
 
 
-def test_approve_runs_the_expensive_loop_to_done(client: TestClient) -> None:
+def test_stub_approval_does_not_claim_a_real_render(client: TestClient) -> None:
     pid = client.post(
         "/studio/api/productions", json={"idea": "playa al amanecer"}
     ).json()["production_id"]
@@ -68,9 +68,12 @@ def test_approve_runs_the_expensive_loop_to_done(client: TestClient) -> None:
     resp = client.post(f"/studio/api/productions/{pid}/approve")
     assert resp.status_code == 200
     body = resp.json()
-    # con stubs deterministas el lazo llega a done con un reel.
-    assert body["phase"] == "done"
-    assert body["final_output_path"]
+    # con stubs deterministas el lazo no debe afirmar que produjo un reel real.
+    assert body["phase"] == "simulated"
+    assert body["final_output_path"] is None
+    assert body["output_asset_ids"] == []
+    assert body["status"]["simulated"] is True
+    assert body["status"]["artifact_ready"] is False
 
 
 def test_approve_unknown_production_is_404(client: TestClient) -> None:

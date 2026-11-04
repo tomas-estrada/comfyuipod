@@ -15,7 +15,7 @@
 
     const $ = (sel) => document.querySelector(sel);
 
-    const TERMINAL_PHASES = new Set(["done", "failed", "cancelled", "halted"]);
+    const TERMINAL_PHASES = new Set(["done", "simulated", "failed", "cancelled", "halted"]);
     const ACTIVE_PHASES = new Set(["planning", "executing", "evaluating", "assembling"]);
 
     const state = {
@@ -705,13 +705,20 @@
             wrap.appendChild(note);
         }
 
+        if (status.phase === "simulated") {
+            const note = document.createElement("p");
+            note.className = "agent-hint";
+            note.textContent = "Simulación: se usaron colaboradores stub; no se creó un video final verificable.";
+            wrap.appendChild(note);
+        }
+
         if (status.phase === "failed" || (plan && plan.log)) {
-            const errors = (plan && plan.log ? plan.log : []).filter((e) => e.kind === "error" || e.kind === "failed" || e.kind === "gallery_error");
+            const errors = (plan && plan.log ? plan.log : []).filter((e) => e.kind === "error" || e.kind === "failed" || e.kind === "gallery_error" || e.kind === "artifact_verification_failed");
             if (status.phase === "failed" || errors.length) {
                 const errBox = document.createElement("div");
                 errBox.className = "plan-error";
                 errBox.setAttribute("role", "alert");
-                errBox.textContent = "Error: " + JSON.stringify(errors.slice(-3), null, 2).slice(0, 800);
+                errBox.textContent = "Error: " + (status.artifact_error || JSON.stringify(errors.slice(-3), null, 2).slice(0, 800));
                 wrap.appendChild(errBox);
             }
         }

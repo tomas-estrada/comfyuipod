@@ -35,6 +35,8 @@ Los grupos anteriores indican límites de responsabilidad, no procesos independi
 
 No se debe tratar el `202` como resultado final: es una confirmación de aceptación/encolado. El identificador devuelto es la clave para seguir el trabajo.
 
+La orquestación de producción informa `phase=simulated` si usa uno o más colaboradores stub; ese estado no publica `final_output_path` ni assets en la galería. `phase=done` se reserva para una ejecución completamente cableada cuyo archivo final no vacío fue verificado por `ffprobe`. Los checkpoints antiguos `done` sin prueba de artefacto se migran a `simulated` antes de mostrarse.
+
 ## 4. Datos, persistencia y backups
 
 `STUDIO_DATA_DIR` contiene la base de metadatos `studio.db`, el almacén de proyectos y assets bajo `projects/`, y el índice vectorial `index.db` cuando se inicializa. El diseño evita guardar los pesos de modelos en el snapshot de Studio: los modelos pertenecen a las rutas de datos de ComfyUI y se descargan según `MODEL_PROFILE`.
