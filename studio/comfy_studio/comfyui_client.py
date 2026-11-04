@@ -18,6 +18,7 @@ from comfy_studio.config import (
     DEFAULT_STUDIO_COMFYUI_URL,
     SecretRedactor,
 )
+from comfy_studio.engines.preparedness import note_engine_run
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
 
@@ -1312,4 +1313,5 @@ class ComfyUIClient:
             job_id=job_id,
             project_id=project_id,
         )
+        note_engine_run("comfyui", True)
         return result

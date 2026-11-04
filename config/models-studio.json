@@ -1,11 +1,25 @@
 {
- "version": 1,
+ "version": 2,
  "profile": "studio",
  "meta": {
   "default_entries": 79,
   "default_bytes": 163706792041,
   "opt_in_entries": 8,
   "opt_in_bytes": 88776694577,
+  "classes": {
+   "bootstrap": {
+    "entries": 0,
+    "bytes": 0
+   },
+   "task": {
+    "entries": 79,
+    "bytes": 163706792041
+   },
+   "optional": {
+    "entries": 8,
+    "bytes": 88776694577
+   }
+  },
   "phase2_sdxl_checkpoint": {
    "repo_id": "RunDiffusion/Juggernaut-XI-v11",
    "remote_path": "Juggernaut-XI-byRunDiffusion.safetensors",
@@ -95,6 +109,7 @@
    "filename": "clip_vision_h.safetensors",
    "dest_path": "models/clip_vision/clip_vision_h.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -107,6 +122,7 @@
    "filename": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
    "dest_path": "models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -119,6 +135,7 @@
    "filename": "wan2.2_vae.safetensors",
    "dest_path": "models/vae/wan2.2_vae.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -131,6 +148,7 @@
    "filename": "wan_2.1_vae.safetensors",
    "dest_path": "models/vae/wan_2.1_vae.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -143,6 +161,7 @@
    "filename": "wan2.2_ti2v_5B_fp16.safetensors",
    "dest_path": "models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -155,6 +174,7 @@
    "filename": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
    "dest_path": "models/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -167,6 +187,7 @@
    "filename": "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
    "dest_path": "models/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -179,6 +200,7 @@
    "filename": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
    "dest_path": "models/diffusion_models/wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -191,6 +213,7 @@
    "filename": "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
    "dest_path": "models/diffusion_models/wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -203,6 +226,7 @@
    "filename": "wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
    "dest_path": "models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -215,6 +239,7 @@
    "filename": "wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
    "dest_path": "models/loras/wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -227,6 +252,7 @@
    "filename": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
    "dest_path": "models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -239,6 +265,7 @@
    "filename": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
    "dest_path": "models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -251,6 +278,7 @@
    "filename": "wan2.2_animate_14B_relight_lora_bf16.safetensors",
    "dest_path": "models/loras/wan2.2_animate_14B_relight_lora_bf16.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -263,6 +291,7 @@
    "filename": "wan2.2_s2v_14B_fp8_scaled.safetensors",
    "dest_path": "models/diffusion_models/wan2.2_s2v_14B_fp8_scaled.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -275,6 +304,7 @@
    "filename": "wav2vec2-large-xlsr-53-spanish.safetensors",
    "dest_path": "models/audio_encoders/wav2vec2-large-xlsr-53-spanish.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -287,6 +317,7 @@
    "filename": "wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors",
    "dest_path": "models/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -299,6 +330,7 @@
    "filename": "wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors",
    "dest_path": "models/diffusion_models/wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -311,6 +343,7 @@
    "filename": "Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors",
    "dest_path": "models/loras/Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -323,6 +356,7 @@
    "filename": "latentsync_unet.pt",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/latentsync_unet.pt",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -335,6 +369,7 @@
    "filename": "stable_syncnet.pt",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/stable_syncnet.pt",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -347,6 +382,7 @@
    "filename": "tiny.pt",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/whisper/tiny.pt",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -359,6 +395,7 @@
    "filename": "config.json",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/config.json",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -371,6 +408,7 @@
    "filename": "i3d_torchscript.pt",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/auxiliary/i3d_torchscript.pt",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -383,6 +421,7 @@
    "filename": "koniq_pretrained.pkl",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/auxiliary/koniq_pretrained.pkl",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -395,6 +434,7 @@
    "filename": "sfd_face.pth",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/auxiliary/sfd_face.pth",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -407,6 +447,7 @@
    "filename": "syncnet_v2.model",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/auxiliary/syncnet_v2.model",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -419,6 +460,7 @@
    "filename": "vgg16-397923af.pth",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/auxiliary/vgg16-397923af.pth",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -431,6 +473,7 @@
    "filename": "vit_g_hybrid_pt_1200e_ssv2_ft.pth",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/auxiliary/vit_g_hybrid_pt_1200e_ssv2_ft.pth",
    "license": "openrail++",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -443,6 +486,7 @@
    "filename": "diffusion_pytorch_model.safetensors",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/vae/diffusion_pytorch_model.safetensors",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -455,6 +499,7 @@
    "filename": "config.json",
    "dest_path": "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/vae/config.json",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -467,6 +512,7 @@
    "filename": "appearance_feature_extractor.safetensors",
    "dest_path": "models/liveportrait/appearance_feature_extractor.safetensors",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -479,6 +525,7 @@
    "filename": "landmark.onnx",
    "dest_path": "models/liveportrait/landmark.onnx",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -491,6 +538,7 @@
    "filename": "motion_extractor.safetensors",
    "dest_path": "models/liveportrait/motion_extractor.safetensors",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -503,6 +551,7 @@
    "filename": "spade_generator.safetensors",
    "dest_path": "models/liveportrait/spade_generator.safetensors",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -515,6 +564,7 @@
    "filename": "stitching_retargeting_module.safetensors",
    "dest_path": "models/liveportrait/stitching_retargeting_module.safetensors",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -527,6 +577,7 @@
    "filename": "warping_module.safetensors",
    "dest_path": "models/liveportrait/warping_module.safetensors",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -539,6 +590,7 @@
    "filename": ".gitattributes",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/.gitattributes",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -551,6 +603,7 @@
    "filename": "LICENSE",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/LICENSE",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -563,6 +616,7 @@
    "filename": "README.md",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/README.md",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -575,6 +629,7 @@
    "filename": "codec.pth",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/codec.pth",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -587,6 +642,7 @@
    "filename": "config.yaml",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/config.yaml",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -599,6 +655,7 @@
    "filename": "feat1.pt",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/feat1.pt",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -611,6 +668,7 @@
    "filename": "feat2.pt",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/feat2.pt",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -623,6 +681,7 @@
    "filename": "gpt.pth",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/gpt.pth",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -635,6 +694,7 @@
    "filename": "multilingual_zh_ja_yue_char_del.tiktoken",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/multilingual_zh_ja_yue_char_del.tiktoken",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -647,6 +707,7 @@
    "filename": "Modelfile",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/Modelfile",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -659,6 +720,7 @@
    "filename": "added_tokens.json",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/added_tokens.json",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -671,6 +733,7 @@
    "filename": "chat_template.jinja",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/chat_template.jinja",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -683,6 +746,7 @@
    "filename": "config.json",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/config.json",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -695,6 +759,7 @@
    "filename": "generation_config.json",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/generation_config.json",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -707,6 +772,7 @@
    "filename": "merges.txt",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/merges.txt",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -719,6 +785,7 @@
    "filename": "model.safetensors",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/model.safetensors",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -731,6 +798,7 @@
    "filename": "special_tokens_map.json",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/special_tokens_map.json",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -743,6 +811,7 @@
    "filename": "tokenizer.json",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/tokenizer.json",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -755,6 +824,7 @@
    "filename": "tokenizer_config.json",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/tokenizer_config.json",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -767,6 +837,7 @@
    "filename": "vocab.json",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/qwen0.6bemo4-merge/vocab.json",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -779,6 +850,7 @@
    "filename": "s2mel.pth",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/s2mel.pth",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -791,6 +863,7 @@
    "filename": "wav2vec2bert_stats.pt",
    "dest_path": "${COMFY_DATA_DIR}/indextts/checkpoints/wav2vec2bert_stats.pt",
    "license": "ULA bilibili (IndexTTS-2.5)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -803,6 +876,7 @@
    "filename": "model.bin",
    "dest_path": "models/whisper/faster-whisper-large-v3/model.bin",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -815,6 +889,7 @@
    "filename": "config.json",
    "dest_path": "models/whisper/faster-whisper-large-v3/config.json",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -827,6 +902,7 @@
    "filename": "preprocessor_config.json",
    "dest_path": "models/whisper/faster-whisper-large-v3/preprocessor_config.json",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -839,6 +915,7 @@
    "filename": "tokenizer.json",
    "dest_path": "models/whisper/faster-whisper-large-v3/tokenizer.json",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -851,6 +928,7 @@
    "filename": "vocabulary.json",
    "dest_path": "models/whisper/faster-whisper-large-v3/vocabulary.json",
    "license": "MIT",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -863,6 +941,7 @@
    "filename": "pytorch_model.bin",
    "dest_path": "models/whisper/aligners/wav2vec2-large-xlsr-53-english/pytorch_model.bin",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -875,6 +954,7 @@
    "filename": "pytorch_model.bin",
    "dest_path": "models/whisper/aligners/wav2vec2-large-xlsr-53-spanish/pytorch_model.bin",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -887,6 +967,7 @@
    "filename": "pytorch_model.bin",
    "dest_path": "models/clip/clip-vit-large-patch14/pytorch_model.bin",
    "license": "MIT (con caveats de card OpenAI)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -899,6 +980,7 @@
    "filename": "config.json",
    "dest_path": "models/clip/clip-vit-large-patch14/config.json",
    "license": "MIT (con caveats de card OpenAI)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -911,6 +993,7 @@
    "filename": "merges.txt",
    "dest_path": "models/clip/clip-vit-large-patch14/merges.txt",
    "license": "MIT (con caveats de card OpenAI)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -923,6 +1006,7 @@
    "filename": "vocab.json",
    "dest_path": "models/clip/clip-vit-large-patch14/vocab.json",
    "license": "MIT (con caveats de card OpenAI)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -935,6 +1019,7 @@
    "filename": "tokenizer_config.json",
    "dest_path": "models/clip/clip-vit-large-patch14/tokenizer_config.json",
    "license": "MIT (con caveats de card OpenAI)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -947,6 +1032,7 @@
    "filename": "special_tokens_map.json",
    "dest_path": "models/clip/clip-vit-large-patch14/special_tokens_map.json",
    "license": "MIT (con caveats de card OpenAI)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -959,6 +1045,7 @@
    "filename": "preprocessor_config.json",
    "dest_path": "models/clip/clip-vit-large-patch14/preprocessor_config.json",
    "license": "MIT (con caveats de card OpenAI)",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -971,6 +1058,7 @@
    "filename": "ip-adapter_sdxl_vit-h.safetensors",
    "dest_path": "models/ipadapter/ip-adapter_sdxl_vit-h.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -983,6 +1071,7 @@
    "filename": "model.safetensors",
    "dest_path": "models/clip_vision/CLIP-ViT-H-14-laion2B-s32B-b79K/model.safetensors",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -995,6 +1084,7 @@
    "filename": "config.json",
    "dest_path": "models/clip_vision/CLIP-ViT-H-14-laion2B-s32B-b79K/config.json",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -1007,6 +1097,7 @@
    "filename": "campplus_cn_common.bin",
    "dest_path": "models/funasr/campplus/campplus_cn_common.bin",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -1019,6 +1110,7 @@
    "filename": "config.yaml",
    "dest_path": "models/funasr/campplus/config.yaml",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -1031,6 +1123,7 @@
    "filename": "configuration.json",
    "dest_path": "models/funasr/campplus/configuration.json",
    "license": "Apache-2.0",
+   "class": "task",
    "opt_in": null
   },
   {
@@ -1043,6 +1136,7 @@
    "filename": "wan2.2_animate_14B_int8_convrot.safetensors",
    "dest_path": "models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors",
    "license": "Apache-2.0",
+   "class": "optional",
    "opt_in": "STUDIO_INCLUDE_ANIMATE"
   },
   {
@@ -1055,6 +1149,7 @@
    "filename": "hunyuan_3d_v2.1.safetensors",
    "dest_path": "models/checkpoints/hunyuan_3d_v2.1.safetensors",
    "license": "Tencent Hunyuan Community License",
+   "class": "optional",
    "opt_in": "STUDIO_INCLUDE_3D"
   },
   {
@@ -1067,6 +1162,7 @@
    "filename": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
    "dest_path": "models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
    "license": "minimax-h3-community-license",
+   "class": "optional",
    "opt_in": "STUDIO_INCLUDE_MINIMAX"
   },
   {
@@ -1079,6 +1175,7 @@
    "filename": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
    "dest_path": "models/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
    "license": "minimax-h3-community-license",
+   "class": "optional",
    "opt_in": "STUDIO_INCLUDE_MINIMAX"
   },
   {
@@ -1091,6 +1188,7 @@
    "filename": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
    "dest_path": "models/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
    "license": "minimax-h3-community-license",
+   "class": "optional",
    "opt_in": "STUDIO_INCLUDE_MINIMAX"
   },
   {
@@ -1103,6 +1201,7 @@
    "filename": "minimax_h3_video_vae_int8_convrot.safetensors",
    "dest_path": "models/vae/minimax_h3_video_vae_int8_convrot.safetensors",
    "license": "minimax-h3-community-license",
+   "class": "optional",
    "opt_in": "STUDIO_INCLUDE_MINIMAX"
   },
   {
@@ -1115,6 +1214,7 @@
    "filename": "minimax_h3_audio_vae_fp32.safetensors",
    "dest_path": "models/vae/minimax_h3_audio_vae_fp32.safetensors",
    "license": "minimax-h3-community-license",
+   "class": "optional",
    "opt_in": "STUDIO_INCLUDE_MINIMAX"
   },
   {
@@ -1127,6 +1227,7 @@
    "filename": "Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
    "dest_path": "models/diffusion_models/Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors",
    "license": "apache-2.0",
+   "class": "optional",
    "opt_in": "STUDIO_INCLUDE_MINIMAX"
   }
  ]

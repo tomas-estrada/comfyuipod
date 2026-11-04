@@ -1,7 +1,6 @@
 # ComfyUIPod Agent Conventions
 
-## Project Structure
-- `comfyctl/` — Rust supervisor, status server, strict checks (S1..S16 + S13b/S13c), triage, redaction
+## Project Structure- `comfyctl/` — Rust supervisor, status server, strict checks (S1..S16 + S13b/S13c), triage, redaction
 - `studio/comfy_studio/` — Python FastAPI service (`comfy_studio`), package layout:
   - `app.py` / `server.py` / `webutil.py` — app assembly, single-worker CLI entry, shared HTTP/upload/auth helpers
   - `routers/` — 14 route modules under `/studio/api/*` (core, projects, assets, jobs, templates, chat, perception, media_ops, brief, ads, review_pins, montage, productions)
@@ -24,6 +23,18 @@
 - `tools/mac/comfy` — macOS/Linux Vast.ai CLI helper
 - `docs/` — architecture, guides, decisions, contracts (frozen JSON schemas), proposals
 - `docs/auditorias/` — point-in-time audit records (do not treat as current state)
+
+- `studio/comfy_studio/model_assets.py` — activos de modelo como dependencias de tarea
+- `scripts/storage_requirement.py` — requisito de almacenamiento derivado
+- `scripts/check_models_manifest.py` — validador del manifiesto (clases y bytes)
+
+## Architecture & Resource Policy
+[`docs/POLITICA_ARQUITECTURA_RECURSOS.md`](docs/POLITICA_ARQUITECTURA_RECURSOS.md) is the source of truth for what is prepared at build time, what is downloaded on demand, what may run, and what hardware to rent. Key rules that are enforced in code:
+- Storage is derived (`scripts/storage_requirement.py`), never a hardcoded guess.
+- Engines are baked into the image; the agent never installs them (`install_engine` only decides; `STUDIO_DYNAMIC` off by default).
+- "Installed" is not "running": health distinguishes installed / integrated / weights-missing / on-disk / hardware / loaded / execution-validated (`engines/preparedness.py`).
+- Model assets are classified `bootstrap` / `task` / `optional` in `config/models-studio.json`; a large collection is never bootstrap just because an engine supports it.
+- Weight availability is a filesystem fact (`*_weights_available()`), not an env flag.
 
 ## Validation Commands
 Always run these before submitting changes:

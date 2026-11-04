@@ -5,8 +5,9 @@ Verifica:
 2. `comfy rent studio`:
    - Lectura oculta (`read -s`) de `STUDIO_LLM_KEY` sin eco, sin disco ni historial.
    - `STUDIO_LLM_KEY` llega en `--env` de `vastai create instance` junto con
-     `MODEL_PROFILE="studio"` y `--disk 200` (`--disk 250` con `STUDIO_INCLUDE_ANIMATE=1`).
-   - Filtros (`gpu_name=RTX_5090`, `disk_space>=200`, `inet_down>=5000`,
+     `MODEL_PROFILE="studio"` y `--disk <derivado>` (el mínimo de disco se calcula
+     con `scripts/storage_requirement.py` y sube con los opt-in pedidos).
+   - Filtros (`gpu_name=RTX_5090`, `disk_space>=<derivado>`, `inet_down>=5000`,
      `reliability>=0.98`) probados contra fixtures con ofertas mixtas.
 3. `comfy studio [<id>]`:
    - Resuelve la URL del portal, verifica `/studio/api/health` con Basic Auth
@@ -217,6 +218,20 @@ def _run_comfy(
     )
 
 
+def _derived_disk_gb(*, animate: bool = False) -> int:
+    """Mínimo de disco que deriva `scripts/storage_requirement.py` para studio."""
+    script = REPO_ROOT / "scripts" / "storage_requirement.py"
+    cmd = [sys.executable, str(script), "--profile", "studio", "--json"]
+    if animate:
+        cmd += ["--opt-in", "STUDIO_INCLUDE_ANIMATE"]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
+    return int(json.loads(out.stdout)["min_volume_gb"])
+
+
+def derived_disk_gb(*, animate: bool = False) -> int:
+    return _derived_disk_gb(animate=animate)
+
+
 def _sample_offers_fixture() -> list[dict[str, Any]]:
     return [
         {
@@ -358,8 +373,8 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     assert synthetic_webhook_secret not in combined_dry
     assert synthetic_webhook_url not in combined_dry
     assert "[DRY-RUN]" in dry.stdout
-    assert "105" in dry.stdout  # Oferta 105 seleccionada tras filtrar 101..104
-    assert "200" in dry.stdout
+    assert "106" in dry.stdout  # Con el disco derivado, 105 (220 GB) se filtra y se elige 106
+    assert str(derived_disk_gb()) in dry.stdout
     assert "STUDIO_LLM_KEY=<definida>" in dry.stdout
     assert "STUDIO_LLM_FALLBACK_KEY=<definida>" in dry.stdout
     assert "STUDIO_RESUME_JOBS='0'" in dry.stdout
@@ -417,15 +432,15 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     assert search_calls, "No se invocó vastai search offers"
     search_query = search_calls[-1]["args"][2]
     assert "gpu_name=RTX_5090" in search_query
-    assert "disk_space>=200" in search_query
+    assert f"disk_space>={derived_disk_gb()}" in search_query
     assert "inet_down>=5000" in search_query
     assert "reliability>=0.98" in search_query
 
     created = json.loads((state_dir / "created_instance.json").read_text(encoding="utf-8"))
     c_args = created["args"]
-    assert c_args[:3] == ["create", "instance", "105"]
+    assert c_args[:3] == ["create", "instance", "106"]
     assert "--disk" in c_args
-    assert c_args[c_args.index("--disk") + 1] == "200"
+    assert c_args[c_args.index("--disk") + 1] == str(derived_disk_gb())
     assert "--label" in c_args
     assert c_args[c_args.index("--label") + 1] == "comfy-studio"
     assert "--args" in c_args
@@ -442,7 +457,7 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     assert '-e STUDIO_LLM_FALLBACK_MODEL="deepseek-chat"' in env_arg
 
 
-def test_rent_studio_animate_opt_in_requires_250gb_disk(tmp_path: Path) -> None:
+def test_rent_studio_animate_opt_in_raises_derived_disk(tmp_path: Path) -> None:
     bin_dir, state_dir = _setup_mock_bin(tmp_path)
     (state_dir / "offers_fixture.json").write_text(
         json.dumps(_sample_offers_fixture()),
@@ -465,9 +480,9 @@ def test_rent_studio_animate_opt_in_requires_250gb_disk(tmp_path: Path) -> None:
 
     created = json.loads((state_dir / "created_instance.json").read_text(encoding="utf-8"))
     c_args = created["args"]
-    # Oferta 105 tiene 220 GB (< 250 GB), por lo que debe elegirse la oferta 106 (300 GB)
+    # Oferta 105 tiene 220 GB (< mínimo derivado con Animate), se elige la 106 (300 GB)
     assert c_args[:3] == ["create", "instance", "106"]
-    assert c_args[c_args.index("--disk") + 1] == "250"
+    assert c_args[c_args.index("--disk") + 1] == str(derived_disk_gb(animate=True))
     env_arg = c_args[c_args.index("--env") + 1]
     assert '-e STUDIO_INCLUDE_ANIMATE="1"' in env_arg
 
@@ -482,7 +497,7 @@ def test_rent_studio_rejects_insufficient_disk_override_and_accepts_valid_overri
     )
     synthetic_llm_key = "sk" + "-disk-override-secret-12345678"
 
-    # 1. Override COMFY_DISK_GB=120 (< 200 GB mínimo de studio) debe rechazarse antes de
+    # 1. Override COMFY_DISK_GB=120 (< mínimo derivado de studio) debe rechazarse antes de
     #    filtrar/seleccionar ofertas de 150 GB o llamar a vastai create instance.
     low_base = _run_comfy(
         ["rent", "studio", "--yes"],
@@ -498,12 +513,13 @@ def test_rent_studio_rejects_insufficient_disk_override_and_accepts_valid_overri
         f"Se esperaba fallo con COMFY_DISK_GB=120; "
         f"stdout={low_base.stdout}\nstderr={low_base.stderr}"
     )
-    assert "COMFY_DISK_GB" in low_base.stderr and "200" in low_base.stderr
+    assert "COMFY_DISK_GB" in low_base.stderr and str(derived_disk_gb()) in low_base.stderr
     assert not (state_dir / "created_instance.json").exists()
     assert not (state_dir / "vastai_calls.jsonl").exists()
 
-    # 2. Con STUDIO_INCLUDE_ANIMATE=1, el mínimo sube a 250 GB; COMFY_DISK_GB=200 debe rechazarse
-    #    y nunca seleccionar la oferta 105 (220 GB) ni llamar a create instance.
+    # 2. Con STUDIO_INCLUDE_ANIMATE=1 el mínimo derivado sube (+18.41 GB de pesos);
+    #    COMFY_DISK_GB=200 debe rechazarse y nunca seleccionar la oferta 105 (220 GB)
+    #    ni llamar a create instance.
     low_animate = _run_comfy(
         ["rent", "studio", "--yes"],
         bin_dir=bin_dir,
@@ -519,7 +535,8 @@ def test_rent_studio_rejects_insufficient_disk_override_and_accepts_valid_overri
         f"Se esperaba fallo con STUDIO_INCLUDE_ANIMATE=1 y COMFY_DISK_GB=200; "
         f"stdout={low_animate.stdout}\nstderr={low_animate.stderr}"
     )
-    assert "COMFY_DISK_GB" in low_animate.stderr and "250" in low_animate.stderr
+    assert "COMFY_DISK_GB" in low_animate.stderr
+    assert str(derived_disk_gb(animate=True)) in low_animate.stderr
     assert not (state_dir / "created_instance.json").exists()
     assert not (state_dir / "vastai_calls.jsonl").exists()
 
@@ -538,15 +555,15 @@ def test_rent_studio_rejects_insufficient_disk_override_and_accepts_valid_overri
     assert "COMFY_DISK_GB" in invalid_disk.stderr
     assert not (state_dir / "created_instance.json").exists()
 
-    # 4. Override válido por encima del mínimo (COMFY_DISK_GB=260) se respeta: filtra
-    #    la oferta 105 (220 GB) y selecciona la 106 (300 GB) con --disk 260.
+    # 4. Override válido por encima del mínimo derivado (COMFY_DISK_GB=300) se respeta:
+    #    filtra la oferta 105 (220 GB) y selecciona la 106 (300 GB) con --disk 300.
     valid_override = _run_comfy(
         ["rent", "studio", "--yes"],
         bin_dir=bin_dir,
         state_dir=state_dir,
         extra_env={
             "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
-            "COMFY_DISK_GB": "260",
+            "COMFY_DISK_GB": "300",
         },
         stdin_text=f"{synthetic_llm_key}\n",
     )
@@ -556,7 +573,7 @@ def test_rent_studio_rejects_insufficient_disk_override_and_accepts_valid_overri
     created = json.loads((state_dir / "created_instance.json").read_text(encoding="utf-8"))
     c_args = created["args"]
     assert c_args[:3] == ["create", "instance", "106"]
-    assert c_args[c_args.index("--disk") + 1] == "260"
+    assert c_args[c_args.index("--disk") + 1] == "300"
 
 
 class _MockPodServer:

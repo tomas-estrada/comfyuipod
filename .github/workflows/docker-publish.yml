@@ -451,27 +451,30 @@ jobs:
           chmod +x "$tmp_helper/vastai"
           dummy_llm_key="sk""-ci-dryrun-key-123456"
           dummy_pod_pass="ci-pass-placeholder-789"
-          dry_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" tools/mac/comfy rent studio --dry-run 2>&1)"
+          dry_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" COMFY_REPO_ROOT="$GITHUB_WORKSPACE" tools/mac/comfy rent studio --dry-run 2>&1)"
           printf '%s\n' "$dry_out"
           echo "$dry_out" | grep -q "Se alquilaría la oferta ID 902"
-          echo "$dry_out" | grep -q "disco=200 GB"
+          # El mínimo de disco se DERIVA de scripts/storage_requirement.py: se comprueba
+          # que el valor usado coincide con el derivado, no con un literal (política de recursos).
+          derived_disk="$(python3 scripts/storage_requirement.py --profile studio --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["min_volume_gb"])')"
+          echo "$dry_out" | grep -q "disco=${derived_disk} GB"
           echo "$dry_out" | grep -q "STUDIO_LLM_KEY=<definida>"
           if echo "$dry_out" | grep -qE "${dummy_llm_key}|${dummy_pod_pass}"; then
             echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en comfy rent studio --dry-run"
             exit 1
           fi
           MOCK_CREATE_ARGS="$tmp_helper/create.txt"
-          sim_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" tools/mac/comfy rent studio --yes 2>&1)"
+          sim_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" COMFY_REPO_ROOT="$GITHUB_WORKSPACE" tools/mac/comfy rent studio --yes 2>&1)"
           if echo "$sim_out" | grep -qE "${dummy_llm_key}|${dummy_pod_pass}"; then
             echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en comfy rent studio --yes"
             exit 1
           fi
-          grep -q -- '--disk 200 --label comfy-studio' "$MOCK_CREATE_ARGS"
+          grep -q -- "--disk ${derived_disk} --label comfy-studio" "$MOCK_CREATE_ARGS"
           grep -q -- '-e MODEL_PROFILE="studio"' "$MOCK_CREATE_ARGS"
           grep -q -- "-e STUDIO_LLM_KEY=\"${dummy_llm_key}\"" "$MOCK_CREATE_ARGS"
           rm -f "$MOCK_CREATE_ARGS"
-          if printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_DISK_GB="120" tools/mac/comfy rent studio --yes >/dev/null 2>&1; then
-            echo "::error::comfy rent studio aceptó COMFY_DISK_GB=120 (< 200 GB mínimo)"
+          if printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_REPO_ROOT="$GITHUB_WORKSPACE" COMFY_DISK_GB="120" tools/mac/comfy rent studio --yes >/dev/null 2>&1; then
+            echo "::error::comfy rent studio aceptó COMFY_DISK_GB=120 (< ${derived_disk} GB derivado)"
             exit 1
           fi
           [ ! -e "$MOCK_CREATE_ARGS" ] || { echo "::error::create instance se invocó con COMFY_DISK_GB=120"; exit 1; }

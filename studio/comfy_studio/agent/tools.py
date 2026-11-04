@@ -18,6 +18,7 @@ from ..config import StudioConfig
 from ..creative import build_brief, build_direction, build_understanding, review_output
 from ..creative.brief import BRIEF_STATUSES, EDITABLE_FIELDS, validate_brief
 from ..creative.review import save_review
+from ..engines.preparedness import note_engine_run
 from ..ml import is_real_backend
 from ..progress import ProgressBroker
 from ..projects import ProjectStore
@@ -1436,6 +1437,9 @@ async def _handle_enqueue_render(
             comfyui_client=context.comfyui_client,
             broker=context.broker,
             strict=True,
+            three_d_available=context.config.three_d_weights_available(),
+            animate_available=context.config.animate_weights_available(),
+            minimax_available=context.config.minimax_weights_available(),
         )
     except (TemplateNotFoundError, TemplateParamError, LookupError) as exc:
         raise ToolExecutionError(str(exc)) from exc
@@ -2306,6 +2310,7 @@ async def _handle_upscale_asset(
                     }
                 )
             )
+            note_engine_run("upscaler", result.ok)
             if not result.ok:
                 raise ToolExecutionError(
                     f"upscaler falló: {result.error or 'error desconocido'}"
@@ -2386,6 +2391,7 @@ async def _handle_generate_music(
                     }
                 )
             )
+            note_engine_run("music_gen", result.ok)
             if not result.ok:
                 raise ToolExecutionError(
                     f"music_gen falló: {result.error or 'error desconocido'}"
@@ -2463,6 +2469,7 @@ async def _handle_generate_speech(
                         }
                     )
                 )
+                note_engine_run("indextts", tts_result.ok)
                 if not tts_result.ok:
                     raise ToolExecutionError(
                         f"IndexTTS-2.5 falló: {tts_result.error or 'error desconocido'}"
@@ -2482,6 +2489,7 @@ async def _handle_generate_speech(
                         }
                     )
                 )
+                note_engine_run("audio", tts_result.ok)
                 if not tts_result.ok:
                     raise ToolExecutionError(
                         f"TTS falló: {tts_result.error or 'error desconocido'}"
@@ -2513,6 +2521,7 @@ async def _handle_generate_speech(
                         }
                     )
                 )
+                note_engine_run("voice_clone", vc_result.ok)
                 if vc_result.ok and cloned_path.is_file():
                     final_path = cloned_path
                     voice_clone_applied = True
@@ -2591,6 +2600,7 @@ async def _handle_lipsync_video(
                     }
                 )
             )
+            note_engine_run("lipsync", result.ok)
             if not result.ok:
                 raise ToolExecutionError(
                     f"lipsync falló: {result.error or 'error desconocido'}"

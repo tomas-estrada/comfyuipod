@@ -61,6 +61,11 @@ VALID_OPT_IN_FLAGS = frozenset({
     "STUDIO_INCLUDE_MINIMAX",
 })
 
+# Política de arquitectura: clases de activo admitidas. `bootstrap` reservado
+# para lo genuinamente necesario para operar; `task` se adquiere para la tarea
+# elegida; `optional` son variantes y mejoras (coincide con los grupos opt-in).
+VALID_ASSET_CLASSES = frozenset({"bootstrap", "task", "optional"})
+
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -120,8 +125,8 @@ def validate_manifest_data(
     """Valida el diccionario del manifiesto; devuelve lista de errores (vacía si todo es válido)."""
     errors: list[str] = []
 
-    if data.get("version") != 1:
-        errors.append(f"version inválida: {data.get('version')!r} (esperado 1)")
+    if data.get("version") != 2:
+        errors.append(f"version inválida: {data.get('version')!r} (esperado 2)")
     if data.get("profile") != "studio":
         errors.append(f"profile inválido: {data.get('profile')!r} (esperado 'studio')")
 
@@ -256,6 +261,50 @@ def validate_manifest_data(
     else:
         errors.append("meta.categories debe ser un objeto")
 
+    # Clasificación de activos (política de arquitectura): bootstrap / task /
+    # optional. Nada es bootstrap sin declararlo, así que una clase ausente o
+    # desconocida es un error y el desglose de meta debe cuadrar con las entradas.
+    for index, model in enumerate(models):
+        declared = model.get("class")
+        if declared not in VALID_ASSET_CLASSES:
+            errors.append(
+                f"models[{index}].class={declared!r} inválida "
+                f"(esperado uno de {sorted(VALID_ASSET_CLASSES)})"
+            )
+        elif bool(model.get("opt_in")) != (declared == "optional"):
+            errors.append(
+                f"models[{index}] ({model.get('filename')!r}): class={declared!r} "
+                "no coherente con opt_in (los opt-in deben ser 'optional')"
+            )
+
+    class_counts = {"bootstrap": 0, "task": 0, "optional": 0}
+    class_bytes = {"bootstrap": 0, "task": 0, "optional": 0}
+    for model in models:
+        declared = model.get("class")
+        if declared in class_counts:
+            class_counts[declared] += 1
+            class_bytes[declared] += int(model.get("bytes") or 0)
+
+    meta_classes = meta.get("classes")
+    if not isinstance(meta_classes, dict):
+        errors.append("meta.classes debe ser un objeto con el desglose por clase")
+    else:
+        for name in class_counts:
+            info = meta_classes.get(name)
+            if not isinstance(info, dict):
+                errors.append(f"meta.classes[{name!r}] debe ser un objeto")
+                continue
+            if info.get("entries") != class_counts[name]:
+                errors.append(
+                    f"meta.classes[{name!r}].entries={info.get('entries')} "
+                    f"!= calculado={class_counts[name]}"
+                )
+            if info.get("bytes") != class_bytes[name]:
+                errors.append(
+                    f"meta.classes[{name!r}].bytes={info.get('bytes')} "
+                    f"!= calculado={class_bytes[name]}"
+                )
+
     if head_fn is not None and not errors:
         def _check_one(item: dict[str, Any]) -> str | None:
             url = item["url"]
@@ -285,13 +334,18 @@ def run_fixture_self_test() -> int:
     """Ejecuta pruebas unitarias deterministas sobre el validador."""
     sample_url = "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/main/split_files/vae/wan2.2_vae.safetensors"
     valid_manifest: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "profile": "studio",
         "meta": {
             "default_entries": 1,
             "default_bytes": 1409400960,
             "opt_in_entries": 1,
             "opt_in_bytes": 18413068672,
+            "classes": {
+                "bootstrap": {"entries": 0, "bytes": 0},
+                "task": {"entries": 1, "bytes": 1409400960},
+                "optional": {"entries": 1, "bytes": 18413068672},
+            },
             "categories": {
                 "wan_core": {"entries": 1, "bytes": 1409400960, "license": "Apache-2.0"},
                 "animate_opt_in": {"entries": 1, "bytes": 18413068672, "license": "Apache-2.0"},
@@ -308,6 +362,7 @@ def run_fixture_self_test() -> int:
                 "filename": "wan2.2_vae.safetensors",
                 "dest_path": "models/vae/wan2.2_vae.safetensors",
                 "license": "Apache-2.0",
+                "class": "task",
                 "opt_in": None,
             },
             {
@@ -326,6 +381,7 @@ def run_fixture_self_test() -> int:
                 "filename": "wan2.2_animate_14B_int8_convrot.safetensors",
                 "dest_path": "models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors",
                 "license": "Apache-2.0",
+                "class": "optional",
                 "opt_in": "STUDIO_INCLUDE_ANIMATE",
             },
         ],

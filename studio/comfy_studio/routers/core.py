@@ -15,6 +15,7 @@ from comfy_studio.config import (
 from comfy_studio.engines.health import health_report
 from comfy_studio.engines.registry import build_default_registry
 from comfy_studio.media_bins import find_ffmpeg, find_ffprobe
+from comfy_studio.model_assets import summary as model_assets_summary
 from comfy_studio.orchestration.health import orchestration_health_report
 from comfy_studio.projects import ProjectStore
 from comfy_studio.webutil import (
@@ -119,6 +120,9 @@ def register_routes(app: FastAPI) -> None:
                 "stub": active_cfg.studio_stub_llm,
             },
             "env_masked": active_cfg.to_public_dict(),
+            # Activos de modelo como dependencias de tarea: qué se pidió, qué
+            # está en disco y en qué clase cae cada grupo (política de recursos).
+            "model_assets": model_assets_summary(),
         }
         return active_redactor.redact_value(payload)
     @app.get("/studio/api/agent/tools")

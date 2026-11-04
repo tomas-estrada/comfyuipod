@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from comfy_studio import model_assets
+
 SECRET_PLACEHOLDER = "[REDACTED]"
 
 DEFAULT_STUDIO_LLM_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
@@ -606,35 +608,60 @@ class StudioConfig:
     def masked_comfy_pass_status(self) -> str:
         return "<definida>" if self.comfy_pass else "<no definida>"
 
-    def minimax_weights_available(self) -> bool:
+    def minimax_weights_expected(self) -> bool:
         """
-        ¿Están previstos los pesos del grupo MiniMax H3 (Hailuo 3.0)?
+        ¿Se pidió el grupo MiniMax H3 (Hailuo 3.0)?
 
         `STUDIO_INCLUDE_MINIMAX=1` hace que `download-models.sh` descargue el
-        set local Ref2VA pruned-int8 (+42.03 GB: DiT 19.5 GiB + Qwen3-VL nvfp4
-        14.6 GiB + VAEs + LoRA turbo); sin él la plantilla `minimax_r2v` no se
-        ofrece ni acepta submits.
+        set local Ref2VA pruned-int8 (+63.00 GB en 6 archivos: DiT ref2va +
+        Singularity v2, Qwen3-VL nvfp4, VAEs de vídeo/audio y LoRA turbo); sin
+        él la plantilla `minimax_r2v` no se ofrece ni acepta submits.
+
+        Es una señal de **intención**: no afirma que los archivos estén en disco.
         """
         return bool(self.studio_include_minimax)
 
-    def animate_weights_available(self) -> bool:
+    def minimax_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """¿Están los pesos de MiniMax H3 realmente en disco?
+
+        Política de activos: «disponible» es un hecho del filesystem, no de la
+        entorno. Un grupo pedido pero aún descargando NO está disponible.
         """
-        ¿Están previstos los pesos del grupo Animate (Wan 2.2 Animate 14B)?
+        return self.minimax_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_MINIMAX", env
+        )
+
+    def animate_weights_expected(self) -> bool:
+        """
+        ¿Se pidió el grupo Animate (Wan 2.2 Animate 14B)?
 
         `STUDIO_INCLUDE_ANIMATE=1` hace que `download-models.sh` descargue
-        `wan2.2_animate_14B_int8_convrot.safetensors` (+17.15 GiB); sin él la
+        `wan2.2_animate_14B_int8_convrot.safetensors` (+18.41 GB); sin él la
         plantilla `wan_animate` no se ofrece ni acepta submits.
         """
         return bool(self.studio_include_animate)
 
-    def three_d_weights_available(self) -> bool:
-        """¿Están previstos los pesos del grupo 3D (Hunyuan3D) en este pod?
+    def animate_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """¿Está `wan2.2_animate_14B_int8_convrot.safetensors` en disco?"""
+        return self.animate_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_ANIMATE", env
+        )
+
+    def three_d_weights_expected(self) -> bool:
+        """¿Se pidió el grupo 3D (Hunyuan3D) en este pod?
 
         `STUDIO_INCLUDE_3D=1` o `MODEL_PROFILE=unreal` hacen que
-        `download-models.sh` descargue `hunyuan_3d_v2.1.safetensors`; sin ellos la
-        plantilla `hunyuan3d_image_to_3d` no es ofrecida ni acepta submits.
+        `download-models.sh` descargue `hunyuan_3d_v2.1.safetensors` (+7.37 GB);
+        sin ellos la plantilla `hunyuan3d_image_to_3d` no es ofrecida ni acepta
+        submits.
         """
         return bool(self.studio_include_3d)
+
+    def three_d_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """¿Está `hunyuan_3d_v2.1.safetensors` en disco?"""
+        return self.three_d_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_3D", env
+        )
 
     def redactor(self) -> SecretRedactor:
         return SecretRedactor.from_config(self)
