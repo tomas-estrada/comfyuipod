@@ -400,6 +400,15 @@ class PerceptionVectorStore:
             ).fetchall()
         return [self._row_to_clip_shot(r) for r in rows]
 
+    def get_clip_shot_by_keyframe(self, keyframe_asset_id: str) -> dict[str, Any] | None:
+        """Return an indexed shot by its unique keyframe asset ID, if present."""
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM clip_shots WHERE keyframe_asset_id = ?",
+                (keyframe_asset_id,),
+            ).fetchone()
+        return self._row_to_clip_shot(row) if row is not None else None
+
     def search_clip_shots(
         self,
         project_id: str,
