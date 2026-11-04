@@ -9,26 +9,26 @@
 Se ha realizado una auditoría exhaustiva y adversarial de extremo a extremo en todo el repositorio. Como resultado, se han identificado, corregido y verificado empíricamente todas las discrepancias y fallos encontrados:
 
 1. **Corrección de linting estricto en Rust (`cargo clippy`)**:
-   - En [`comfyctl/src/config.rs`](file:///c:/Users/estra/OneDrive/Documents/ComfyUIPod/comfyctl/src/config.rs#L16), la documentación del enum `ModelProfile::Unreal` contenía la palabra `Hunyuan3D` sin comillas invertidas, disparando `clippy::doc_markdown` bajo la bandera obligatoria de CI `-D warnings`.
+   - En [`comfyctl/src/config.rs`](../../comfyctl/src/config.rs#L16), la documentación del enum `ModelProfile::Unreal` contenía la palabra `Hunyuan3D` sin comillas invertidas, disparando `clippy::doc_markdown` bajo la bandera obligatoria de CI `-D warnings`.
    - *Corrección*: Se agregaron las comillas invertidas correspondientes: ``(`Hunyuan3D` 2.1, Blender)``.
 
 2. **Limpieza de advertencias de formato y sintaxis en Python (`ruff`)**:
-   - En [`studio/comfy_studio/blender.py`](file:///c:/Users/estra/OneDrive/Documents/ComfyUIPod/studio/comfy_studio/blender.py):
+   - En [`studio/comfy_studio/blender.py`](../../studio/comfy_studio/blender.py):
      - L219: Se reemplazó el formato heredado `stem = r"%s" % stem` (`UP031`) por f-string `f'stem = r"{stem}"'`.
      - L276 y L328: Se dividieron las líneas que excedían el límite de 100 caracteres (`E501`).
      - L352: Se actualizó `except asyncio.TimeoutError` a `except TimeoutError` (`UP041`).
    - `ruff check studio panel scripts config/probes` pasa con 0 errores y 0 advertencias.
 
 3. **Prevención de bloqueo en el bucle de eventos (`Event Loop`) en FastAPI**:
-   - En [`studio/comfy_studio/app.py`](file:///c:/Users/estra/OneDrive/Documents/ComfyUIPod/studio/comfy_studio/app.py#L1767), el endpoint `POST /studio/api/projects/{project_id}/edl/highlights` ejecutaba `generate_highlights_edl` síncronamente en el hilo principal (lo que disparaba transcripciones o análisis acústico de archivos multimedia bloqueando peticiones concurrentes y SSE).
+   - En [`studio/comfy_studio/app.py`](../../studio/comfy_studio/app.py#L1767), el endpoint `POST /studio/api/projects/{project_id}/edl/highlights` ejecutaba `generate_highlights_edl` síncronamente en el hilo principal (lo que disparaba transcripciones o análisis acústico de archivos multimedia bloqueando peticiones concurrentes y SSE).
    - *Corrección*: Se delegó la llamada pesada mediante `await run_in_threadpool(generate_highlights_edl, ...)`.
 
 4. **Protección contra timestamps negativos en diarización corta (`M3-SCR-017`)**:
-   - En [`studio/comfy_studio/asr/diarize.py`](file:///c:/Users/estra/OneDrive/Documents/ComfyUIPod/studio/comfy_studio/asr/diarize.py#L120), si un archivo de audio tenía una duración menor a 0.2 segundos, la expresión `dur - 0.2` generaba un timestamp de inicio negativo (`start: -0.1`).
+   - En [`studio/comfy_studio/asr/diarize.py`](../../studio/comfy_studio/asr/diarize.py#L120), si un archivo de audio tenía una duración menor a 0.2 segundos, la expresión `dur - 0.2` generaba un timestamp de inicio negativo (`start: -0.1`).
    - *Corrección*: Se acotó con `max(0.0, min(dur - 0.2, round(mid + 0.1, 3)))`.
 
 5. **Alineación de pruebas de registro de plantillas**:
-   - Las pruebas en [`studio/tests/test_templates_registry.py`](file:///c:/Users/estra/OneDrive/Documents/ComfyUIPod/studio/tests/test_templates_registry.py) y suites de herramientas fueron actualizadas para contemplar la totalidad de las 7 plantillas curadas del pod (incluyendo `hunyuan3d_image_to_3d` para la ingesta de imagen a malla 3D).
+   - Las pruebas en [`studio/tests/test_templates_registry.py`](../../studio/tests/test_templates_registry.py) y suites de herramientas fueron actualizadas para contemplar la totalidad de las 7 plantillas curadas del pod (incluyendo `hunyuan3d_image_to_3d` para la ingesta de imagen a malla 3D).
 
 ---
 
