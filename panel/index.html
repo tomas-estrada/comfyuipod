@@ -43,6 +43,9 @@
             <button type="button" id="nav-edl" class="nav-tab" data-view="edl" aria-selected="false">
                 5. Timeline EDL
             </button>
+            <button type="button" id="nav-ads" class="nav-tab" data-view="ads" aria-selected="false">
+                6. Anuncios
+            </button>
             <button type="button" id="nav-login" class="nav-tab" data-view="login" aria-selected="false">
                 Acceso / Login
             </button>
@@ -579,7 +582,97 @@
             </div>
         </section>
 
-        <!-- VISTA 6: ACCESO / LOGIN (EDGE BASIC-AUTH DEL POD) -->
+        <!-- VISTA 6: ESTUDIO DE ANUNCIOS (motor ad_studio) -->
+        <section id="view-ads" class="studio-view" data-view-panel="ads" aria-labelledby="heading-ads" hidden>
+            <div class="two-col-grid">
+                <div class="panel-card">
+                    <div class="card-header">
+                        <div>
+                            <h2 id="heading-ads">Estudio de Anuncios (ad_studio)</h2>
+                            <p class="card-subtitle">Brief de producto &rarr; guion &rarr; storyboard &rarr; variantes 9:16 / 1:1 / 16:9 con ffmpeg, voz y QA autom&aacute;tico.</p>
+                        </div>
+                        <button type="button" id="refresh-ads-btn" class="btn btn-secondary btn-sm">
+                            Actualizar anuncios
+                        </button>
+                    </div>
+
+                    <form id="ad-brief-form" class="studio-form">
+                        <div class="form-group">
+                            <label for="ad-product-name">Producto</label>
+                            <input type="text" id="ad-product-name" name="product_name" required maxlength="120"
+                                   placeholder="Cafetera Nova">
+                        </div>
+                        <div class="form-group">
+                            <label for="ad-key-message">Mensaje clave</label>
+                            <input type="text" id="ad-key-message" name="key_message" required maxlength="500"
+                                   placeholder="El café perfecto cada mañana en 30 segundos.">
+                        </div>
+                        <div class="form-group">
+                            <label for="ad-audience">Audiencia</label>
+                            <input type="text" id="ad-audience" name="audience" required maxlength="200"
+                                   placeholder="profesionales ocupados">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="ad-tone">Tono</label>
+                                <select id="ad-tone" name="tone">
+                                    <option value="profesional">Profesional</option>
+                                    <option value="energico">Energético</option>
+                                    <option value="cercano" selected>Cercano</option>
+                                    <option value="inspirador">Inspirador</option>
+                                    <option value="humoristico">Humorístico</option>
+                                </select>
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="ad-duration">Duración (s)</label>
+                                <input type="number" id="ad-duration" name="target_duration_s" min="5" max="60" step="0.5" value="15">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="ad-cta">Call to action</label>
+                            <input type="text" id="ad-cta" name="cta" required maxlength="120"
+                                   placeholder="Pruébala hoy con un 20% de descuento.">
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" id="ad-create-btn" class="btn btn-primary">
+                                Crear guion de anuncio
+                            </button>
+                        </div>
+                        <span id="ad-status-msg" class="inline-status" aria-live="polite"></span>
+                    </form>
+                </div>
+
+                <div class="panel-card">
+                    <h3 class="section-subtitle">Anuncios del proyecto (<span id="ads-count">0</span>)</h3>
+                    <div id="ads-list" class="items-list" aria-live="polite">
+                        <p class="empty-hint">No hay anuncios todavía. Crea uno con el brief de la izquierda.</p>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <h3 class="section-subtitle">Variantes del anuncio seleccionado</h3>
+                    <div class="form-row">
+                        <label class="checkbox-label"><input type="checkbox" id="ad-aspect-9x16" checked> 9:16</label>
+                        <label class="checkbox-label"><input type="checkbox" id="ad-aspect-1x1" checked> 1:1</label>
+                        <label class="checkbox-label"><input type="checkbox" id="ad-aspect-16x9" checked> 16:9</label>
+                        <label class="checkbox-label"><input type="checkbox" id="ad-aspect-4x5"> 4:5</label>
+                    </div>
+                    <div class="form-row">
+                        <label class="checkbox-label"><input type="checkbox" id="ad-voiceover"> Voz del guion (TTS)</label>
+                        <label class="checkbox-label"><input type="checkbox" id="ad-music"> Cama musical</label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="ad-variants-btn" class="btn btn-accent" disabled>
+                            Generar variantes (job ad_variants)
+                        </button>
+                    </div>
+                    <span id="ad-variants-status" class="inline-status" aria-live="polite"></span>
+                    <div id="ad-variants-list" class="items-list" aria-live="polite"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- VISTA 7: ACCESO / LOGIN (EDGE BASIC-AUTH DEL POD) -->
         <section id="view-login" class="studio-view" data-view-panel="login" aria-labelledby="heading-login" hidden>
             <div class="two-col-grid">
                 <div class="panel-card">

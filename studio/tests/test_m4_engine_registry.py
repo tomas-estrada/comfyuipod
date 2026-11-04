@@ -52,6 +52,7 @@ def test_full_roster_all_wired() -> None:
         "heavy_video",
         "qa",
         "roto",
+        "ad_studio",
     ):
         e = reg.get(name)
         assert e is not None and e.wired is True, f"{name} debería estar cableado"
@@ -71,5 +72,5 @@ def test_describe_is_serializable(monkeypatch: pytest.MonkeyPatch) -> None:
     # Debe serializar a JSON sin objetos vivos.
     blob = json.dumps(desc)
     assert '"dynamic": false' in blob
-    assert desc["count"] == 15
+    assert desc["count"] == 16
     assert all(set(e) == {"name", "tier", "wired", "note"} for e in desc["engines"])

@@ -241,6 +241,7 @@ def create_app(
     )
     # M7-SCR-001: tareas de render en segundo plano (submit async) y su semáforo.
     app.state.render_tasks = set()
+    app.state.ad_tasks = set()  # jobs `ad_variants` en segundo plano (routers/ads.py)
     app.state.render_semaphore = asyncio.Semaphore(cfg.max_concurrent_renders)
     # (El ProductionService se arma más abajo, tras construir app.state.llm_client,
     # porque el cableado de motores reales lo necesita — M6-AGT-001.)

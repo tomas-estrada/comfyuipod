@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from . import (
+    ads,
     assets,
     chat,
     core,
@@ -28,6 +29,7 @@ _MODULES = (
     chat,
     perception,
     media_ops,
+    ads,
     review_pins,
     montage,
 )
