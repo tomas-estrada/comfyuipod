@@ -167,10 +167,13 @@ def test_health_report_exposes_both_views() -> None:
     reg = build_default_registry()
     rep = health_report(reg)
     blob = json.dumps(rep)
-    # La vista antigua (cableado) se conserva intacta.
-    assert rep["counts"]["ready"] == 16
+    # La vista antigua (cableado) se conserva intacta. El reparto ready/stub
+    # depende del entorno (CI activa STUDIO_STUB_*), así que no se fija un
+    # literal: lo invariante es que cubre los 16 motores y ninguno queda
+    # sin cablear.
     assert rep["counts"]["unwired"] == 0
-    assert sum(rep["counts"].values()) == len(rep["engines"])
+    assert sum(rep["counts"].values()) == len(rep["engines"]) == 16
+    assert rep["counts"]["ready"] + rep["counts"]["stub"] == 16
     # La nueva (preparación) llega además por motor y agregada.
     assert "preparedness" in rep
     assert len(rep["preparedness"]["engines"]) == 16
