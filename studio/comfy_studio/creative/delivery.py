@@ -15,6 +15,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from .provenance import linked_transcriptions
+
 DELIVERY_SCHEMA = "comfy_studio.delivery.v1"
 
 #: cuántos hashtags como máximo por plataforma (sugerencia conservadora; no hay
@@ -143,13 +145,26 @@ def build_delivery_package(
         images = [a for a in store.list_assets(project_id) if a.get("kind") == "image"]
         cover_id = images[0]["id"] if images else None
 
-    # Subtítulos: última transcripción del proyecto.
-    trs = store.list_transcriptions(project_id)
+    # Subtítulos: solo transcripciones exportables de assets usados por el EDL final.
+    audio_plan = (brief.get("editorial") or {}).get("audio_plan") or {}
+    subtitles_disabled = (
+        any(
+            isinstance(item, dict)
+            and item.get("key") == "subtitles"
+            and item.get("value") is False
+            for item in (brief.get("user_constraints") or [])
+        )
+        or audio_plan.get("subtitles_policy") == "disabled"
+    )
+    trs = (
+        [] if subtitles_disabled else linked_transcriptions(store, project_id, final_asset_id)
+    )
     subtitles = None
     if trs:
         tid = trs[0]["id"]
         subtitles = {
             "transcription_id": tid,
+            "source_asset_id": trs[0].get("asset_id"),
             "language": trs[0].get("language"),
             "diarized": bool(trs[0].get("diarized")),
             "srt_url": f"/studio/api/projects/{project_id}/transcriptions/{tid}/subtitles?fmt=srt",

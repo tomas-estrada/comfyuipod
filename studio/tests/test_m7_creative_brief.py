@@ -134,6 +134,8 @@ def test_specific_brief_parses_constraints_into_user_constraints_and_acceptance(
 
     audio_plan = brief["editorial"]["audio_plan"]
     assert "sin música" in audio_plan["music"]
+    assert audio_plan["music_policy"] == "prohibited"
+    assert audio_plan["subtitles_policy"] == "required"
     assert audio_plan["subtitles"] == "subtítulos obligatorios"
 
 
@@ -370,9 +372,15 @@ def test_review_output_separates_technical_from_editorial_and_localizes_correcti
     pid = _make_project(client, "Revisión")
     store = ProjectStore(studio_data_dir)
     src = _upload(client, pid, "fuente.mp4", FAKE_MP4, "video/mp4")
+    unrelated = _upload(client, pid, "otro.mp4", FAKE_MP4, "video/mp4")
     out = store.save_upload(
         pid, filename="render.mp4", content_type="video/mp4",
         data=FAKE_MP4, max_upload_bytes=2 * 1024 * 1024, category="outputs",
+    )
+    store.save_edl_version(
+        pid,
+        edl={"schema": "comfy_studio.edl.v1", "cuts": [{"asset_id": src["id"]}]},
+        output_asset_id=out["id"],
     )
     _create_brief(client, pid, "video de 15 segundos con subtítulos del material")
 
@@ -387,6 +395,8 @@ def test_review_output_separates_technical_from_editorial_and_localizes_correcti
     # la evaluación editorial NO se inventa: queda pendiente de humano/VLM
     pending = [c for c in report["editorial_checks"] if c["status"] == "pending"]
     assert pending and all(c["requires"] == "human_or_vlm" for c in pending)
+    claims_check = next(c for c in pending if c["check"] == "afirmaciones inventadas")
+    assert "no compara" in claims_check["note"]
     # cada issue trae corrección localizada
     assert all(i.get("correction") for i in report["issues"])
     # sin ffprobe en este entorno el archivo no es verificable → error de integridad
@@ -403,17 +413,29 @@ def test_review_output_separates_technical_from_editorial_and_localizes_correcti
     )
     assert missing.status_code == 404
 
-    # con transcripción, los subtítulos requeridos pasan a disponibles
+    # Una transcripción ajena al EDL no se atribuye a este render.
     client.post(
         f"/studio/api/projects/{pid}/transcribe",
-        json={"asset_id": src["id"], "language": "es",
+        json={"asset_id": unrelated["id"], "language": "es",
               "script_segments": [{"start": 0.0, "end": 1.0, "text": "hola mundo"}]},
     )
     resp2 = client.post(f"/studio/api/projects/{pid}/brief/review", json={"asset_id": out["id"]})
     rep2 = resp2.json()
     assert rep2["subtitles"]["required"] is True
-    assert rep2["subtitles"]["available"] is True
-    assert rep2["subtitles"]["srt_url"].endswith("fmt=srt")
+    assert rep2["subtitles"]["available"] is False
+    assert any(issue["check"] == "subtítulos" for issue in rep2["issues"])
+
+    # Una transcripción exportable vinculada al source del EDL sí es elegible.
+    client.post(
+        f"/studio/api/projects/{pid}/transcribe",
+        json={"asset_id": src["id"], "language": "es",
+              "script_segments": [{"start": 0.0, "end": 1.0, "text": "hola mundo"}]},
+    )
+    resp3 = client.post(f"/studio/api/projects/{pid}/brief/review", json={"asset_id": out["id"]})
+    rep3 = resp3.json()
+    assert rep3["subtitles"]["available"] is True
+    assert rep3["subtitles"]["transcription_id"]
+    assert rep3["subtitles"]["srt_url"].endswith("fmt=srt")
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="requiere ffmpeg/ffprobe reales")
@@ -464,6 +486,7 @@ def test_delivery_package_marks_trend_data_unavailable_and_never_publishes(
     pid = _make_project(client, "Entrega")
     store = ProjectStore(studio_data_dir)
     src = _upload(client, pid, "entrevista.mp4", FAKE_MP4, "video/mp4")
+    unrelated = _upload(client, pid, "material-ajeno.mp4", FAKE_MP4, "video/mp4")
     out = store.save_upload(
         pid, filename="reel_final.mp4", content_type="video/mp4",
         data=FAKE_MP4, max_upload_bytes=2 * 1024 * 1024, category="outputs",
@@ -473,6 +496,11 @@ def test_delivery_package_marks_trend_data_unavailable_and_never_publishes(
         f"/studio/api/projects/{pid}/transcribe",
         json={"asset_id": src["id"], "language": "es",
               "script_segments": [{"start": 0.0, "end": 2.0, "text": "gran noticia del producto"}]},
+    )
+    client.post(
+        f"/studio/api/projects/{pid}/transcribe",
+        json={"asset_id": unrelated["id"], "language": "es",
+              "script_segments": [{"start": 0.0, "end": 2.0, "text": "otro proyecto"}]},
     )
     store.save_edl_version(
         pid,
@@ -495,6 +523,7 @@ def test_delivery_package_marks_trend_data_unavailable_and_never_publishes(
     assert pkg["video"]["file_url"].endswith(f"/assets/{out['id']}/file")
     assert pkg["variants"] and pkg["variants"][0]["asset_id"] == out["id"]
     assert pkg["subtitles"]["srt_url"].endswith("fmt=srt")
+    assert pkg["subtitles"]["source_asset_id"] == src["id"]
     assert pkg["edl"]["cuts_count"] == 1
     assert pkg["edl"]["render_url"].endswith("/render")
     assert pkg["generated_assets"][0]["provenance"]["is_final_reel"] is True
@@ -656,3 +685,77 @@ def test_understanding_includes_clip_shots_when_vector_store_available(
     assert shots[0]["simulated"] is True
     assert und["perception_available"] is True
     assert und["counts"]["shots"] == 1
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="requiere ffmpeg/ffprobe reales")
+def test_music_policy_distinguishes_prohibited_from_required_audio(
+    client: TestClient,
+    studio_data_dir: Path,
+    tmp_path: Path,
+) -> None:
+    pid = _make_project(client, "Política de audio")
+    store = ProjectStore(studio_data_dir)
+    video_path = tmp_path / "silent.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+            "-i", "color=c=blue:s=320x180:d=3:r=24",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            str(video_path),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60.0,
+    )
+    output = store.save_upload(
+        pid, filename="silent.mp4", content_type="video/mp4",
+        data=video_path.read_bytes(), max_upload_bytes=64 * 1024 * 1024,
+        category="outputs",
+    )
+
+    _create_brief(client, pid, "video de 3 segundos sin música")
+    prohibited = client.post(
+        f"/studio/api/projects/{pid}/brief/review", json={"asset_id": output["id"]}
+    ).json()
+    assert prohibited["summary"]["passed"] is True
+    assert not any(issue["check"] == "audio" for issue in prohibited["issues"])
+
+    _create_brief(client, pid, "video de 3 segundos con música")
+    required = client.post(
+        f"/studio/api/projects/{pid}/brief/review", json={"asset_id": output["id"]}
+    ).json()
+    assert required["summary"]["passed"] is False
+    assert any(issue["check"] == "audio" for issue in required["issues"])
+
+
+def test_explicit_no_subtitles_suppresses_review_and_delivery_links(
+    client: TestClient,
+    studio_data_dir: Path,
+) -> None:
+    pid = _make_project(client, "Sin subtítulos")
+    store = ProjectStore(studio_data_dir)
+    source = _upload(client, pid, "source.mp4", FAKE_MP4, "video/mp4")
+    output = store.save_upload(
+        pid, filename="output.mp4", content_type="video/mp4",
+        data=FAKE_MP4, max_upload_bytes=2 * 1024 * 1024, category="outputs",
+    )
+    store.save_edl_version(
+        pid,
+        edl={"schema": "comfy_studio.edl.v1", "cuts": [{"asset_id": source["id"]}]},
+        output_asset_id=output["id"],
+    )
+    client.post(
+        f"/studio/api/projects/{pid}/transcribe",
+        json={"asset_id": source["id"], "language": "es",
+              "script_segments": [{"start": 0.0, "end": 1.0, "text": "texto disponible"}]},
+    )
+    _create_brief(client, pid, "video sin subtítulos")
+
+    review = client.post(
+        f"/studio/api/projects/{pid}/brief/review", json={"asset_id": output["id"]}
+    ).json()
+    delivery = client.get(f"/studio/api/projects/{pid}/brief/delivery").json()
+    assert review["subtitles"]["required"] is False
+    assert review["subtitles"]["available"] is False
+    assert review["subtitles"]["srt_url"] is None
+    assert delivery["subtitles"] is None

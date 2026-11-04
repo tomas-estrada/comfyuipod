@@ -456,8 +456,17 @@ def new_brief(
         acceptance.append({
             "id": "ac-no-music",
             "check": "Sin pista de música añadida (solo audio original o silencio)",
-            "target": "sin música generada",
-            "how_verified": "revisión del plan de audio y del render",
+            "target": "sin música añadida por la producción",
+            "how_verified": (
+                "revisión humana/VLM del audio; ffprobe solo detecta presencia de pista"
+            ),
+        })
+    elif music is True:
+        acceptance.append({
+            "id": "ac-music",
+            "check": "La pieza incluye la música solicitada",
+            "target": "pista musical presente y adecuada",
+            "how_verified": "presencia de pista por ffprobe y revisión humana/VLM de su contenido",
         })
     if _constraint_value(intent, "language") is not None:
         acceptance.append({

@@ -23,6 +23,8 @@ from typing import Any
 
 from comfy_studio.perception.keyframes import probe_media_info
 
+from .provenance import linked_transcriptions
+
 REVIEW_SCHEMA = "comfy_studio.review.v1"
 
 _ASPECT_TOLERANCE = 0.02
@@ -49,6 +51,48 @@ def _constraint(brief: dict[str, Any], key: str) -> Any:
         if isinstance(c, dict) and c.get("key") == key:
             return c.get("value")
     return None
+
+
+def _expects_audio(brief: dict[str, Any]) -> bool:
+    """Resolve audio requirements without treating a negated music label as required."""
+    audio_plan = (brief.get("editorial") or {}).get("audio_plan") or {}
+    music_policy = audio_plan.get("music_policy")
+    if music_policy not in ("required", "optional", "prohibited"):
+        music_constraint = _constraint(brief, "music")
+        if music_constraint is True:
+            music_policy = "required"
+        elif music_constraint is False:
+            music_policy = "prohibited"
+        else:
+            music_text = str(audio_plan.get("music") or "").casefold()
+            if any(phrase in music_text for phrase in ("sin música", "sin musica", "no music")):
+                music_policy = "prohibited"
+            elif any(
+                phrase in music_text
+                for phrase in ("música obligatoria", "musica obligatoria", "music required")
+            ):
+                music_policy = "required"
+            else:
+                # Legacy briefs often say music is permitted or only used when present.
+                music_policy = "optional"
+
+    dialogue_policy = audio_plan.get("dialogue_policy")
+    legacy_dialogue = str(audio_plan.get("dialogue") or "").casefold()
+    if dialogue_policy not in ("required", "preserve_if_present", "none"):
+        dialogue_policy = (
+            "preserve_if_present" if legacy_dialogue.startswith("conservar") else "none"
+        )
+
+    source_audio = audio_plan.get("has_audio_in_sources") is True
+    legacy_transcribed_dialogue = legacy_dialogue.startswith("conservar")
+    return (
+        music_policy == "required"
+        or dialogue_policy == "required"
+        or (
+            dialogue_policy == "preserve_if_present"
+            and (source_audio or legacy_transcribed_dialogue)
+        )
+    )
 
 
 def review_output(
@@ -146,14 +190,8 @@ def review_output(
                         "correction": f"re-renderizar el EDL en {want_aspect} (variante existente)",
                     })
 
-            # audio: si el brief espera diálogo o música, el render debe tener audio
-            audio_plan = (brief.get("editorial") or {}).get("audio_plan") or {}
-            expects_audio = (
-                audio_plan.get("dialogue", "").startswith("conservar")
-                or "música" in str(audio_plan.get("music") or "")
-                or _constraint(brief, "music") is True
-            )
-            if expects_audio and not technical["has_audio"]:
+            # La política estructurada evita falsos positivos por frases como "sin música".
+            if _expects_audio(brief) and not technical["has_audio"]:
                 issues.append({
                     "severity": "error",
                     "check": "audio",
@@ -169,25 +207,32 @@ def review_output(
                 })
 
     # subtítulos requeridos -> debe existir transcripción exportable
+    audio_plan = (brief.get("editorial") or {}).get("audio_plan") or {}
+    subtitles_policy = audio_plan.get("subtitles_policy")
     subs_required = _constraint(brief, "subtitles")
+    if subs_required is None and subtitles_policy in ("required", "recommended", "disabled"):
+        subs_required = subtitles_policy == "required"
     if subs_required is None:
-        audio_plan_brief = (brief.get("editorial") or {}).get("audio_plan") or {}
-        subs_required = audio_plan_brief.get("subtitles") == "subtítulos obligatorios"
-    subtitles_available = False
-    transcription_ref = None
-    if subs_required:
-        trs = store.list_transcriptions(project_id)
-        if trs:
-            subtitles_available = True
-            transcription_ref = trs[0].get("id")
-        else:
-            issues.append({
-                "severity": "error",
-                "check": "subtítulos",
-                "detail": "El brief exige subtítulos pero no hay transcripción en el proyecto",
-                "timecode": None,
-                "correction": "transcribir el asset fuente (whisperx) y exportar SRT/VTT",
-            })
+        subs_required = audio_plan.get("subtitles") == "subtítulos obligatorios"
+    subtitles_disabled = (
+        _constraint(brief, "subtitles") is False or subtitles_policy == "disabled"
+    )
+    linked = (
+        [] if subtitles_disabled else linked_transcriptions(store, project_id, asset_id)
+    )
+    subtitles_available = bool(linked)
+    transcription_ref = linked[0].get("id") if linked else None
+    if subs_required and not subtitles_available:
+        issues.append({
+            "severity": "error",
+            "check": "subtítulos",
+            "detail": (
+                "El brief exige subtítulos pero no hay una transcripción exportable "
+                "vinculada a los assets fuente de esta producción"
+            ),
+            "timecode": None,
+            "correction": "transcribir un asset fuente incluido en el EDL y exportar SRT/VTT",
+        })
 
     # Verificaciones editoriales que NO se pueden medir objetivamente aquí:
     # se declaran explícitamente como pendientes de humano/VLM, sin inventar notas.
@@ -199,13 +244,24 @@ def review_output(
          "note": "Comparar contra brief.purpose y brief.main_message."},
         {"check": "ritmo y resolución", "status": "pending", "requires": "human_or_vlm",
          "note": "Ver estructura en brief.editorial.structure (momentos con asset+intervalo)."},
-        {"check": "afirmaciones inventadas", "status": "checked",
-         "requires": None,
-         "note": "Todo claim del paquete debe trazarse a brief.asset_facts (método + simulated)."},
+        {"check": "afirmaciones inventadas", "status": "pending",
+         "requires": "human_or_vlm",
+         "note": "Este endpoint no compara el contenido visual del render con brief.asset_facts."},
         {"check": "legibilidad de subtítulos en encuadre", "status": "pending",
          "requires": "human_or_vlm",
          "note": "SRT/VTT disponibles; la revisión visual del encuadre requiere ver el render."},
     ]
+    music_constraint = _constraint(brief, "music")
+    if music_constraint is not None or audio_plan.get("music_policy") in ("required", "prohibited"):
+        editorial_checks.append({
+            "check": "cumplimiento del contenido musical",
+            "status": "pending",
+            "requires": "human_or_vlm",
+            "note": (
+                "ffprobe confirma si existe una pista de audio, pero no distingue "
+                "música añadida de diálogo/audio original."
+            ),
+        })
 
     error_count = sum(1 for i in issues if i.get("severity") == "error")
     warning_count = sum(1 for i in issues if i.get("severity") == "warning")

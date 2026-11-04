@@ -248,11 +248,15 @@ def build_direction(
             if has_speech
             else "sin diálogo disponible en el material"
         ),
+        "dialogue_policy": "preserve_if_present" if has_speech or has_audio else "none",
         "music": (
             "sin música añadida (restricción del usuario)" if music is False
             else "música incidental permitida según el tono"
             if music is True
             else "priorizar audio original; música solo si el material la trae"
+        ),
+        "music_policy": (
+            "prohibited" if music is False else "required" if music is True else "optional"
         ),
         "voice_over": "no prevista salvo que el usuario la pida",
         "silence": (
@@ -261,6 +265,13 @@ def build_direction(
             else "solo pausas del montaje"
         ),
         "subtitles": "subtítulos obligatorios" if subtitles else "sin subtítulos",
+        "subtitles_policy": (
+            "required"
+            if subtitles and intent.get("subtitles") is True
+            else "recommended"
+            if subtitles
+            else "disabled"
+        ),
         "has_audio_in_sources": has_audio,
     }
 
