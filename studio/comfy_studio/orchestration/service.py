@@ -76,6 +76,11 @@ class ProductionService:
         self.broker = broker
         # puertas de storyboard por producción (serializadas junto al estado).
         self._gates: dict[str, StoryboardGate] = {}
+        # cancelaciones cooperativadas en proceso (M7-AGT-001): el grafo en vuelo
+        # corre sobre su propia copia del estado y no ve el flag persistido por
+        # `cancel_production`; este set es la vía que sí llega al lazo vía
+        # `graph.should_cancel`.
+        self._cancel_requested: set[str] = set()
 
     def _publish(self, event_type: str, data: dict[str, Any]) -> None:
         """Publica un evento de producción en el bus SSE (thread-safe si hay loop)."""
@@ -233,6 +238,7 @@ class ProductionService:
         else:
             state.metadata["cancel_requested"] = True
             state.record("cancel_requested", stage=state.phase)
+            self._cancel_requested.add(production_id)
             event = "production_cancel_requested"
         self.checkpointer.save(state)
         self._publish(
@@ -278,6 +284,10 @@ class ProductionService:
         state.storyboard_approved = True
         state.phase = "executing"
         state.record("approved")
+        # persistir la transición ANTES de correr el lazo: si no, un cancel que
+        # llegue antes del primer checkpoint del grafo leería `awaiting_approval`
+        # y tomaría la vía terminal mientras el lazo arranca igualmente (M7-AGT-001).
+        self.checkpointer.save(state)
 
         # correr el lazo caro (ejecución + evaluación + replan + ensamblaje).
         graph = build_production_graph(
@@ -289,6 +299,9 @@ class ProductionService:
             graph.on_step = lambda st: self._publish(
                 "production_step", self._status_dict(st)
             )
+        # cancelación cooperativa en proceso: `cancel_production` durante la
+        # ejecución sólo persiste el flag; el hook es lo que detiene el lazo.
+        graph.should_cancel = lambda: production_id in self._cancel_requested
         self._publish(
             "production_approved",
             {
@@ -297,7 +310,10 @@ class ProductionService:
                 "phase": state.phase,
             },
         )
-        final = graph.run(state)
+        try:
+            final = graph.run(state)
+        finally:
+            self._cancel_requested.discard(production_id)
         registered = self._register_outputs_in_gallery(final)
         self.checkpointer.save(final)
         self._publish(
