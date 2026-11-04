@@ -810,13 +810,17 @@ class ComfyUIClient:
         try:
             while True:
                 tick += 1
+                history_ok = True
                 try:
                     history_map = await self.get_history(prompt_id)
                 except (ComfyUIConnectionError, ComfyUITimeoutError):
                     # ComfyUI puede estar reiniciándose (comfyctl lo levanta en segundos):
                     # no se falla el job a la primera; si al volver el prompt ya no está,
                     # el contador de ausentes lo marca `interrupted` enseguida.
+                    # M7-SCR-004: con error de transporte NO sabemos si el prompt sigue
+                    # vivo, así que no cuenta como ausente.
                     history_map = {}
+                    history_ok = False
                 entry = history_map.get(prompt_id)
                 if isinstance(entry, dict) and entry:
                     result = self._inspect_history_entry(prompt_id, entry)
@@ -840,26 +844,31 @@ class ComfyUIClient:
                         return result
 
                 # Aún no está en /history: consultar /queue y emitir progreso de sondeo
+                queue_ok = True
                 try:
                     queue = await self.get_queue()
                 except (ComfyUIConnectionError, ComfyUITimeoutError):
                     queue = QueueStatus()
+                    queue_ok = False
                 is_running = prompt_id in queue.running_prompt_ids()
                 is_pending = prompt_id in queue.pending_prompt_ids()
-                if is_running or is_pending:
-                    absent_ticks = 0
-                else:
-                    absent_ticks += 1
-                if absent_ticks >= 10:
-                    # El prompt desapareció de /queue e /history: ComfyUI se reinició
-                    # (p. ej. OOM CUDA exit 137) y el prompt en memoria se perdió.
-                    lost_msg = self._redact(
-                        f"El prompt {prompt_id} desapareció de /queue e /history de ComfyUI "
-                        "(ComfyUI se reinició durante la ejecución)"
-                    )
-                    if job_id and self._store is not None:
-                        self._store.update_job(job_id, status="interrupted", error=lost_msg)
-                    raise ComfyUIExecutionError(lost_msg, prompt_id=prompt_id)
+                if history_ok and queue_ok:
+                    # sólo con respuestas válidas de /history y /queue se puede afirmar
+                    # que el prompt desapareció (M7-SCR-004).
+                    if is_running or is_pending:
+                        absent_ticks = 0
+                    else:
+                        absent_ticks += 1
+                    if absent_ticks >= 10:
+                        # El prompt desapareció de /queue e /history: ComfyUI se reinició
+                        # (p. ej. OOM CUDA exit 137) y el prompt en memoria se perdió.
+                        lost_msg = self._redact(
+                            f"El prompt {prompt_id} desapareció de /queue e /history de ComfyUI "
+                            "(ComfyUI se reinició durante la ejecución)"
+                        )
+                        if job_id and self._store is not None:
+                            self._store.update_job(job_id, status="interrupted", error=lost_msg)
+                        raise ComfyUIExecutionError(lost_msg, prompt_id=prompt_id)
                 current_status = "running" if is_running else "queued"
                 estimated_max = float(max(tick + 1, 2))
                 current_val = float(tick)
