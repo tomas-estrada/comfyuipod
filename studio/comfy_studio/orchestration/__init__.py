@@ -52,8 +52,10 @@ from comfy_studio.orchestration.planner import (
     replan_shot_focalized,
 )
 from comfy_studio.orchestration.service import (
+    ProductionAlreadyTerminalError,
     ProductionNotApprovedError,
     ProductionNotFoundError,
+    ProductionPlanNotEditableError,
     ProductionService,
 )
 from comfy_studio.orchestration.state import (
@@ -92,8 +94,10 @@ __all__ = [
     "PlannerLLM",
     "ProductionCheckpointer",
     "ProductionGraph",
+    "ProductionAlreadyTerminalError",
     "ProductionNotApprovedError",
     "ProductionNotFoundError",
+    "ProductionPlanNotEditableError",
     "ProductionService",
     "ProductionState",
     "QaShotEvaluator",

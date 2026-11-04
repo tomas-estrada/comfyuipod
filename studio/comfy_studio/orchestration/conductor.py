@@ -59,7 +59,13 @@ class Collaborators:
 
 def _route(state: ProductionState) -> str:
     """Decide el siguiente nodo desde el estado."""
-    if state.phase in ("done", "failed"):
+    if state.phase in ("done", "failed", "cancelled"):
+        return END
+    # cancelación cooperativa: el humano canceló durante la ejecución; el lazo se
+    # detiene en el siguiente límite de paso (cada paso queda checkpointed).
+    if state.metadata.get("cancel_requested"):
+        state.phase = "cancelled"
+        state.record("cancelled", stage="execution")
         return END
     if not state.sequences:
         return PLAN

@@ -34,6 +34,23 @@ class ProgressBroker:
         self._subscribers: set[asyncio.Queue[tuple[str, dict[str, Any]]]] = set()
         self._seq = 0
         self._redactor = redactor
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Registra el event loop del servidor para publicaciones cross-thread.
+
+        El lazo de orquestación corre en threadpool (run_in_threadpool); este loop
+        permite reenviar sus eventos al broker de forma thread-safe.
+        """
+        self._loop = loop
+
+    def publish_threadsafe(self, event_type: str, data: dict[str, Any]) -> None:
+        """Publica desde cualquier hilo: reencola al loop si está vivo."""
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self.publish, event_type, data)
+            return
+        self.publish(event_type, data)
 
     def publish(self, event_type: str, data: dict[str, Any]) -> dict[str, Any]:
         self._seq += 1
@@ -73,6 +90,7 @@ class ProgressBroker:
         max_events: int | None = None,
     ) -> AsyncIterator[str]:
         """Genera frames SSE sin buffering, comenzando con un heartbeat inmediato."""
+        self.bind_loop(asyncio.get_running_loop())
         queue = self.subscribe(maxsize=256)
         emitted = 0
         interval = max(0.01, float(heartbeat_interval))

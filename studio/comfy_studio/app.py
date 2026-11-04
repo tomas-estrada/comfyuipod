@@ -39,6 +39,7 @@ from comfy_studio.observability import (
     unbind_request_id,
 )
 from comfy_studio.orchestration.adapters import build_server_collaborators
+from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
 from comfy_studio.orchestration.service import (
     ProductionService,
 )
@@ -112,6 +113,9 @@ def create_app(
 
     @asynccontextmanager
     async def _webhook_lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+        # El lazo de orquestación corre en threadpool: vincula el loop al broker para
+        # que sus eventos (production_step, etc.) lleguen al bus SSE de forma segura.
+        broker.bind_loop(asyncio.get_running_loop())
         if webhook_notifier is not None:
             webhook_notifier.start()
         if webhook_dispatcher is not None:
@@ -351,8 +355,20 @@ def create_app(
                 redactor.redact(str(exc)),
             )
             orch_collaborators = None
+    # Checkpointer de producciones arraigado en el data-dir de la config (en prod
+    # equivale a _default_checkpoint_dir; en tests aísla cada app en su tmp_path).
+    # STUDIO_ORCH_CHECKPOINT_DIR sigue como override explícito.
+    orch_ckpt_env = os.environ.get("STUDIO_ORCH_CHECKPOINT_DIR", "").strip()
+    orch_checkpointer = ProductionCheckpointer(
+        Path(orch_ckpt_env) / "checkpoints.sqlite3"
+        if orch_ckpt_env
+        else cfg.studio_data_dir / "orchestration" / "checkpoints.sqlite3"
+    )
     app.state.production_service = ProductionService(
-        collaborators=orch_collaborators, store=store
+        checkpointer=orch_checkpointer,
+        collaborators=orch_collaborators,
+        store=store,
+        broker=broker,
     )
 
     mcp_ctx = McpContext(
