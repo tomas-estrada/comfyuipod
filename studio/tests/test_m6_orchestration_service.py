@@ -39,24 +39,29 @@ def test_status_reports_progress(tmp_path):
     assert st["complete"] is False
 
 
-def test_approve_runs_loop_to_done(tmp_path):
+def test_approve_reports_simulation_without_fake_artifact(tmp_path):
     svc = _service(tmp_path)
     pid = svc.plan_production("desierto rojo", cost_cap_usd=1.0)["production_id"]
     out = svc.approve_plan(pid)
-    assert out["phase"] == "done"
-    assert out["final_output_path"] is not None
+    assert out["phase"] == "simulated"
+    assert out["final_output_path"] is None
+    assert out["output_asset_ids"] == []
     assert out["status"]["complete"] is True
+    assert out["status"]["simulated"] is True
+    assert out["status"]["execution_mode"] == "simulated"
+    assert out["status"]["artifact_ready"] is False
     assert out["status"]["shots_accepted"] == out["status"]["shots_total"]
     assert out["status"]["storyboard_approved"] is True
 
 
-def test_approve_twice_is_rejected_after_terminal(tmp_path):
+def test_approve_twice_is_idempotent_after_terminal_simulation(tmp_path):
     svc = _service(tmp_path)
     pid = svc.plan_production("x")["production_id"]
     svc.approve_plan(pid)  # first approval runs the loop
-    # second approval: gate already APPROVED -> can_enter_build True, re-runs idempotently
+    # terminal simulation is idempotent and does not re-run the graph.
     out2 = svc.approve_plan(pid)
-    assert out2["phase"] == "done"
+    assert out2["phase"] == "simulated"
+    assert out2["final_output_path"] is None
 
 
 def test_get_plan_missing_raises(tmp_path):
@@ -97,7 +102,7 @@ def test_approval_survives_pod_restart(tmp_path):
     svc2 = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
     assert svc2._gates == {}
     out = svc2.approve_plan(pid)
-    assert out["phase"] == "done"
+    assert out["phase"] == "simulated"
     assert out["status"]["storyboard_approved"] is True
 
 
@@ -130,7 +135,7 @@ def test_approval_persists_full_storyboard_gate_dict(tmp_path):
     # Reinicio del pod: svc2 hidrata desde dict y aprueba manteniendo el historial
     svc2 = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
     out = svc2.approve_plan(pid)
-    assert out["phase"] == "done"
+    assert out["phase"] == "simulated"
 
     st2 = svc2.checkpointer.load(pid)
     assert st2 is not None
@@ -153,4 +158,4 @@ def test_approval_legacy_string_gate_fallback(tmp_path):
     # Reinicio del pod: svc2 maneja el string sin lanzar excepción
     svc2 = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
     out = svc2.approve_plan(pid)
-    assert out["phase"] == "done"
+    assert out["phase"] == "simulated"

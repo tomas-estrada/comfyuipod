@@ -381,6 +381,7 @@
 .phase-chip.ph-awaiting_approval { border-color: var(--warning); color: var(--warning); }
 .phase-chip.ph-executing, .phase-chip.ph-planning, .phase-chip.ph-evaluating, .phase-chip.ph-assembling { border-color: var(--accent); color: var(--accent); }
 .phase-chip.ph-done { border-color: var(--success); color: var(--success); }
+.phase-chip.ph-simulated { border-color: var(--warning); color: var(--warning); }
 .phase-chip.ph-failed, .phase-chip.ph-cancelled, .phase-chip.ph-halted { border-color: var(--danger); color: var(--danger); }
 
 .plan-results {
