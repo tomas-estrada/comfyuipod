@@ -742,9 +742,32 @@ pub fn probe_studio_engines(cfg: &RuntimeConfig) -> (bool, String) {
             ),
         );
     }
+
+    // Política de arquitectura (punto 3): «instalado» no es «en ejecución». El
+    // roster decía `ready` para los 16 motores; la taxonomía de preparación dice
+    // cuáles pueden ejecutar de verdad aquí. Se informa, sin volverlo fatal: un
+    // motor instalado que pide pesos de tarea es el caso normal.
+    let prep = engines.get("preparedness").and_then(|p| p.get("counts"));
+    let prep_of = |key: &str| -> u64 {
+        prep.and_then(|c| c.get(key))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    let prep_ready = prep_of("ready");
+    let prep_weights = prep_of("weights_required");
+    let prep_not_installed = prep_of("not_installed");
+    let prep_integration = prep_of("integration_missing");
+    if prep_ready + prep_weights + prep_not_installed + prep_integration == 0 {
+        return (
+            true,
+            format!("roster de motores: {ready} ready, {stub} stub, 0 sin cablear"),
+        );
+    }
     (
         true,
-        format!("roster de motores: {ready} ready, {stub} stub, 0 sin cablear"),
+        format!(
+            "roster de motores: {ready} ready, {stub} stub, 0 sin cablear;              preparados {prep_ready}, pendientes de pesos {prep_weights},              sin instalar {prep_not_installed}, sin integracion {prep_integration}"
+        ),
     )
 }
 

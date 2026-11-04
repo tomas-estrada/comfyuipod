@@ -18,6 +18,7 @@ from comfy_studio.config import (
     DEFAULT_STUDIO_COMFYUI_URL,
     SecretRedactor,
 )
+from comfy_studio.engines.preparedness import note_engine_run
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
 
@@ -317,6 +318,54 @@ def _extract_error_message_from_body(body: Any, default: str) -> tuple[str, dict
 
     return ("; ".join(parts) if parts else default), node_errors
 
+
+
+async def sample_system_stats_peak(
+    client: ComfyUIClient,
+    *,
+    stop: asyncio.Event,
+    interval: float = 2.0,
+) -> dict[str, Any]:
+    """Muestrea `/system_stats` mientras dura un render y devuelve el pico medido.
+
+    Es la única forma honesta de saber cuánta VRAM/RAM pidió de verdad un
+    trabajo: las declaraciones de las plantillas son estimativas. Falla en
+    silencio si ComfyUI no responde: una medición ausente no debe tumbar el
+    render.
+    """
+    peak: dict[str, Any] = {"vram_peak_mb": None, "ram_peak_mb": None, "gpu_name": None,
+                            "driver": None, "cuda": None, "samples": 0}
+    while not stop.is_set():
+        try:
+            stats = await client.system_stats()
+        except Exception:  # noqa: BLE001 - la medición nunca rompe el render
+            return peak
+        devices = stats.get("devices") or []
+        if devices and isinstance(devices[0], dict):
+            device = devices[0]
+            vram_total = device.get("vram_total") or 0
+            vram_used = device.get("vram_used") or 0
+            if vram_used:
+                used_mb = int(vram_used / (1024 * 1024))
+                if peak["vram_peak_mb"] is None or used_mb > peak["vram_peak_mb"]:
+                    peak["vram_peak_mb"] = used_mb
+                    peak["vram_total_mb"] = int(vram_total / (1024 * 1024)) if vram_total else None
+            if device.get("name"):
+                peak["gpu_name"] = device["name"]
+        system = stats.get("system") or {}
+        ram_used = system.get("ram_used")
+        if ram_used:
+            used_mb = int(ram_used / (1024 * 1024))
+            if peak["ram_peak_mb"] is None or used_mb > peak["ram_peak_mb"]:
+                peak["ram_peak_mb"] = used_mb
+        if stats.get("cuda_version"):
+            peak["cuda"] = stats["cuda_version"]
+        peak["samples"] += 1
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except TimeoutError:
+            continue
+    return peak
 
 class ComfyUIClient:
     """Cliente HTTP/WS hacia ComfyUI con reintentos, backoff y elevación de errores al job."""
@@ -1201,6 +1250,38 @@ class ComfyUIClient:
         data = resp.json()
         return data if isinstance(data, dict) else {"freed": True}
 
+    async def _record_render_measurement(
+        self,
+        *,
+        started_at: float,
+        template_id: str | None,
+        job_id: str | None,
+        project_id: str | None,
+        params: dict[str, Any] | None,
+        peak: dict[str, Any],
+    ) -> None:
+        """Registra el render que acaba de terminar (política, punto 5).
+
+        `peak` viene de la muestra tomada *durante* el trabajo (ver
+        `sample_system_stats_peak`), no de una estimativa. Guardar la medición
+        nunca debe tumbar el render.
+        """
+        duration = max(0.0, time.monotonic() - started_at)
+        if template_id and self._store is not None:
+            self._store.record_render_measurement(
+                template_id=template_id,
+                params=params,
+                job_id=job_id,
+                project_id=project_id,
+                duration_s=round(duration, 2),
+                vram_peak_mb=peak.get("vram_peak_mb"),
+                ram_peak_mb=peak.get("ram_peak_mb"),
+                gpu_name=peak.get("gpu_name"),
+                driver=None,
+                cuda=peak.get("cuda"),
+                status="ok",
+            )
+
     async def execute_prompt_job(
         self,
         prompt: dict[str, Any],
@@ -1213,6 +1294,13 @@ class ComfyUIClient:
         persist_outputs: bool = True,
     ) -> PromptResult:
         """Ciclo de alto nivel: submit -> poll -> descarga /view -> registro en proyecto."""
+        started_at = time.monotonic()
+        # El pico de VRAM/RAM se muestrea MIENTRAS dura el render: medirlo
+        # después daría siempre el valor en reposo.
+        stop_sampling = asyncio.Event()
+        sample_task = asyncio.create_task(
+            sample_system_stats_peak(self, stop=stop_sampling, interval=2.0)
+        )
         submission = await self.submit_prompt(
             prompt,
             job_id=job_id,
@@ -1225,6 +1313,19 @@ class ComfyUIClient:
             job_id=job_id,
             project_id=project_id,
             finalize_job=False,
+        )
+        stop_sampling.set()
+        try:
+            peak = await asyncio.wait_for(sample_task, timeout=5.0)
+        except (TimeoutError, asyncio.CancelledError, Exception):  # noqa: BLE001
+            peak = {}
+        await self._record_render_measurement(
+            started_at=started_at,
+            template_id=template_id,
+            job_id=job_id,
+            project_id=project_id,
+            params=prompt,
+            peak=peak if isinstance(peak, dict) else {},
         )
 
         if job_id and self._store is not None:
@@ -1312,4 +1413,5 @@ class ComfyUIClient:
             job_id=job_id,
             project_id=project_id,
         )
+        note_engine_run("comfyui", True)
         return result

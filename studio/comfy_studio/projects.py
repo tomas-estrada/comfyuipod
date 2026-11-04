@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import sqlite3
@@ -13,8 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
-
+logger = logging.getLogger("comfy_studio.projects")
+SCHEMA_VERSION = 3
 PROJECT_SUBDIRS: tuple[str, ...] = ("uploads", "outputs", "keyframes", "voice")
 
 # Mapa MIME permitido -> (kind, conjunto de extensiones permitidas)
@@ -253,6 +254,36 @@ CREATE INDEX IF NOT EXISTS idx_review_pins_project
     ON review_pins(project_id, edl_version, status);
 """
 
+SCHEMA_V3_SQL = """
+-- Política de arquitectura (punto 5): recetas de ejecución con resultados
+-- MEDIDOS. Sin esto, cada decisión de parámetros se toma desde cero a partir de
+-- estimativas estáticas. `vram_peak_mb`/`ram_peak_mb`/`duration_s` son medidas,
+-- no declaraciones.
+CREATE TABLE IF NOT EXISTS render_measurements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id TEXT NOT NULL,
+    job_id TEXT,
+    project_id TEXT,
+    params_json TEXT NOT NULL DEFAULT '{}',
+    -- Medidas
+    duration_s REAL,
+    vram_peak_mb INTEGER,
+    ram_peak_mb INTEGER,
+    -- Entorno medido
+    gpu_name TEXT,
+    driver TEXT,
+    cuda TEXT,
+    -- Resultado
+    status TEXT NOT NULL CHECK (status IN ('ok','error')),
+    error TEXT,
+    simulated INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_render_measurements_template
+    ON render_measurements(template_id, created_at DESC);
+"""
+
 
 class ProjectStore:
     """Almacén SQLite (studio.db) y gestor de archivos bajo STUDIO_DATA_DIR/projects."""
@@ -317,9 +348,23 @@ class ProjectStore:
                         "M3-RVP-001: review_pins para feedback anclado a versiones de EDL",
                     ),
                 )
+            # Política de arquitectura: mediciones de render (recetas medidas).
+            existing_v3 = conn.execute(
+                "SELECT version FROM schema_version WHERE version = 3",
+            ).fetchone()
+            if existing_v3 is None:
+                conn.executescript(SCHEMA_V3_SQL)
+                conn.execute(
+                    "INSERT INTO schema_version (version, applied_at, description) "
+                    "VALUES (?, ?, ?)",
+                    (
+                        3,
+                        _utc_now_iso(),
+                        "Política de recursos: render_measurements (VRAM/RAM/tiempo medidos)",
+                    ),
+                )
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
             conn.commit()
-
     def get_schema_version(self) -> int:
         with self._connection() as conn:
             row = conn.execute(
@@ -1970,3 +2015,120 @@ class ProjectStore:
             ).fetchall()
         return [self._row_to_creative_brief(r) for r in rows]
 
+
+    # ------------------------------------------------------------------
+    # Mediciones de render (política de arquitectura, punto 5)
+    # ------------------------------------------------------------------
+
+    def record_render_measurement(
+        self,
+        *,
+        template_id: str,
+        params: dict[str, Any] | None = None,
+        job_id: str | None = None,
+        project_id: str | None = None,
+        duration_s: float | None = None,
+        vram_peak_mb: int | None = None,
+        ram_peak_mb: int | None = None,
+        gpu_name: str | None = None,
+        driver: str | None = None,
+        cuda: str | None = None,
+        status: str = "ok",
+        error: str | None = None,
+        simulated: bool = False,
+    ) -> None:
+        """Guarda una medición real de render.
+
+        Escribir una medición nunca debe tumbar un render: si falla, se registra
+        en el log y se sigue.
+        """
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO render_measurements (template_id, job_id, project_id, "
+                    "params_json, duration_s, vram_peak_mb, ram_peak_mb, gpu_name, driver, "
+                    "cuda, status, error, simulated, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(template_id),
+                        job_id,
+                        project_id,
+                        json.dumps(params or {}, ensure_ascii=False),
+                        duration_s,
+                        vram_peak_mb,
+                        ram_peak_mb,
+                        gpu_name,
+                        driver,
+                        cuda,
+                        status,
+                        error,
+                        1 if simulated else 0,
+                        _utc_now_iso(),
+                    ),
+                )
+        except Exception:  # noqa: BLE001 - la medición nunca rompe el render
+            logger.warning("No se pudo guardar la medición de render", exc_info=True)
+
+    def list_render_measurements(
+        self,
+        *,
+        template_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Mediciones recientes, opcionalmente filtradas por plantilla."""
+        clauses = []
+        params: list[Any] = []
+        if template_id:
+            clauses.append("template_id = ?")
+            params.append(str(template_id))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(int(limit))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM render_measurements {where} "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [self._row_to_measurement(r) for r in rows]
+
+    def recipe_for_template(self, template_id: str) -> dict[str, Any] | None:
+        """Receta medida de una plantilla: ajustes declarados + resultados medidos.
+
+        Es la unidad que la política pide reutilizar en lugar de razonar desde
+        cero en cada despliegue.
+        """
+        rows = self.list_render_measurements(template_id=template_id, limit=50)
+        if not rows:
+            return None
+        ok = [r for r in rows if r["status"] == "ok" and r["duration_s"] is not None]
+        if not ok:
+            return {"template_id": template_id, "samples": len(rows), "measured": False}
+        vram = [r["vram_peak_mb"] for r in ok if r["vram_peak_mb"] is not None]
+        durations = [r["duration_s"] for r in ok if r["duration_s"] is not None]
+        latest = ok[0]
+        return {
+            "template_id": template_id,
+            "samples": len(ok),
+            "measured": True,
+            "last": latest,
+            "vram_peak_mb_max": max(vram) if vram else None,
+            "vram_peak_mb_avg": int(sum(vram) / len(vram)) if vram else None,
+            "duration_s_last": latest["duration_s"],
+            "duration_s_avg": round(sum(durations) / len(durations), 2) if durations else None,
+            "duration_s_max": max(durations) if durations else None,
+            "gpu_name": latest.get("gpu_name"),
+            "driver": latest.get("driver"),
+            "cuda": latest.get("cuda"),
+        }
+
+    @staticmethod
+    def _row_to_measurement(row: Any) -> dict[str, Any]:
+        if row is None:
+            return {}
+        data = dict(row)
+        try:
+            data["params"] = json.loads(data.pop("params_json", "{}") or "{}")
+        except (TypeError, ValueError):
+            data["params"] = {}
+        data["simulated"] = bool(data.get("simulated"))
+        return data

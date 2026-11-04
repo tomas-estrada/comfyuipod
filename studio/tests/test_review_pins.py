@@ -56,8 +56,10 @@ def _pin_payload(
 
 def test_schema_v2_review_pins_table(studio_data_dir: Path) -> None:
     store = ProjectStore(studio_data_dir)
-    assert SCHEMA_VERSION == 2
-    assert store.get_schema_version() == 2
+    # El esquema ha crecido (v3 añade render_measurements), pero la tabla de
+    # review_pins y su migración siguen siendo las de v2.
+    assert SCHEMA_VERSION >= 2
+    assert store.get_schema_version() == SCHEMA_VERSION
     with sqlite3.connect(store.db_path) as conn:
         tables = {
             row[0]
@@ -67,7 +69,7 @@ def test_schema_v2_review_pins_table(studio_data_dir: Path) -> None:
         }
         assert "review_pins" in tables
         user_version = conn.execute("PRAGMA user_version").fetchone()[0]
-        assert user_version == 2
+        assert user_version == SCHEMA_VERSION
 
 
 def test_review_pins_endpoint_crud_roundtrip(client: TestClient) -> None:

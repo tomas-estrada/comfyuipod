@@ -15,10 +15,11 @@ Este índice orienta la documentación del repositorio y señala cuál es la fue
 | Investigación competitiva limpia (Kling, Higgsfield, Suno, “Omni”, +8) y selección open source | [`propuestas/INVESTIGACION_COMPETITIVA_2026-11-04.md`](propuestas/INVESTIGACION_COMPETITIVA_2026-11-04.md) |
 | Seguir el recorrido por carpetas y archivos principales | [`walkthrough.md`](walkthrough.md) |
 | Consultar decisiones técnicas y su justificación | [`decisiones.md`](decisiones.md) |
+| Saber qué se prepara, qué se descarga y qué hardware alquilar | [`POLITICA_ARQUITECTURA_RECURSOS.md`](POLITICA_ARQUITECTURA_RECURSOS.md) |
 
 ## Por área
 
-- **Despliegue e infraestructura:** el README raíz y la guía de producción cubren perfiles, variables de entorno, requisitos del host, persistencia, backups, operación y diagnóstico. La fuente de configuración de runtime está en `comfyctl/src/config.rs`, `studio/comfy_studio/config.py`, `scripts/` y `config/`.
+- **Despliegue e infraestructura:** el README raíz y la guía de producción cubren perfiles, variables de entorno, requisitos del host, persistencia, backups, operación y diagnóstico. La fuente de configuración de runtime está en `comfyctl/src/config.rs`, `studio/comfy_studio/config.py`, `scripts/` y `config/`. El almacenamiento **se deriva** con `scripts/storage_requirement.py`; los umbrales codificados a mano deben justificarse contra ese cálculo.
 - **Comfy Studio:** la arquitectura y el README describen la API, el panel, proyectos/assets, trabajos, percepción/ASR, EDL, workers y persistencia. Los contratos concretos se implementan en `studio/comfy_studio/`; los tests de `studio/tests/` definen muchos comportamientos observables.
 - **API de estado y supervisor:** la arquitectura, el README y `docs/decisiones.md` acompañan a los contratos JSON de [`contratos/`](contratos/) y a la implementación Rust de `comfyctl/`.
 - **Propuestas y backlog:** [`propuestas/`](propuestas/) contiene planes, opciones evaluadas e ideas. Una propuesta no implica que la función esté implementada; comprueba el estado del backlog y el código antes de tratarla como capacidad disponible.
