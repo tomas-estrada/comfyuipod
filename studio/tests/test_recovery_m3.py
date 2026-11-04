@@ -135,6 +135,8 @@ async def test_recover_resumes_multiple_jobs_with_bounded_concurrency(
         "stale": 3,
         "interrupted": 0,
         "requeued": 3,
+        "attached": 0,
+        "active": 0,
         "done": 3,
         "failed": 0,
     }
@@ -221,6 +223,8 @@ async def test_second_startup_does_not_requeue_an_already_interrupted_job(
             "stale": 0,
             "interrupted": 0,
             "requeued": 0,
+            "attached": 0,
+            "active": 0,
             "done": 0,
             "failed": 0,
         }
@@ -270,11 +274,13 @@ async def test_recovered_job_that_fails_again_is_not_requeued_endlessly(
     )
     assert first["requeued"] == 1
 
-    # Simular nueva caída: el job completado vuelve a estar en vuelo y el contador
-    # de reintentos persiste (>= MAX) → la segunda recuperación NO reencola.
+    # Simular nueva caída: el job vuelve a estar en vuelo con un prompt que ComfyUI
+    # ya no tiene (reinicio de ComfyUI) y el contador de reintentos persiste (>= MAX)
+    # → la segunda recuperación NO reencola.
     store.update_job(
         job["id"],
         status="running",
+        prompt_id="ghost-after-comfyui-restart",
         result={"interrupt_retries": MAX_INTERRUPT_RETRIES},
     )
     second = await recover_interrupted_jobs(
