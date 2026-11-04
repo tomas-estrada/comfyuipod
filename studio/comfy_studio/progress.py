@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections import deque
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -35,6 +36,9 @@ class ProgressBroker:
         self._seq = 0
         self._redactor = redactor
         self._loop: asyncio.AbstractEventLoop | None = None
+        # M7-SCR-003: `publish` puede llamarse desde hilos del threadpool (fallback
+        # de `publish_threadsafe` sin loop vinculado); asyncio.Queue no es thread-safe.
+        self._lock = threading.Lock()
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Registra el event loop del servidor para publicaciones cross-thread.
@@ -53,21 +57,22 @@ class ProgressBroker:
         self.publish(event_type, data)
 
     def publish(self, event_type: str, data: dict[str, Any]) -> dict[str, Any]:
-        self._seq += 1
-        enriched = {
-            "type": event_type,
-            "seq": self._seq,
-            "ts": _utc_now_iso(),
-            **data,
-        }
-        if self._redactor is not None:
-            enriched = self._redactor.redact_value(enriched)
-        self._history.append((event_type, enriched))
-        for q in list(self._subscribers):
-            try:
-                q.put_nowait((event_type, enriched))
-            except asyncio.QueueFull:
-                pass
+        with self._lock:
+            self._seq += 1
+            enriched = {
+                "type": event_type,
+                "seq": self._seq,
+                "ts": _utc_now_iso(),
+                **data,
+            }
+            if self._redactor is not None:
+                enriched = self._redactor.redact_value(enriched)
+            self._history.append((event_type, enriched))
+            for q in list(self._subscribers):
+                try:
+                    q.put_nowait((event_type, enriched))
+                except asyncio.QueueFull:
+                    pass
         return enriched
 
     def recent_events(self) -> list[tuple[str, dict[str, Any]]]:
