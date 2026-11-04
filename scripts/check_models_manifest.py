@@ -393,7 +393,11 @@ def validate_manifest_data(
 
 def run_fixture_self_test() -> int:
     """Ejecuta pruebas unitarias deterministas sobre el validador."""
-    sample_url = "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/main/split_files/vae/wan2.2_vae.safetensors"
+    sample_revision = "ee6f4a40737a995bf5818954cfce6d59443b0f04"
+    sample_url = (
+        "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/"
+        f"{sample_revision}/split_files/vae/wan2.2_vae.safetensors"
+    )
     valid_manifest: dict[str, Any] = {
         "version": 2,
         "profile": "studio",
@@ -423,6 +427,8 @@ def run_fixture_self_test() -> int:
                 "filename": "wan2.2_vae.safetensors",
                 "dest_path": "models/vae/wan2.2_vae.safetensors",
                 "license": "Apache-2.0",
+                "revision": sample_revision,
+                "sha256": "e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156",
                 "class": "task",
                 "opt_in": None,
             },
@@ -434,14 +440,17 @@ def run_fixture_self_test() -> int:
                     "wan2.2_animate_14B_int8_convrot.safetensors"
                 ),
                 "url": (
-                    "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/main/"
-                    "split_files/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors"
+                    "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/"
+                    f"{sample_revision}"
+                    "/split_files/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors"
                 ),
                 "bytes": 18413068672,
                 "target_dir": "models/diffusion_models",
                 "filename": "wan2.2_animate_14B_int8_convrot.safetensors",
                 "dest_path": "models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors",
                 "license": "Apache-2.0",
+                "revision": sample_revision,
+                "sha1": "135542a23eb13611cafa71878d3c33e355d896a7",
                 "class": "optional",
                 "opt_in": "STUDIO_INCLUDE_ANIMATE",
             },
