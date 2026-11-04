@@ -118,16 +118,53 @@ def fetch_head_size(url: str, timeout: float = 20.0, retries: int = 3) -> tuple[
     raise RuntimeError(f"Fallo tras {retries} intentos en {url}: {last_err}")
 
 
-def _expected_url(repo_id: str, remote_path: str, repo_type: object) -> str:
+HEX = set("0123456789abcdef")
+
+
+def _expected_url(
+    repo_id: str,
+    remote_path: str,
+    repo_type: object,
+    revision: object = None,
+) -> str:
     """URL canónica del activo.
 
     Los repositorios de tipo `dataset` se resuelven bajo `/datasets/`; el resto
     (modelos, espacios) bajo la raíz. Aceptar solo la forma de modelo hacía
     fallar los activos dataset correctamente declarados.
+
+    Con `revision` fijada la URL apunta a ese commit (inmutable) en lugar de a
+    `main`, que es lo que permite verificar integridad de forma determinista.
     """
-    if str(repo_type or "").strip().lower() == "dataset":
-        return f"https://huggingface.co/datasets/{repo_id}/resolve/main/{remote_path}"
-    return f"https://huggingface.co/{repo_id}/resolve/main/{remote_path}"
+    prefix = "datasets/" if str(repo_type or "").strip().lower() == "dataset" else ""
+    ref = str(revision) if revision else "main"
+    return f"https://huggingface.co/{prefix}{repo_id}/resolve/{ref}/{remote_path}"
+
+
+def _validate_integrity(entry: dict[str, Any], prefix: str, errors: list[str]) -> None:
+    """Revisión fijada e integridad, «where available» (política de activos).
+
+    HuggingFace publica el SHA-256 del objeto LFS o, para ficheros pequeños
+    guardados en git, el SHA-1 del blob. Se exige `revision` siempre y al menos
+    un hash; el algoritmo debe coincidir con la longitud.
+    """
+    revision = entry.get("revision")
+    if not isinstance(revision, str) or len(revision) != 40 or set(revision) > HEX:
+        errors.append(f"{prefix}: revision inválida {revision!r} (se esperaba un SHA-1 de git)")
+
+    digests = {
+        name: entry.get(name)
+        for name in ("sha256", "sha1")
+        if entry.get(name) is not None
+    }
+    if not digests:
+        errors.append(f"{prefix}: sin hash de integridad (sha256 o sha1)")
+    for name, value in digests.items():
+        expected_len = 64 if name == "sha256" else 40
+        if not isinstance(value, str) or len(value) != expected_len or set(value) > HEX:
+            errors.append(f"{prefix}: {name} inválido {value!r}")
+    if len(digests) > 1:
+        errors.append(f"{prefix}: hash redundante ({sorted(digests)}), deja uno")
 
 
 def validate_manifest_data(
@@ -199,9 +236,13 @@ def validate_manifest_data(
         size = entry.get("bytes")
         opt_in = entry.get("opt_in")
 
-        expected_url = _expected_url(repo_id, remote_path, entry.get("repo_type"))
+        expected_url = _expected_url(
+            repo_id, remote_path, entry.get("repo_type"), entry.get("revision")
+        )
         if url != expected_url:
             errors.append(f"{prefix}: url {url!r} != {expected_url!r}")
+
+        _validate_integrity(entry, prefix, errors)
 
         expected_dest = f"{target_dir}/{filename}"
         if dest_path != expected_dest:

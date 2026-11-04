@@ -40,6 +40,11 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
+#: Contenido que escribe el `hf` de mentira. Su hash se fija en los activos
+#: para que la verificación de integridad del manifiesto pase.
+FAKE_CONTENT = b"pesos-de-mentira"
+
+
 @pytest.fixture()
 def fake_hf(tmp_path: Path) -> Path:
     """Cliente `hf` de mentira: crea el archivo remoto bajo --local-dir."""
@@ -47,7 +52,7 @@ def fake_hf(tmp_path: Path) -> Path:
     script.write_text(
         "#!/bin/bash\n"
         'mkdir -p "$(dirname "$7/$3")"\n'
-        'printf "pesos-de-mentira" > "$7/$3"\n',
+        f'printf "{FAKE_CONTENT.decode()}" > "$7/$3"\n',
         encoding="utf-8",
     )
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
@@ -56,6 +61,16 @@ def fake_hf(tmp_path: Path) -> Path:
 
 def _env(fake_hf: Path, data_dir: Path) -> dict[str, str]:
     return {"COMFY_DATA_DIR": str(data_dir), "HF_CLI": str(fake_hf)}
+
+
+def _pin_fake_hashes(resolution) -> None:
+    """Alinea el hash declarado con lo que escribe el `hf` de mentira."""
+    import hashlib
+
+    digest = hashlib.sha256(FAKE_CONTENT).hexdigest()
+    for need in list(resolution.assets) + list(resolution.missing):
+        need.sha256 = digest
+        need.sha1 = None
 
 
 # --------------------------------------------------------------------------
@@ -154,6 +169,7 @@ def test_acquire_downloads_then_reuses(data_dir: Path, fake_hf: Path) -> None:
     env = _env(fake_hf, data_dir)
     resolution = resolve("video.face_restore", env=env)
 
+    _pin_fake_hashes(resolution)
     report = asset_acquire.acquire(resolution.missing, env=env)
     assert not report.failed
     assert all(e.status == "downloaded" for e in report.entries)
@@ -244,6 +260,7 @@ def test_cancellation_stops_between_entries(data_dir: Path, fake_hf: Path) -> No
 def test_progress_callback_reports_each_phase(data_dir: Path, fake_hf: Path) -> None:
     env = _env(fake_hf, data_dir)
     resolution = resolve("video.face_restore", env=env)
+    _pin_fake_hashes(resolution)
     events: list[tuple[str, str]] = []
     asset_acquire.acquire(
         resolution.missing, env=env, progress=lambda f, s: events.append((f, s))
@@ -276,7 +293,9 @@ def test_belt_exposes_the_new_tools() -> None:
     assert {"list_capabilities", "request_capability", "download_model"}.issubset(names)
 
 
-def test_request_capability_tool_acquires_and_plans(tmp_path: Path) -> None:
+def test_request_capability_tool_acquires_and_plans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """El flujo completo de la política, por la herramienta del agente."""
     import asyncio
 
@@ -319,6 +338,12 @@ def test_request_capability_tool_acquires_and_plans(tmp_path: Path) -> None:
         },
     )()
 
+    # Este test cubre el cableado de la herramienta, no la integridad (que tiene
+    # tests propios más abajo): se alinea el hash con lo que escribe el fake.
+    import comfy_studio.asset_acquire as acquire_mod
+
+    monkeypatch.setattr(acquire_mod, "_verify_integrity", lambda path, need: True)
+
     result = asyncio.run(
         _handle_request_capability(
             RequestCapabilityArgs(capability="video.face_restore"), context
@@ -327,6 +352,7 @@ def test_request_capability_tool_acquires_and_plans(tmp_path: Path) -> None:
     assert result["capability"] == "video.face_restore"
     assert result["downloaded"], "debe adquirir los activos que faltaban"
     # Motor preparado + activos en disco = listo para encolar.
+    assert result["state"] == "ready"
     assert result["state"] == "ready"
     assert "enqueue_render" in result["next_step"]
     assert result["selected_template"] == "face_fix"
@@ -351,3 +377,63 @@ def test_request_capability_tool_acquires_and_plans(tmp_path: Path) -> None:
 
     belt = create_default_tool_belt()
     assert "request_capability" in belt.list_names()
+
+
+# --------------------------------------------------------------------------
+# Integridad: revisión fijada y verificación de hash
+# --------------------------------------------------------------------------
+
+
+def test_manifest_assets_carry_revision_and_hash(data_dir: Path) -> None:
+    """Cada activo declara la revisión (commit) y el hash que publica HF."""
+    resolution = resolve("video.face_restore", env={"COMFY_DATA_DIR": str(data_dir)})
+    for need in resolution.assets:
+        assert need.revision and len(need.revision) == 40, need.filename
+        assert need.sha256 or need.sha1, need.filename
+        if need.sha256:
+            assert len(need.sha256) == 64
+        if need.sha1:
+            assert len(need.sha1) == 40
+
+
+def test_acquire_rejects_a_file_whose_hash_does_not_match(
+    data_dir: Path, fake_hf: Path
+) -> None:
+    """Un activo corrupto o sustituido se rechaza, no se instala."""
+    resolution = resolve("video.face_restore", env=_env(fake_hf, data_dir))
+    need = resolution.missing[0]
+    # El hash del manifiesto es el del fichero real de HuggingFace; el fake
+    # escribe otro contenido, así que la verificación debe fallar.
+    report = asset_acquire.acquire([need], env=_env(fake_hf, data_dir))
+    entry = report.entries[0]
+    assert entry.status == "failed"
+    assert "integridad" in (entry.error or "")
+    assert not Path(need.dest_path).exists(), "no debe dejar el fichero en disco"
+
+
+def test_acquire_accepts_a_file_whose_hash_matches(data_dir: Path, fake_hf: Path) -> None:
+    """Con el hash correcto declarado, la descarga se acepta y se reutiliza."""
+    import hashlib
+
+    resolution = resolve("video.face_restore", env=_env(fake_hf, data_dir))
+    need = resolution.missing[0]
+    need.sha256 = hashlib.sha256(b"pesos-de-mentira").hexdigest()
+    need.sha1 = None
+
+    report = asset_acquire.acquire([need], env=_env(fake_hf, data_dir))
+    assert report.entries[0].status == "downloaded"
+    assert Path(need.dest_path).is_file()
+
+    # Y la segunda pasada lo reutiliza sin volver a descargar.
+    second = asset_acquire.acquire([need], env=_env(fake_hf, data_dir))
+    assert second.entries[0].status == "skipped"
+
+
+def test_acquire_without_declared_hash_still_works(data_dir: Path, fake_hf: Path) -> None:
+    """«Where available»: sin hash se acepta el activo (tamaño ya verificado)."""
+    resolution = resolve("video.face_restore", env=_env(fake_hf, data_dir))
+    need = resolution.missing[0]
+    need.sha256 = None
+    need.sha1 = None
+    report = asset_acquire.acquire([need], env=_env(fake_hf, data_dir))
+    assert report.entries[0].status == "downloaded"

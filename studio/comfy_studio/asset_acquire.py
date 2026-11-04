@@ -16,6 +16,7 @@ No selecciona modelos ni decide políticas: ejecuta un plan que le dan.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -175,8 +176,29 @@ def acquire(
     return report
 
 
-def _acquire_one(
-    need: Any,
+def _verify_integrity(path: Path, need: Any) -> str | None | bool:
+    """Compara el hash del fichero con el que declara el manifiesto.
+
+    Devuelve `True` si coincide (o si el manifiesto no publica hash), y un
+    mensaje de error si no. Un activo sin hash se acepta: la política dice
+    «where available», y exigirlo bloquearía activos que HuggingFace solo
+    sirve por tamaño.
+    """
+    expected = getattr(need, "sha256", None) or getattr(need, "sha1", None)
+    if not expected:
+        return True
+    algorithm = "sha256" if getattr(need, "sha256", None) else "sha1"
+    digest = hashlib.new(algorithm)
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if actual == str(expected).lower():
+        return True
+    return f"{algorithm} esperado {expected}, obtenido {actual}"
+
+
+def _acquire_one(    need: Any,
     *,
     cli: str,
     stage: Path,
@@ -273,6 +295,18 @@ def _acquire_one(
             )
 
         if returncode == 0 and staged.is_file() and staged.stat().st_size > 0:
+            # Integridad «where available»: el manifiesto publica el hash que
+            # HuggingFace declara (SHA-256 del objeto LFS o SHA-1 del blob git).
+            verified = _verify_integrity(staged, need)
+            if verified is not True:
+                staged.unlink(missing_ok=True)
+                return AcquiredEntry(
+                    filename=need.filename,
+                    dest_path=str(dest),
+                    status="failed",
+                    attempts=attempt,
+                    error=f"integridad no verificada: {verified}",
+                )
             dest.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staged, dest)
             if progress:

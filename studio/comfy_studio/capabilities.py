@@ -151,6 +151,10 @@ class AssetNeed:
     url: str | None = None
     #: Ruta tal y como la declara el manifiesto (relativa), para trazabilidad.
     manifest_dest: str = ""
+    #: Revisión fijada (commit) e hash de integridad, si el manifiesto los publica.
+    revision: str | None = None
+    sha256: str | None = None
+    sha1: str | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -251,6 +255,9 @@ def _asset_need(
         license=entry.get("license"),
         url=entry.get("url"),
         manifest_dest=dest,
+        revision=entry.get("revision"),
+        sha256=entry.get("sha256"),
+        sha1=entry.get("sha1"),
     )
 
 

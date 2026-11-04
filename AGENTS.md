@@ -26,7 +26,8 @@
 
 - `studio/comfy_studio/model_assets.py` — activos de modelo como dependencias de tarea
 - `scripts/storage_requirement.py` — requisito de almacenamiento derivado
-- `scripts/check_models_manifest.py` — validador del manifiesto (clases y bytes)
+- `scripts/check_models_manifest.py` — validador del manifiesto (clases, bytes, integridad)
+- `scripts/pin_manifest_integrity.py` — fija `revision` + hash en los manifiestos
 
 ## Architecture & Resource Policy
 [`docs/POLITICA_ARQUITECTURA_RECURSOS.md`](docs/POLITICA_ARQUITECTURA_RECURSOS.md) is the source of truth for what is prepared at build time, what is downloaded on demand, what may run, and what hardware to rent. Key rules that are enforced in code:

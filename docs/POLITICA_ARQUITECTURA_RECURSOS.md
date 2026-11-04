@@ -144,7 +144,6 @@ Dos manifiestos versionados declarán los activos, con la misma forma:
 | [`config/models-studio.json`](../config/models-studio.json) | Fase 3 del perfil studio (79 + 8 entradas) |
 
 Cada entrada lleva `class` explícita:
-
 | Clase | Significado |
 |---|---|
 | `bootstrap` | genuinamente necesario para operar |
@@ -195,16 +194,34 @@ Esto corrigió un defecto real: el camino del agente (`enqueue_render`) no pasab
 los flags de disponibilidad, así que podía encolar renders de Animate/3D/MiniMax
 sin pesos.
 
+### Integridad y revisión fijada
+
+La política pide verificar «source, revision, license, size and integrity where
+available». HuggingFace publica ambos en la respuesta `HEAD` de `resolve`:
+
+- `X-Repo-Commit` → el **commit exacto** del fichero;
+- `X-Linked-Etag` → el **SHA-256** del objeto LFS (o el SHA-1 del blob git para
+  ficheros pequeños).
+
+[`scripts/pin_manifest_integrity.py`](../scripts/pin_manifest_integrity.py) fija
+ambos en las **113 entradas** de los dos manifiestos (58+26 con SHA-256, 29 con
+SHA-1) y reescribe cada URL para apuntar a la revisión en lugar de a `main`.
+Es idempotente y sigue los renombres de repo aguas arriba (`flux1-dev` →
+`Flux-1-Dev`).
+
+Con la revisión fijada, `asset_acquire` **verifica el hash tras descargar** y
+rechaza el activo si no cuadra, en lugar de instalarlo. Un activo sin hash
+declarado se acepta («where available»): el tamaño exacto ya está verificado.
+
+El validador exige `revision` (SHA-1 de git de 40 hex) y al menos un hash, con
+el algoritmo coherente con la longitud.
+
 ### Pendiente
 
-- **Integridad**: se verifica el tamaño exacto vía `x-linked-size` (y las URLs
-  canónicas por tipo de repo), pero no hay `sha256` por entrada ni `revision`
-  fijada (las URLs usan `resolve/main`).
 - **Retención de caché**: no hay política de expulsión; hoy todo se conserva
   hasta que el operador interviene.
 - **Clasificar las Fases 1/2 por perfil**: el manifiesto core declara `class`,
   pero la selección por `MODEL_PROFILE` sigue viviendo en bash.
----
 
 ## 5. Hardware objetivo
 
