@@ -167,9 +167,14 @@ def requirement_bytes(
         "profile": profile,
         "opt_ins": sorted(requested),
         "image_on_volume": image_on_volume,
+        # Tamaño real de la imagen: se transfiere en every arranque en frío,
+        # aunque no ocupe el volumen de datos.
+        "image_bytes": image_bytes,
         "components": components,
         "start_gate_bytes": start_gate,
-        "start_gate_gb": start_gate / GB,
+        # Entero ya redondeado al alza: es lo que consume comfyctl (S5) y evita
+        # casts en punto flotante en Rust.
+        "start_gate_gb": -(-int(start_gate) // GB),
         "total_bytes": total,
         "total_gb": total / GB,
         "total_gib": total / GiB,
@@ -183,6 +188,103 @@ def requirement_bytes(
 
 def _gb(value: int) -> str:
     return f"{value / GB:.2f} GB ({value / GiB:.2f} GiB)"
+
+
+#: Precios por defecto (orientativos, sobreescritibles por CLI/entorno).
+DEFAULT_GPU_DPH = 0.55
+DEFAULT_STORAGE_COST_PER_GB_MONTH = 0.15
+DEFAULT_TRANSFER_PER_GB = 0.01
+DEFAULT_INET_DOWN_MBPS = 500.0
+
+
+def session_cost(
+    report: dict[str, Any],
+    *,
+    hours: float = 2.0,
+    gpu_dph: float = DEFAULT_GPU_DPH,
+    disk_gb: int | None = None,
+    storage_cost_per_gb_month: float = DEFAULT_STORAGE_COST_PER_GB_MONTH,
+    transfer_per_gb: float = DEFAULT_TRANSFER_PER_GB,
+    inet_down_mbps: float = DEFAULT_INET_DOWN_MBPS,
+) -> dict[str, Any]:
+    """Coste completo de una sesión (política, punto 6).
+
+    «Optimize the cost of producing an acceptable deliverable, including startup,
+    transfers, downloads, inference, evaluation, storage and API usage.»
+
+    Lo que suele ignorarse y aquí se hace explícito: la GPU se paga **mientras
+    se descarga**. Con 180 GB de modelos a 500 Mbps son ~50 min de GPU cobrando
+    sin producir nada, y eso cambia qué hardware compensa.
+    """
+    components = report["components"]
+    image_bytes = report.get("image_bytes") or 0
+    model_bytes = (
+        components.get("bootstrap_phase1_2", 0)
+        + components.get("task_models", 0)
+    )
+    transfer_bytes = image_bytes + model_bytes
+
+    bits = transfer_bytes * 8
+    seconds = bits / (max(inet_down_mbps, 1.0) * 1e6)
+    transfer_hours = seconds / 3600.0
+
+    image_bits = image_bytes * 8
+    cold_start_hours = (image_bits / (max(inet_down_mbps, 1.0) * 1e6)) / 3600.0
+
+    disk = disk_gb if disk_gb is not None else report["min_volume_gb"]
+    disk_cost = (disk * storage_cost_per_gb_month / 730.0) * hours
+    gpu_cost = gpu_dph * hours
+    # La GPU factura durante el arranque en frío y la descarga de modelos.
+    idle_gpu_cost = gpu_dph * min(transfer_hours, hours) if hours else 0.0
+    transfer_cost = (transfer_bytes / 1e9) * transfer_per_gb
+
+    return {
+        "hours": hours,
+        "gpu_dph": gpu_dph,
+        "disk_gb": disk,
+        "inet_down_mbps": inet_down_mbps,
+        "image_bytes": image_bytes,
+        "model_bytes": model_bytes,
+        "transfer_bytes": transfer_bytes,
+        "transfer_cost": round(transfer_cost, 4),
+        "disk_cost": round(disk_cost, 4),
+        "gpu_cost": round(gpu_cost, 4),
+        "gpu_idle_cost": round(idle_gpu_cost, 4),
+        "cold_start_hours": round(cold_start_hours, 3),
+        "download_hours": round(transfer_hours, 3),
+        "productive_hours": round(max(0.0, hours - min(transfer_hours, hours)), 3),
+        "total_cost": round(gpu_cost + disk_cost + transfer_cost, 4),
+        # Coste por hora productiva: la métrica que de verdad importa.
+        "cost_per_productive_hour": round(
+            (gpu_cost + disk_cost + transfer_cost)
+            / max(0.001, hours - min(transfer_hours, hours)),
+            4,
+        ),
+    }
+
+
+def render_cost(report: dict[str, Any], cost: dict[str, Any]) -> str:
+    lines = [
+        f"Coste de sesión ({cost['hours']}h, GPU ${cost['gpu_dph']}/h, "
+        f"disco {cost['disk_gb']} GB, {cost['inet_down_mbps']:.0f} Mbps)",
+        "",
+        f"  imagen                    {cost['image_bytes'] / 1e9:>8.2f} GB",
+        f"  modelos                   {cost['model_bytes'] / 1e9:>8.2f} GB",
+        f"  transferencia total       {cost['transfer_bytes'] / 1e9:>8.2f} GB "
+        f"(${cost['transfer_cost']:.2f})",
+        f"  arranque en frío          {cost['cold_start_hours']:>8.2f} h",
+        f"  descarga de modelos       {cost['download_hours']:>8.2f} h",
+        f"  GPU facturada sin producir{cost['download_hours']:>7.2f} h "
+        f"(${cost['gpu_idle_cost']:.2f})",
+        f"  horas productivas         {cost['productive_hours']:>8.2f} h",
+        "",
+        f"  coste GPU                 ${cost['gpu_cost']:>8.2f}",
+        f"  coste disco               ${cost['disk_cost']:>8.2f}",
+        f"  coste transferencia       ${cost['transfer_cost']:>8.2f}",
+        f"  TOTAL                     ${cost['total_cost']:>8.2f}",
+        f"  por hora productiva       ${cost['cost_per_productive_hour']:>8.2f}",
+    ]
+    return "\n".join(lines)
 
 
 def render(report: dict[str, Any]) -> str:
@@ -219,6 +321,41 @@ def render(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _write_all_profiles(manifest_path: Path, *, image_bytes: int, out: str | None) -> int:
+    """Deriva todos los perfiles y escribe el JSON que consume `comfyctl`.
+
+    Es el contrato entre el script (Python, fuente de verdad del cálculo) y el
+    binario Rust: la imagen lo hornea en `/etc/comfyui/storage-requirement.json`
+    y S5 lee de ahí en lugar de una tabla codificada a mano.
+    """
+    manifest = load_manifest(manifest_path)
+    profiles: dict[str, Any] = {}
+    for name in PROFILE_BOOTSTRAP_BYTES:
+        report = requirement_bytes(
+            manifest, profile=name, image_bytes=image_bytes
+        )
+        profiles[name] = {
+            "start_gate_gb": report["start_gate_gb"],
+            "start_gate_bytes": report["start_gate_bytes"],
+            "min_volume_gb": report["min_volume_gb"],
+            "total_bytes": report["total_bytes"],
+        }
+    payload = {
+        "version": 1,
+        "source": "scripts/storage_requirement.py",
+        "image_bytes": image_bytes,
+        "profiles": profiles,
+    }
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(text + "\n", encoding="utf-8")
+        print(f"escrito {out}")
+    else:
+        print(text)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -246,6 +383,38 @@ def main(argv: list[str] | None = None) -> int:
         help="La imagen vive en el mismo volumen que los datos (RunPod/proveedores "
         "sin overlay separado). En Vast.ai la imagen está en el host: no se carga.",
     )
+    parser.add_argument("--cost", action="store_true", help="Añade el coste de sesión.")
+    parser.add_argument(
+        "--hours", type=float, default=2.0, help="Duración de la sesión en horas."
+    )
+    parser.add_argument(
+        "--gpu-dph", type=float, default=DEFAULT_GPU_DPH, help="Precio de la GPU por hora."
+    )
+    parser.add_argument(
+        "--disk-gb", type=int, default=None, help="GB de disco (por defecto el derivado)."
+    )
+    parser.add_argument(
+        "--transfer-per-gb",
+        type=float,
+        default=DEFAULT_TRANSFER_PER_GB,
+        help="Coste de transferencia por GB.",
+    )
+    parser.add_argument(
+        "--inet-down-mbps",
+        type=float,
+        default=DEFAULT_INET_DOWN_MBPS,
+        help="Ancho de bajada del host.",
+    )
+    parser.add_argument(
+        "--all-profiles",
+        action="store_true",
+        help="Deriva todos los perfiles y escribe el JSON que hornea la imagen.",
+    )
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Ruta de salida para --all-profiles (por defecto stdout).",
+    )
     parser.add_argument("--json", action="store_true", help="Salida JSON.")
     parser.add_argument(
         "--check",
@@ -259,6 +428,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: no existe el manifiesto {manifest_path}", file=sys.stderr)
         return 2
 
+    if args.all_profiles:
+        return _write_all_profiles(
+            manifest_path, image_bytes=args.image_bytes, out=args.out
+        )
+
     report = requirement_bytes(
         load_manifest(manifest_path),
         profile=args.profile,
@@ -267,10 +441,27 @@ def main(argv: list[str] | None = None) -> int:
         image_on_volume=args.image_on_volume,
     )
 
+    cost = None
+    if args.cost:
+        cost = session_cost(
+            report,
+            hours=args.hours,
+            gpu_dph=args.gpu_dph,
+            disk_gb=args.disk_gb,
+            transfer_per_gb=args.transfer_per_gb,
+            inet_down_mbps=args.inet_down_mbps,
+        )
+
     if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        payload = dict(report)
+        if cost is not None:
+            payload["cost"] = cost
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(render(report))
+        if cost is not None:
+            print()
+            print(render_cost(report, cost))
 
     if args.check:
         problems = []

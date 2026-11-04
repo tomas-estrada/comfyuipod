@@ -54,11 +54,15 @@ scripts/storage_requirement.py --profile studio --check    # falla si un umbral 
 | `studio` | 62.6 GB | 180 GB ✓ | 248 GB | 248 GB (derivado) |
 | `unreal` | 62.6 GB | 210 GB ✓ | 256 GB | 256 GB (derivado) |
 
-⚠ = el umbral queda por debajo de lo derivado. No es un fallo inmediato: el
-cortacircuitos por archivo de `download-models.sh` impide el desborde, pero la
-puerta de arranque no garantiza que la descarga completa quepa. **Ajustar
-`default_min_disk_gb` en [`comfyctl/src/config.rs`](../comfyctl/src/config.rs)
-a estos valores derivados es trabajo pendiente** (requiere toolchain de Rust).
+⚠ = el umbral queda por debajo de lo derivado.
+
+**Estado:** el umbral ya **no está codificado a mano**. El `Dockerfile` ejecuta
+`storage_requirement.py --all-profiles` en el build y hornea el resultado en
+`/etc/comfyui/storage-requirement.json`; `comfyctl` lo lee al arrancar
+([`comfyctl/src/storage.rs`](../comfyctl/src/storage.rs)) y S5 comprueba el
+número derivado. Si el fichero no existe (imagen antigua, desarrollo), cae al
+respaldo documentado en `default_min_disk_gb`, que sigue siendo la tabla de
+siempre. Test de integración: `s5_uses_the_derived_requirement_when_the_image_publishes_it`.
 
 ---
 
@@ -276,12 +280,58 @@ cinturón. `offload: true` sigue en los `performance_defaults` de las plantillas
 como documentación de lo que el pod necesita; el offloading real lo aplica la
 gestión de VRAM de ComfyUI al arrancar (`COMFYUI_EXTRA_ARGS`).
 
+## 6. Coste completo de producción
+
+`scripts/storage_requirement.py --cost` modela el coste de una sesión con los
+componentes que la política pide, y hace explícito el que suele ignorarse:
+**la GPU se factura mientras se descarga**.
+
+```bash
+scripts/storage_requirement.py --profile studio --cost --hours 3
+```
+
+```
+Coste de sesión (3.0h, GPU $0.55/h, disco 248 GB, 500 Mbps)
+  imagen                       15.60 GB
+  modelos                     180.90 GB
+  transferencia total         196.50 GB ($1.97)
+  arranque en frío              0.07 h
+  descarga de modelos           0.87 h
+  GPU facturada sin producir   0.87 h ($0.48)
+  horas productivas            2.13 h
+  coste GPU                 $    1.65
+  coste disco               $    0.15
+  coste transferencia       $    1.97
+  TOTAL                     $    3.77
+  por hora productiva       $    1.77
+```
+
+Dos consecuencias que el modelo hace visibles:
+
+- En una sesión corta, la transferencia manda: bajar 180 GB a 500 Mbps son ~50
+  min de GPU cobrando sin producir. **Un render más largo puede ser el mejor
+  negocio** si evita una segunda sesión.
+- La métrica honesta es el **coste por hora productiva**, no el `$/h` de la GPU.
+  Por eso `comfy rent` ordena por precio pero el presupuesto se justifica con
+  mediciones y ofertas reales, no con latencia.
+
+La imagen se cuenta como transferencia aunque no ocupe el volumen de datos: se
+descarga en cada arranque en frío. Las capases reutilizables (`buildcache`,
+`mode=max`) ya están en CI; lo que falta es un modelo de egress, no de disco.
+
+S14 (`engine_roster`) informa además de la taxonomía de preparación: «preparados
+N, pendientes de pesos N, sin instalar N, sin integración N». Sigue siendo `warn`
+nunca `fatal`, porque un motor instalado que pide pesos de tarea es el caso
+normal, no un fallo.
+
 ### Pendiente
 
 - **Clasificar las Fases 1/2 por perfil**: el manifiesto core declara `class`,
   pero la selección por `MODEL_PROFILE` sigue viviendo en bash.
 - **Driver medido**: `recipe_for_template` expone GPU y CUDA, pero el driver se
   toma de `strict-check` (S2), no de la medición.
+- **Egress**: se modela la transferencia de bajada con un precio por GB
+  orientativo; falta el precio real del proveedor.
 ## 5. Hardware objetivo
 
 El objetivo preferido es **una GPU de consumo con ~32 GB de VRAM** y RAM de host
