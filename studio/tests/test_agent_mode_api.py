@@ -11,13 +11,17 @@ Todo corre SIN GPU/LLM (colaboradores stub por defecto en los tests).
 from __future__ import annotations
 
 import re
+import threading
+import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+import comfy_studio.orchestration.service as service_module
 from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
 from comfy_studio.orchestration.conductor import build_production_graph
+from comfy_studio.orchestration.graph import END, ProductionGraph
 from comfy_studio.orchestration.service import (
     ProductionAlreadyTerminalError,
     ProductionService,
@@ -189,6 +193,62 @@ def test_cancel_during_execution_stops_graph_at_next_step(tmp_path) -> None:
     assert any(e["kind"] == "cancelled" for e in final.log)
 
 
+def test_cancel_during_execution_reaches_in_flight_graph(tmp_path, monkeypatch) -> None:
+    """M7-AGT-001: `cancel_production` durante la ejecución detiene el grafo en vuelo.
+
+    El grafo corre sobre su propia copia del estado (cargada antes del cancel), así
+    que el flag persistido en el checkpoint no le llega; la vía que sí llega es el
+    hook en proceso `graph.should_cancel` cableado por `approve_plan`.
+    """
+    checkpointer = ProductionCheckpointer(tmp_path / "ckpt.sqlite3")
+    service = ProductionService(checkpointer=checkpointer, broker=ProgressBroker())
+    pid = service.plan_production("ola de dron")["production_id"]
+
+    entered = threading.Event()
+
+    def blocking_node(st):
+        entered.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and pid not in service._cancel_requested:
+            time.sleep(0.01)
+        st.record("node_done")
+        return st
+
+    graph = ProductionGraph(checkpointer=checkpointer)
+    graph.add_node("work", blocking_node)
+    graph.set_entry("work")
+    graph.set_router(lambda st: END if st.phase == "cancelled" else "work")
+    monkeypatch.setattr(
+        service_module, "build_production_graph", lambda **_kw: graph
+    )
+
+    runner = threading.Thread(target=service.approve_plan, args=(pid,))
+    runner.start()
+    assert entered.wait(timeout=5)
+    # esperar a que la transición a `executing` esté persistida (la cancela
+    # durante el arranque del lazo también debe ser cooperativo, no terminal)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        loaded = checkpointer.load(pid)
+        if loaded is not None and loaded.phase == "executing":
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("el lazo nunca persistió la fase executing")
+    status = service.cancel_production(pid)
+    assert status["cancel_requested"] is True
+    runner.join(timeout=10)
+    assert not runner.is_alive()
+
+    final = checkpointer.load(pid)
+    assert final is not None
+    assert final.phase == "cancelled"
+    kinds = [e["kind"] for e in final.log]
+    assert "cancelled" in kinds
+    # el flag en proceso se limpia al terminar el lazo
+    assert pid not in service._cancel_requested
+
+
 # ---------------------------------------------------------------------------
 # Eventos SSE del ciclo de vida (bus del broker)
 # ---------------------------------------------------------------------------
@@ -236,6 +296,34 @@ def test_publish_threadsafe_without_loop_falls_back_to_direct() -> None:
     broker = ProgressBroker()
     broker.publish_threadsafe("custom", {"ok": True})
     assert broker.recent_events()[-1][0] == "custom"
+
+
+def test_publish_threadsafe_from_threads_without_loop_is_safe() -> None:
+    """M7-SCR-003: publicación concurrente desde hilos sin loop vinculado.
+
+    Sin `bind_loop`, `publish_threadsafe` cae al publish directo; con el lock interno
+    todos los eventos llegan a suscriptores e historial con seq contiguo.
+    """
+    broker = ProgressBroker(history_limit=1000)
+    queue = broker.subscribe(maxsize=1024)
+
+    def worker(n: int) -> None:
+        for i in range(50):
+            broker.publish_threadsafe("tick", {"n": n, "i": i})
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    got = []
+    while not queue.empty():
+        got.append(queue.get_nowait())
+    assert len(got) == 200
+    seqs = sorted(d["seq"] for _, d in got)
+    assert seqs == list(range(1, 201))
+    assert len(broker.recent_events()) == 200
 
 
 # ---------------------------------------------------------------------------

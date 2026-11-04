@@ -34,6 +34,9 @@ NodeFn = Callable[[ProductionState], ProductionState]
 #: hook opcional llamado tras cada paso (checkpoint incluido) para progreso en vivo.
 StepHook = Callable[[ProductionState], None]
 
+#: hook opcional de cancelación cooperativa: True = detener el lazo en el siguiente paso.
+CancelHook = Callable[[], bool]
+
 #: nombre del nodo terminal.
 END = "__end__"
 
@@ -66,6 +69,8 @@ class ProductionGraph:
         self.max_steps = max_steps
         #: hook de progreso por paso (p.ej. publicar SSE); nunca rompe el grafo.
         self.on_step: StepHook | None = None
+        #: hook de cancelación en proceso (p.ej. cancelRequested por otra petición).
+        self.should_cancel: CancelHook | None = None
 
     # -- construcción --------------------------------------------------------
 
@@ -106,6 +111,19 @@ class ProductionGraph:
                 raise RuntimeError(f"nodo desconocido: {current}")
             state = node(state)
             self._checkpoint(state)
+            if self.should_cancel is not None and self.should_cancel():
+                # cancelación cooperativa llegada durante el paso (M7-AGT-001):
+                # el estado en vuelo no ve el flag persistido por otra petición,
+                # así que el hook en proceso es la vía que sí llega al lazo.
+                state.phase = "cancelled"
+                state.record("cancelled", stage="execution")
+                self._checkpoint(state)
+                if self.on_step is not None:
+                    try:
+                        self.on_step(state)
+                    except Exception:
+                        logger.exception("on_step del grafo falló en el paso %s", current)
+                return state
             if self.on_step is not None:
                 try:
                     self.on_step(state)
