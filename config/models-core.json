@@ -1,0 +1,437 @@
+{
+ "version": 1,
+ "profile": "core",
+ "meta": {
+  "default_entries": 26,
+  "default_bytes": 68020295951,
+  "opt_in_entries": 0,
+  "opt_in_bytes": 0,
+  "classes": {
+   "bootstrap": {
+    "entries": 10,
+    "bytes": 2859295624
+   },
+   "task": {
+    "entries": 16,
+    "bytes": 65161000327
+   },
+   "optional": {
+    "entries": 0,
+    "bytes": 0
+   }
+  },
+  "categories": {
+   "insightface": {
+    "entries": 2,
+    "bytes": 842875035
+   },
+   "facerestore": {
+    "entries": 2,
+    "bytes": 725270772
+   },
+   "facedetection": {
+    "entries": 2,
+    "bytes": 194828954
+   },
+   "ultralytics": {
+    "entries": 1,
+    "bytes": 51996128
+   },
+   "sams": {
+    "entries": 1,
+    "bytes": 375042383
+   },
+   "vae": {
+    "entries": 2,
+    "bytes": 669282352
+   },
+   "upscalers": {
+    "entries": 2,
+    "bytes": 133972203
+   },
+   "checkpoints": {
+    "entries": 7,
+    "bytes": 54403998004
+   },
+   "controlnet": {
+    "entries": 1,
+    "bytes": 2513342408
+   },
+   "ipadapter": {
+    "entries": 4,
+    "bytes": 1891401600
+   },
+   "clip_vision": {
+    "entries": 2,
+    "bytes": 6218286112
+   }
+  }
+ },
+ "models": [
+  {
+   "category": "insightface",
+   "repo_id": "Gourieff/ReActor",
+   "remote_path": "models/buffalo_l.zip",
+   "url": "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/buffalo_l.zip",
+   "bytes": 288621354,
+   "target_dir": "models/insightface/models/buffalo_l",
+   "filename": "buffalo_l.zip",
+   "dest_path": "models/insightface/models/buffalo_l/buffalo_l.zip",
+   "license": "ReActor (InsightFace buffalo_l: no comercial)",
+   "repo_type": "dataset",
+   "class": "bootstrap",
+   "opt_in": null,
+   "extract": true
+  },
+  {
+   "category": "insightface",
+   "repo_id": "Gourieff/ReActor",
+   "remote_path": "models/inswapper_128.onnx",
+   "url": "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/inswapper_128.onnx",
+   "bytes": 554253681,
+   "target_dir": "models/insightface",
+   "filename": "inswapper_128.onnx",
+   "dest_path": "models/insightface/inswapper_128.onnx",
+   "license": "ReActor (InsightFace buffalo_l: no comercial)",
+   "repo_type": "dataset",
+   "class": "bootstrap",
+   "opt_in": null
+  },
+  {
+   "category": "facerestore",
+   "repo_id": "Gourieff/ReActor",
+   "remote_path": "models/facerestore_models/codeformer-v0.1.0.pth",
+   "url": "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/codeformer-v0.1.0.pth",
+   "bytes": 376637898,
+   "target_dir": "models/facerestore_models",
+   "filename": "codeformer-v0.1.0.pth",
+   "dest_path": "models/facerestore_models/codeformer-v0.1.0.pth",
+   "license": "ReActor (InsightFace buffalo_l: no comercial)",
+   "repo_type": "dataset",
+   "class": "bootstrap",
+   "opt_in": null
+  },
+  {
+   "category": "facerestore",
+   "repo_id": "Gourieff/ReActor",
+   "remote_path": "models/facerestore_models/GFPGANv1.4.pth",
+   "url": "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/facerestore_models/GFPGANv1.4.pth",
+   "bytes": 348632874,
+   "target_dir": "models/facerestore_models",
+   "filename": "GFPGANv1.4.pth",
+   "dest_path": "models/facerestore_models/GFPGANv1.4.pth",
+   "license": "ReActor (InsightFace buffalo_l: no comercial)",
+   "repo_type": "dataset",
+   "class": "bootstrap",
+   "opt_in": null
+  },
+  {
+   "category": "facedetection",
+   "repo_id": "kg-09/face_detection_models",
+   "remote_path": "detection_Resnet50_Final.pth",
+   "url": "https://huggingface.co/kg-09/face_detection_models/resolve/main/detection_Resnet50_Final.pth",
+   "bytes": 109497761,
+   "target_dir": "models/facedetection",
+   "filename": "detection_Resnet50_Final.pth",
+   "dest_path": "models/facedetection/detection_Resnet50_Final.pth",
+   "license": "MIT",
+   "repo_type": "model",
+   "class": "bootstrap",
+   "opt_in": null
+  },
+  {
+   "category": "facedetection",
+   "repo_id": "kg-09/face_detection_models",
+   "remote_path": "parsing_parsenet.pth",
+   "url": "https://huggingface.co/kg-09/face_detection_models/resolve/main/parsing_parsenet.pth",
+   "bytes": 85331193,
+   "target_dir": "models/facedetection",
+   "filename": "parsing_parsenet.pth",
+   "dest_path": "models/facedetection/parsing_parsenet.pth",
+   "license": "MIT",
+   "repo_type": "model",
+   "class": "bootstrap",
+   "opt_in": null
+  },
+  {
+   "category": "ultralytics",
+   "repo_id": "Gourieff/ReActor",
+   "remote_path": "models/detection/bbox/face_yolov8m.pt",
+   "url": "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/detection/bbox/face_yolov8m.pt",
+   "bytes": 51996128,
+   "target_dir": "models/ultralytics/bbox",
+   "filename": "face_yolov8m.pt",
+   "dest_path": "models/ultralytics/bbox/face_yolov8m.pt",
+   "license": "ReActor (InsightFace buffalo_l: no comercial)",
+   "repo_type": "dataset",
+   "class": "bootstrap",
+   "opt_in": null
+  },
+  {
+   "category": "sams",
+   "repo_id": "Gourieff/ReActor",
+   "remote_path": "models/sams/sam_vit_b_01ec64.pth",
+   "url": "https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/sams/sam_vit_b_01ec64.pth",
+   "bytes": 375042383,
+   "target_dir": "models/sams",
+   "filename": "sam_vit_b_01ec64.pth",
+   "dest_path": "models/sams/sam_vit_b_01ec64.pth",
+   "license": "ReActor (InsightFace buffalo_l: no comercial)",
+   "repo_type": "dataset",
+   "class": "bootstrap",
+   "opt_in": null
+  },
+  {
+   "category": "vae",
+   "repo_id": "madebyollin/sdxl-vae-fp16-fix",
+   "remote_path": "sdxl.vae.safetensors",
+   "url": "https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl.vae.safetensors",
+   "bytes": 334641162,
+   "target_dir": "models/vae",
+   "filename": "sdxl.vae.safetensors",
+   "dest_path": "models/vae/sdxl.vae.safetensors",
+   "license": "MIT",
+   "repo_type": "model",
+   "class": "bootstrap",
+   "opt_in": null
+  },
+  {
+   "category": "vae",
+   "repo_id": "stabilityai/sd-vae-ft-mse-original",
+   "remote_path": "vae-ft-mse-840000-ema-pruned.safetensors",
+   "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors",
+   "bytes": 334641190,
+   "target_dir": "models/vae",
+   "filename": "vae-ft-mse-840000-ema-pruned.safetensors",
+   "dest_path": "models/vae/vae-ft-mse-840000-ema-pruned.safetensors",
+   "license": "MIT",
+   "repo_type": "model",
+   "class": "bootstrap",
+   "opt_in": null
+  },
+  {
+   "category": "upscalers",
+   "repo_id": "Kim2091/UltraSharp",
+   "remote_path": "4x-UltraSharp.pth",
+   "url": "https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.pth",
+   "bytes": 66961958,
+   "target_dir": "models/upscale_models",
+   "filename": "4x-UltraSharp.pth",
+   "dest_path": "models/upscale_models/4x-UltraSharp.pth",
+   "license": "AGPL-3.0",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "upscalers",
+   "repo_id": "Kim2091/AnimeSharp",
+   "remote_path": "4x-AnimeSharp.pth",
+   "url": "https://huggingface.co/Kim2091/AnimeSharp/resolve/main/4x-AnimeSharp.pth",
+   "bytes": 67010245,
+   "target_dir": "models/upscale_models",
+   "filename": "4x-AnimeSharp.pth",
+   "dest_path": "models/upscale_models/4x-AnimeSharp.pth",
+   "license": "AGPL-3.0",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "checkpoints",
+   "repo_id": "RunDiffusion/Juggernaut-XI-v11",
+   "remote_path": "Juggernaut-XI-byRunDiffusion.safetensors",
+   "url": "https://huggingface.co/RunDiffusion/Juggernaut-XI-v11/resolve/main/Juggernaut-XI-byRunDiffusion.safetensors",
+   "bytes": 7105350536,
+   "target_dir": "models/checkpoints",
+   "filename": "Juggernaut-XI-byRunDiffusion.safetensors",
+   "dest_path": "models/checkpoints/Juggernaut-XI-byRunDiffusion.safetensors",
+   "license": "RunDiffusion (revisar)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "checkpoints",
+   "repo_id": "SG161222/Realistic_Vision_V6.0_B1_noVAE",
+   "remote_path": "Realistic_Vision_V6.0_NV_B1_fp16.safetensors",
+   "url": "https://huggingface.co/SG161222/Realistic_Vision_V6.0_B1_noVAE/resolve/main/Realistic_Vision_V6.0_NV_B1_fp16.safetensors",
+   "bytes": 2132625894,
+   "target_dir": "models/checkpoints",
+   "filename": "Realistic_Vision_V6.0_NV_B1_fp16.safetensors",
+   "dest_path": "models/checkpoints/Realistic_Vision_V6.0_NV_B1_fp16.safetensors",
+   "license": "CreativeML OpenRAIL-M",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "checkpoints",
+   "repo_id": "SG161222/RealVisXL_V5.0",
+   "remote_path": "RealVisXL_V5.0_fp16.safetensors",
+   "url": "https://huggingface.co/SG161222/RealVisXL_V5.0/resolve/main/RealVisXL_V5.0_fp16.safetensors",
+   "bytes": 6938065488,
+   "target_dir": "models/checkpoints",
+   "filename": "RealVisXL_V5.0_fp16.safetensors",
+   "dest_path": "models/checkpoints/RealVisXL_V5.0_fp16.safetensors",
+   "license": "CreativeML OpenRAIL-M",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "checkpoints",
+   "repo_id": "Ine007/waiIllustriousSDXL_v160",
+   "remote_path": "waiIllustriousSDXL_v160.safetensors",
+   "url": "https://huggingface.co/Ine007/waiIllustriousSDXL_v160/resolve/main/waiIllustriousSDXL_v160.safetensors",
+   "bytes": 6938040682,
+   "target_dir": "models/checkpoints",
+   "filename": "waiIllustriousSDXL_v160.safetensors",
+   "dest_path": "models/checkpoints/waiIllustriousSDXL_v160.safetensors",
+   "license": "Illustrious (revisar)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "checkpoints",
+   "repo_id": "OnomaAIResearch/Illustrious-XL-v2.0",
+   "remote_path": "Illustrious-XL-v2.0.safetensors",
+   "url": "https://huggingface.co/OnomaAIResearch/Illustrious-XL-v2.0/resolve/main/Illustrious-XL-v2.0.safetensors",
+   "bytes": 6938040674,
+   "target_dir": "models/checkpoints",
+   "filename": "Illustrious-XL-v2.0.safetensors",
+   "dest_path": "models/checkpoints/Illustrious-XL-v2.0.safetensors",
+   "license": "Illustrious (revisar)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "checkpoints",
+   "repo_id": "Laxhar/noobai-XL-1.1",
+   "remote_path": "NoobAI-XL-v1.1.safetensors",
+   "url": "https://huggingface.co/Laxhar/noobai-XL-1.1/resolve/main/NoobAI-XL-v1.1.safetensors",
+   "bytes": 7105349958,
+   "target_dir": "models/checkpoints",
+   "filename": "NoobAI-XL-v1.1.safetensors",
+   "dest_path": "models/checkpoints/NoobAI-XL-v1.1.safetensors",
+   "license": "noobai (revisar)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "controlnet",
+   "repo_id": "xinsir/controlnet-union-sdxl-1.0",
+   "remote_path": "diffusion_pytorch_model_promax.safetensors",
+   "url": "https://huggingface.co/xinsir/controlnet-union-sdxl-1.0/resolve/main/diffusion_pytorch_model_promax.safetensors",
+   "bytes": 2513342408,
+   "target_dir": "models/controlnet",
+   "filename": "controlnet-union-sdxl-promax.safetensors",
+   "dest_path": "models/controlnet/controlnet-union-sdxl-promax.safetensors",
+   "license": "Apache-2.0",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "ipadapter",
+   "repo_id": "h94/IP-Adapter",
+   "remote_path": "sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors",
+   "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter-plus_sdxl_vit-h.safetensors",
+   "bytes": 847517512,
+   "target_dir": "models/ipadapter",
+   "filename": "ip-adapter-plus_sdxl_vit-h.safetensors",
+   "dest_path": "models/ipadapter/ip-adapter-plus_sdxl_vit-h.safetensors",
+   "license": "Apache-2.0 (sin pesos FaceID)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "ipadapter",
+   "repo_id": "h94/IP-Adapter",
+   "remote_path": "sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors",
+   "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors",
+   "bytes": 847517512,
+   "target_dir": "models/ipadapter",
+   "filename": "ip-adapter-plus-face_sdxl_vit-h.safetensors",
+   "dest_path": "models/ipadapter/ip-adapter-plus-face_sdxl_vit-h.safetensors",
+   "license": "Apache-2.0 (sin pesos FaceID)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "ipadapter",
+   "repo_id": "h94/IP-Adapter",
+   "remote_path": "models/ip-adapter-plus_sd15.safetensors",
+   "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus_sd15.safetensors",
+   "bytes": 98183288,
+   "target_dir": "models/ipadapter",
+   "filename": "ip-adapter-plus_sd15.safetensors",
+   "dest_path": "models/ipadapter/ip-adapter-plus_sd15.safetensors",
+   "license": "Apache-2.0 (sin pesos FaceID)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "ipadapter",
+   "repo_id": "h94/IP-Adapter",
+   "remote_path": "models/ip-adapter-plus-face_sd15.safetensors",
+   "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus-face_sd15.safetensors",
+   "bytes": 98183288,
+   "target_dir": "models/ipadapter",
+   "filename": "ip-adapter-plus-face_sd15.safetensors",
+   "dest_path": "models/ipadapter/ip-adapter-plus-face_sd15.safetensors",
+   "license": "Apache-2.0 (sin pesos FaceID)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "clip_vision",
+   "repo_id": "h94/IP-Adapter",
+   "remote_path": "models/image_encoder/model.safetensors",
+   "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/image_encoder/model.safetensors",
+   "bytes": 2528373448,
+   "target_dir": "models/clip_vision",
+   "filename": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+   "dest_path": "models/clip_vision/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+   "license": "Apache-2.0 (sin pesos FaceID)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "clip_vision",
+   "repo_id": "h94/IP-Adapter",
+   "remote_path": "sdxl_models/image_encoder/model.safetensors",
+   "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/image_encoder/model.safetensors",
+   "bytes": 3689912664,
+   "target_dir": "models/clip_vision",
+   "filename": "CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors",
+   "dest_path": "models/clip_vision/CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors",
+   "license": "Apache-2.0 (sin pesos FaceID)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  },
+  {
+   "category": "checkpoints",
+   "repo_id": "Comfy-Org/flux1-dev",
+   "remote_path": "flux1-dev-fp8.safetensors",
+   "url": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev-fp8.safetensors",
+   "bytes": 17246524772,
+   "target_dir": "models/checkpoints",
+   "filename": "flux1-dev-fp8.safetensors",
+   "dest_path": "models/checkpoints/flux1-dev-fp8.safetensors",
+   "license": "FLUX.1-dev (no comercial)",
+   "repo_type": "model",
+   "class": "task",
+   "opt_in": null
+  }
+ ]
+}

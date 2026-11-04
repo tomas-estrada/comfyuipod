@@ -61,6 +61,9 @@ VALID_OPT_IN_FLAGS = frozenset({
     "STUDIO_INCLUDE_MINIMAX",
 })
 
+# Manifiestos conocidos: `studio` (Fase 3, vídeo/voz) y `core` (Fases 1/2).
+VALID_PROFILES = frozenset({"studio", "core"})
+
 # Política de arquitectura: clases de activo admitidas. `bootstrap` reservado
 # para lo genuinamente necesario para operar; `task` se adquiere para la tarea
 # elegida; `optional` son variantes y mejoras (coincide con los grupos opt-in).
@@ -115,6 +118,18 @@ def fetch_head_size(url: str, timeout: float = 20.0, retries: int = 3) -> tuple[
     raise RuntimeError(f"Fallo tras {retries} intentos en {url}: {last_err}")
 
 
+def _expected_url(repo_id: str, remote_path: str, repo_type: object) -> str:
+    """URL canónica del activo.
+
+    Los repositorios de tipo `dataset` se resuelven bajo `/datasets/`; el resto
+    (modelos, espacios) bajo la raíz. Aceptar solo la forma de modelo hacía
+    fallar los activos dataset correctamente declarados.
+    """
+    if str(repo_type or "").strip().lower() == "dataset":
+        return f"https://huggingface.co/datasets/{repo_id}/resolve/main/{remote_path}"
+    return f"https://huggingface.co/{repo_id}/resolve/main/{remote_path}"
+
+
 def validate_manifest_data(
     data: dict[str, Any],
     *,
@@ -125,10 +140,15 @@ def validate_manifest_data(
     """Valida el diccionario del manifiesto; devuelve lista de errores (vacía si todo es válido)."""
     errors: list[str] = []
 
-    if data.get("version") != 2:
-        errors.append(f"version inválida: {data.get('version')!r} (esperado 2)")
-    if data.get("profile") != "studio":
-        errors.append(f"profile inválido: {data.get('profile')!r} (esperado 'studio')")
+    version = data.get("version")
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        errors.append(f"version inválida: {version!r} (se esperaba un entero >= 1)")
+    elif data.get("profile") == "studio" and version != 2:
+        errors.append(f"version inválida: {version!r} (esperado 2 para 'studio')")
+
+    profile = data.get("profile")
+    if profile not in VALID_PROFILES:
+        errors.append(f"profile inválido: {profile!r} (esperado uno de {sorted(VALID_PROFILES)})")
 
     models = data.get("models")
     if not isinstance(models, list) or not models:
@@ -179,7 +199,7 @@ def validate_manifest_data(
         size = entry.get("bytes")
         opt_in = entry.get("opt_in")
 
-        expected_url = f"https://huggingface.co/{repo_id}/resolve/main/{remote_path}"
+        expected_url = _expected_url(repo_id, remote_path, entry.get("repo_type"))
         if url != expected_url:
             errors.append(f"{prefix}: url {url!r} != {expected_url!r}")
 
@@ -219,7 +239,7 @@ def validate_manifest_data(
 
     if require_all_categories:
         missing_cats = REQUIRED_CATEGORIES - set(cat_counts.keys())
-        if missing_cats:
+        if data.get("profile") == "studio" and missing_cats:
             errors.append(f"Faltan categorías requeridas: {sorted(missing_cats)}")
 
     if meta.get("default_entries") != default_entries:
@@ -434,12 +454,60 @@ def run_fixture_self_test() -> int:
     return 0
 
 
+MANIFESTS = ("config/models-studio.json", "config/models-core.json")
+
+
+def _validate_one(path: Path, *, offline: bool, workers: int) -> int:
+    if not path.is_file():
+        print(f"ERROR: No existe el manifiesto en {path}", file=sys.stderr)
+        return 1
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    head_callable = None if offline else fetch_head_size
+    errors = validate_manifest_data(
+        data,
+        require_all_categories=True,
+        head_fn=head_callable,
+        workers=workers,
+    )
+    if errors:
+        print(f"ERROR: {len(errors)} fallo(s) en {path}:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
+    meta = data["meta"]
+    classes = meta.get("classes") or {}
+    bootstrap = classes.get("bootstrap", {})
+    mode_label = "offline" if offline else "HEAD x-linked-size"
+    print(
+        f"OK [{mode_label}]: {meta['default_entries']} entradas por defecto "
+        f"({meta['default_bytes']:,} B = {meta['default_bytes'] / 1e9:.2f} GB) + "
+        f"{meta['opt_in_entries']} opt-in ({meta['opt_in_bytes']:,} B) "
+        f"verificadas en {path}; bootstrap={bootstrap.get('entries', 0)} "
+        f"({bootstrap.get('bytes', 0):,} B)."
+    )
+    return 0
+
+
+def _validate_all(args: argparse.Namespace) -> int:
+    status = 0
+    for name in MANIFESTS:
+        status |= _validate_one(Path(name), offline=args.offline, workers=args.workers)
+    return 1 if status else 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Verifica config/models-studio.json.")
+    parser = argparse.ArgumentParser(description="Verifica manifiestos de modelos.")
     parser.add_argument(
         "--manifest",
         default="config/models-studio.json",
         help="Ruta al archivo JSON del manifiesto (default: config/models-studio.json)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Valida todos los manifiestos conocidos (studio + core)",
     )
     parser.add_argument(
         "--offline",
@@ -461,6 +529,9 @@ def main() -> int:
 
     if args.fixture:
         return run_fixture_self_test()
+
+    if args.all:
+        return _validate_all(args)
 
     manifest_path = Path(args.manifest)
     if not manifest_path.is_file():

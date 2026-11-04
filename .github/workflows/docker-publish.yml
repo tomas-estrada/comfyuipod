@@ -336,10 +336,23 @@ jobs:
           sys.exit(1 if failures else 0)
           EOF
 
-      - name: Validar config/models-studio.json y tamaños exactos vía HEAD en HuggingFace (VAL-PROFILE-002)
+      - name: Validar manifiestos de modelos (studio + core) y tamaños exactos vía HEAD (VAL-PROFILE-002)
         run: |
           python3 scripts/check_models_manifest.py --fixture
-          python3 scripts/check_models_manifest.py
+          python3 scripts/check_models_manifest.py --all
+          # El requisito de almacenamiento se DERIVA (política de arquitectura).
+          # `comfy rent studio` toma su mínimo de este cálculo: si alguien vuelve a
+          # codificar un literal menor, el check falla.
+          python3 scripts/storage_requirement.py --profile studio --check || {
+            echo "::error::El mínimo de disco de 'comfy rent studio' queda por debajo del requisito derivado (ver scripts/storage_requirement.py)"
+            exit 1
+          }
+          # Informativo: umbrales S5 y mínimos de alquiler que la derivación ya
+          # supera. No bloquean (el cortacircuitos por archivo cubre el caso), pero
+          # quedan registrados en docs/POLITICA_ARQUITECTURA_RECURSOS.md.
+          for profile in minimal all general realistic anime unreal; do
+            python3 scripts/storage_requirement.py --profile "$profile" || true
+          done
 
       - name: Instalar ffmpeg/ffprobe para los tests de percepción M3 (VAL-PERC-001/002/003/006)
         # La imagen ubuntu-24.04 de GitHub Actions NO trae ffmpeg preinstalado (no aparece en

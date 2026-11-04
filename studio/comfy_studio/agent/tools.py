@@ -1142,8 +1142,46 @@ class DownloadModelArgs(BaseModel):
         ...,
         description=(
             "Grupo de pesos opt-in a descargar: 'animate' (STUDIO_INCLUDE_ANIMATE=1, "
-            "+17.15 GiB), 'minimax' (STUDIO_INCLUDE_MINIMAX=1, +42.03 GB, Hailuo 3.0 "
+            "+17.15 GiB), 'minimax' (STUDIO_INCLUDE_MINIMAX=1, +63.00 GB, Hailuo 3.0 "
             "local) o 'three_d' (STUDIO_INCLUDE_3D=1)."
+        ),
+    )
+
+    acquire: bool = Field(
+        default=True,
+        description=(
+            "Con True (por defecto) descarga ahora los archivos que faltan con el "
+            "cliente de HuggingFace. Con False solo informa de la disponibilidad."
+        ),
+    )
+
+
+class ListCapabilitiesArgs(BaseModel):
+    """Argumentos para la herramienta `list_capabilities`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RequestCapabilityArgs(BaseModel):
+    """Argumentos para la herramienta `request_capability`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    capability: str = Field(
+        ...,
+        max_length=64,
+        description=(
+            "Capacidad registrada, p. ej. 'video.text_to_video', 'image.generate', "
+            "video.lipsync', 'video.face_restore', 'model3d.from_image'. Usa "
+            "`list_capabilities` para ver el catálogo."
+        ),
+    )
+
+    acquire: bool = Field(
+        default=True,
+        description=(
+            "Con True (por defecto) descarga los activos que falten con el cliente "
+            "de HuggingFace antes de devolver el plan."
         ),
     )
 
@@ -2811,52 +2849,168 @@ async def _handle_download_model(
 ) -> dict[str, Any]:
     group = (args.model_group or "").strip().lower()
     cfg = context.config
-    if group == "animate":
-        available = bool(cfg.animate_weights_available())
-        reason = None if available else (
-            "Los pesos de Wan 2.2 Animate 14B se descargan con "
-            "STUDIO_INCLUDE_ANIMATE=1 y reinicio del pod (+17.15 GiB)."
+    flag = {
+        "animate": "STUDIO_INCLUDE_ANIMATE",
+        "minimax": "STUDIO_INCLUDE_MINIMAX",
+        "three_d": "STUDIO_INCLUDE_3D",
+        "3d": "STUDIO_INCLUDE_3D",
+    }.get(group)
+    if flag is None:
+        raise ToolExecutionError(
+            f"Grupo de pesos desconocido: {group!r}. "
+            "Grupos válidos: animate, minimax, three_d."
         )
-        return {
-            "status": "available" if available else "unavailable",
-            "project_id": context.project_id,
-            "model_group": "animate",
-            "templates": ["wan_animate"],
-            "available": available,
-            "reason": reason,
-        }
-    if group == "minimax":
-        available = bool(cfg.minimax_weights_available())
-        reason = None if available else (
-            "Los pesos de MiniMax H3 (Hailuo 3.0) Ref2VA pruned-int8 se descargan "
-            "con STUDIO_INCLUDE_MINIMAX=1 y reinicio del pod (+42.03 GB: DiT 19.5 "
-            "GiB + Qwen3-VL nvfp4 14.6 GiB + VAEs + LoRA turbo 4-step)."
+    expected = {
+        "animate": cfg.animate_weights_expected,
+        "minimax": cfg.minimax_weights_expected,
+        "three_d": cfg.three_d_weights_expected,
+        "3d": cfg.three_d_weights_expected,
+    }[group]()
+    available = {
+        "animate": cfg.animate_weights_available,
+        "minimax": cfg.minimax_weights_available,
+        "three_d": cfg.three_d_weights_available,
+        "3d": cfg.three_d_weights_available,
+    }[group]()
+
+    templates = {
+        "animate": ["wan_animate", "wan_animate_cont"],
+        "minimax": ["minimax_r2v"],
+        "three_d": ["hunyuan3d_image_to_3d"],
+        "3d": ["hunyuan3d_image_to_3d"],
+    }[group]
+    payload: dict[str, Any] = {
+        "status": "available" if available else "unavailable",
+        "project_id": context.project_id,
+        "model_group": "three_d" if group == "3d" else group,
+        "templates": templates,
+        "available": available,
+        "expected": expected,
+        "reason": None,
+    }
+
+    if available or not args.acquire:
+        if not available and not expected:
+            payload["reason"] = (
+                f"El grupo no está pedido en este pod: exporta {flag}=1 y reinicia "
+                "para que la Fase 3 lo incluya."
+            )
+        return payload
+
+    # Política: no se descarga lo que no se ha pedido (nada de descargas
+    # especulativas). Pedido y ausente sí se adquiere con la herramienta existente.
+    if not expected:
+        payload["reason"] = (
+            f"El grupo no está pedido en este pod: exporta {flag}=1 y reinicia "
+            "para que la Fase 3 lo incluya."
         )
-        return {
-            "status": "available" if available else "unavailable",
-            "project_id": context.project_id,
-            "model_group": "minimax",
-            "templates": ["minimax_r2v"],
-            "available": available,
-            "reason": reason,
-        }
-    if group in ("three_d", "3d"):
-        available = bool(cfg.three_d_weights_available())
-        reason = None if available else (
-            "Los pesos de Hunyuan3D 2.1 se descargan con "
-            "STUDIO_INCLUDE_3D=1 (o MODEL_PROFILE=unreal) y reinicio del pod."
+        return payload
+
+    from comfy_studio import asset_acquire
+    from comfy_studio.capabilities import needs_for_group
+
+    needs = needs_for_group(flag)
+    report = asset_acquire.acquire(needs)
+    payload["acquisition"] = report.to_public_dict()
+    payload["downloaded"] = [e.filename for e in report.entries if e.status == "downloaded"]
+    payload["failed"] = [e.filename for e in report.failed]
+    now_available = {
+        "animate": cfg.animate_weights_available,
+        "minimax": cfg.minimax_weights_available,
+        "three_d": cfg.three_d_weights_available,
+        "3d": cfg.three_d_weights_available,
+    }[group]()
+    payload["available"] = now_available
+    payload["status"] = "available" if now_available else "unavailable"
+    if not now_available:
+        payload["reason"] = (
+            "La descarga no completó todos los archivos del grupo: "
+            + ", ".join(payload["failed"] or ["desconocido"])
         )
-        return {
-            "status": "available" if available else "unavailable",
-            "project_id": context.project_id,
-            "model_group": "three_d",
-            "templates": ["hunyuan3d_image_to_3d"],
-            "available": available,
-            "reason": reason,
-        }
-    raise ToolExecutionError(
-        f"Grupo de pesos desconocido: {group!r}. Grupos válidos: animate, minimax, three_d."
-    )
+    return payload
+
+
+async def _handle_list_capabilities(
+    args: ListCapabilitiesArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    """Catálogo de capacidades registradas con su estado actual de preparación."""
+    from comfy_studio.capabilities import CAPABILITY_REGISTRY_VERSION, list_capabilities, resolve
+
+    entries = []
+    for spec in list_capabilities():
+        resolution = resolve(spec["id"])
+        entries.append(
+            {
+                "id": spec["id"],
+                "engine": spec["engine"],
+                "templates": spec["templates"],
+                "summary": spec["summary"],
+                "state": resolution.state,
+                "missing_bytes": resolution.missing_bytes,
+            }
+        )
+    return {
+        "status": "ok",
+        "project_id": context.project_id,
+        "registry_version": CAPABILITY_REGISTRY_VERSION,
+        "count": len(entries),
+        "capabilities": entries,
+    }
+
+
+async def _handle_request_capability(
+    args: RequestCapabilityArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    """Resuelve una capacidad y adquiere los activos que falten.
+
+    Es el flujo que define la política: «necesito esta capacidad» -> motor
+    preparado -> activos identificados -> los que faltan se descargan -> receta
+    seleccionada. No ejecuta el render: devuelve el plan para que el agente
+    encuele con `enqueue_render` usando `selected_template`.
+    """
+    from comfy_studio import asset_acquire
+    from comfy_studio.capabilities import CAPABILITY_REGISTRY_VERSION, resolve
+
+    resolution = resolve(args.capability)
+    payload = resolution.to_public_dict()
+    payload["registry_version"] = CAPABILITY_REGISTRY_VERSION
+    payload["project_id"] = context.project_id
+
+    if resolution.state == "unknown_capability":
+        raise ToolExecutionError(resolution.summary)
+
+    if resolution.state == "assets_missing" and args.acquire:
+        report = asset_acquire.acquire(resolution.missing)
+        payload["acquisition"] = report.to_public_dict()
+        payload["downloaded"] = [
+            e.filename for e in report.entries if e.status == "downloaded"
+        ]
+        payload["failed"] = [e.filename for e in report.failed]
+        # Se re-resuelve para reflejar el estado real tras la adquisición.
+        resolution = resolve(args.capability)
+        payload.update(resolution.to_public_dict())
+        payload["registry_version"] = CAPABILITY_REGISTRY_VERSION
+        payload["project_id"] = context.project_id
+
+    if resolution.state == "engine_unprepared":
+        payload["next_step"] = (
+            f"El motor '{resolution.engine}' no está preparado en este pod "
+            f"({resolution.engine_prep.get('state')}). "
+            "No se instala nada en runtime: corrección en el repositorio y nueva imagen."
+        )
+    elif resolution.state == "assets_missing":
+        payload["next_step"] = (
+            "Faltan activos y no se pudieron adquirir; revisa `failed` y el "
+            "espacio libre, o pide el grupo opt-in correspondiente."
+        )
+    else:
+        payload["next_step"] = (
+            f"Listo: encola con `enqueue_render` usando template_id="
+            f"'{resolution.selected_template}'."
+        )
+    return payload
 
 
 async def _handle_export_edl(
@@ -3768,13 +3922,41 @@ def create_default_tool_belt() -> ToolBelt:
         ToolSpec(
             name="download_model",
             description=(
-                "Consulta los grupos de pesos opt-in (animate, three_d): disponibilidad, "
-                "plantillas que los requieren e instrucciones de descarga "
-                "(STUDIO_INCLUDE_ANIMATE=1 / STUDIO_INCLUDE_3D=1 + reinicio del pod)."
+                "Grupos de pesos opt-in (animate, minimax, three_d): disponibilidad y, "
+                "con acquire=True (por defecto), descarga REAL de los archivos que "
+                "faltan usando el cliente de HuggingFace. Nunca descarga un grupo que "
+                "no esté pedido (STUDIO_INCLUDE_*=1): evita descargas especulativas."
             ),
             args_model=DownloadModelArgs,
             handler=_handle_download_model,
             parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="list_capabilities",
+            description=(
+                "Catálogo de capacidades registradas (vídeo, imagen, 3D, audio, música) "
+                "con el estado de preparación de cada una: motor preparado, activos en "
+                "disco y bytes que faltan. Úsalo para saber qué puede ejecutar el pod."
+            ),
+            args_model=ListCapabilitiesArgs,
+            handler=_handle_list_capabilities,
+            parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="request_capability",
+            description=(
+                "Resuelve una capacidad a motor + receta (plantilla) + activos requeridos "
+                "y, con acquire=True (por defecto), descarga los activos que falten con el "
+                "cliente de HuggingFace. Devuelve el plan y el template_id listo para "
+                "`enqueue_render`. No ejecuta el render."
+            ),
+            args_model=RequestCapabilityArgs,
+            handler=_handle_request_capability,
+            parallel_safe=False,
         )
     )
     belt.register(

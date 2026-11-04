@@ -136,25 +136,57 @@ están instalados, cuáles piden pesos y cuáles no tienen binario.
 
 ## 4. Los activos de modelo son dependencias de tarea
 
-[`config/models-studio.json`](../config/models-studio.json) (versión 2) declara
-cada activo con una clase explícita:
+Dos manifiestos versionados declarán los activos, con la misma forma:
+
+| Manifiesto | Contenido |
+|---|---|
+| [`config/models-core.json`](../config/models-core.json) | Fases 1 y 2 (26 entradas, 68.02 GB), generado desde `download-models.sh` y verificado por `HEAD` |
+| [`config/models-studio.json`](../config/models-studio.json) | Fase 3 del perfil studio (79 + 8 entradas) |
+
+Cada entrada lleva `class` explícita:
 
 | Clase | Significado |
 |---|---|
-| `bootstrap` | genuinamente necesario para operar (reservado; la Fase 1 vive en `download-models.sh`) |
+| `bootstrap` | genuinamente necesario para operar |
 | `task` | se adquiere para la tarea elegida |
-| `optional` | variantes y mejoras (coincide con los grupos `opt_in`) |
+| `optional` | variantes y mejoras (grupos `opt_in`) |
 
 **Una colección grande de modelos no es bootstrap porque un motor la soporte.**
-La Fase 3 (163.71 GB) está clasificada como `task`, y los tres grupos opt-in
-(`animate`, `three_d`, `minimax`) como `optional`.
+El resultado de clasificar de verdad: de 68.02 GB en el núcleo, solo
+**2.86 GB (10 archivos)** son bootstrap —el stack facial/VAE que la Fase 1 trae
+antes de abrir ComfyUI—. Los 65.16 GB restantes son selección de modelo. En la
+Fase 3, los 163.71 GB son `task` y los tres grupos opt-in `optional`.
 
-[`studio/comfy_studio/model_assets.py`](../studio/comfy_studio/model_assets.py)
-es la fuente de verdad en Python: resuelve el manifiesto igual que
-`download-models.sh`, agrupa por clase y por opt-in, y comprueba presencia real.
+### Resolvedor de capacidades
 
-Con ello, «disponible» pasó de ser una variable de entorno a ser un hecho del
-disco:
+[`studio/comfy_studio/capabilities.py`](../studio/comfy_studio/capabilities.py)
+implementa el flujo que define la política. Cada plantilla ya declaraba sus
+`models`; el resolvedor une esa declaración con los manifiestos:
+
+```
+request_capability("video.face_restore")
+  → motor `comfyui` y su estado de preparación
+  → receta: plantilla `face_fix`
+  → activos: 4 ficheros, con clase y origen (core/studio)
+  → faltan 4 (0.92 GB) → se adquieren con el cliente `hf`
+  → estado: ready, con `template_id` listo para `enqueue_render`
+```
+
+Herramientas del agente:
+
+- `list_capabilities`: catálogo con el estado de preparación de cada capacidad.
+- `request_capability`: resuelve y, con `acquire=True`, descarga lo que falta.
+- `download_model`: ahora **descarga de verdad** los grupos opt-in pedidos
+  (antes solo informaba). Nunca descarga un grupo que no esté pedido
+  (`STUDIO_INCLUDE_*=1`): sin descargas especulativas.
+
+[`asset_acquire.py`](../studio/comfy_studio/asset_acquire.py) ejecuta la
+adquisición con las mismas reglas que `download-models.sh`: reutiliza lo que ya
+está, comprueba espacio libre por intento y falla cerrado, staging aislado con
+`rename()` atómico, 3 intentos con backoff, timeout por intento, y admite
+progreso y cancelación.
+
+Con ello, «disponible» pasó de variable de entorno a hecho del disco:
 
 - `*_weights_expected()` = se pidió (intención);
 - `*_weights_available()` = está en disco (hecho).
@@ -163,20 +195,15 @@ Esto corrigió un defecto real: el camino del agente (`enqueue_render`) no pasab
 los flags de disponibilidad, así que podía encolar renders de Animate/3D/MiniMax
 sin pesos.
 
-`scripts/check_models_manifest.py` valida la clase de cada entrada, su coherencia
-con `opt_in` y el desglose `meta.classes`.
-
 ### Pendiente
 
-- **Resolución por capacidad**: hoy el agente pide `template_id` + parámetros
-  libres. Falta un resolutor determinista `capacidad -> receta -> activos` que
-  use el manifiesto y adquiera lo que falte con la herramienta de descarga
-  existente.
-- **Integridad**: se verifica el tamaño exacto vía `x-linked-size`, pero no hay
-  `sha256` por entrada ni `revision` fijada (las URLs usan `resolve/main`).
+- **Integridad**: se verifica el tamaño exacto vía `x-linked-size` (y las URLs
+  canónicas por tipo de repo), pero no hay `sha256` por entrada ni `revision`
+  fijada (las URLs usan `resolve/main`).
 - **Retención de caché**: no hay política de expulsión; hoy todo se conserva
   hasta que el operador interviene.
-
+- **Clasificar las Fases 1/2 por perfil**: el manifiesto core declara `class`,
+  pero la selección por `MODEL_PROFILE` sigue viviendo en bash.
 ---
 
 ## 5. Hardware objetivo
@@ -233,5 +260,6 @@ Pendiente: modelo de coste de transferencia/egress y de arranque en frío.
 > → la tarea se ejecuta;
 > → los recursos se liberan y los activos reutilizables se retienen según política.
 
-Los pasos 1, 2 (parcial), 5 y 6 están implementados. El resolvedor determinista
-(3) y las recetas medidas (4) son el trabajo pendiente de esta política.
+Los pasos 1, 2, 3, 5 y 6 están implementados. Quedan como trabajo pendiente las
+**recetas de ejecución medidas** (paso 4) y la retención de caché con política
+explícita (paso 6).

@@ -81,15 +81,16 @@ DECLARED_THRESHOLDS_GB: dict[str, int] = {
     "unreal": 210,
 }
 
-#: Mínimo que pide `tools/mac/comfy` al alquilar (GB).
-RENT_MIN_DISK_GB: dict[str, int] = {
+#: Mínimo que pide `tools/mac/comfy` al alquilar (GB). `studio`/`unreal` son None
+#: porque el helper los DERIVA de este mismo script: no hay literal que verificar.
+RENT_MIN_DISK_GB: dict[str, int | None] = {
     "all": 120,
     "general": 120,
     "realistic": 120,
     "anime": 120,
     "minimal": 120,
-    "studio": 200,
-    "unreal": 220,
+    "studio": None,
+    "unreal": None,
 }
 
 OPT_IN_FLAGS = {
@@ -180,7 +181,6 @@ def requirement_bytes(
         "volume_shortfall_gb": max(0.0, (total - (rent or 0) * GB) / GB),
     }
 
-
 def _gb(value: int) -> str:
     return f"{value / GB:.2f} GB ({value / GiB:.2f} GiB)"
 
@@ -213,6 +213,8 @@ def render(report: dict[str, Any]) -> str:
             else f"INSUFICIENTE por {report['volume_shortfall_gb']:.1f} GB"
         )
         lines.append(f"  volumen mínimo (comfy rent): {rent} GB -> {verdict}")
+    else:
+        lines.append("  volumen mínimo (comfy rent): derivado por el helper")
     lines.append(f"  volumen derivado recomendado: {report['min_volume_gb']} GB")
     return "\n".join(lines)
 

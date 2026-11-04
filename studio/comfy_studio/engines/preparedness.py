@@ -47,8 +47,10 @@ class EnginePrepSpec:
     """
 
     name: str
-    #: Entrypoints candidatos: nombre resoluble en PATH o ruta absoluta.
+    #: Entrypoints candidatos: nombre resoluble en PATH o ruta absoluta ejecutable.
     binaries: tuple[str, ...] = ()
+    #: Ficheros que deben existir (no ejecutables), p. ej. `main.py`.
+    files: tuple[str, ...] = ()
     #: Módulos Python importables (se comprueban con `find_spec`, sin importar).
     modules: tuple[str, ...] = ()
     #: Entornos aislados que deben existir en disco.
@@ -180,7 +182,13 @@ def probe_preparedness(
             venvs_ok = False
             missing.append(f"venv:{venv}")
 
-    installed = binaries_ok and modules_ok and venvs_ok
+    files_ok = True
+    for required in spec.files:
+        if not os.path.isfile(_expand(required, environment)):
+            files_ok = False
+            missing.append(f"fichero:{required}")
+
+    installed = binaries_ok and modules_ok and venvs_ok and files_ok
 
     integration_ok = True
     for var in spec.config_env:
@@ -253,7 +261,7 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
     specs = [
         EnginePrepSpec(
             name="comfyui",
-            binaries=("{COMFY_APP_DIR}/main.py",),
+            files=("{COMFY_APP_DIR}/main.py",),
             config_env=("COMFY_APP_DIR",),
             note="núcleo + 12 custom nodes fijados por SHA en nodes.lock",
         ),
