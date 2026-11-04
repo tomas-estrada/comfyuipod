@@ -230,7 +230,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
   - `frames` (*integer*, `77` por defecto): longitud a 16 fps.
   - `steps` (*integer*, `20`), `cfg` (*number*, `5.0`): muestreo estándar, sin LoRA Lightning.
 - **Defaults de rendimiento**: `832x480` (`480p`), `77` frames (`16` fps), `steps=20`, `cfg=5.0`, `denoise=1.0`, `int8_convrot`.
-- **Disponibilidad (gating por pesos)**: solo se ofrece y acepta submits con `STUDIO_INCLUDE_ANIMATE=1`; sin esos pesos, `available=false` con instrucciones en `unavailable_reason` (igual que el grupo 3D).
+- **Disponibilidad (gating por pesos)**: el registro la expone siempre con `available=false` e instrucciones en `unavailable_reason` (es el panel quien no la ofrece en el selector) y solo acepta submits con `STUDIO_INCLUDE_ANIMATE=1`; sin esos pesos `POST .../submit` responde `422` con el mensaje que indica cómo descargarlos (nunca falla en silencio).
 
 ---
 
@@ -293,7 +293,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
   - `octree_resolution` (*integer*): resolución del voxelado (`256` por defecto).
 - **Defaults de rendimiento**: `precision=fp16`, `latent_resolution=4096`, `octree_resolution=256`, `steps=30`, `cfg=5.0`, `offload=false`.
 - **Salida**: `output_kind=model3d`; el `GLB` queda registrado en la galería del proyecto (`outputs/`).
-- **Disponibilidad (gating por pesos)**: solo se descarga con `STUDIO_INCLUDE_3D=1` o `MODEL_PROFILE=unreal`. Sin esos pesos, `GET /studio/api/templates` **no la ofrece**, `GET /studio/api/templates/hunyuan3d_image_to_3d` la devuelve con `available=false` y `unavailable_reason`, y `POST .../submit` responde `422` con el mensaje que indica cómo descargarlos (nunca falla en silencio).
+- **Disponibilidad (gating por pesos)**: solo se descarga con `STUDIO_INCLUDE_3D=1` o `MODEL_PROFILE=unreal`. Sin esos pesos, `GET /studio/api/templates` sigue listándola con `available=false` y `unavailable_reason` (es el panel quien la excluye del selector), `GET /studio/api/templates/hunyuan3d_image_to_3d` la devuelve con `available=false` y `unavailable_reason`, y `POST .../submit` responde `422` con el mensaje que indica cómo descargarlos (nunca falla en silencio).
 
 ---
 
@@ -307,17 +307,14 @@ python -m comfy_studio.templates
 
 ### Reglas verificadas por plantilla
 
-1. **Metadatos y documentación en español**: presencia de `id`, `name`, `category`, `output_kind`, `performance_defaults`, `parameters` y `docs` (`uso`, `inputs`, `defaults`, `notas_rendimiento`).
-2. **Defaults de rendimiento obligatorios**:
-   - `vace_*` y `wan_*` 14B: `height == 480`, `width == 832`, `steps == 4`, `offload == True`, `weight_dtype == "fp8_scaled"`.
-   - `wan_t2v_5b` y `wan_i2v_5b`: `width == 1280`, `height == 720`, `steps == 4`, `fp16` + LoRA Turbo. La variante `wan_i2v_5b` declara además `WanImageToVideo` con `start_image` + `clip_vision_output`.
-   - `sdxl_image` y `sdxl_ipadapter`: `width == 1024`, `height == 1024`, `steps == 25`.
+1. **Metadatos y documentación en español**: presencia de `id`, `name`, `summary`, `description`, `category`, `output_kind`, `performance_defaults`, `parameters`, `workflow` y `docs` (`uso`, `inputs`, `defaults`, `notas_rendimiento`).
+2. **Metadatos de rendimiento obligatorios**: cada plantilla debe declarar `performance_defaults` (objeto no vacío). Los valores concretos —`832x480` + `steps=4` + `offload=true` + `precision="fp8_scaled"` en `vace_*`, `wan_flf2v`, `wan_i2v` y `wan_t2v`; `1280x720` + `steps=4` + LoRA Turbo en `wan_t2v_5b`/`wan_i2v_5b`; `1024x1024` + `steps=25` en `sdxl_*`— se verifican en [`studio/tests/test_templates_registry.py`](../studio/tests/test_templates_registry.py), no en el validador.
 3. **Integridad del grafo ComfyUI API-format y contratos pinneados**:
    - Todos los `class_type` pertenecen al catálogo `KNOWN_NODE_SPECS`, declaran todas sus entradas obligatorias (`required_inputs`, incluyendo `pingpong` en `VHS_VideoCombine`) sin valores `null` desconectados y rechazan cualquier entrada no declarada en `required_inputs ∪ optional_inputs` del nodo pinneado (p. ej. `clip_vision_output` o `control_mask` singular en `WanVaceToVideo`, u `offload` en `KSamplerAdvanced`).
    - En `WanVaceToVideo`, `control_masks` no puede alimentarse directamente del slot 1 (canal alfa) de `LoadImage` ni de una máscara espacial única; la imagen cargada por `LoadImage` debe repetirse a la longitud temporal solicitada mediante `RepeatImageBatch` (`amount == length`) antes de extraer el canal RGB con `ImageToMask` (evitando que `WanVaceToVideo` rellene los frames restantes con `1.0` blanco/editable).
    - Todo enlace `["node_id", slot_idx]` apunta a un nodo existente en el mismo workflow con índice de salida entero `>= 0`.
    - Ausencia de ciclos dirigidos (DAG válido).
-   - Existencia de al menos un nodo terminal de salida (`VHS_VideoCombine` o `SaveImage`) cuyo `filename_prefix` contiene `{{output_prefix}}` o `{{project_id}}`.
+   - Existencia de al menos un nodo terminal de salida (`SaveImage`, `VHS_VideoCombine` o `SaveGLB`) cuyo `filename_prefix` contiene `{{output_prefix}}` o `{{project_id}}`.
 4. **Correspondencia de placeholders `{{param}}`**:
    - Todo placeholder usado en el grafo está declarado en `parameters` (o en el contexto interno `{project_id, job_id, template_id, output_prefix}`).
 
@@ -329,6 +326,6 @@ python -m comfy_studio.templates
 |---|---|
 | `GET /studio/api/templates` | Lista las 17 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
 | `GET /studio/api/templates/{template_id}` | Devuelve el detalle completo de una plantilla incluyendo su grafo `workflow` en formato API (`404` si no existe). |
-| `POST /studio/api/templates/{template_id}/submit` | Valida `params` contra el schema de la plantilla (`422` con detalle si hay campos inválidos, fuera de rango o desconocidos, sin encolar en ComfyUI), sube a ComfyUI los `*_asset_id` referenciados del proyecto, crea el job en `studio.db`, ejecuta el workflow contra ComfyUI, descarga las salidas vía `/view` y las registra en la galería del proyecto (`category="outputs"`). |
+| `POST /studio/api/templates/{template_id}/submit` | Valida `params` contra el schema de la plantilla (`422` con detalle si hay campos inválidos, fuera de rango o desconocidos, sin encolar en ComfyUI), sube a ComfyUI los `*_asset_id` referenciados del proyecto y crea el job en `studio.db`. Por defecto responde `202 Accepted` con el `job_id` y el render corre en segundo plano (seguimiento por `GET /studio/api/jobs/{job_id}` y SSE `/studio/api/progress`, acotado por `STUDIO_MAX_CONCURRENT_RENDERS`); con `?wait=1` se ejecuta en línea y devuelve el resultado. Al terminar descarga las salidas vía `/view` y las registra en la galería del proyecto (`category="outputs"`). |
 | `GET /studio/api/projects/{project_id}/gallery` | Lista los assets generados en la galería del proyecto enriquecidos con `preview_url`, `download_url` y `view_url`. |
 | `GET /studio/api/view` | Sirve previsualización inline o descarga (`?download=1` → `Content-Disposition: attachment`) de un asset de galería (`project_id` + `asset_id`) o salida de ComfyUI (`filename`). |

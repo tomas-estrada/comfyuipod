@@ -1,13 +1,29 @@
 # ComfyUIPod Agent Conventions
 
 ## Project Structure
-- `comfyctl/` — Rust supervisor, status server, strict checks, triage
-- `studio/` — Python FastAPI + LLM agent + job queue + templates
-- `panel/` — JS frontend, home portal
-- `config/` — nodes.lock, constraints.txt, nginx.conf, model manifests
-- `scripts/` — start.sh, download-models.sh, triage patterns
-- `tools/mac/comfy` — macOS CLI helper
-- `docs/auditorias/` — audit findings
+- `comfyctl/` — Rust supervisor, status server, strict checks (S1..S16 + S13b/S13c), triage, redaction
+- `studio/comfy_studio/` — Python FastAPI service (`comfy_studio`), package layout:
+  - `app.py` / `server.py` / `webutil.py` — app assembly, single-worker CLI entry, shared HTTP/upload/auth helpers
+  - `routers/` — 14 route modules under `/studio/api/*` (core, projects, assets, jobs, templates, chat, perception, media_ops, brief, ads, review_pins, montage, productions)
+  - `agent/` — LLM agent loop, OpenAI-compatible client, 42-tool belt, roles, budgets, memory
+  - `templates/` — 17 curated workflow templates + structural/semantic validator
+  - `engines/` — 16 engines behind a uniform list/install/verify/run contract, install gate
+  - `orchestration/` — production graph, planner, executor, evaluator, SQLite checkpointer
+  - `creative/` — project understanding, creative brief, review, delivery
+  - `ads/` — `ad_studio` engine (script → storyboard → variants + QA)
+  - `montage/` — assisted, verifiable montage from a brief
+  - `edl/` — EDL document, deterministic ffmpeg executor, highlights, windowed assembly
+  - `perception/` — CLIP/InsightFace indexes over sqlite-vec, keyframes
+  - `asr/` — WhisperX transcription + FunASR diarization
+  - `ml/` — subprocess worker protocol, backend probe, real/sim backends
+  - `agent_brain/` — memory/compress/retrieve/rerank capabilities (health-reported)
+  - `stubs/` — deterministic ComfyUI and LLM doubles for tests/CI
+- `panel/` — vanilla JS SPA (projects, chat, jobs, gallery, EDL, ads), no build, no CDN
+- `config/` — nodes.lock, constraints.txt, nginx.conf, extra_model_paths.yaml, model manifests, probes, portal
+- `scripts/` — start.sh, download-models.sh, check_models_manifest.py, triage_patterns.json
+- `tools/mac/comfy` — macOS/Linux Vast.ai CLI helper
+- `docs/` — architecture, guides, decisions, contracts (frozen JSON schemas), proposals
+- `docs/auditorias/` — point-in-time audit records (do not treat as current state)
 
 ## Validation Commands
 Always run these before submitting changes:
