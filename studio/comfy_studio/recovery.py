@@ -32,6 +32,28 @@ STALE_STATUSES = ("queued", "running", "cancelling", "fetching")
 MAX_INTERRUPT_RETRIES = 1
 MAX_CONCURRENT_RESUMES = 2  # M3-SCR-016: reanudaciones simultáneas en el arranque
 
+#: Tareas de re-adjuste (re-attach) lanzadas al recuperar; se guardan para que el
+#: loop de asyncio no las recoja el GC antes de terminar.
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+async def active_comfyui_prompt_ids(comfyui_client: ComfyUIClient) -> set[str] | None:
+    """Ids de prompt vivos en ComfyUI (`/queue` running+pending e `/history`).
+
+    Devuelve `None` si ComfyUI no responde (p. ej. en pleno reinicio): el llamador
+    decide si trata el conjunto como vacío (arranque) o aborta el chequeo (watchdog).
+    """
+    try:
+        queue = await comfyui_client.get_queue()
+        history = await comfyui_client.get_history()
+    except ComfyUIError:
+        return None
+    return (
+        set(queue.running_prompt_ids())
+        | set(queue.pending_prompt_ids())
+        | set(history.keys())
+    )
+
 
 def find_stale_jobs(store: ProjectStore) -> list[dict[str, Any]]:
     """Jobs en estados en vuelo que ningún ejecutor posee tras un reinicio."""
@@ -48,18 +70,35 @@ async def recover_interrupted_jobs(
     broker: ProgressBroker | None = None,
     resume: bool = True,
     start_delay_s: float = 0.0,
+    watchdog: bool = False,
 ) -> dict[str, int]:
     """Marca jobs huérfanos como `interrupted` y reencola una vez los elegibles.
 
-    Devuelve un informe `{"stale", "interrupted", "requeued", "done", "failed"}`.
+    Devuelve un informe `{"stale", "interrupted", "requeued", "attached", "active",
+    "done", "failed"}`.
     Con `resume=False` (`STUDIO_RESUME_JOBS=0`) la recuperación es **inerte**: no
     se altera el estado de ningún job (ni se marca `interrupted` ni se reencola);
     el operador decidió desactivarla y la reconciliación es manual.
     Los fallos de conexión con ComfyUI no propagan: el job queda en estado
     terminal con la causa en `error` (el arranque del servidor nunca bloquea).
+
+    Antes de reencolar, se comprueba contra ComfyUI (`/queue` + `/history`) si el
+    `prompt_id` persistido del job sigue vivo: si sigue, el job se **re-adjunta**
+    (`attached`) en vez de re-ejecutarse (evita renders duplicados cuando sólo
+    Studio se reinició). Con `watchdog=True` (reconciliación periódica en vivo) los
+    jobs sin `prompt_id` se omiten y los que siguen vivos en ComfyUI se dejan en paz
+    (`active`): sólo se tocan los que ComfyUI perdió (reinicio de ComfyUI, OOM 137).
     """
     stale = find_stale_jobs(store)
-    report = {"stale": len(stale), "interrupted": 0, "requeued": 0, "done": 0, "failed": 0}
+    report = {
+        "stale": len(stale),
+        "interrupted": 0,
+        "requeued": 0,
+        "attached": 0,
+        "active": 0,
+        "done": 0,
+        "failed": 0,
+    }
     if not stale:
         return report
 
@@ -73,15 +112,60 @@ async def recover_interrupted_jobs(
         await asyncio.sleep(start_delay_s)
 
     registry = get_default_registry()
+    active_ids = await active_comfyui_prompt_ids(comfyui_client)
     resume_semaphore = asyncio.Semaphore(MAX_CONCURRENT_RESUMES)
     pending_executions: list[dict[str, Any]] = []
     for job in stale:
         job_id = str(job["id"])
         project_id = job.get("project_id")
         template_id = job.get("template_id")
+        prompt_id = str(job.get("prompt_id") or "")
         result_meta = dict(job.get("result") or {})
         retries = int(result_meta.get("interrupt_retries") or 0)
         project_alive = bool(project_id) and store.get_project(str(project_id)) is not None
+
+        if watchdog and not prompt_id:
+            # Job en cola todavía no despachado (sin prompt_id): su ejecutor sigue
+            # vivo en este proceso; el watchdog no debe tocarlo.
+            continue
+        if prompt_id and active_ids is not None and prompt_id in active_ids:
+            # El prompt sigue vivo en ComfyUI: no re-ejecutar (evita duplicados).
+            if watchdog:
+                report["active"] += 1
+                continue
+            store.update_job(
+                job_id,
+                status="running",
+                result={
+                    **result_meta,
+                    "interrupt_retries": retries,
+                    "reattached_after_restart": True,
+                },
+                error="",
+            )
+            report["attached"] += 1
+            if broker is not None:
+                broker.publish(
+                    "job",
+                    {
+                        "job_id": job_id,
+                        "project_id": project_id,
+                        "prompt_id": prompt_id,
+                        "status": "running",
+                        "reattached": True,
+                    },
+                )
+            task = asyncio.create_task(
+                comfyui_client.poll_until_complete(
+                    prompt_id,
+                    job_id=job_id,
+                    project_id=project_id,
+                    finalize_job=True,
+                )
+            )
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+            continue
 
         can_resume = (
             job.get("kind") == "render"

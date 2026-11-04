@@ -373,14 +373,26 @@ class ComfyUIClient:
         project_id: str | None = None,
         prompt_id: str | None = None,
     ) -> None:
+        eff_prompt_id = prompt_id or error.prompt_id
         if job_id and self._store is not None:
             existing = self._store.get_job(job_id)
-            if existing and existing.get("status") == "cancelled":
-                return
+            if existing is not None:
+                # `cancelled` e `interrupted` son terminales "pegajosos": un poll tardío
+                # no debe resucitarlos ni sobrescribirlos.
+                if existing.get("status") in ("cancelled", "interrupted"):
+                    return
+                # Poll antiguo de un prompt ya re-encolado con otro prompt_id: no
+                # machacar el estado del job vivo (reconciliación tras reinicio de ComfyUI).
+                if (
+                    eff_prompt_id
+                    and existing.get("prompt_id")
+                    and existing.get("prompt_id") != eff_prompt_id
+                    and existing.get("status") in ("queued", "running")
+                ):
+                    return
         redacted_msg = self._redact(error.message)
         error.message = redacted_msg
         error.args = (redacted_msg,)
-        eff_prompt_id = prompt_id or error.prompt_id
         if error.prompt_id is None and eff_prompt_id is not None:
             error.prompt_id = eff_prompt_id
         if job_id and self._store is not None:
@@ -793,11 +805,22 @@ class ComfyUIClient:
         max_wait = timeout if timeout is not None else self.poll_timeout
         deadline = time.monotonic() + max_wait
         tick = 0
+        absent_ticks = 0
 
         try:
             while True:
                 tick += 1
-                history_map = await self.get_history(prompt_id)
+                history_ok = True
+                try:
+                    history_map = await self.get_history(prompt_id)
+                except (ComfyUIConnectionError, ComfyUITimeoutError):
+                    # ComfyUI puede estar reiniciándose (comfyctl lo levanta en segundos):
+                    # no se falla el job a la primera; si al volver el prompt ya no está,
+                    # el contador de ausentes lo marca `interrupted` enseguida.
+                    # M7-SCR-004: con error de transporte NO sabemos si el prompt sigue
+                    # vivo, así que no cuenta como ausente.
+                    history_map = {}
+                    history_ok = False
                 entry = history_map.get(prompt_id)
                 if isinstance(entry, dict) and entry:
                     result = self._inspect_history_entry(prompt_id, entry)
@@ -821,8 +844,31 @@ class ComfyUIClient:
                         return result
 
                 # Aún no está en /history: consultar /queue y emitir progreso de sondeo
-                queue = await self.get_queue()
+                queue_ok = True
+                try:
+                    queue = await self.get_queue()
+                except (ComfyUIConnectionError, ComfyUITimeoutError):
+                    queue = QueueStatus()
+                    queue_ok = False
                 is_running = prompt_id in queue.running_prompt_ids()
+                is_pending = prompt_id in queue.pending_prompt_ids()
+                if history_ok and queue_ok:
+                    # sólo con respuestas válidas de /history y /queue se puede afirmar
+                    # que el prompt desapareció (M7-SCR-004).
+                    if is_running or is_pending:
+                        absent_ticks = 0
+                    else:
+                        absent_ticks += 1
+                    if absent_ticks >= 10:
+                        # El prompt desapareció de /queue e /history: ComfyUI se reinició
+                        # (p. ej. OOM CUDA exit 137) y el prompt en memoria se perdió.
+                        lost_msg = self._redact(
+                            f"El prompt {prompt_id} desapareció de /queue e /history de ComfyUI "
+                            "(ComfyUI se reinició durante la ejecución)"
+                        )
+                        if job_id and self._store is not None:
+                            self._store.update_job(job_id, status="interrupted", error=lost_msg)
+                        raise ComfyUIExecutionError(lost_msg, prompt_id=prompt_id)
                 current_status = "running" if is_running else "queued"
                 estimated_max = float(max(tick + 1, 2))
                 current_val = float(tick)
