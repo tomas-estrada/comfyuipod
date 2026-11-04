@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 PROJECT_SUBDIRS: tuple[str, ...] = ("uploads", "outputs", "keyframes", "voice")
 
@@ -232,6 +232,28 @@ CREATE INDEX IF NOT EXISTS idx_creative_briefs_project_id ON creative_briefs(pro
 """
 
 
+SCHEMA_V2_SQL = """
+CREATE TABLE IF NOT EXISTS review_pins (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    edl_version INTEGER NOT NULL,
+    t_start REAL NOT NULL,
+    t_end REAL NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'note' CHECK (severity IN ('note','issue','blocker')),
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','discarded')),
+    body TEXT NOT NULL,
+    author TEXT NOT NULL DEFAULT 'reviewer',
+    resolved_by TEXT,
+    resolution_note TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_pins_project
+    ON review_pins(project_id, edl_version, status);
+"""
+
+
 class ProjectStore:
     """Almacén SQLite (studio.db) y gestor de archivos bajo STUDIO_DATA_DIR/projects."""
 
@@ -267,18 +289,32 @@ class ProjectStore:
         with self._connection() as conn:
             conn.execute("PRAGMA journal_mode = WAL;")
             conn.executescript(SCHEMA_V1_SQL)
-            existing = conn.execute(
-                "SELECT version FROM schema_version WHERE version = ?",
-                (SCHEMA_VERSION,),
+            existing_v1 = conn.execute(
+                "SELECT version FROM schema_version WHERE version = 1",
             ).fetchone()
-            if existing is None:
+            if existing_v1 is None:
                 conn.execute(
                     "INSERT INTO schema_version (version, applied_at, description) "
                     "VALUES (?, ?, ?)",
                     (
-                        SCHEMA_VERSION,
+                        1,
                         _utc_now_iso(),
                         "Initial schema: projects, jobs, assets, chat, transcriptions, edl",
+                    ),
+                )
+            # M3-RVP-001: migración a v2 (review_pins). Idempotente: CREATE IF NOT EXISTS.
+            existing_v2 = conn.execute(
+                "SELECT version FROM schema_version WHERE version = 2",
+            ).fetchone()
+            if existing_v2 is None:
+                conn.executescript(SCHEMA_V2_SQL)
+                conn.execute(
+                    "INSERT INTO schema_version (version, applied_at, description) "
+                    "VALUES (?, ?, ?)",
+                    (
+                        2,
+                        _utc_now_iso(),
+                        "M3-RVP-001: review_pins para feedback anclado a versiones de EDL",
                     ),
                 )
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION};")
@@ -1006,6 +1042,209 @@ class ProjectStore:
             )
             conn.commit()
         return self.get_edl_version(project_id, current["id"])
+
+    # ------------------------------------------------------------------
+    # Review pins (M3-RVP-001): feedback anclado a versiones de EDL
+    # ------------------------------------------------------------------
+
+    PIN_SEVERITIES: tuple[str, ...] = ("note", "issue", "blocker")
+    PIN_STATUSES: tuple[str, ...] = ("open", "resolved", "discarded")
+    PIN_BODY_MAX_CHARS = 2000
+    PIN_RESOLUTION_MAX_CHARS = 1000
+
+    @staticmethod
+    def _row_to_review_pin(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "edl_version": int(row["edl_version"]),
+            "t_start": float(row["t_start"]),
+            "t_end": float(row["t_end"]),
+            "severity": row["severity"],
+            "status": row["status"],
+            "body": row["body"],
+            "author": row["author"],
+            "resolved_by": row["resolved_by"],
+            "resolution_note": row["resolution_note"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def create_review_pin(
+        self,
+        project_id: str,
+        *,
+        edl_version: int,
+        t_start: float,
+        t_end: float,
+        severity: str,
+        body: str,
+        author: str = "reviewer",
+    ) -> dict[str, Any]:
+        project = self.get_project(project_id)
+        if project is None:
+            raise ValueError(f"Proyecto no encontrado: {project_id!r}")
+        pid = project["id"]
+        if severity not in self.PIN_SEVERITIES:
+            raise ValueError(
+                f"Severidad inválida: {severity!r}. Debe ser una de {self.PIN_SEVERITIES}."
+            )
+        clean_body = (body or "").strip()
+        if not clean_body:
+            raise ValueError("El cuerpo del pin no puede estar vacío.")
+        if len(clean_body) > self.PIN_BODY_MAX_CHARS:
+            raise ValueError(
+                f"El cuerpo del pin excede {self.PIN_BODY_MAX_CHARS} caracteres."
+            )
+        with self._connect() as conn:
+            version_row = conn.execute(
+                "SELECT 1 FROM edl_versions WHERE project_id = ? AND version = ?",
+                (pid, int(edl_version)),
+            ).fetchone()
+            if version_row is None:
+                raise ValueError(
+                    f"Versión de EDL no encontrada: {edl_version!r} "
+                    f"en proyecto {pid!r}"
+                )
+            pin_id = f"pin-{uuid.uuid4().hex[:12]}"
+            now = _utc_now_iso()
+            conn.execute(
+                "INSERT INTO review_pins "
+                "(id, project_id, edl_version, t_start, t_end, severity, status, "
+                "body, author, resolved_by, resolution_note, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, NULL, NULL, ?, ?)",
+                (
+                    pin_id,
+                    pid,
+                    int(edl_version),
+                    float(t_start),
+                    float(t_end),
+                    severity,
+                    clean_body,
+                    author,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM review_pins WHERE id = ?",
+                (pin_id,),
+            ).fetchone()
+        assert row is not None
+        return self._row_to_review_pin(row)
+
+    def get_review_pin(self, project_id: str, pin_id: str) -> dict[str, Any] | None:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM review_pins WHERE project_id = ? AND id = ?",
+                (pid, pin_id),
+            ).fetchone()
+        return self._row_to_review_pin(row) if row is not None else None
+
+    def list_review_pins(
+        self,
+        project_id: str,
+        *,
+        edl_version: int | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        pid = self._validate_project_id(project_id)
+        if status is not None and status not in self.PIN_STATUSES:
+            raise ValueError(
+                f"Estado inválido: {status!r}. Debe ser uno de {self.PIN_STATUSES}."
+            )
+        query = "SELECT * FROM review_pins WHERE project_id = ?"
+        params: list[Any] = [pid]
+        if edl_version is not None:
+            query += " AND edl_version = ?"
+            params.append(int(edl_version))
+        if status is not None:
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY t_start ASC, created_at ASC"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_review_pin(r) for r in rows]
+
+    def update_review_pin(
+        self,
+        project_id: str,
+        pin_id: str,
+        *,
+        t_start: float | None = None,
+        t_end: float | None = None,
+        status: str | None = None,
+        resolution_note: str | None = None,
+        resolved_by: str | None = None,
+    ) -> dict[str, Any] | None:
+        current = self.get_review_pin(project_id, pin_id)
+        if current is None:
+            return None
+        if status is not None and status not in self.PIN_STATUSES:
+            raise ValueError(
+                f"Estado inválido: {status!r}. Debe ser uno de {self.PIN_STATUSES}."
+            )
+        new_status = status if status is not None else current["status"]
+        if new_status != "open" and current["status"] != "open":
+            raise ValueError(
+                f"El pin {pin_id!r} ya está en estado {current['status']!r}; "
+                "solo los pins abiertos pueden cambiar de estado."
+            )
+        if resolution_note is not None and len(resolution_note) > self.PIN_RESOLUTION_MAX_CHARS:
+            raise ValueError(
+                f"La nota de resolución excede {self.PIN_RESOLUTION_MAX_CHARS} caracteres."
+            )
+        new_t_start = (
+            float(t_start) if t_start is not None else current["t_start"]
+        )
+        new_t_end = float(t_end) if t_end is not None else current["t_end"]
+        if new_t_start > new_t_end:
+            raise ValueError("t_start no puede ser mayor que t_end.")
+        clean_note = resolution_note
+        if clean_note is not None:
+            clean_note = clean_note.strip() or None
+        sets: list[str] = [
+            "t_start = ?",
+            "t_end = ?",
+            "status = ?",
+            "resolution_note = ?",
+            "updated_at = ?",
+        ]
+        params: list[Any] = [new_t_start, new_t_end, new_status, clean_note]
+        if new_status != "open":
+            params.append(resolved_by or "reviewer")
+            sets.insert(len(sets) - 1, "resolved_by = ?")
+        else:
+            params.append(current["resolved_by"])
+            sets.insert(len(sets) - 1, "resolved_by = ?")
+        params.extend([_utc_now_iso(), current["project_id"], current["id"]])
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE review_pins SET {', '.join(sets)} "
+                "WHERE project_id = ? AND id = ?",
+                params,
+            )
+            conn.commit()
+        return self.get_review_pin(project_id, pin_id)
+
+    def delete_review_pin(self, project_id: str, pin_id: str) -> bool:
+        current = self.get_review_pin(project_id, pin_id)
+        if current is None:
+            return False
+        if current["status"] != "open":
+            raise ValueError(
+                f"Solo se pueden eliminar pins abiertos; {pin_id!r} está en "
+                f"estado {current['status']!r}."
+            )
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM review_pins WHERE project_id = ? AND id = ?",
+                (current["project_id"], pin_id),
+            )
+            conn.commit()
+        return cur.rowcount > 0
 
     # ------------------------------------------------------------------
     # Transcriptions (ASR whisperx + diarization FunASR cam++)

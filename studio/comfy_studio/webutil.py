@@ -16,13 +16,13 @@ import shutil
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import aclosing
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from python_multipart.multipart import parse_options_header
 from starlette.datastructures import FormData, Headers
 from starlette.formparsers import FormParser, MultiPartException, MultiPartParser
@@ -86,6 +86,48 @@ class ProductionPlanUpdateRequest(BaseModel):
 
     idea: str | None = Field(default=None, min_length=1, max_length=4000)
     shots: list[ProductionShotEdit] | None = Field(default=None, max_length=200)
+
+
+class ReviewPinCreateRequest(BaseModel):
+    """Payload de creación de un review pin anclado a una versión de EDL (M3-RVP-001)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    edl_version: int = Field(..., ge=1, description="Versión del EDL revisado.")
+    t_start: float = Field(
+        ..., ge=0.0, description="Segundo de inicio del pin en el timeline renderizado."
+    )
+    t_end: float = Field(
+        ..., ge=0.0, description="Segundo de fin del pin (>= t_start)."
+    )
+    severity: Literal["note", "issue", "blocker"] = Field(
+        default="note", description="Severidad del feedback."
+    )
+    body: str = Field(
+        ..., min_length=1, max_length=2000, description="Comentario del revisor."
+    )
+
+    @model_validator(mode="after")
+    def _check_window(self) -> ReviewPinCreateRequest:
+        if self.t_end < self.t_start:
+            raise ValueError(
+                f"t_end ({self.t_end}) no puede ser menor que t_start ({self.t_start})."
+            )
+        return self
+
+
+class ReviewPinUpdateRequest(BaseModel):
+    """Payload de actualización de un review pin (M3-RVP-001)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    t_start: float | None = Field(default=None, ge=0.0)
+    t_end: float | None = Field(default=None, ge=0.0)
+    status: Literal["open", "resolved", "discarded"] | None = None
+    resolution_note: str | None = Field(
+        default=None, max_length=1000,
+        description="Nota opcional de resolución; solo aplica con status != open."
+    )
 
 
 class JobCreateRequest(BaseModel):
