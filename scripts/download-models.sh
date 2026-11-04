@@ -119,8 +119,10 @@ require_disk_space() {
     local free
     free="$(disk_free_bytes "${path}")"
     if ! [[ "${free}" =~ ^[0-9]+$ ]]; then
-        log "WARN: no se pudo leer el espacio libre de ${path}; se continúa la descarga."
-        return 0
+        # M7-OPS-007: fail-closed. Sin lectura fiable del espacio libre no se puede
+        # garantizar el margen; abortar es reintentable en el siguiente arranque.
+        log "ERROR: no se pudo leer el espacio libre de ${path}; se aborta la descarga (fail-closed)."
+        return 1
     fi
     local needed=$(( expected + DISK_SAFETY_MARGIN_BYTES ))
     if [ "${free}" -lt "${needed}" ]; then

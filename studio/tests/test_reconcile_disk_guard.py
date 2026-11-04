@@ -22,7 +22,12 @@ from fastapi import HTTPException
 from starlette.datastructures import Headers
 
 from comfy_studio.app import _check_upload_free_disk
-from comfy_studio.comfyui_client import ComfyUIClient, ComfyUIExecutionError
+from comfy_studio.comfyui_client import (
+    ComfyUIClient,
+    ComfyUIConnectionError,
+    ComfyUIExecutionError,
+    ComfyUITimeoutError,
+)
 from comfy_studio.config import StudioConfig
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
@@ -137,6 +142,40 @@ async def test_poll_marks_interrupted_when_prompt_vanishes(reconcile_env) -> Non
     assert recovered is not None
     assert recovered["status"] == "interrupted"
     assert "desapareció" in (recovered["error"] or "")
+
+
+@pytest.mark.anyio
+async def test_poll_does_not_mark_interrupted_on_transport_errors(
+    reconcile_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M7-SCR-004: un error de transporte no prueba que el prompt desapareció.
+
+    Con ComfyUI inalcanzable (reinicio en curso o cuelgue transitorio) el poll NO
+    debe contar ticks como "ausente" ni marcar el job `interrupted`; espera al
+    timeout y marca el fallo como timeout.
+    """
+    store, _broker, project, client = reconcile_env
+    job = _job_with_prompt(store, project["id"], "flaky-prompt-1")
+
+    async def _boom(*_args, **_kwargs):
+        raise ComfyUIConnectionError("ComfyUI no responde")
+
+    monkeypatch.setattr(client, "get_history", _boom)
+    monkeypatch.setattr(client, "get_queue", _boom)
+
+    with pytest.raises(ComfyUITimeoutError):
+        await client.poll_until_complete(
+            "flaky-prompt-1",
+            poll_interval=0.01,
+            timeout=0.2,
+            job_id=job["id"],
+            project_id=project["id"],
+        )
+
+    recovered = store.get_job(job["id"])
+    assert recovered is not None
+    assert recovered["status"] != "interrupted"
+    assert "desapareció" not in (recovered["error"] or "")
 
 
 def test_upload_free_disk_returns_507_when_full(
