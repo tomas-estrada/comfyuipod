@@ -25,6 +25,7 @@
         perceptionResults: null,
         perceptionNotice: "",
         editedCuts: null,
+        reviewPins: [],
         toolEvents: [],
         selectedKeyframeIds: new Set(),
         chatDomProjectId: null,
@@ -1615,6 +1616,7 @@
         const targetProjectId = state.activeProjectId;
         if (!targetProjectId) {
             renderEdlView();
+            await refreshReviewPins();
             return;
         }
         try {
@@ -1637,13 +1639,172 @@
                 }
             }
             await refreshIdentities(targetProjectId);
+            await refreshReviewPins(targetProjectId);
             if (state.activeProjectId === targetProjectId) {
                 renderEdlView();
             }
         } catch (_err) {
             if (state.activeProjectId === targetProjectId) {
                 renderEdlView();
+                refreshReviewPins(targetProjectId);
             }
+        }
+    }
+
+    /* --- M3-RVP-001: pins de revisión anclados al EDL --- */
+    function currentEdlVersion() {
+        const latest = state.edlData && (state.edlData.latest || state.edlData.edl);
+        return latest && latest.version ? Number(latest.version) : null;
+    }
+
+    async function refreshReviewPins(projectIdParam) {
+        const targetId = projectIdParam || state.activeProjectId;
+        const version = currentEdlVersion();
+        if (!targetId || !version) {
+            state.reviewPins = [];
+            renderReviewPins();
+            return;
+        }
+        try {
+            const resp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(targetId)}/pins?edl_version=${encodeURIComponent(version)}`
+            );
+            if (resp.ok && state.activeProjectId === targetId) {
+                const data = await resp.json();
+                state.reviewPins = Array.isArray(data.pins) ? data.pins : [];
+            }
+        } catch (_err) {
+            state.reviewPins = [];
+        }
+        renderReviewPins();
+    }
+
+    function renderReviewPins() {
+        const trackEl = document.getElementById("review-pins-track");
+        const listEl = document.getElementById("review-pins-list");
+        const version = currentEdlVersion();
+        const pins = state.reviewPins || [];
+        const sevLabels = { note: "Nota", issue: "Inconveniente", blocker: "Bloqueante" };
+
+        if (trackEl) {
+            if (!version || pins.length === 0) {
+                trackEl.innerHTML = '<span class="track-empty">Sin pins de revisión en esta versión del EDL.</span>';
+            } else {
+                trackEl.innerHTML = pins
+                    .map(
+                        (pin) => `
+                        <span class="track-segment track-segment-pin pin-sev-${escapeHtml(pin.severity)} ${pin.status !== "open" ? "pin-closed" : ""}" title="${escapeHtml(pin.body)}">
+                            ${Number(pin.t_start).toFixed(1)}s–${Number(pin.t_end).toFixed(1)}s · ${escapeHtml(sevLabels[pin.severity] || pin.severity)}${pin.status !== "open" ? ` · ${escapeHtml(pin.status)}` : ""}
+                        </span>
+                    `
+                    )
+                    .join("");
+            }
+        }
+
+        if (listEl) {
+            if (!version) {
+                listEl.innerHTML =
+                    '<p class="empty-hint">Genera primero una versión de EDL para poder anclar pins a su timeline.</p>';
+                return;
+            }
+            if (pins.length === 0) {
+                listEl.innerHTML =
+                    '<p class="empty-hint">Sin pins de revisión en esta versión. Anota feedback anclado a un timecode y pídeselo al agente con <code>list_review_pins</code>.</p>';
+                return;
+            }
+            listEl.innerHTML = pins
+                .map(
+                    (pin) => `
+                    <div class="item-card pin-item">
+                        <div class="item-main">
+                            <span class="item-title"><code>${Number(pin.t_start).toFixed(1)}s–${Number(pin.t_end).toFixed(1)}s</code> · ${escapeHtml(sevLabels[pin.severity] || pin.severity)} · ${escapeHtml(pin.status)}</span>
+                            <span class="item-meta">${escapeHtml(pin.body)}</span>
+                            ${pin.resolution_note ? `<span class="item-meta"><em>Resolución:</em> ${escapeHtml(pin.resolution_note)}</span>` : ""}
+                        </div>
+                        ${pin.status === "open" ? `
+                        <div class="item-actions">
+                            <button type="button" class="btn btn-secondary btn-sm" data-pin-resolve="${escapeHtml(pin.id)}">Resolver</button>
+                            <button type="button" class="btn btn-secondary btn-sm" data-pin-discard="${escapeHtml(pin.id)}">Descartar</button>
+                            <button type="button" class="btn btn-secondary btn-sm" data-pin-delete="${escapeHtml(pin.id)}">Eliminar</button>
+                        </div>` : ""}
+                    </div>
+                `
+                )
+                .join("");
+        }
+    }
+
+    async function submitReviewPin(event) {
+        event.preventDefault();
+        const version = currentEdlVersion();
+        const statusEl = document.getElementById("review-pin-status");
+        if (!state.activeProjectId || !version) {
+            if (statusEl) statusEl.textContent = "Genera primero una versión de EDL.";
+            return;
+        }
+        const tStart = Number(document.getElementById("review-pin-start").value);
+        const tEnd = Number(document.getElementById("review-pin-end").value);
+        const severity = document.getElementById("review-pin-severity").value;
+        const body = document.getElementById("review-pin-body").value.trim();
+        if (!Number.isFinite(tStart) || !Number.isFinite(tEnd) || tEnd < tStart || !body) {
+            if (statusEl) statusEl.textContent = "Ventana o comentario inválidos.";
+            return;
+        }
+        try {
+            const resp = await apiFetch(`/studio/api/projects/${encodeURIComponent(state.activeProjectId)}/pins`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    edl_version: version,
+                    t_start: tStart,
+                    t_end: tEnd,
+                    severity,
+                    body,
+                }),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                if (statusEl) statusEl.textContent = err.detail || `Error ${resp.status}.`;
+                return;
+            }
+            document.getElementById("review-pin-body").value = "";
+            if (statusEl) statusEl.textContent = "Pin añadido.";
+            await refreshReviewPins();
+        } catch (err) {
+            if (statusEl) statusEl.textContent = `Error de red: ${err.message}`;
+        }
+    }
+
+    async function reviewPinAction(action, pinId) {
+        const statusEl = document.getElementById("review-pin-status");
+        if (!state.activeProjectId) return;
+        try {
+            if (action === "resolve" || action === "discard") {
+                const resp = await apiFetch(`/studio/api/projects/${encodeURIComponent(state.activeProjectId)}/pins/${encodeURIComponent(pinId)}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ status: action === "resolve" ? "resolved" : "discarded" }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    if (statusEl) statusEl.textContent = err.detail || `Error ${resp.status}.`;
+                    return;
+                }
+            } else if (action === "delete") {
+                const resp = await apiFetch(`/studio/api/projects/${encodeURIComponent(state.activeProjectId)}/pins/${encodeURIComponent(pinId)}`, {
+                    method: "DELETE",
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    if (statusEl) statusEl.textContent = err.detail || `Error ${resp.status}.`;
+                    return;
+                }
+            }
+            if (statusEl) statusEl.textContent = "Pin actualizado.";
+            await refreshReviewPins();
+        } catch (err) {
+            if (statusEl) statusEl.textContent = `Error de red: ${err.message}`;
         }
     }
 
@@ -2727,6 +2888,23 @@
             edlBuild9x16Btn.addEventListener("click", () => triggerEdlBuild("9:16"));
         }
 
+        const reviewPinForm = document.getElementById("review-pin-form");
+        if (reviewPinForm) {
+            reviewPinForm.addEventListener("submit", submitReviewPin);
+        }
+        const reviewPinsList = document.getElementById("review-pins-list");
+        if (reviewPinsList) {
+            reviewPinsList.addEventListener("click", (event) => {
+                const target = event.target;
+                if (!(target instanceof HTMLElement)) return;
+                const resolveId = target.getAttribute("data-pin-resolve");
+                const discardId = target.getAttribute("data-pin-discard");
+                const deleteId = target.getAttribute("data-pin-delete");
+                if (resolveId) reviewPinAction("resolve", resolveId);
+                else if (discardId) reviewPinAction("discard", discardId);
+                else if (deleteId) reviewPinAction("delete", deleteId);
+            });
+        }
         const refreshEdlBtn = document.getElementById("refresh-edl-btn");
         if (refreshEdlBtn) {
             refreshEdlBtn.addEventListener("click", refreshEdl);

@@ -518,12 +518,55 @@
                             <span class="track-segment track-segment-audio">Sincronización de transcripción WhisperX (large-v3 + wav2vec2 ES/EN) y diarización cam++</span>
                         </div>
                     </div>
+                    <div class="timeline-track-row">
+                        <span class="track-label">R1 · Pins de Revisión</span>
+                        <div id="review-pins-track" class="timeline-track timeline-track-secondary">
+                            <span class="track-empty">Sin pins de revisión en esta versión del EDL.</span>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="divider"></div>
                 <h3 class="section-subtitle">Lista de Decisiones de Corte (Cuts)</h3>
                 <div id="edl-cuts-list" class="items-list" aria-live="polite">
                     <p class="empty-hint">No hay cortes registrados en el proyecto activo.</p>
+                </div>
+
+                <!-- M3-RVP-001: pins de revisión anclados a la versión del EDL -->
+                <div class="divider"></div>
+                <h3 class="section-subtitle">Pins de Revisión (Review Pins)</h3>
+                <form id="review-pin-form" class="studio-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="review-pin-start">Inicio (s)</label>
+                            <input type="number" id="review-pin-start" min="0" step="0.1" value="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="review-pin-end">Fin (s)</label>
+                            <input type="number" id="review-pin-end" min="0" step="0.1" value="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="review-pin-severity">Severidad</label>
+                            <select id="review-pin-severity">
+                                <option value="note">Nota</option>
+                                <option value="issue" selected>Inconveniente</option>
+                                <option value="blocker">Bloqueante</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="review-pin-body">Comentario</label>
+                        <textarea id="review-pin-body" maxlength="2000" rows="2" placeholder="Ej. corte demasiado brusco a partir de este punto, suavizar" required></textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" id="review-pin-btn" class="btn btn-primary">
+                            Añadir pin a la versión actual
+                        </button>
+                        <span id="review-pin-status" class="inline-status" aria-live="polite"></span>
+                    </div>
+                </form>
+                <div id="review-pins-list" class="items-list" aria-live="polite">
+                    <p class="empty-hint">Sin pins de revisión todavía. Anota feedback anclado a un timecode y pídeselo al agente con <code>list_review_pins</code>.</p>
                 </div>
 
                 <div class="divider"></div>

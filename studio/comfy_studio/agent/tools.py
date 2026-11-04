@@ -16,6 +16,7 @@ from ..comfyui_client import ComfyUIClient
 from ..config import StudioConfig
 from ..progress import ProgressBroker
 from ..projects import ProjectStore
+from ..review_pins import match_pin_to_cut, open_pin_summary
 from ..templates import (
     TemplateNotFoundError,
     TemplateParamError,
@@ -546,6 +547,50 @@ class ListTemplatesArgs(BaseModel):
     include_workflow: bool = Field(
         default=False,
         description="Incluir el grafo de workflow completo de cada plantilla en la respuesta.",
+    )
+
+
+class ListReviewPinsArgs(BaseModel):
+    """Argumentos para la herramienta `list_review_pins` (M3-RVP-001)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str | None = Field(
+        default=None,
+        description="ID del proyecto; por defecto el proyecto activo.",
+    )
+    edl_version: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Versión del EDL a revisar; si se omite, se listan los pins de todas "
+            "las versiones."
+        ),
+    )
+    status: Literal["open", "resolved", "discarded"] = Field(
+        default="open",
+        description="Estado de los pins a listar (por defecto, abiertos).",
+    )
+
+
+class ResolveReviewPinArgs(BaseModel):
+    """Argumentos para la herramienta `resolve_review_pin` (M3-RVP-001)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str | None = Field(
+        default=None,
+        description="ID del proyecto; por defecto el proyecto activo.",
+    )
+    pin_id: str = Field(
+        ...,
+        min_length=1,
+        description="ID del pin a resolver.",
+    )
+    resolution_note: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Nota opcional sobre cómo se resolvió el feedback.",
     )
 
 
@@ -1782,6 +1827,75 @@ async def _handle_job_cancel(
         "interrupted_active_run": was_running and interrupt_error is None,
         "interrupt_error": interrupt_error,
     }
+
+
+async def _handle_list_review_pins(
+    args: ListReviewPinsArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    pid = args.project_id or context.project_id
+    pins = context.store.list_review_pins(
+        pid,
+        edl_version=args.edl_version,
+        status=args.status,
+    )
+    if args.edl_version is not None:
+        edl = context.store.get_edl_version(pid, args.edl_version)
+        cuts: list[dict[str, Any]] = list(edl["edl"].get("cuts") or []) if edl else []
+    else:
+        cuts = []
+    enriched = []
+    for pin in pins:
+        pin_cuts = cuts
+        if args.edl_version is None:
+            edl = context.store.get_edl_version(pid, pin["edl_version"])
+            pin_cuts = list(edl["edl"].get("cuts") or []) if edl else []
+        enriched.append({**pin, "matched_cut": match_pin_to_cut(pin, pin_cuts)})
+    return {
+        "project_id": pid,
+        "pins": enriched,
+        "summary": open_pin_summary(pins),
+    }
+
+
+async def _handle_resolve_review_pin(
+    args: ResolveReviewPinArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    pid = args.project_id or context.project_id
+    current = context.store.get_review_pin(pid, args.pin_id)
+    if current is None:
+        raise ToolExecutionError(
+            f"Pin no encontrado en el proyecto {pid!r}: {args.pin_id!r}"
+        )
+    if current["status"] != "open":
+        raise ToolExecutionError(
+            f"El pin {args.pin_id!r} ya está en estado {current['status']!r}; "
+            "solo los pins abiertos pueden resolverse."
+        )
+    updated = context.store.update_review_pin(
+        pid,
+        args.pin_id,
+        status="resolved",
+        resolution_note=args.resolution_note,
+        resolved_by="agent",
+    )
+    if updated is None:  # pragma: no cover - cubierto por la comprobación previa
+        raise ToolExecutionError(f"Pin no encontrado: {args.pin_id!r}")
+    context.broker.publish(
+        "review_pin",
+        {
+            "project_id": pid,
+            "pin_id": updated["id"],
+            "edl_version": updated["edl_version"],
+            "t_start": updated["t_start"],
+            "t_end": updated["t_end"],
+            "severity": updated["severity"],
+            "status": updated["status"],
+            "action": "resolved",
+        },
+    )
+    return {"status": "resolved", "project_id": pid, "pin": updated}
 
 
 async def _handle_tag_asset(
@@ -3170,6 +3284,32 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=TagAssetArgs,
             handler=_handle_tag_asset,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="list_review_pins",
+            description=(
+                "Lista los pins de revisión (feedback anclado a un timecode del timeline "
+                "renderizado) del proyecto: severidad note/issue/blocker, comentario y, "
+                "si procede, el corte del EDL al que apunta cada pin."
+            ),
+            args_model=ListReviewPinsArgs,
+            handler=_handle_list_review_pins,
+            parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="resolve_review_pin",
+            description=(
+                "Marca como resuelto un pin de revisión abierto tras atender su "
+                "feedback (p. ej. tras regenerar el EDL), con una nota opcional de "
+                "resolución. Solo los pins abiertos pueden resolverse."
+            ),
+            args_model=ResolveReviewPinArgs,
+            handler=_handle_resolve_review_pin,
+            parallel_safe=False,
         )
     )
     belt.register(

@@ -201,6 +201,27 @@ def map_broker_event(
                 },
             )
         return None
+    # M3-RVP-001: pins de revisión anclados a versiones de EDL.
+    if event_type == "review_pin":
+        action = str(data.get("action") or "")
+        base_payload = {
+            key: data[key]
+            for key in (
+                "project_id",
+                "pin_id",
+                "edl_version",
+                "t_start",
+                "t_end",
+                "severity",
+                "status",
+            )
+            if data.get(key) is not None
+        }
+        if action == "added":
+            return "review_pin_added", base_payload
+        if action == "resolved":
+            return "review_pin_resolved", base_payload
+        return None
     return None
 
 
