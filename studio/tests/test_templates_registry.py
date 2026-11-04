@@ -459,7 +459,7 @@ def test_submit_template_valid_params_enqueues_job_and_registers_gallery_outputs
 
     # 1. Submit de vace_inpaint con assets del proyecto y defaults 480p+offload
     submit_resp = client.post(
-        "/studio/api/templates/vace_inpaint/submit",
+        "/studio/api/templates/vace_inpaint/submit?wait=1",
         json={
             "project_id": project_id,
             "params": {
@@ -634,7 +634,7 @@ def test_submit_template_history_succeeds_view_fails_marks_job_error_and_emits_s
     stub_comfyui_state.fail_view_error = "Output video missing on ComfyUI /view"
 
     sub_resp = client.post(
-        "/studio/api/templates/wan_t2v/submit",
+        "/studio/api/templates/wan_t2v/submit?wait=1",
         json={
             "project_id": project_id,
             "params": {
