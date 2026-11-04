@@ -973,6 +973,80 @@ class LipsyncVideoArgs(BaseModel):
     )
 
 
+class AdScriptArgs(BaseModel):
+    """Argumentos para la herramienta `ad_script` (motor ad_studio, op=script)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    product_name: str = Field(min_length=1, max_length=120)
+    key_message: str = Field(min_length=1, max_length=500)
+    audience: str = Field(min_length=1, max_length=200)
+    tone: Literal["profesional", "energico", "cercano", "inspirador", "humoristico"] = (
+        "profesional"
+    )
+    target_duration_s: float = Field(default=15.0, ge=5.0, le=60.0)
+    cta: str = Field(min_length=1, max_length=120)
+    language: str = Field(default="es", pattern=r"^[a-z]{2}(-[A-Za-z]{2})?$")
+    product_asset_ids: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Assets de imagen/vídeo del producto para anclar los planos.",
+    )
+
+
+class AdStoryboardArgs(BaseModel):
+    """Argumentos para la herramienta `ad_storyboard` (motor ad_studio, op=storyboard)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ad_id: str = Field(min_length=1, description="ID del anuncio devuelto por ad_script.")
+
+
+class BuildAdVariantsArgs(BaseModel):
+    """Argumentos para `build_ad_variants` (motor ad_studio, op=variants)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ad_id: str = Field(min_length=1, description="ID del anuncio con storyboard aprobado.")
+    aspect_ratios: list[str] = Field(
+        default_factory=lambda: ["9:16", "1:1", "16:9"],
+        description="Formatos de entrega (16:9, 9:16, 1:1, 4:5); máx. 4.",
+    )
+    voiceover: bool = Field(
+        default=False,
+        description="Sintetiza la voz del guion (TTS) y la mezcla en las variantes.",
+    )
+    voice_id: str = Field(default="default", max_length=64)
+    music: bool = Field(default=False, description="Añade cama musical con music_gen.")
+    music_prompt: str = Field(default="", max_length=500)
+    source_asset_id: str | None = Field(
+        default=None,
+        description="Asset de vídeo fuente si los planos no llevan asset propio.",
+    )
+    chunk_asset_ids: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Un asset de vídeo por plano del storyboard (montaje multi-clip).",
+    )
+    fps: int = Field(default=24, ge=12, le=60)
+    max_retries: int = Field(default=0, ge=0, le=2)
+
+    @field_validator("aspect_ratios")
+    @classmethod
+    def _validate_aspects(cls, value: list[str]) -> list[str]:
+        allowed = {"16:9", "9:16", "1:1", "4:5"}
+        cleaned: list[str] = []
+        for item in value:
+            c = str(item or "").strip()
+            if c not in allowed:
+                raise ValueError(f"aspect ratio no soportado: {c!r}")
+            if c not in cleaned:
+                cleaned.append(c)
+        if not cleaned:
+            raise ValueError("aspect_ratios no puede estar vacío")
+        return cleaned[:4]
+
+
 class VisionCheckArgs(BaseModel):
     """Argumentos para la herramienta `vision_check`."""
 
@@ -3105,6 +3179,122 @@ async def _handle_review_output(
         },
     )
     return {"status": "reviewed", "project_id": context.project_id, "report": report}
+async def _handle_ad_script(
+    args: AdScriptArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..ads.pipeline import AdPipelineError, create_ad_doc
+    from ..ads.schema import AdBrief
+
+    def _do_create() -> dict[str, Any]:
+        brief = AdBrief.model_validate(args.model_dump())
+        try:
+            doc = create_ad_doc(context.store, context.project_id, brief)
+        except AdPipelineError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        return {
+            "status": "scripted",
+            "project_id": context.project_id,
+            "ad": doc,
+            "ad_id": doc["id"],
+            "scenes": len(doc["script"]["scenes"]),
+            "generator": doc["script"]["generator"],
+        }
+
+    return await run_in_threadpool(_do_create)
+
+
+async def _handle_ad_storyboard(
+    args: AdStoryboardArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..ads.pipeline import AdPipelineError, attach_storyboard
+
+    def _do_build() -> dict[str, Any]:
+        try:
+            doc = attach_storyboard(context.store, context.project_id, args.ad_id)
+        except AdPipelineError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        storyboard = doc.get("storyboard") or {}
+        context.broker.publish(
+            "ad",
+            {
+                "project_id": context.project_id,
+                "ad_id": args.ad_id,
+                "event": "storyboard",
+                "shots": len(storyboard.get("shots") or []),
+                "gate": doc.get("gate"),
+            },
+        )
+        return {
+            "status": "storyboarded",
+            "project_id": context.project_id,
+            "ad_id": args.ad_id,
+            "storyboard": storyboard,
+            "gate": doc.get("gate"),
+        }
+
+    return await run_in_threadpool(_do_build)
+
+
+async def _handle_build_ad_variants(
+    args: BuildAdVariantsArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..ads.pipeline import AdCancelledError, AdPipelineError, get_ad_doc, run_ad_variants
+    from ..engines import is_stub_mode
+
+    def _do_variants() -> dict[str, Any]:
+        if get_ad_doc(context.store, context.project_id, args.ad_id) is None:
+            raise ToolExecutionError(f"Anuncio no encontrado: {args.ad_id!r}")
+        job = context.store.create_job(
+            kind="ad_variants",
+            project_id=context.project_id,
+            params={"ad_id": args.ad_id, **args.model_dump()},
+        )
+        context.broker.publish(
+            "job",
+            {
+                "job_id": job["id"],
+                "project_id": context.project_id,
+                "kind": "ad_variants",
+                "status": job["status"],
+                "ad_id": args.ad_id,
+            },
+        )
+        try:
+            summary = run_ad_variants(
+                context.store,
+                context.project_id,
+                args.ad_id,
+                broker=context.broker,
+                config=context.config,
+                job_id=job["id"],
+                aspect_ratios=args.aspect_ratios,
+                voiceover=args.voiceover,
+                voice_id=args.voice_id,
+                music=args.music,
+                music_prompt=args.music_prompt,
+                source_asset_id=args.source_asset_id,
+                chunk_asset_ids=args.chunk_asset_ids or None,
+                fps=args.fps,
+                max_retries=args.max_retries,
+                simulated=is_stub_mode("ad_studio"),
+            )
+        except AdCancelledError as exc:
+            context.store.update_job(job["id"], status="cancelled", error=str(exc))
+            raise ToolExecutionError(str(exc)) from exc
+        except AdPipelineError as exc:
+            context.store.update_job(job["id"], status="failed", error=str(exc))
+            raise ToolExecutionError(str(exc)) from exc
+        return {
+            "status": "variants_built",
+            "project_id": context.project_id,
+            "job_id": job["id"],
+            **summary,
+        }
+
+    return await run_in_threadpool(_do_variants)
 
 
 def create_restricted_belt(base_belt: ToolBelt, role: str) -> ToolBelt:
@@ -3656,6 +3846,20 @@ def create_default_tool_belt() -> ToolBelt:
     )
     belt.register(
         ToolSpec(
+            name="ad_script",
+            description=(
+                "Estudio de anuncios (motor ad_studio): crea un anuncio desde un brief de "
+                "producto (nombre, mensaje clave, audiencia, tono, duración, CTA) y compone "
+                "su guion determinista. Devuelve ad_id para encadenar ad_storyboard y "
+                "build_ad_variants."
+            ),
+            args_model=AdScriptArgs,
+            handler=_handle_ad_script,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
             name="create_creative_brief",
             description=(
                 "Crea un brief creativo persistente (versionado) desde el prompt del usuario "
@@ -3665,6 +3869,19 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=CreateCreativeBriefArgs,
             handler=_handle_create_creative_brief,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="ad_storyboard",
+            description=(
+                "Deriva el storyboard (planos con duración, prompt visual, texto en pantalla "
+                "y línea de voz) del guion de un anuncio existente y lo deja en la puerta de "
+                "aprobación (awaiting_approval)."
+            ),
+            args_model=AdStoryboardArgs,
+            handler=_handle_ad_storyboard,
             parallel_safe=False,
         )
     )
@@ -3691,6 +3908,20 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=ReviewOutputArgs,
             handler=_handle_review_output,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="build_ad_variants",
+            description=(
+                "Monta las variantes de formato (9:16, 1:1, 16:9, 4:5) de un anuncio a partir "
+                "de su storyboard y los assets del proyecto, con ffmpeg, voz (TTS) y música "
+                "opcionales; cada variante se evalúa con el motor QA y queda registrada como "
+                "asset de salida. Crea un job ad_variants trazable y cancelable."
+            ),
+            args_model=BuildAdVariantsArgs,
+            handler=_handle_build_ad_variants,
             parallel_safe=False,
         )
     )

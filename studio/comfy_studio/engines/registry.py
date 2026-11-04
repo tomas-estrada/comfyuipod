@@ -200,4 +200,15 @@ def build_default_registry() -> EngineRegistry:
             note="Rotoscopia por texto (SAM 3); paquete horneado, pesos HF-gated en runtime",
         )
     )
+    reg.register(
+        EngineEntry(
+            "ad_studio",
+            EngineTier.WARM,
+            wired=True,
+            note=(
+                "Estudio de anuncios: brief->guion->storyboard->variantes 9:16/1:1/16:9 "
+                "con ffmpeg + TTS/música/QA existentes (M7)"
+            ),
+        )
+    )
     return reg

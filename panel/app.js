@@ -18,6 +18,8 @@
         templates: [],
         jobs: [],
         edlData: null,
+        adsData: null,
+        selectedAdId: null,
         transcriptionData: null,
         identities: [],
         perceptionResults: null,
@@ -129,7 +131,7 @@
     }
 
     function switchView(viewName) {
-        const validViews = ["projects", "chat", "jobs", "gallery", "edl", "login"];
+        const validViews = ["projects", "chat", "jobs", "gallery", "edl", "ads", "login"];
         const target = validViews.includes(viewName) ? viewName : "projects";
         state.activeView = target;
 
@@ -155,6 +157,8 @@
             refreshGallery();
         } else if (target === "edl") {
             refreshEdl();
+        } else if (target === "ads") {
+            refreshAds();
         } else if (target === "login") {
             refreshHealthAndStatus();
         }
@@ -462,6 +466,7 @@
                     return;
                 }
                 await refreshGallery();
+                refreshAds();
 
                 if (
                     announce &&
@@ -1996,6 +2001,213 @@
         }
     }
 
+    /* --- ESTUDIO DE ANUNCIOS (motor ad_studio) --- */
+
+    async function refreshAds() {
+        const targetProjectId = state.activeProjectId;
+        renderAdsView();
+        if (!targetProjectId) return;
+        try {
+            const resp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(targetProjectId)}/ads`
+            );
+            if (resp.ok && state.activeProjectId === targetProjectId) {
+                state.adsData = await resp.json();
+                if (
+                    state.selectedAdId &&
+                    !(state.adsData.ads || []).some((a) => a.id === state.selectedAdId)
+                ) {
+                    state.selectedAdId = null;
+                }
+                renderAdsView();
+            }
+        } catch (_err) {
+            /* el toast global ya cubre el fallo de red */
+        }
+    }
+
+    function renderAdsView() {
+        const listEl = document.getElementById("ads-list");
+        const countEl = document.getElementById("ads-count");
+        const variantsBtn = document.getElementById("ad-variants-btn");
+        const variantsList = document.getElementById("ad-variants-list");
+        if (!listEl) return;
+        const ads = (state.adsData && state.adsData.ads) || [];
+        if (countEl) countEl.textContent = String(ads.length);
+        if (variantsBtn) variantsBtn.disabled = !state.selectedAdId;
+        if (!ads.length) {
+            listEl.innerHTML =
+                '<p class="empty-hint">No hay anuncios todavía. Crea uno con el brief.</p>';
+        } else {
+            listEl.innerHTML = ads
+                .map((ad) => {
+                    const isSel = ad.id === state.selectedAdId;
+                    const script = ad.script || {};
+                    const sb = ad.storyboard || null;
+                    const scenes = Array.isArray(script.scenes) ? script.scenes.length : 0;
+                    const variants = Array.isArray(ad.variants) ? ad.variants : [];
+                    return `
+                        <div class="item-card${isSel ? " item-card-selected" : ""}">
+                            <div class="item-main">
+                                <span class="item-title">${escapeHtml((ad.brief || {}).product_name || ad.id)}</span>
+                                <span class="item-meta">${scenes} escenas · ${sb ? sb.shots.length + " planos" : "sin storyboard"} · ${variants.length} variantes · puerta: ${escapeHtml((ad.gate || {}).state || "drafting")}</span>
+                            </div>
+                            <div class="item-actions">
+                                <button type="button" class="btn btn-secondary btn-sm" data-ad-action="select" data-ad-id="${escapeHtml(ad.id)}">Seleccionar</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-ad-action="storyboard" data-ad-id="${escapeHtml(ad.id)}">Storyboard</button>
+                            </div>
+                        </div>
+                    `;
+                })
+                .join("");
+        }
+        if (variantsList) {
+            const sel = ads.find((a) => a.id === state.selectedAdId);
+            const variants = (sel && Array.isArray(sel.variants)) ? sel.variants : [];
+            if (!sel) {
+                variantsList.innerHTML =
+                    '<p class="empty-hint">Selecciona un anuncio para ver sus variantes.</p>';
+            } else if (!variants.length) {
+                variantsList.innerHTML =
+                    '<p class="empty-hint">Sin variantes todavía. Pulsa «Generar variantes».</p>';
+            } else {
+                variantsList.innerHTML = variants
+                    .map((v) => `
+                        <div class="item-card">
+                            <div class="item-main">
+                                <span class="item-title">${escapeHtml(v.aspect_ratio)} · ${escapeHtml(v.asset_id)}</span>
+                                <span class="item-meta">QA ${v.qa_passed ? "OK" : "revisar"}${v.simulated ? " · simulado" : ""} · ${formatBytes(v.size_bytes)}</span>
+                            </div>
+                            <div class="item-actions">
+                                <button type="button" class="btn btn-secondary btn-sm" data-goto-view="gallery">Ver en Galería</button>
+                            </div>
+                        </div>
+                    `)
+                    .join("");
+            }
+        }
+    }
+
+    async function createAdFromBrief(event) {
+        event.preventDefault();
+        const projectId = state.activeProjectId;
+        const statusEl = document.getElementById("ad-status-msg");
+        if (!projectId) {
+            if (statusEl) statusEl.textContent = "Selecciona un proyecto primero.";
+            return;
+        }
+        const form = event.target;
+        const body = {
+            product_name: form.product_name.value,
+            key_message: form.key_message.value,
+            audience: form.audience.value,
+            tone: form.tone.value,
+            target_duration_s: Number(form.target_duration_s.value) || 15,
+            cta: form.cta.value,
+            language: "es",
+            product_asset_ids: state.assets
+                .filter((a) => a.kind === "image" || a.kind === "video")
+                .map((a) => a.id)
+                .slice(0, 8),
+        };
+        if (statusEl) statusEl.textContent = "Creando guion…";
+        try {
+            const resp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(projectId)}/ads/script`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                }
+            );
+            if (!resp.ok) {
+                const detail = await resp.json().catch(() => ({}));
+                throw new Error(detail.detail || `HTTP ${resp.status}`);
+            }
+            const doc = await resp.json();
+            state.selectedAdId = doc.id;
+            if (statusEl) statusEl.textContent = `Guion creado (${doc.script.scenes.length} escenas).`;
+            setToast(`Anuncio creado: ${doc.id}`, "success");
+            await refreshAds();
+        } catch (err) {
+            if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+        }
+    }
+
+    async function runAdAction(action, adId) {
+        const projectId = state.activeProjectId;
+        const statusEl = document.getElementById("ad-status-msg");
+        if (!projectId || !adId) return;
+        if (action === "select") {
+            state.selectedAdId = adId;
+            renderAdsView();
+            return;
+        }
+        if (action === "storyboard") {
+            if (statusEl) statusEl.textContent = "Generando storyboard…";
+            try {
+                const resp = await apiFetch(
+                    `/studio/api/projects/${encodeURIComponent(projectId)}/ads/${encodeURIComponent(adId)}/storyboard`,
+                    { method: "POST" }
+                );
+                if (!resp.ok) {
+                    const detail = await resp.json().catch(() => ({}));
+                    throw new Error(detail.detail || `HTTP ${resp.status}`);
+                }
+                state.selectedAdId = adId;
+                if (statusEl) statusEl.textContent = "Storyboard listo (awaiting_approval).";
+                await refreshAds();
+            } catch (err) {
+                if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+            }
+        }
+    }
+
+    async function buildAdVariants() {
+        const projectId = state.activeProjectId;
+        const adId = state.selectedAdId;
+        const statusEl = document.getElementById("ad-variants-status");
+        if (!projectId || !adId) return;
+        const aspects = [];
+        if (document.getElementById("ad-aspect-9x16").checked) aspects.push("9:16");
+        if (document.getElementById("ad-aspect-1x1").checked) aspects.push("1:1");
+        if (document.getElementById("ad-aspect-16x9").checked) aspects.push("16:9");
+        if (document.getElementById("ad-aspect-4x5").checked) aspects.push("4:5");
+        if (!aspects.length) {
+            if (statusEl) statusEl.textContent = "Marca al menos un formato.";
+            return;
+        }
+        const body = {
+            aspect_ratios: aspects,
+            voiceover: document.getElementById("ad-voiceover").checked,
+            music: document.getElementById("ad-music").checked,
+        };
+        if (statusEl) statusEl.textContent = "Encolando variantes (job ad_variants)…";
+        try {
+            const resp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(projectId)}/ads/${encodeURIComponent(adId)}/variants`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                }
+            );
+            if (!resp.ok) {
+                const detail = await resp.json().catch(() => ({}));
+                throw new Error(detail.detail || `HTTP ${resp.status}`);
+            }
+            const data = await resp.json();
+            if (data.async && data.job_id) {
+                if (statusEl) statusEl.textContent = `Job ${data.job_id} encolado; síguelo en «Jobs y Render».`;
+                setToast(`Variantes encoladas (job ${data.job_id})`, "success");
+            }
+            await refreshAds();
+            await refreshJobs();
+        } catch (err) {
+            if (statusEl) statusEl.textContent = `Error: ${err.message}`;
+        }
+    }
+
     function renderEdlView() {
         const badgeEl = document.getElementById("edl-version-badge");
         const summaryEl = document.getElementById("edl-summary-box");
@@ -2288,6 +2500,16 @@
             if (gotoBtn) {
                 const targetView = gotoBtn.getAttribute("data-goto-view");
                 switchView(targetView);
+                return;
+            }
+
+            const adActionBtn = event.target.closest("[data-ad-action]");
+            if (adActionBtn) {
+                event.preventDefault();
+                runAdAction(
+                    adActionBtn.getAttribute("data-ad-action"),
+                    adActionBtn.getAttribute("data-ad-id")
+                );
                 return;
             }
 
@@ -2686,6 +2908,20 @@
         const refreshEdlBtn = document.getElementById("refresh-edl-btn");
         if (refreshEdlBtn) {
             refreshEdlBtn.addEventListener("click", refreshEdl);
+        }
+
+        // Estudio de anuncios (ad_studio)
+        const adBriefForm = document.getElementById("ad-brief-form");
+        if (adBriefForm) {
+            adBriefForm.addEventListener("submit", createAdFromBrief);
+        }
+        const refreshAdsBtn = document.getElementById("refresh-ads-btn");
+        if (refreshAdsBtn) {
+            refreshAdsBtn.addEventListener("click", refreshAds);
+        }
+        const adVariantsBtn = document.getElementById("ad-variants-btn");
+        if (adVariantsBtn) {
+            adVariantsBtn.addEventListener("click", buildAdVariants);
         }
 
         // Login / Basic-Auth

@@ -307,6 +307,70 @@ class BriefReviewRequest(BaseModel):
     """Revisión del render real de un asset contra el brief activo."""
 
     asset_id: str = Field(..., min_length=1, max_length=64)
+class AdBriefRequest(BaseModel):
+    """Brief de un anuncio de producto (estudio de anuncios, motor ad_studio)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    product_name: str = Field(min_length=1, max_length=120)
+    key_message: str = Field(min_length=1, max_length=500)
+    audience: str = Field(min_length=1, max_length=200)
+    tone: Literal["profesional", "energico", "cercano", "inspirador", "humoristico"] = (
+        "profesional"
+    )
+    target_duration_s: float = Field(default=15.0, ge=5.0, le=60.0)
+    cta: str = Field(min_length=1, max_length=120)
+    language: str = Field(default="es", pattern=r"^[a-z]{2}(-[A-Za-z]{2})?$")
+    product_asset_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
+class AdVariantsRequest(BaseModel):
+    """Variantes de formato a montar para un anuncio (ad_studio op=variants)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    aspect_ratios: list[str] = Field(default_factory=lambda: ["9:16", "1:1", "16:9"])
+    voiceover: bool = False
+    voice_id: str = Field(default="default", max_length=64)
+    music: bool = False
+    music_prompt: str = Field(default="", max_length=500)
+    music_duration_s: float = Field(default=0.0, ge=0.0, le=60.0)
+    source_asset_id: str | None = None
+    chunk_asset_ids: list[str] = Field(default_factory=list, max_length=20)
+    fps: int = Field(default=24, ge=12, le=60)
+    max_retries: int = Field(default=0, ge=0, le=2)
+    acceptance: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("aspect_ratios")
+    @classmethod
+    def _validate_aspect_ratios(cls, value: list[str]) -> list[str]:
+        allowed = {"16:9", "9:16", "1:1", "4:5"}
+        cleaned: list[str] = []
+        for item in value:
+            candidate = str(item or "").strip()
+            if candidate not in allowed:
+                raise ValueError(
+                    f"Relación de aspecto no soportada: {candidate!r} "
+                    f"(usa una de {sorted(allowed)})."
+                )
+            if candidate not in cleaned:
+                cleaned.append(candidate)
+        if not cleaned:
+            raise ValueError("aspect_ratios no puede estar vacío")
+        if len(cleaned) > 4:
+            raise ValueError("Máximo 4 variantes de formato por anuncio")
+        return cleaned
+
+    @field_validator("acceptance")
+    @classmethod
+    def _validate_acceptance(cls, value: dict[str, float]) -> dict[str, float]:
+        allowed = {"max_black_s", "max_freeze_s"}
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(
+                f"Criterios QA no soportados: {sorted(unknown)} (usa {sorted(allowed)})"
+            )
+        return value
 
 
 def _verify_basic_auth(
