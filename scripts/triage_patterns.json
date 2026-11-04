@@ -37,7 +37,7 @@
     "pattern": "CUDA out of memory|torch\\.OutOfMemoryError",
     "severity": "media",
     "cause": "VRAM de la GPU insuficiente para la resolución o tamaño de lote del workflow actual",
-    "first_command": "Reducir batch_size/resolución en el workflow o pasar -e COMFYUI_EXTRA_ARGS=\"--reserve-vram 2\""
+    "first_command": "Reducir batch_size/resolución en el workflow o pasar -e COMFYUI_EXTRA_ARGS=\"--vram-headroom 2\" (headroom de DynamicVRAM; también --reserve-vram 2; ambos verificados en el SHA fijado, ver /etc/comfyui/comfyui-vram-flags.txt)"
   },
   {
     "id": "import-failed",

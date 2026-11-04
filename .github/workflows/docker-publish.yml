@@ -719,6 +719,8 @@ jobs:
           timeout 300 docker run --rm --entrypoint nginx "${CANDIDATE_TAG}" -t
           timeout 300 docker run --rm --entrypoint hf "${CANDIDATE_TAG}" version
           timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/image.json
+          # M7-OPS-003: los flags de VRAM del SHA fijado de ComfyUI deben existir y ser no vacíos (el build ya falla si no).
+          timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/comfyui-vram-flags.txt
           timeout 300 docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
             "import torch, onnxruntime as ort, insightface, cv2, huggingface_hub, hf_xet; print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'CV2:', cv2.__version__, 'HF:', huggingface_hub.__version__, 'ORT:', ort.get_available_providers())"
           timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
