@@ -44,6 +44,12 @@ from comfy_studio.engines.upscaler import UpscalerEngine
 from comfy_studio.mcp_server import McpContext, create_mcp_router
 from comfy_studio.media_bins import find_ffmpeg, find_ffprobe
 from comfy_studio.ml import probe_capabilities
+from comfy_studio.observability import (
+    REQUEST_ID_HEADER,
+    bind_request_id,
+    new_request_id,
+    unbind_request_id,
+)
 from comfy_studio.orchestration.adapters import build_server_collaborators
 from comfy_studio.orchestration.health import orchestration_health_report
 from comfy_studio.orchestration.service import (
@@ -991,6 +997,21 @@ def create_app(
                         headers=headers,
                         media_type="application/json",
                     )
+        return response
+
+    # M7-OPS-005: request ID por petición (cabecera X-Request-Id entrante segura o
+    # uuid4 generado), reflejado en la respuesta y disponible en el ContextVar para
+    # los logs. Se registra DESPUÉS del middleware de edge auth para quedar como
+    # middleware más externo: la cabecera también se devuelve en 401.
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next):
+        request_id = new_request_id(request)
+        token = bind_request_id(request_id)
+        try:
+            response = await call_next(request)
+        finally:
+            unbind_request_id(token)
+        response.headers[REQUEST_ID_HEADER] = request_id
         return response
 
     @app.get("/studio/api/health")
