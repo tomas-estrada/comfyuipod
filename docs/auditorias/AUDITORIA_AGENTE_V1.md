@@ -213,7 +213,7 @@ Además el README contiene rutas locales de Windows (`file:///c:/Users/estra/...
 - **Ubicación**: `README.md:87,159,175`
 - **Evidencia**: `file:///c:/Users/estra/OneDrive/Documents/ComfyUIPod/...`
 - **Impacto**: Expone nombre de usuario y estructura de disco del autor; los enlaces no funcionan en GitHub.
-- **Acción**: Sustituir por rutas relativas: `[Dockerfile](Dockerfile)`, `[scripts/start.sh](scripts/start.sh)`, etc.
+- **Acción**: Sustituir por rutas relativas: `[Dockerfile](../../Dockerfile)`, `[scripts/start.sh](../../scripts/start.sh)`, etc.
 
 #### DOC-02 — Tamaños y tiempos declarados no cuadran · **Media** · Decisión: Aplicar
 - **Ubicación**: `README.md:19-21,110,120,140`; `scripts/download-models.sh:9,150,204`

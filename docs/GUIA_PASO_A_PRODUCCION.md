@@ -1,15 +1,15 @@
 # Guía de paso a producción — ComfyUI "Everything-Ready" para Vast.ai
 
-**Versión:** 1.1 · **Repositorio:** ComfyUIPod (rama `main`, estado de código verificado `0e8cafc`)
-**Público objetivo:** tú, dentro de una tarde, con un café y una MacBook.
+**Actualizado:** 2026-11-04 · **Fuente de código:** rama `main` (verifica el estado de CI del commit actual antes de desplegar).
+**Público objetivo:** operadores desde Windows, macOS o Linux; los pasos con helper Bash se señalan explícitamente.
 
 ---
 
 ## A. Qué tienes ahora
 
-Tienes una imagen Docker lista para producción que convierte cualquier GPU RTX 5090 o RTX 4090 alquilada en Vast.ai en un ComfyUI completo y privado, accesible 100% desde el navegador con usuario y contraseña. La imagen incluye ComfyUI con 12 custom nodes preinstalados, catálogo de modelos que se descargan automáticamente en hasta tres fases (los ligeros de 2.79 GiB antes de abrir; los checkpoints pesados de 60.56 GiB en segundo plano mientras trabajas; y en el perfil `studio`, 136.02 GiB / 146.05 GB adicionales de modelos de vídeo y voz), un portal de bienvenida en `/home`, **Comfy Studio** en `/studio/` (estudio web con 7 plantillas curadas, percepción visual y búsqueda facial sobre `sqlite-vec`, transcripción y diarización, agente conversacional multimodal con 19 herramientas, recuperación durable de jobs y webhooks HMAC, galería y ejecutor determinista de EDL `ffmpeg` en `16:9` y `9:16` cuando usas `MODEL_PROFILE=studio`), un panel de estado en vivo en `/status` con métricas de GPU y diagnóstico automático, un supervisor en Rust (`comfyctl`) que verifica la máquina antes de gastar dinero en descargas, y varios perfiles de modelos (`all`, `general`, `realistic`, `anime`, `minimal`, `studio`) para pagar solo por lo que necesitas. GitHub Actions construye y publica la imagen en GHCR, y el script `comfy` para macOS/Linux te deja alquilar, abrir, monitorizar y destruir instancias con un comando cada uno.
+Tienes una imagen Docker Linux lista para producción que convierte una GPU RTX 5090 o RTX 4090 alquilada en Vast.ai en un ComfyUI protegido, accesible desde un navegador en Windows, macOS o Linux. La imagen incluye ComfyUI con 12 custom nodes preinstalados, un catálogo de modelos por fases, el portal `/home`, **Comfy Studio** en `/studio/` (plantillas, proyectos, percepción, transcripción/diarización, agente, galería, recuperación durable de jobs, webhooks y EDL), estado/diagnóstico en `/status` y el supervisor Rust `comfyctl`. El helper `tools/mac/comfy` es opcional y funciona desde una shell compatible en macOS/Linux; en Windows puede usarse dentro de WSL2. No se requiere Mac para usar la interfaz web. Consulta el [índice documental](README.md) y la [arquitectura](ARCHITECTURE.md) para los límites de plataforma y componentes.
 
-> **Qué es real y qué es simulado en Comfy Studio.** Los *keyframes* (con `ffmpeg`), el almacén vectorial (`sqlite-vec`), las identidades, el EDL y el **render final** son reales. En cambio, los **modelos** de percepción y ASR **no se cargan en esta versión**: la búsqueda semántica, la detección facial, la transcripción y la diarización son simulaciones deterministas locales y cada respuesta de API lo declara con `simulated: true`. No evalúes calidad de modelo con esas salidas; la integración de `CLIP ViT-L/14`, `whisperx`/`faster-whisper`, `FunASR cam++` e `InsightFace buffalo_l` es el siguiente hito. Los endpoints de percepción responden **503 con el motivo** si `sqlite-vec` no está disponible, sin tumbar el resto de Studio.
+> **Qué es real y qué es simulado en Comfy Studio.** La extracción de keyframes, `sqlite-vec`, el almacenamiento de identidades, el EDL y el render final son componentes reales. El backend ML arranca en `auto`: usa modelos reales si el probe de capacidades tiene éxito; de lo contrario usa simulación determinista, declarada por `simulated: true` y `simulation_notice`. `STUDIO_PERCEPTION_BACKEND=real` exige modelos reales y falla de forma explícita cuando no están disponibles; `sim` fuerza el camino simulado. Algunas funciones del índice visual CLIP permanecen deterministas incluso con backend real. Comprueba siempre el campo de respuesta antes de evaluar calidad. Si falta `sqlite-vec`, las funciones dependientes se degradan y reportan el motivo sin tumbar todo Studio.
 
 ---
 
@@ -55,9 +55,9 @@ Confirma el nombre exacto tras el primer push (aparece en la página del paquete
 
 **Cómo sé que va bien:** en *Billing* ves tu saldo disponible y en *Account* puedes copiar tu **API Key**.
 
-### 5. Preparar la Mac (vastai + helper `comfy`)
+### 5. Preparar el cliente (Vast.ai + helper opcional `comfy`)
 
-**Qué haces:** instalas la CLI de Vast.ai, la autenticas e instalas el helper:
+**Qué haces:** instala y autentica la CLI de Vast.ai si usarás el helper. `tools/mac/comfy` es Bash y se soporta en macOS y Linux; en Windows ejecútalo dentro de WSL2. El navegador para `/home`, ComfyUI y `/studio/` funciona desde los tres sistemas. En Windows nativo puedes operar desde la consola web de Vast.ai y el navegador, o usar WSL2 para los comandos de esta guía; el script Bash no es un ejecutable PowerShell.
 
 ```bash
 pipx install vastai          # (fallback: pip3 install --user vastai)
@@ -68,7 +68,7 @@ cp tools/mac/comfy ~/.local/bin/comfy
 chmod +x ~/.local/bin/comfy
 ```
 
-Añade a tu `~/.zshrc` si no está ya: `export PATH="$HOME/.local/bin:$PATH"`
+Añade a tu archivo de inicio de shell si no está ya (por ejemplo `~/.zshrc` en zsh): `export PATH="$HOME/.local/bin:$PATH"`
 
 **Cómo sé que va bien:** `comfy all` lista tus instancias (ninguna aún) sin errores de autenticación.
 
@@ -78,7 +78,7 @@ Añade a tu `~/.zshrc` si no está ya: `export PATH="$HOME/.local/bin:$PATH"`
 export COMFY_IMAGE=ghcr.io/<tu-usuario>/comfyuipod:latest
 ```
 
-Hazlo persistente añadiéndolo también a tu `~/.zshrc` (mismo patrón que la línea del `PATH` del paso 5):
+Hazlo persistente añadiéndolo también al archivo de inicio de tu shell (p. ej. `~/.zshrc` en zsh):
 
 ```bash
 echo 'export COMFY_IMAGE=ghcr.io/<tu-usuario>/comfyuipod:latest' >> ~/.zshrc
@@ -109,7 +109,7 @@ El helper te muestra el **Top 5 de ofertas RTX 5090 (o RTX 4090 si no hay 5090)*
 3. **`comfy watch`:** muestra el estado en vivo desde la terminal cada 3 segundos.
 4. **Secretos redactados:** `comfy report --stdout` no muestra tu `COMFY_PASS` ni tokens: `comfyctl` los redacta automáticamente en `/report.md`.
 5. **Variables con espacios (cierra V27 / S-07) — VERIFICADO:** `comfy rent` cita **solo el valor** (`-e COMFYUI_EXTRA_ARGS="--fast --cpu"`), que es el contrato del parser de vast-cli (limpia comillas del valor, nunca de la clave), así que la clave llega intacta y V27 **pasa**. Ciérralo así: alquila con `COMFYUI_EXTRA_ARGS="--fast --cpu"` exportada y comprueba en `/status/api` que `env_masked` muestra `COMFYUI_EXTRA_ARGS` con su valor correcto.
-6. **Runbook S3 en `MODEL_PROFILE=studio` (`comfy rent studio` → `comfy studio`):** en la pestaña **Percepción & EDL** de `/studio/`, sube un clip de vídeo, extrae keyframes reales con `ffmpeg` e indexa en `sqlite-vec`, registra una identidad y busca planos por texto, cara o ambos, transcribe y diariza, genera el EDL de highlights y renderiza los entregables MP4 en `16:9` y `9:16` con `ffmpeg` (real, verificado con `ffprobe`). **La percepción y el ASR son simulaciones deterministas en esta versión** (`simulated: true`): la búsqueda semántica, la detección facial, la transcripción y la diarización no usan los modelos `CLIP`/`whisperx`/`cam++`/`buffalo_l` todavía, así que sirven para validar el flujo completo de punta a punta, no la calidad del resultado. Ten en cuenta además que, cuando se integren, `InsightFace buffalo_l` tiene **licencia no comercial [NC]**.
+6. **Runbook S3 en `MODEL_PROFILE=studio` (`comfy rent studio` → `comfy studio`):** en la pestaña **Percepción & EDL** de `/studio/`, sube un clip de vídeo, extrae keyframes con `ffmpeg`, indexa en `sqlite-vec`, registra una identidad, busca planos, transcribe/diariza y renderiza EDL verificado con `ffprobe`. Comprueba `/studio/api/health` y `perception.backend` / `media_tools` para saber qué capacidades están activas. El valor por defecto `STUDIO_PERCEPTION_BACKEND=auto` usa modelos reales solo cuando el probe pasa; si usa fallback, las respuestas lo indican con `simulated: true`. `real` exige backend real; `sim` fuerza simulación. El índice visual CLIP conserva componentes deterministas. No evalúes calidad de modelo a partir de respuestas simuladas. Los pesos `InsightFace buffalo_l` están sujetos a licencia **no comercial [NC]**; revisa las licencias antes de habilitar uso real/comercial.
 
 ### 8.1 Aceptación semántica de shots en producción (PR #32)
 
@@ -125,7 +125,8 @@ Para recibir eventos, configura una URL HTTPS pública y un secreto compartido a
 export STUDIO_RESUME_JOBS=1
 export STUDIO_RESUME_DELAY_S=30
 export STUDIO_WEBHOOK_URL='https://tu-receptor.example.com/comfy-events'
-read -r -s 'STUDIO_WEBHOOK_SECRET?Secreto compartido del webhook: '
+printf 'Secreto compartido del webhook: '
+read -r -s STUDIO_WEBHOOK_SECRET
 echo
 export STUDIO_WEBHOOK_SECRET
 comfy rent studio --dry-run  # confirma variables; los valores del webhook no se muestran
@@ -133,6 +134,10 @@ comfy rent studio
 ```
 
 El receptor verifica `X-Studio-Signature` como HMAC-SHA256 del cuerpo JSON usando ese secreto. Usa únicamente un endpoint de confianza: se rechazan URLs que apunten a loopback o redes privadas; no publiques el secreto en `~/.zshrc`, repositorios, capturas ni logs. El helper enmascara URL y secreto en `--dry-run`, y Comfy Studio los redacta en `/status/api` y `/report.md`. Sin webhook configurado, Studio opera normalmente sin enviar notificaciones.
+
+### 8.3 Envío asíncrono de plantillas
+
+El endpoint de envío de una plantilla responde `202 Accepted` con `job_id` cuando el trabajo queda encolado; no es la confirmación de que el render terminó. Sigue el estado con `GET /studio/api/jobs/{job_id}` o los eventos SSE de `/studio/api/progress`. Los clientes que necesiten el contrato síncrono pueden usar `?wait=1`, aunque para renders largos se recomienda el seguimiento por job. El límite por defecto es `STUDIO_MAX_CONCURRENT_RENDERS=2`; no aumentes `STUDIO_SERVER_WORKERS`, que debe permanecer en `1`.
 
 ### 9. Al terminar: rescatar outputs y destruir la instancia
 
@@ -145,6 +150,8 @@ comfy destroy <id>
 ```
 
 **Cómo sé que va bien:** `comfy fetch-outputs` imprime `[OK] fetch-outputs: N archivo(s) descargados…` con la estructura `output/…` en el destino local; `comfy all` ya no lista la instancia, o la muestra destruyéndose. **El disco sigue facturando aunque pares la instancia**: solo `destroy` detiene todos los cargos.
+
+> **Dos respaldos distintos:** `comfy fetch-outputs` rescata renders de ComfyUI en `output/`; no respalda la base ni los proyectos de Studio. Si quieres conservar `studio.db`, el índice `index.db` y `projects/`, crea y verifica un snapshot portable antes de destruir la instancia siguiendo [Copias portátiles de Studio](../README.md#copias-portátiles-de-studio). El archivo no incluye modelos, configuración, secretos ni necesariamente el output de ComfyUI. Para restaurar, detén Studio, conserva una copia del destino actual, verifica el ZIP y solo entonces extrae los datos en `STUDIO_DATA_DIR`.
 
 ---
 
@@ -172,6 +179,8 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 | ComfyUI no responde pero el portal sí | El supervisor está reiniciando `main.py` (OOM, crash CUDA, etc.) | Mira `/status` (clasifica la salida: 137 OOM, 134/139 crash nativo...) y `/report.md` para el informe completo |
 | Faltan modelos en los desplegables | Fase 2 aún en curso | Espera a que termine en `/status` y pulsa **R** en ComfyUI |
 | `comfy rent` falla con la imagen | `COMFY_IMAGE` mal exportada o paquete GHCR privado | Revisa el paso 6 y que el paquete sea público (paso 3) |
+| EDL/keyframes/ASR no encuentra `ffmpeg` o `ffprobe` | El ejecutable no está en el `PATH` que ve Studio | Consulta `/studio/api/health` → `media_tools.ffmpeg_available` / `ffprobe_available`; instala la herramienta en el entorno de Studio o define `STUDIO_FFMPEG_BIN` / `STUDIO_FFPROBE_BIN` con las rutas completas. |
+| Error de Studio difícil de localizar | Hace falta correlacionar una respuesta con el log | Guarda el `X-Request-Id` de la respuesta. Activa `STUDIO_JSON_LOGS=1` en la configuración de la instancia y busca ese valor en `request_id` de las líneas JSON. Mantén `STUDIO_SERVER_WORKERS=1`; el servidor rechaza varios workers. |
 | Algo raro sin nombre claro | — | `comfy report <id>`: el informe está pensado para pegárselo a un agente IA y que lo diagnostique |
 
 ---
@@ -199,4 +208,4 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 
 ---
 
-*Generada a partir del estado verificado del repositorio en `main` (estado de código `0e8cafc`): README.md, docs/decisiones.md, docs/walkthrough.md, .github/workflows/docker-publish.yml y tools/mac/README.md.*
+*Revisada contra la documentación y el código de `main` el 2026-11-04. Las auditorías históricas pueden describir revisiones anteriores; antes de desplegar, confirma que la CI del commit actual esté verde.*

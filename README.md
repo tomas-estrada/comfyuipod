@@ -1,8 +1,10 @@
 # ComfyUI "Everything-Ready" Executor para Vast.ai (RTX 5090 32 GB / RTX 4090 24 GB — 100% Web)
 
-Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5090 (32 GB GDDR7 VRAM, arquitectura Blackwell `sm_120` con CUDA 12.8)** —y totalmente compatible con **RTX 4090 (24 GB, Ada `sm_89`)**—, diseñado para abrir en el navegador de tu **MacBook**, iniciar sesión con usuario/contraseña (HTTP Basic Auth), arrastrar cualquier workflow (`.json` o `.png`) y ejecutarlo sin tocar rutas ni escribir código.
+Despliegue efímero de **ComfyUI** en **Vast.ai** optimizado para **NVIDIA RTX 5090 (32 GB GDDR7 VRAM, arquitectura Blackwell `sm_120` con CUDA 12.8)** —y totalmente compatible con **RTX 4090 (24 GB, Ada `sm_89`)**—, diseñado para abrirse desde un navegador en **Windows, macOS o Linux**, iniciar sesión con usuario/contraseña (HTTP Basic Auth), arrastrar cualquier workflow (`.json` o `.png`) y ejecutarlo sin tocar rutas ni escribir código.
 
-> Consulta [`docs/decisiones.md`](docs/decisiones.md) para ver la tabla de investigación web verificada (fecha `2026-10-16`) y el registro completo de decisiones de seguridad, reproducibilidad y arquitectura, o [`docs/walkthrough.md`](docs/walkthrough.md) para el desglose archivo por archivo.
+> Empieza por el [índice de documentación](docs/README.md); consulta [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) para los componentes y flujos, [`docs/GUIA_PASO_A_PRODUCCION.md`](docs/GUIA_PASO_A_PRODUCCION.md) para desplegar y operar, [`docs/decisiones.md`](docs/decisiones.md) para las decisiones técnicas o [`docs/walkthrough.md`](docs/walkthrough.md) para el recorrido por archivos.
+
+> **Plataformas:** la imagen de producción corre en Linux; el panel se usa desde un navegador en Windows, macOS o Linux. El helper `tools/mac/comfy` es opcional, requiere una shell Bash compatible y se soporta en macOS/Linux (en Windows, mediante WSL2); las instrucciones de navegador no requieren ese helper.
 
 ---
 
@@ -140,6 +142,7 @@ Todos los tamaños han sido verificados contra la cabecera `x-linked-size` de Hu
 | `STUDIO_LLM_FALLBACK_KEY` / `STUDIO_LLM_FALLBACK_BASE_URL` / `STUDIO_LLM_FALLBACK_MODEL` | *(Vacía)* / `https://api.deepseek.com` / `deepseek-chat` | Proveedor LLM secundario (failover automático ante errores 4xx/5xx/timeout del primario). `STUDIO_LLM_FALLBACK_KEY` es independiente de `STUDIO_LLM_KEY` (fail-closed: nunca reenvía la key primaria a otro proveedor) y se redacta en todas las salidas. |
 | `STUDIO_SERVER_PORT` | `18190` | Puerto loopback (`127.0.0.1`) donde `comfy_studio.server` expone `/studio/api/*` cuando `MODEL_PROFILE=studio`. |
 | `STUDIO_SERVER_WORKERS` | `1` | Único valor admitido (M7-OPS-004): el servidor usa un `ProgressBroker` SSE en memoria y estado por proceso, así que con varios workers los eventos no llegarían a todos los clientes. Cualquier otro valor aborta el arranque con error claro (`exit 2`). |
+| `STUDIO_MAX_CONCURRENT_RENDERS` | `2` | Máximo de jobs de render de plantilla ejecutándose concurrentemente en segundo plano. ComfyUI serializa la ejecución; este límite acota tareas y sondeos en vuelo. |
 | `STUDIO_JSON_LOGS` | `0` | Pon `1` para que el studio-server emita logs JSON de una línea (`ts`, `level`, `logger`, `request_id`, `msg`) en stdout. La redacción de secretos se mantiene (los filtros de handler redactan antes de formatear). Cada petición lleva `X-Request-Id` (se acepta uno entrante seguro o se genera `uuid4`), se refleja en la respuesta y se propaga a los logs (M7-OPS-005). |
 | `STUDIO_STUB_LLM` / `STUDIO_STUB_COMFY` | `0` / `0` | Flags de prueba para ejecutar Comfy Studio con cliente LLM determinista in-process (`STUDIO_STUB_LLM=1`) y cola ComfyUI simulada (`STUDIO_STUB_COMFY=1`) en tests y smoke CI sin llamadas de red externas. |
 | `STUDIO_RESUME_JOBS` / `STUDIO_RESUME_DELAY_S` | `1` / `30` | Recuperación durable de jobs (M3-B): al arrancar, los jobs huérfanos en vuelo (`queued`/`running`/`cancelling`/`fetching`) se marcan `interrupted` y, con `STUDIO_RESUME_JOBS=1`, los jobs `render` elegibles se reencolan **una sola vez** (`interrupt_retries ≤ 1`) tras `STUDIO_RESUME_DELAY_S` segundos (espera el arranque de ComfyUI). Pon `0` para desactivar por completo la recuperación: es **inerte**, no altera el estado de ningún job (la reconciliación queda en tus manos). |
@@ -186,13 +189,13 @@ python -m comfy_studio.backup verify /ruta/segura/studio-backup.zip
 
 ---
 
-## 4. Guía de Uso (Desde tu MacBook, 100% Web)
+## 4. Guía de Uso (Navegador en Windows, macOS o Linux)
 
 La guía está dividida en dos partes: **A. Primera vez** (configuración que se hace una sola vez) y **B. Cada sesión** (lo que repites cada vez que alquilas una GPU). Los tiempos citados provienen de ejecuciones reales del workflow de CI (runner `ubuntu-24.04` con `buildcache`).
 
 ### A. Primera vez
 
-#### A1. Publicar la imagen en GitHub Container Registry (gratis, sin Docker en tu Mac)
+#### A1. Publicar la imagen en GitHub Container Registry (gratis, sin Docker local)
 
 1. Crea un repositorio en tu cuenta de GitHub (por ejemplo `comfyui-vast`) y sube el contenido de este proyecto a la rama `main`.
 2. El workflow [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) valida scripts, SHAs y las 26 URLs de HuggingFace, construye una imagen candidata `sha-*`, ejecuta el smoke test (incluido `--quick-test-for-ci` de ComfyUI) y, solo si pasa, la promueve a:
@@ -299,21 +302,29 @@ vastai create instance <OFFER_ID> \
 
 Cuando alquilas con `comfy rent studio` y abres `comfy studio` (`/studio/`), puedes ejecutar el flujo completo de indexación y montaje automático desde la pestaña **Percepción & EDL** o pidiéndoselo al agente conversacional:
 
-> **Modo de inferencia actual**: los pasos 1–4 funcionan de extremo a extremo (assets, keyframes reales con `ffmpeg`, índice `sqlite-vec`, transcripciones/EDL y render EDL real con `ffmpeg` que **falla** si `ffprobe` no verifica el MP4). Los backends ML de percepción/ASR arrancan en `auto`: real si el probe de pesos pasa (`ml/backends.py`), simulación determinista etiquetada (`simulated: true`) si no; el índice CLIP del panel sigue siendo el extractor local determinista. Controla el modo con `STUDIO_PERCEPTION_BACKEND=auto|real|sim`.
+> **Modo de inferencia actual**: los pasos 1–4 funcionan de extremo a extremo (assets, keyframes reales con `ffmpeg`, índice `sqlite-vec`, transcripciones/EDL y render EDL real con `ffmpeg` que **falla** si `ffprobe` no verifica el MP4). Los backends ML de percepción/ASR arrancan en `auto`: usan backend real si el probe de capacidades pasa; si no, la simulación determinista local se declara con `simulated: true` y `simulation_notice`. `real` exige los modelos reales y falla de forma explícita si no están disponibles; `sim` fuerza la simulación. El índice visual CLIP del panel sigue siendo determinista y no debe interpretarse como calidad de un modelo CLIP real. Controla el modo con `STUDIO_PERCEPTION_BACKEND=auto|real|sim` y revisa el campo `simulated` de cada respuesta antes de evaluar resultados.
 
 1. **Subir brutos e indexar keyframes (`sqlite-vec`)**:
    - Arrastra tus clips MP4/MOV/WAV o fotos de referencia a la barra lateral **Assets del Proyecto**.
-   - En la pestaña **Percepción & EDL**, selecciona el vídeo y pulsa **Extraer Keyframes** (`POST /studio/api/projects/{id}/keyframes/extract`) e **Indexar** (`POST /studio/api/projects/{id}/perception/index`), o escribe en el chat *"extrae los keyframes e indexa los medios del proyecto"* (`extract_keyframes`, `index_media`). Las miniaturas con timestamps exactos aparecen en la cuadrícula de keyframes y sus embeddings quedan almacenados en `STUDIO_DATA_DIR/index.db`. Si `ffmpeg` no puede extraer fotogramas de un clip, el marcador de posición se guarda con `synthetic: true` y **se excluye del índice**.
+   - En la pestaña **Percepción & EDL**, selecciona el vídeo y pulsa **Extraer Keyframes** (`POST /studio/api/projects/{id}/keyframes/extract`) e **Indexar** (`POST /studio/api/projects/{id}/perception/index`), o escribe en el chat *"extrae los keyframes e indexa los medios del proyecto"* (`extract_keyframes`, `index_media`). Las miniaturas con timestamps exactos aparecen en la cuadrícula de keyframes y sus embeddings quedan almacenados en `STUDIO_DATA_DIR/index.db`. Reindexar reutiliza keyframes y embeddings cuando no cambiaron la fuente, los parámetros de extracción, los archivos derivados ni los inputs del embedding; las modificaciones pertinentes invalidan esa caché. Si `ffmpeg` no puede extraer fotogramas de un clip, el marcador de posición se guarda con `synthetic: true` y **se excluye del índice**.
 2. **Detectar rostros, nombrar identidades y buscar planos (`texto`, `cara` o `texto ∩ persona`)**:
    - Pulsa **Detectar Caras** (`POST /studio/api/projects/{id}/faces/index`) sobre los vídeos o fotos de referencia y registra/renombra identidades (`POST /studio/api/projects/{id}/identities`, `PATCH /studio/api/projects/{id}/identities/{identity_id}`).
    - Busca planos por descripción textual (`find_shots_text`), por identidad/foto de referencia (`find_shots_face`) o combinando ambos (`POST /studio/api/projects/{id}/search/combined`, p. ej. *"Persona A hablando frente a pizarra"*).
    - > **Aviso de licencia no comercial (`InsightFace buffalo_l`)**: cuando se integren los pesos reales del paquete `InsightFace buffalo_l` (`det_10g.onnx`, `w600k_r50.onnx`), su licencia **no comercial (NC)** restringe el uso del índice facial a investigación y proyectos no comerciales salvo acuerdo comercial directo con el titular (los pesos `IP-Adapter-FaceID` siguen excluidos del catálogo Fase 3 por el mismo motivo). El aviso acompaña ya a todas las respuestas faciales.
-3. **Transcribir y diarizar (simulación determinista; sin `HF_TOKEN`)**:
-   - Pulsa **Transcribir Audio** (`POST /studio/api/projects/{id}/transcribe`, herramienta `transcribe`) para obtener palabras con timestamps (`start_sec`, `end_sec`) y detección de muletillas en ES/EN. La respuesta incluye `simulated: true`.
-   - Pulsa **Diarizar Hablantes** (`POST /studio/api/projects/{id}/diarize`, herramienta `diarize`) para etiquetar cada segmento y palabra por hablante (`SPEAKER_00`, `SPEAKER_01`, ...). No requiere `pyannote` **ni `HF_TOKEN`**, y la respuesta también incluye `simulated: true`.
+3. **Transcribir y diarizar**:
+   - Pulsa **Transcribir Audio** (`POST /studio/api/projects/{id}/transcribe`, herramienta `transcribe`) para obtener palabras con timestamps (`start_sec`, `end_sec`) y detección de muletillas en ES/EN. Comprueba `simulated` y `simulation_notice`: en `auto`, `true` indica que se usó el fallback determinista; con backend real disponible puede devolver inferencia real.
+   - Pulsa **Diarizar Hablantes** (`POST /studio/api/projects/{id}/diarize`, herramienta `diarize`) para etiquetar cada segmento y palabra por hablante (`SPEAKER_00`, `SPEAKER_01`, ...). La ruta simulada no requiere `pyannote` ni `HF_TOKEN`; verifica de nuevo el campo `simulated` de la respuesta.
 4. **Generar EDL de Highlights y renderizar entregables `16:9` y `9:16` con `ffmpeg` (real)**:
    - Pulsa **Generar Highlights EDL** (`POST /studio/api/projects/{id}/edl/highlights`, o pide al agente `propose_edl`) para crear una nueva versión de EDL (`comfy_studio.edl.v1`) que recorta pausas (`>= min_pause_sec`) y muletillas (`remove_fillers=true`).
    - Revisa o ajusta los cortes (`in_sec`, `out_sec`, `speaker`, `reason`) en el timeline editable de la pestaña **Percepción & EDL**, elige el formato de entrega (`16:9` `1280x720` o `9:16` `720x1280`) y pulsa **Renderizar MP4** (`POST /studio/api/projects/{id}/edl/{version}/render`, herramienta `build_edl`). El MP4 concatenado se verifica con `ffprobe` y solo entonces se guarda en la **Galería**; si la verificación falla, el render devuelve error en lugar de un entregable con metadatos inventados. Los timeouts de `ffmpeg`/`ffprobe` son configurables (`STUDIO_FFMPEG_TIMEOUT_S`, `STUDIO_FFPROBE_TIMEOUT_S`).
+
+#### Envío de plantillas y seguimiento de jobs
+
+`POST /studio/api/templates/{template_id}/submit` y su ruta por proyecto responden `202 Accepted` con un `job_id` por defecto: la respuesta confirma que el render fue aceptado, **no** que haya terminado. Consulta `GET /studio/api/jobs/{job_id}` o escucha progreso en `/studio/api/progress` (SSE). Los clientes que necesiten esperar dentro de la petición pueden usar `?wait=1` para obtener la respuesta síncrona; se recomienda el modo asíncrono para renders largos. El límite inicial de trabajos concurrentes es `STUDIO_MAX_CONCURRENT_RENDERS=2`.
+
+#### Diagnóstico de herramientas multimedia
+
+Abre `/studio/api/health` y revisa `media_tools.ffmpeg_available` / `media_tools.ffprobe_available`. Si una herramienta aparece ausente, comprueba que el ejecutable esté en `PATH` o define `STUDIO_FFMPEG_BIN` y `STUDIO_FFPROBE_BIN` con su ruta completa; todas las rutas Studio de media, percepción, EDL, ASR y QA comparten este resolver. En solicitudes con error, conserva la cabecera `X-Request-Id` de la respuesta para correlacionarla con logs; `STUDIO_JSON_LOGS=1` activa líneas JSON con `request_id`.
 
 #### B4. Si algo falla durante la sesión (Observabilidad y Diagnóstico IA)
 
