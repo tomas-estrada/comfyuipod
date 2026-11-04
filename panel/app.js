@@ -24,6 +24,7 @@
         identities: [],
         perceptionResults: null,
         perceptionNotice: "",
+        montageData: null,
         editedCuts: null,
         reviewPins: [],
         toolEvents: [],
@@ -2206,6 +2207,157 @@
         } catch (err) {
             if (statusEl) statusEl.textContent = `Error: ${err.message}`;
         }
+    /* --- M7: montaje asistido y verificable desde brief --- */
+    }
+    async function runMontageFromBrief() {
+        const briefInput = document.getElementById("montage-brief-input");
+        const durationInput = document.getElementById("montage-target-duration");
+        const aspectSelect = document.getElementById("montage-aspect-select");
+        const renderCheck = document.getElementById("montage-render-checkbox");
+        const statusEl = document.getElementById("montage-status");
+        const projectId = state.activeProjectId;
+        if (!projectId) {
+            setToast("Selecciona un proyecto antes de planificar el montaje.", "error");
+            return;
+        }
+        const brief = (briefInput && briefInput.value ? briefInput.value : "").trim();
+        if (brief.length < 3) {
+            setToast("Escribe un brief de al menos 3 caracteres.", "error");
+            return;
+        }
+        const payload = {
+            brief,
+            aspect_ratio: aspectSelect ? aspectSelect.value : "16:9",
+            render: Boolean(renderCheck && renderCheck.checked),
+        };
+        const target = durationInput ? Number(durationInput.value) : NaN;
+        if (Number.isFinite(target) && target > 0) {
+            payload.target_duration_sec = target;
+        }
+        if (statusEl) statusEl.textContent = "Planificando montaje…";
+        try {
+            const resp = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(projectId)}/montage/from-brief`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                }
+            );
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                state.montageData = null;
+                renderMontagePlan();
+                if (statusEl) statusEl.textContent = `Error ${resp.status}`;
+                setToast(
+                    data.detail
+                        ? String(data.detail).slice(0, 240)
+                        : `Error al planificar el montaje (${resp.status}).`,
+                    "error"
+                );
+                return;
+            }
+            state.montageData = data;
+            renderMontagePlan();
+            if (statusEl) {
+                const n = Array.isArray(data.cuts) ? data.cuts.length : 0;
+                statusEl.textContent = data.render
+                    ? `${n} cortes · borrador renderizado (EDL v${data.version}).`
+                    : `${n} cortes propuestos (EDL v${data.version}).`;
+            }
+            setToast(
+                data.render
+                    ? `Montaje planificado y borrador renderizado (EDL v${data.version}).`
+                    : `Montaje planificado: EDL v${data.version} guardado.`,
+                "success"
+            );
+            await refreshEdl();
+            if (data.render) {
+                await refreshGallery();
+            }
+        } catch (err) {
+            if (statusEl) statusEl.textContent = "Error de red.";
+            setToast(`Error al planificar el montaje: ${err.message}`, "error");
+        }
+    }
+
+    function renderMontageEvidenceChip(ev) {
+        const mode = ev && ev.mode ? ev.mode : "evidencia";
+        let detail = "";
+        if (mode === "transcript") {
+            detail = `transcripción ${ev.transcription_id || "?"} · segmento ${ev.segment_id || "?"}`;
+            if (Array.isArray(ev.matched_terms) && ev.matched_terms.length) {
+                detail += ` · términos: ${ev.matched_terms.join(", ")}`;
+            }
+        } else if (mode === "visual") {
+            detail = `plano ${ev.shot_id || "?"} · keyframe ${ev.keyframe_asset_id || "?"} · similitud ${ev.similarity}`;
+        } else if (mode === "identity") {
+            detail = `persona ${ev.identity_name || ev.identity_id || "?"} · keyframe ${ev.keyframe_asset_id || "?"} · similitud ${ev.similarity}`;
+        }
+        const verified = ev && ev.timecode_verified ? "timecode verificado (ffprobe)" : "timecode sin verificar";
+        const sim = ev && ev.simulated ? "backend simulado" : "backend real";
+        return `<span class="evidence-chip" title="${escapeHtml(detail)}">${escapeHtml(mode)} · ${escapeHtml(verified)} · ${escapeHtml(sim)}</span>`;
+    }
+
+    function renderMontagePlan() {
+        const summaryEl = document.getElementById("montage-summary");
+        const cutsListEl = document.getElementById("montage-cuts-list");
+        const data = state.montageData;
+        if (!summaryEl || !cutsListEl) return;
+        if (!data) {
+            summaryEl.innerHTML =
+                '<p class="empty-hint">Sin montaje planificado todavía. Escribe un brief arriba: se recuperarán momentos por imagen (CLIP), diálogo (transcripción) y persona (identidades), y cada corte mostrará su evidencia con timecodes verificados.</p>';
+            cutsListEl.innerHTML =
+                '<p class="empty-hint">Los cortes propuestos desde el brief aparecerán aquí con su evidencia trazable.</p>';
+            return;
+        }
+        const cuts = Array.isArray(data.cuts) ? data.cuts : [];
+        const terms = Array.isArray(data.query_terms) ? data.query_terms.join(", ") : "-";
+        const persons = Array.isArray(data.persons) && data.persons.length ? data.persons.join(", ") : "-";
+        const simNotice = data.simulated
+            ? '<p><strong>Aviso:</strong> la recuperación visual/facial/transcripción usa backends simulados (<code>simulated: true</code>); la planificación del EDL y los timecodes verificados con ffprobe son reales.</p>'
+            : "";
+        let renderLine = "";
+        if (data.render && data.render.verification) {
+            const v = data.render.verification;
+            renderLine = `<p><strong>Borrador renderizado:</strong> <code>${escapeHtml(data.render.output_asset ? data.render.output_asset.id : "")}</code> · duración real <code>${Number(v.actual_duration_sec).toFixed(2)}s</code> (esperada ${Number(v.expected_duration_sec).toFixed(2)}s) · ${v.width}×${v.height} · verificado con ffprobe: <code>${v.probe_ok ? "sí" : "no"}</code></p>`;
+        }
+        summaryEl.innerHTML = `
+            <p><strong>Montaje desde brief</strong> — EDL <code>v${escapeHtml(data.version)}</code> (<code>${escapeHtml(data.edl_id || "")}</code>) · ${cuts.length} cortes · <code>${Number(data.total_duration_sec || 0).toFixed(2)}s</code> · cobertura de evidencia <code>${Math.round((data.evidence_coverage || 0) * 100)}%</code> · timecodes verificados <code>${data.cuts_timecode_verified}/${cuts.length}</code></p>
+            <p><strong>Brief:</strong> ${escapeHtml(data.brief || "")}</p>
+            <p><strong>Términos:</strong> ${escapeHtml(terms)} · <strong>Personas detectadas:</strong> ${escapeHtml(persons)}</p>
+            ${renderLine}
+            ${simNotice}
+        `;
+        if (cuts.length === 0) {
+            cutsListEl.innerHTML = '<p class="empty-hint">El brief no produjo cortes.</p>';
+            return;
+        }
+        cutsListEl.innerHTML = cuts
+            .map((cut, idx) => {
+                const inSec = Number(cut.in_sec || 0).toFixed(2);
+                const outSec = Number(cut.out_sec || 0).toFixed(2);
+                const chips = Array.isArray(cut.evidence)
+                    ? cut.evidence.map(renderMontageEvidenceChip).join("")
+                    : "";
+                const textLine = cut.text
+                    ? `<span class="item-meta">${escapeHtml(cut.text)}</span>`
+                    : "";
+                const speakerLine = cut.speaker
+                    ? `Hablante: <code>${escapeHtml(cut.speaker)}</code> · `
+                    : "";
+                return `
+                <div class="item-card" data-montage-cut="${idx}">
+                    <div class="item-main">
+                        <span class="item-title">Corte #${idx + 1} · ${inSec}s → ${outSec}s · score <code>${Number(cut.score || 0).toFixed(3)}</code></span>
+                        <span class="item-meta">${speakerLine}asset <code>${escapeHtml(cut.asset_id || "")}</code> · motivo ${escapeHtml(cut.reason || "brief_match")}</span>
+                        ${textLine}
+                        <div class="evidence-chip-row">${chips}</div>
+                    </div>
+                </div>
+                `;
+            })
+            .join("");
     }
 
     function renderEdlView() {
@@ -2471,6 +2623,19 @@
                 refreshEdl();
             });
 
+            es.addEventListener("montage", function (evt) {
+                try {
+                    const data = JSON.parse(evt.data);
+                    if (data.project_id && data.project_id !== state.activeProjectId) return;
+                    if (data.status === "built") {
+                        refreshGallery();
+                    }
+                } catch (_e) {
+                    // Ignorar
+                }
+                refreshEdl();
+            });
+
             es.onerror = function () {
                 state.sseConnected = false;
                 if (badge) {
@@ -2628,6 +2793,13 @@
         if (perceptionIndexBtn) {
             perceptionIndexBtn.addEventListener("click", async () => {
                 await runPerceptionIndex();
+            });
+        }
+        const montageForm = document.getElementById("montage-brief-form");
+        if (montageForm) {
+            montageForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                await runMontageFromBrief();
             });
         }
         const saveCutsBtn = document.getElementById("edl-save-cuts-btn");

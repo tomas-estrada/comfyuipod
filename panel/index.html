@@ -502,6 +502,59 @@
                     <p class="empty-hint">Sin búsqueda todavía. Escribe una descripción o filtra por persona.</p>
                 </div>
 
+                <!-- M7: montaje asistido y verificable desde brief -->
+                <div class="divider"></div>
+                <h3 class="section-subtitle">Montaje asistido desde brief (M7)</h3>
+                <form id="montage-brief-form" class="studio-form">
+                    <div class="form-row">
+                        <div class="form-group flex-2">
+                            <label for="montage-brief-input">Brief del montaje</label>
+                            <input
+                                type="text"
+                                id="montage-brief-input"
+                                maxlength="2000"
+                                placeholder="Ej. quiero los momentos donde Ana explica el incendio, del segundo 2 al 4"
+                            >
+                        </div>
+                        <div class="form-group flex-1">
+                            <label for="montage-target-duration">Duración objetivo (s, opcional)</label>
+                            <input
+                                type="number"
+                                id="montage-target-duration"
+                                min="1"
+                                max="3600"
+                                step="0.5"
+                                placeholder="Sin límite"
+                            >
+                        </div>
+                        <div class="form-group flex-1">
+                            <label for="montage-aspect-select">Formato de entrega</label>
+                            <select id="montage-aspect-select">
+                                <option value="16:9" selected>16:9</option>
+                                <option value="9:16">9:16</option>
+                                <option value="1:1">1:1</option>
+                                <option value="4:5">4:5</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" id="montage-plan-btn" class="btn btn-primary">
+                            Planificar montaje desde brief
+                        </button>
+                        <label class="checkbox-label" for="montage-render-checkbox">
+                            <input type="checkbox" id="montage-render-checkbox">
+                            Renderizar el borrador ahora (ffmpeg verificado con ffprobe)
+                        </label>
+                        <span id="montage-status" class="inline-status" aria-live="polite"></span>
+                    </div>
+                </form>
+                <div id="montage-summary" class="project-summary-box" role="note">
+                    <p class="empty-hint">Sin montaje planificado todavía. Escribe un brief arriba: se recuperarán momentos por imagen (CLIP), diálogo (transcripción) y persona (identidades), y cada corte mostrará su evidencia con timecodes verificados.</p>
+                </div>
+                <div id="montage-cuts-list" class="items-list" aria-live="polite">
+                    <p class="empty-hint">Los cortes propuestos desde el brief aparecerán aquí con su evidencia trazable.</p>
+                </div>
+
                 <div class="divider"></div>
                 <h3 class="section-subtitle">Timeline EDL</h3>
 
