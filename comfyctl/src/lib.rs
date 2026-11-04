@@ -4,6 +4,7 @@ pub mod collect;
 pub mod config;
 pub mod diag;
 pub mod http;
+pub mod idle;
 pub mod logtail;
 pub mod redact;
 pub mod report;

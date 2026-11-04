@@ -9,6 +9,7 @@ Este índice orienta la documentación del repositorio y señala cuál es la fue
 | Entender capacidades, perfiles de modelos, variables de entorno y uso general | [`README.md`](../README.md) |
 | Desplegar y operar el servicio paso a paso, desde cualquier sistema cliente | [Guía Markdown](GUIA_PASO_A_PRODUCCION.md) · [PDF](GUIA_PASO_A_PRODUCCION.pdf) |
 | Entender componentes, límites de confianza, datos y flujos de ejecución | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Arquitectura canónica en 5 fases (línea base aprobada, matriz de requisitos y contrato de variables/secretos) | [`ARCHITECTURE_CANONICAL.md`](ARCHITECTURE_CANONICAL.md) |
 | Consultar plantillas incluidas y su finalidad | [`plantillas.md`](plantillas.md) |
 | Estudio de anuncios (brief → guion → storyboard → variantes con QA) | [`estudio_anuncios.md`](estudio_anuncios.md) |
 | Investigación competitiva limpia (Kling, Higgsfield, Suno, “Omni”, +8) y selección open source | [`propuestas/INVESTIGACION_COMPETITIVA_2026-11-04.md`](propuestas/INVESTIGACION_COMPETITIVA_2026-11-04.md) |

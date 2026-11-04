@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import secrets
+import shutil  # noqa: F401 (re-export: tests parchean app.shutil, módulo compartido con webutil)
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -68,6 +69,7 @@ from comfy_studio.webutil import (  # noqa: F401 (re-export: compatibilidad de i
     EdlBuildRequest,
     _BoundedUploadAPIRoute,
     _check_upload_content_length,
+    _check_upload_free_disk,
     _edge_auth_effective_pass,
     _edge_auth_user,
     _is_media_upload_request,
@@ -138,9 +140,49 @@ def create_app(
                 logger.exception("Error en la recuperación de jobs interrumpidos")
 
         recovery_task: asyncio.Task[None] = asyncio.create_task(_run_job_recovery())
+
+        async def _run_reconcile_loop() -> None:
+            """Watchdog periódico: reconcilia jobs en vuelo contra /queue+/history de ComfyUI.
+
+            Si ComfyUI se reinició (OOM CUDA exit 137) y un prompt desapareció, el job
+            queda `interrupted`/reencolado en vivo en vez de esperar al siguiente arranque
+            de Studio o al timeout de poll. Con `STUDIO_RECONCILE_INTERVAL_S=0` está off.
+            """
+            interval = float(getattr(cfg, "studio_reconcile_interval_s", 30.0))
+            if interval <= 0:
+                return
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    report = await recover_interrupted_jobs(
+                        store=store,
+                        comfyui_client=_app.state.comfyui_client,
+                        broker=broker,
+                        resume=cfg.studio_resume_jobs,
+                        start_delay_s=0.0,
+                        watchdog=True,
+                    )
+                    if any(
+                        report.get(k) for k in ("requeued", "attached", "interrupted", "failed")
+                    ):
+                        logger.info("Reconciliación en vivo de jobs vs ComfyUI: %s", report)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Error en la reconciliación periódica de jobs")
+
+        reconcile_task: asyncio.Task[None] | None = None
+        if float(getattr(cfg, "studio_reconcile_interval_s", 30.0)) > 0:
+            reconcile_task = asyncio.create_task(_run_reconcile_loop())
         try:
             yield
         finally:
+            if reconcile_task is not None:
+                reconcile_task.cancel()
+                try:
+                    await reconcile_task
+                except asyncio.CancelledError:
+                    pass
             # M1.6: drenar la recuperación acotadamente en vez de cancelarla en seco. Un
             # resume a mitad de `execute_prompt_job` quedaba en estado no terminal sin
             # reconciliación; ahora se le da `STUDIO_RECOVERY_DRAIN_S` y, si no termina,

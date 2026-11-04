@@ -386,6 +386,9 @@ class StudioConfig:
     studio_resume_jobs: bool = True
     studio_resume_delay_s: float = DEFAULT_STUDIO_RESUME_DELAY_S
     studio_recovery_drain_s: float = DEFAULT_STUDIO_RECOVERY_DRAIN_S
+    # Reconciliación periódica en vivo de jobs vs /queue+/history de ComfyUI (segundos;
+    # 0 desactiva). Detecta prompts perdidos tras un reinicio de ComfyUI (OOM 137).
+    studio_reconcile_interval_s: float = 30.0
     studio_ffmpeg_timeout_s: float = DEFAULT_STUDIO_FFMPEG_TIMEOUT_S
     studio_ffprobe_timeout_s: float = DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
     max_concurrent_renders: int = DEFAULT_MAX_CONCURRENT_RENDERS
@@ -473,6 +476,14 @@ class StudioConfig:
             "STUDIO_UPLOAD_MAX_TOTAL_MB", DEFAULT_UPLOAD_MAX_TOTAL_MB
         )
 
+        raw_reconcile = source.get("STUDIO_RECONCILE_INTERVAL_S", "").strip()
+        try:
+            reconcile_interval = float(raw_reconcile) if raw_reconcile else 30.0
+        except ValueError:
+            reconcile_interval = 30.0
+        if reconcile_interval < 0:
+            reconcile_interval = 30.0
+
         comfy_pass = (
             source.get("COMFY_PASS", "").strip()
             or source.get("STUDIO_AUTH_PASS", "").strip()
@@ -538,6 +549,7 @@ class StudioConfig:
             studio_webhook_secret=source.get("STUDIO_WEBHOOK_SECRET", "").strip() or None,
             studio_resume_jobs=_parse_bool(source.get("STUDIO_RESUME_JOBS"), default=True),
             studio_resume_delay_s=resume_delay_s,
+            studio_reconcile_interval_s=reconcile_interval,
             studio_recovery_drain_s=_positive_float(
                 "STUDIO_RECOVERY_DRAIN_S", DEFAULT_STUDIO_RECOVERY_DRAIN_S
             ),

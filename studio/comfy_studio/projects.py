@@ -7,6 +7,8 @@ import re
 import shutil
 import sqlite3
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -231,8 +233,22 @@ class ProjectStore:
         conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Conexión con cierre garantizado: commit al salir, close siempre.
+
+        `with sqlite3.connect(...)` solo hace commit/rollback, nunca close;
+        en hilos del executor el cierre quedaba a merced del GC.
+        """
+        conn = self._connect()
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute("PRAGMA journal_mode = WAL;")
             conn.executescript(SCHEMA_V1_SQL)
             existing = conn.execute(
@@ -253,7 +269,7 @@ class ProjectStore:
             conn.commit()
 
     def get_schema_version(self) -> int:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT MAX(version) AS v FROM schema_version"
             ).fetchone()
@@ -351,7 +367,7 @@ class ProjectStore:
         meta_json = json.dumps(metadata or {}, ensure_ascii=False)
 
         self._ensure_project_dirs(pid)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO projects "
                 "(id, name, description, aspect_ratio, metadata_json, created_at, updated_at) "
@@ -371,7 +387,7 @@ class ProjectStore:
         return self._row_to_project(row)
 
     def list_projects(self) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM projects ORDER BY created_at DESC, id DESC"
             ).fetchall()
@@ -382,7 +398,7 @@ class ProjectStore:
             safe_id = self._validate_project_id(project_id)
         except ValueError:
             return None
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM projects WHERE id = ?", (safe_id,)
             ).fetchone()
@@ -416,7 +432,7 @@ class ProjectStore:
         new_meta = metadata if metadata is not None else current["metadata"]
         now = _utc_now_iso()
 
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "UPDATE projects SET name = ?, description = ?, aspect_ratio = ?, "
                 "metadata_json = ?, updated_at = ? WHERE id = ?",
@@ -437,7 +453,7 @@ class ProjectStore:
             safe_id = self._validate_project_id(project_id)
         except ValueError:
             return False
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT id FROM projects WHERE id = ?", (safe_id,)
             ).fetchone()
@@ -504,7 +520,7 @@ class ProjectStore:
         now = _utc_now_iso()
 
         try:
-            with self._connect() as conn:
+            with self._connection() as conn:
                 conn.execute(
                     "INSERT INTO assets "
                     "(id, project_id, kind, category, filename, original_filename, "
@@ -558,7 +574,7 @@ class ProjectStore:
             clauses.append("category = ?")
             params.append(category.strip())
         where_sql = " AND ".join(clauses)
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 f"SELECT * FROM assets WHERE {where_sql} ORDER BY created_at ASC, id ASC",
                 params,
@@ -571,7 +587,7 @@ class ProjectStore:
             safe_aid = self._validate_project_id(asset_id)
         except ValueError:
             return None
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM assets WHERE id = ? AND project_id = ?",
                 (safe_aid, safe_pid),
@@ -598,7 +614,7 @@ class ProjectStore:
             cleaned = [str(t).strip() for t in tags if str(t).strip()]
             existing = [str(t) for t in (merged.get("tags") or []) if str(t).strip()]
             merged["tags"] = list(dict.fromkeys([*existing, *cleaned]))
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "UPDATE assets SET metadata_json = ? WHERE id = ? AND project_id = ?",
                 (
@@ -628,7 +644,7 @@ class ProjectStore:
         full_path = (self.data_dir / asset["rel_path"]).resolve()
         if full_path.is_relative_to(pdir) and full_path.exists():
             full_path.unlink(missing_ok=True)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM assets WHERE id = ? AND project_id = ?",
                 (asset["id"], project_id),
@@ -650,7 +666,7 @@ class ProjectStore:
     ) -> dict[str, Any]:
         job_id = uuid.uuid4().hex[:12]
         now = _utc_now_iso()
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO jobs "
                 "(id, project_id, kind, status, template_id, prompt_id, "
@@ -683,7 +699,7 @@ class ProjectStore:
             safe_jid = self._validate_project_id(job_id)
         except ValueError:
             return None
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM jobs WHERE id = ?", (safe_jid,)
             ).fetchone()
@@ -704,7 +720,7 @@ class ProjectStore:
             clauses.append("status = ?")
             params.append(status)
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 f"SELECT * FROM jobs {where_sql} ORDER BY created_at DESC, id DESC",
                 params,
@@ -740,7 +756,7 @@ class ProjectStore:
         new_error = error if error is not None else current["error"]
         now = _utc_now_iso()
 
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "UPDATE jobs SET status = ?, prompt_id = ?, progress_value = ?, "
                 "progress_max = ?, current_node = ?, result_json = ?, error = ?, updated_at = ? "
@@ -795,7 +811,7 @@ class ProjectStore:
         msg_id = f"msg-{uuid.uuid4().hex[:12]}"
         now = _utc_now_iso()
         tc_json = json.dumps(tool_calls or [], ensure_ascii=False)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO chat_messages "
                 "(id, project_id, role, content, tool_calls_json, created_at) "
@@ -817,7 +833,7 @@ class ProjectStore:
         limit: int = 200,
     ) -> list[dict[str, Any]]:
         pid = self._validate_project_id(project_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM chat_messages WHERE project_id = ? "
                 "ORDER BY created_at DESC, rowid DESC LIMIT ?",
@@ -827,7 +843,7 @@ class ProjectStore:
 
     def clear_chat_messages(self, project_id: str) -> int:
         pid = self._validate_project_id(project_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute(
                 "DELETE FROM chat_messages WHERE project_id = ?",
                 (pid,),
@@ -867,7 +883,7 @@ class ProjectStore:
         pid = project["id"]
         edl_id = f"edl-{uuid.uuid4().hex[:12]}"
         now = _utc_now_iso()
-        with self._connect() as conn:
+        with self._connection() as conn:
             row_ver = conn.execute(
                 "SELECT COALESCE(MAX(version), 0) AS max_ver "
                 "FROM edl_versions WHERE project_id = ?",
@@ -899,7 +915,7 @@ class ProjectStore:
 
     def list_edl_versions(self, project_id: str) -> list[dict[str, Any]]:
         pid = self._validate_project_id(project_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM edl_versions WHERE project_id = ? "
                 "ORDER BY version DESC, created_at DESC",
@@ -928,7 +944,7 @@ class ProjectStore:
                 target = version
             else:
                 return self.get_latest_edl(pid)
-        with self._connect() as conn:
+        with self._connection() as conn:
             if isinstance(target, int) or (
                 isinstance(target, str) and target.isdigit()
             ):
@@ -961,7 +977,7 @@ class ProjectStore:
         eff_output_id = (
             output_asset_id if output_asset_id is not None else current["output_asset_id"]
         )
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "UPDATE edl_versions SET edl_json = ?, output_asset_id = ? "
                 "WHERE id = ? AND project_id = ?",
@@ -1123,7 +1139,7 @@ class ProjectStore:
             "diarization_backend": diarization_backend,
             "compute_config": dict(compute_config or {}),
         }
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO transcriptions "
                 "(id, project_id, asset_id, language, segments_json, created_at) "
@@ -1151,7 +1167,7 @@ class ProjectStore:
         transcription_id: str,
     ) -> dict[str, Any] | None:
         pid = self._validate_project_id(project_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM transcriptions WHERE id = ? AND project_id = ?",
                 (str(transcription_id).strip(), pid),
@@ -1171,7 +1187,7 @@ class ProjectStore:
             clauses.append("asset_id = ?")
             params.append(asset_id.strip())
         where_sql = " AND ".join(clauses)
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 f"SELECT * FROM transcriptions WHERE {where_sql} "
                 "ORDER BY created_at DESC, rowid DESC",
@@ -1258,7 +1274,7 @@ class ProjectStore:
             "diarization_backend": diarization_backend,
             "compute_config": eff_compute_cfg,
         }
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "UPDATE transcriptions SET segments_json = ? WHERE id = ? AND project_id = ?",
                 (
@@ -1326,7 +1342,7 @@ class ProjectStore:
             merged_meta = dict(existing.get("metadata") or {})
             if metadata:
                 merged_meta.update(metadata)
-            with self._connect() as conn:
+            with self._connection() as conn:
                 conn.execute(
                     "UPDATE identities SET name = ?, reference_asset_id = ?, metadata_json = ? "
                     "WHERE id = ? AND project_id = ?",
@@ -1351,7 +1367,7 @@ class ProjectStore:
             if identity_id
             else f"id-{uuid.uuid4().hex[:12]}"
         )
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO identities "
                 "(id, project_id, name, reference_asset_id, metadata_json, created_at) "
@@ -1385,7 +1401,7 @@ class ProjectStore:
         current = self.get_identity(project_id, identity_id)
         if current is None:
             return None
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "UPDATE identities SET name = ? WHERE id = ? AND project_id = ?",
                 (cleaned_name, current["id"], current["project_id"]),
@@ -1399,7 +1415,7 @@ class ProjectStore:
             iid = self._validate_project_id(identity_id)
         except ValueError:
             return None
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM identities WHERE id = ? AND project_id = ?",
                 (iid, pid),
@@ -1411,7 +1427,7 @@ class ProjectStore:
         target = (name or "").strip().lower()
         if not target:
             return None
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM identities WHERE project_id = ? ORDER BY created_at ASC",
                 (pid,),
@@ -1423,7 +1439,7 @@ class ProjectStore:
 
     def list_identities(self, project_id: str) -> list[dict[str, Any]]:
         pid = self._validate_project_id(project_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM identities WHERE project_id = ? ORDER BY created_at ASC, id ASC",
                 (pid,),
@@ -1434,7 +1450,7 @@ class ProjectStore:
         current = self.get_identity(project_id, identity_id)
         if current is None:
             return False
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM identities WHERE id = ? AND project_id = ?",
                 (current["id"], current["project_id"]),
@@ -1485,7 +1501,7 @@ class ProjectStore:
         ]
         now = _utc_now_iso()
         target_id = str(plan_id).strip() if plan_id else f"plan-{uuid.uuid4().hex[:12]}"
-        with self._connect() as conn:
+        with self._connection() as conn:
             existing = conn.execute(
                 "SELECT id FROM plans WHERE id = ? AND project_id = ?",
                 (target_id, pid),
@@ -1527,7 +1543,7 @@ class ProjectStore:
 
     def get_plan(self, project_id: str, plan_id: str) -> dict[str, Any] | None:
         pid = self._validate_project_id(project_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM plans WHERE id = ? AND project_id = ?",
                 (str(plan_id).strip(), pid),
@@ -1536,7 +1552,7 @@ class ProjectStore:
 
     def get_active_plan(self, project_id: str) -> dict[str, Any] | None:
         pid = self._validate_project_id(project_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT * FROM plans WHERE project_id = ? AND status = 'active' "
                 "ORDER BY updated_at DESC, rowid DESC LIMIT 1",
@@ -1546,7 +1562,7 @@ class ProjectStore:
 
     def list_plans(self, project_id: str) -> list[dict[str, Any]]:
         pid = self._validate_project_id(project_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM plans WHERE project_id = ? ORDER BY updated_at DESC, rowid DESC",
                 (pid,),
@@ -1559,7 +1575,7 @@ class ProjectStore:
         clean_key = str(key).strip()
         if not clean_key:
             raise ValueError("La clave de metadato no puede estar vacía")
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO project_meta (project_id, key, value_json, updated_at) "
                 "VALUES (?, ?, ?, ?) "
@@ -1571,7 +1587,7 @@ class ProjectStore:
 
     def get_meta(self, project_id: str, key: str, default: Any = None) -> Any:
         pid = self._validate_project_id(project_id)
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT value_json FROM project_meta WHERE project_id = ? AND key = ?",
                 (pid, str(key).strip()),

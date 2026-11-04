@@ -16,6 +16,8 @@ import json
 import os
 import sqlite3
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from comfy_studio.orchestration.state import ProductionState
@@ -68,14 +70,27 @@ class ProductionCheckpointer:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=5.0)
         conn.row_factory = sqlite3.Row
-        # WAL + busy_timeout: lecturas de estado concurrentes sin bloquear al
-        # grafo que escribe tras cada paso (mismo patrón que projects.py).
-        conn.execute("PRAGMA journal_mode = WAL;")
+        # busy_timeout ANTES de journal_mode: si la BD aún no está en WAL y otro
+        # proceso tiene el lock de escritura, el pragma WAL puede devolver
+        # "database is locked" antes de que el timeout esté armado.
         conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS};")
+        # WAL: lecturas de estado concurrentes sin bloquear al grafo que
+        # escribe tras cada paso (mismo patrón que projects.py).
+        conn.execute("PRAGMA journal_mode = WAL;")
         return conn
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Conexión con cierre garantizado: commit al salir, close siempre."""
+        conn = self._connect()
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
     def _ensure_schema(self) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.executescript(_SCHEMA)
 
     # -- API -----------------------------------------------------------------
@@ -84,7 +99,7 @@ class ProductionCheckpointer:
         """Persiste (upsert) el estado completo de una producción."""
         state.updated_at = time.time()
         payload = json.dumps(state.to_dict(), ensure_ascii=False)
-        with self._connect() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "INSERT INTO production_checkpoint "
                 "(production_id, phase, state_json, updated_at) "
@@ -97,7 +112,7 @@ class ProductionCheckpointer:
 
     def load(self, production_id: str) -> ProductionState | None:
         """Reanuda el estado de una producción, o None si no existe."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT state_json FROM production_checkpoint "
                 "WHERE production_id = ?",
@@ -109,7 +124,7 @@ class ProductionCheckpointer:
 
     def list_ids(self, *, limit: int = 50) -> list[str]:
         """Ids de producciones con checkpoint, más recientes primero."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT production_id FROM production_checkpoint "
                 "ORDER BY updated_at DESC LIMIT ?",
@@ -119,7 +134,7 @@ class ProductionCheckpointer:
 
     def delete(self, production_id: str) -> bool:
         """Borra el checkpoint de una producción; True si existía."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             cur = conn.execute(
                 "DELETE FROM production_checkpoint WHERE production_id = ?",
                 (production_id,),
@@ -134,7 +149,7 @@ class ProductionCheckpointer:
         Devuelve el total de filas eliminadas.
         """
         deleted = 0
-        with self._connect() as conn:
+        with self._connection() as conn:
             if older_than_days is not None and older_than_days > 0:
                 cutoff = time.time() - (older_than_days * 86400.0)
                 cur = conn.execute(
