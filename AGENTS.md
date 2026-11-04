@@ -29,6 +29,7 @@
 - `scripts/check_models_manifest.py` — validador del manifiesto (clases, bytes, integridad)
 - `scripts/pin_manifest_integrity.py` — fija `revision` + hash en los manifiestos
 - `scripts/prune_model_cache.py` — política de retención de caché (dry-run por defecto)
+- `render_recipes` (tool del agente) — recetas medidas: VRAM/RAM/tiempo reales por plantilla
 
 ## Architecture & Resource Policy
 [`docs/POLITICA_ARQUITECTURA_RECURSOS.md`](docs/POLITICA_ARQUITECTURA_RECURSOS.md) is the source of truth for what is prepared at build time, what is downloaded on demand, what may run, and what hardware to rent. Key rules that are enforced in code:

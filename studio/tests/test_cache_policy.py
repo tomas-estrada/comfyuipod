@@ -251,3 +251,140 @@ def test_stale_staging_is_cleaned_but_fresh_is_kept(data_dir: Path, monkeypatch)
     plan2 = cache_policy.plan_retention(policy=RetentionPolicy(staging_max_age_s=7 * 24 * 3600))
     assert not any(".hf_stage_phase3" in s["path"] for s in plan2.staging_cleanups)
     assert fresh.is_dir()
+
+
+# --------------------------------------------------------------------------
+# Recetas de ejecución medidas (política, punto 5)
+# --------------------------------------------------------------------------
+
+
+def test_render_measurements_are_stored_and_aggregated(tmp_path: Path) -> None:
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "studio.db")
+    assert store.get_schema_version() == 3
+
+    store.record_render_measurement(
+        template_id="wan_t2v", duration_s=38.2, vram_peak_mb=12400, gpu_name="RTX 5090", cuda="12.8"
+    )
+    store.record_render_measurement(
+        template_id="wan_t2v", duration_s=41.7, vram_peak_mb=13100, gpu_name="RTX 5090", cuda="12.8"
+    )
+    rows = store.list_render_measurements(template_id="wan_t2v")
+    assert len(rows) == 2
+
+    recipe = store.recipe_for_template("wan_t2v")
+    assert recipe is not None and recipe["measured"] is True
+    assert recipe["samples"] == 2
+    assert recipe["vram_peak_mb_max"] == 13100
+    assert recipe["duration_s_avg"] == 39.95
+    assert recipe["gpu_name"] == "RTX 5090"
+
+
+def test_recipe_is_none_without_measurements(tmp_path: Path) -> None:
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "studio.db")
+    assert store.recipe_for_template("never_rendered") is None
+    assert store.list_render_measurements() == []
+
+
+def test_recording_a_measurement_never_raises(tmp_path: Path, monkeypatch) -> None:
+    """Una medición ausente no debe tumbar un render."""
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "studio.db")
+
+    def _boom(*args, **kwargs):  # noqa: ANN001
+        raise RuntimeError("db llena")
+
+    monkeypatch.setattr(store, "_connect", _boom)
+    store.record_render_measurement(template_id="x", duration_s=1.0)  # no lanza
+
+
+def test_capability_resolution_reuses_the_measured_recipe(tmp_path: Path, monkeypatch) -> None:
+    """La resolución de una capacidad reutiliza la receta medida si existe."""
+    from comfy_studio.capabilities import resolve
+    from comfy_studio.projects import ProjectStore
+
+    data = tmp_path / "data"
+    (data / "models").mkdir(parents=True)
+    monkeypatch.setenv("COMFY_DATA_DIR", str(data))
+    monkeypatch.setenv("STUDIO_DATA_DIR", str(tmp_path / "studio"))
+
+    store = ProjectStore(tmp_path / "studio")
+    store.record_render_measurement(
+        template_id="face_fix", duration_s=12.5, vram_peak_mb=4200, gpu_name="RTX 5090"
+    )
+    payload = resolve("video.face_restore").to_public_dict()
+    assert "recipe" in payload
+    recipe = payload["recipe"]
+    assert recipe is not None and recipe["measured"] is True
+    assert recipe["vram_peak_mb_max"] == 4200
+
+
+def test_resolution_without_measurements_still_works(tmp_path: Path, monkeypatch) -> None:
+    from comfy_studio.capabilities import resolve
+
+    data = tmp_path / "data"
+    (data / "models").mkdir(parents=True)
+    monkeypatch.setenv("COMFY_DATA_DIR", str(data))
+    monkeypatch.setenv("STUDIO_DATA_DIR", str(tmp_path / "empty-studio"))
+    payload = resolve("video.face_restore").to_public_dict()
+    assert payload["recipe"] is None
+    assert payload["selected_template"] == "face_fix"
+
+
+@pytest.mark.anyio
+async def test_system_stats_sampler_measures_the_real_peak() -> None:
+    """El pico se mide durante el render, no se declara."""
+    import asyncio
+
+    from comfy_studio.comfyui_client import sample_system_stats_peak
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def system_stats(self) -> dict:
+            self.calls += 1
+            # VRAM creciente: el pico debe ser el último valor.
+            used = 1024**3 * (10 + self.calls)
+            return {
+                "devices": [{"name": "RTX 5090", "vram_total": 32 * 1024**3, "vram_used": used}],
+                "system": {"ram_used": 1024**2 * 100},
+                "cuda_version": "12.8",
+            }
+
+    client = _FakeClient()
+    stop = asyncio.Event()
+
+    async def _stopper() -> None:
+        await asyncio.sleep(0.08)
+        stop.set()
+
+    task = asyncio.create_task(_stopper())
+    peak = await sample_system_stats_peak(client, stop=stop, interval=0.01)
+    await task
+
+    assert peak["samples"] >= 2
+    assert peak["vram_peak_mb"] == 1024 * (10 + client.calls)
+    assert peak["gpu_name"] == "RTX 5090"
+    assert peak["cuda"] == "12.8"
+    assert peak["ram_peak_mb"] == 100
+
+
+@pytest.mark.anyio
+async def test_sampler_is_silent_when_comfyui_does_not_answer() -> None:
+    """Una medición ausente nunca debe tumbar el render."""
+    import asyncio
+
+    from comfy_studio.comfyui_client import sample_system_stats_peak
+
+    class _Dead:
+        async def system_stats(self) -> dict:
+            raise RuntimeError("ComfyUI caído")
+
+    peak = await sample_system_stats_peak(_Dead(), stop=asyncio.Event(), interval=0.01)
+    assert peak["vram_peak_mb"] is None
+    assert peak["samples"] == 0

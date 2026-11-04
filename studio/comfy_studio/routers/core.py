@@ -123,6 +123,20 @@ def register_routes(app: FastAPI) -> None:
             # Activos de modelo como dependencias de tarea: qué se pidió, qué
             # está en disco y en qué clase cae cada grupo (política de recursos).
             "model_assets": model_assets_summary(),
+            # Recetas medidas: resultados reales por plantilla (política, punto 5).
+            "recipes": [
+                recipe
+                for recipe in (
+                    active_store.recipe_for_template(t)
+                    for t in sorted(
+                        {
+                            m["template_id"]
+                            for m in active_store.list_render_measurements(limit=200)
+                        }
+                    )
+                )
+                if recipe is not None
+            ][:20],
         }
         return active_redactor.redact_value(payload)
     @app.get("/studio/api/agent/tools")

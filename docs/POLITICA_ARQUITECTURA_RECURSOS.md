@@ -247,10 +247,41 @@ scripts/prune_model_cache.py --budget-gb 120  # con presupuesto
 scripts/prune_model_cache.py --apply          # ejecuta
 ```
 
+### Recetas de ejecución medidas
+
+«Maintain execution recipes containing supported settings, expected resource
+requirements and measured results. Reuse them rather than reasoning from scratch
+on each deployment.» Antes no se medía nada: las decisiones se tomaban desde las
+estimativas estáticas de `performance_defaults`.
+
+- **Medición real**: durante el render se muestrea `/system_stats` de ComfyUI
+  cada 2 s (`comfyui_client.sample_system_stats_peak`) y se guarda el **pico** de
+  VRAM/RAM, la duración, la GPU y la versión de CUDA. La muestra corre
+  concurrente al render: medir después daría siempre el valor en reposo.
+- **Almacén**: tabla `render_measurements` (esquema v3 de `studio.db`), con
+  `ProjectStore.record_render_measurement()` / `recipe_for_template()`.
+- **Reutilización**: `GET /studio/api/status` expone las recetas medidas, la
+  herramienta `render_recipes` las devuelve al agente, y el resolvedor de
+  capacidades adjunta la receta de la plantilla seleccionada. Es opcional: sin
+  mediciones, la resolución funciona igual.
+- **Nunca rompe el render**: guardar una medición falla en silencio, y el
+  muestreador también si ComfyUI no responde.
+
+### `offload`: eliminado como parámetro de render
+
+`RenderTemplateParams` aceptaba `offload`, pero ese valor **se descartaba antes
+de llegar al grafo** de ComfyUI: no había ningún knob por render que lo aplicara.
+Anunciar un parámetro sin efecto es peor que no tenerlo, así que se retiró del
+cinturón. `offload: true` sigue en los `performance_defaults` de las plantillas
+como documentación de lo que el pod necesita; el offloading real lo aplica la
+gestión de VRAM de ComfyUI al arrancar (`COMFYUI_EXTRA_ARGS`).
+
 ### Pendiente
 
 - **Clasificar las Fases 1/2 por perfil**: el manifiesto core declara `class`,
   pero la selección por `MODEL_PROFILE` sigue viviendo en bash.
+- **Driver medido**: `recipe_for_template` expone GPU y CUDA, pero el driver se
+  toma de `strict-check` (S2), no de la medición.
 ## 5. Hardware objetivo
 
 El objetivo preferido es **una GPU de consumo con ~32 GB de VRAM** y RAM de host

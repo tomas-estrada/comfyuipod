@@ -129,7 +129,7 @@ class RenderTemplateParams(BaseModel):
         ge=256,
         le=2048,
         description=(
-            "Alto en píxeles (480 por defecto para VACE/Wan en 480p + offload; 1024 para SDXL)."
+            "Alto en píxeles (480 por defecto para VACE/Wan en 480p; 1024 para SDXL)."
         ),
     )
     frames: int | None = Field(
@@ -160,12 +160,6 @@ class RenderTemplateParams(BaseModel):
         ge=0.0,
         le=1.0,
         description="Intensidad de restyle o inpainting VACE (0.0 a 1.0).",
-    )
-    offload: bool | None = Field(
-        default=None,
-        description=(
-            "Activar offload de pesos en plantillas de vídeo Wan 2.2 / VACE (true por defecto)."
-        ),
     )
     video_asset_id: str | None = Field(
         default=None,
@@ -1155,6 +1149,20 @@ class DownloadModelArgs(BaseModel):
             "cliente de HuggingFace. Con False solo informa de la disponibilidad."
         ),
     )
+
+
+class RenderRecipesArgs(BaseModel):
+    """Argumentos para la herramienta `render_recipes`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    template_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Plantilla concreta; si se omite, devuelve todas las medidas.",
+    )
+
+    limit: int = Field(default=10, ge=1, le=50, description="Mediciones a devolver.")
 
 
 class ListCapabilitiesArgs(BaseModel):
@@ -2949,6 +2957,54 @@ async def _handle_download_model(
     return payload
 
 
+async def _handle_render_recipes(
+    args: RenderRecipesArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    """Recetas de ejecución MEDIDAS: resultados reales por plantilla.
+
+    Es la unidad que la política pide reutilizar en lugar de razonar desde cero
+    en cada despliegue. No ejecuta nada: lee lo ya medido.
+    """
+    measurements = context.store.list_render_measurements(
+        template_id=args.template_id, limit=args.limit
+    )
+    recipes: list[dict[str, Any]] = []
+    if args.template_id:
+        recipe = context.store.recipe_for_template(args.template_id)
+        if recipe is not None:
+            recipes.append(recipe)
+    else:
+        seen: set[str] = set()
+        for measurement in context.store.list_render_measurements(limit=200):
+            template_id = str(measurement.get("template_id") or "")
+            if not template_id or template_id in seen:
+                continue
+            seen.add(template_id)
+            recipe = context.store.recipe_for_template(template_id)
+            if recipe is not None:
+                recipes.append(recipe)
+
+    return {
+        "status": "ok",
+        "project_id": context.project_id,
+        "template_id": args.template_id,
+        "recipes": recipes,
+        "measurements": [
+            {
+                "template_id": m.get("template_id"),
+                "duration_s": m.get("duration_s"),
+                "vram_peak_mb": m.get("vram_peak_mb"),
+                "ram_peak_mb": m.get("ram_peak_mb"),
+                "gpu_name": m.get("gpu_name"),
+                "status": m.get("status"),
+                "created_at": m.get("created_at"),
+            }
+            for m in measurements
+        ],
+    }
+
+
 async def _handle_list_capabilities(
     args: ListCapabilitiesArgs,
     context: ToolContext,
@@ -3948,6 +4004,19 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=DownloadModelArgs,
             handler=_handle_download_model,
+            parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="render_recipes",
+            description=(
+                "Recetas de ejecución MEDIDAS por plantilla: pico de VRAM/RAM, tiempo "
+                "real, GPU y driver del último render. Úsalo antes de elegir parámetros "
+                "o de recomendar hardware: son datos medidos, no estimativas."
+            ),
+            args_model=RenderRecipesArgs,
+            handler=_handle_render_recipes,
             parallel_safe=True,
         )
     )

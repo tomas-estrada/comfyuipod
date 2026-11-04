@@ -4,6 +4,15 @@ Este documento describe las **17 plantillas curadas** (hitos M2 + ampliaciones) 
 
 ---
 
+> **Nota sobre `offload` (política de arquitectura)**: `offload: true` en los
+> `performance_defaults` documenta lo que el pod necesita para ejecutar la
+> plantilla, **no es un parámetro por render**. El offloading lo aplica la
+> gestión de VRAM de ComfyUI al arrancar (`COMFYUI_EXTRA_ARGS`, p. ej.
+> `--disable-pinned-memory`); no existe un knob por render que lo active. Por eso
+> se retiró de los parámetros que acepta el agente: anunciar un parámetro sin
+> efecto es peor que no tenerlo. Lo que sí se mide y se reutiliza es el pico real
+> de VRAM por render (`render_recipes`).
+
 ## 1. Filosofía y Decisiones de Rendimiento (RTX 5090 32 GB)
 
 El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`prompt` graph JSON) listos para producción sin exponer el grafo de nodos a la interfaz de usuario ni al agente conversacional:

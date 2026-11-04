@@ -22,6 +22,7 @@ capacidad es añadir una entrada, no razonar de nuevo en cada despliegue.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -183,6 +184,8 @@ class Resolution:
     missing_bytes: int = 0
     summary: str = ""
     registry_version: int = CAPABILITY_REGISTRY_VERSION
+    #: Receta medida de la plantilla seleccionada, si existe (política, punto 5).
+    recipe: dict[str, Any] | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -197,8 +200,8 @@ class Resolution:
             "assets": [a.to_public_dict() for a in self.assets],
             "missing": [a.to_public_dict() for a in self.missing],
             "missing_bytes": self.missing_bytes,
+            "recipe": self.recipe,
         }
-
 
 def _load_core_manifest() -> dict[str, dict[str, Any]]:
     """Activos de Fases 1/2 indexados por nombre de archivo."""
@@ -270,6 +273,27 @@ def needs_for_group(flag: str, *, env: dict[str, str] | None = None) -> list[Ass
     ]
 
 
+def _default_store(env: dict[str, str] | None) -> Any | None:
+    """Store por defecto para consultar recetas medidas (None si no hay datos)."""
+    try:
+        from comfy_studio.projects import ProjectStore
+
+        return ProjectStore(_studio_data_dir(env))
+    except Exception:  # noqa: BLE001, S110 - sin store no hay receta medida
+        return None
+
+
+def _studio_data_dir(env: dict[str, str] | None) -> Path:
+    environment = os.environ if env is None else env
+    explicit = (environment.get("STUDIO_DATA_DIR") or "").strip()
+    if explicit:
+        return Path(explicit)
+    comfy_data = (environment.get("COMFY_DATA_DIR") or "").strip()
+    if comfy_data:
+        return Path(comfy_data) / "studio"
+    return Path("/workspace/comfyui-data/studio")
+
+
 def list_capabilities() -> list[dict[str, Any]]:
     """Catálogo serializable de capacidades registradas."""
     return [
@@ -288,6 +312,7 @@ def resolve(
     *,
     env: dict[str, str] | None = None,
     probe_engines: bool = True,
+    store: Any | None = None,
 ) -> Resolution:
     """Resuelve una capacidad a motor + receta + activos, sin red ni GPU."""
     spec = CAPABILITIES.get(capability_id)
@@ -325,6 +350,18 @@ def resolve(
     missing = [a for a in assets if not a.present]
     missing_bytes = sum(a.bytes for a in missing)
 
+    # Receta medida: si este pod ya renderó esta plantilla, se reutiliza el
+    # resultado en lugar de estimar desde cero. Es opcional: si no hay store o
+    # no hay mediciones, se resuelve igual.
+    recipe: dict[str, Any] | None = None
+    if selected is not None:
+        active_store = store if store is not None else _default_store(env)
+        if active_store is not None:
+            try:
+                recipe = active_store.recipe_for_template(selected)
+            except Exception:  # noqa: BLE001 - la receta medida nunca rompe la resolución
+                recipe = None
+
     if prep.get("state") not in (None, "", "ready"):
         state = "engine_unprepared"
     elif missing:
@@ -343,4 +380,5 @@ def resolve(
         missing=missing,
         missing_bytes=missing_bytes,
         summary=spec["summary"],
+        recipe=recipe,
     )
