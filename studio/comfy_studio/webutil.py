@@ -231,6 +231,40 @@ class EdlBuildRequest(BaseModel):
         return list(self.aspect_ratios)
 
 
+class BriefUnderstandRequest(BaseModel):
+    """Cuerpo para (re)construir la comprensión multimodal con evidencia (M7)."""
+
+    prompt: str = Field(default="", max_length=8000)
+    asset_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+class BriefCreateRequest(BaseModel):
+    """Cuerpo para crear un brief creativo desde prompt + assets (M7)."""
+
+    prompt: str = Field(..., min_length=1, max_length=8000)
+    asset_ids: list[str] = Field(default_factory=list, max_length=500)
+    overrides: dict[str, Any] | None = None
+
+
+class BriefPatchRequest(BaseModel):
+    """Ediciones del usuario sobre el brief activo (crean una nueva versión)."""
+
+    changes: dict[str, Any] = Field(..., min_length=1)
+
+
+class BriefFeedbackRequest(BaseModel):
+    """Feedback del usuario para aprender preferencias por proyecto."""
+
+    text: str = Field(..., min_length=1, max_length=4000)
+    applies_to: str | None = Field(default=None, max_length=200)
+
+
+class BriefReviewRequest(BaseModel):
+    """Revisión del render real de un asset contra el brief activo."""
+
+    asset_id: str = Field(..., min_length=1, max_length=64)
+
+
 def _verify_basic_auth(
     auth_header: str | None,
     expected_user: str,

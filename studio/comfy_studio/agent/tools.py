@@ -6,6 +6,7 @@ import json
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,6 +15,10 @@ from starlette.concurrency import run_in_threadpool
 
 from ..comfyui_client import ComfyUIClient
 from ..config import StudioConfig
+from ..creative import build_brief, build_direction, build_understanding, review_output
+from ..creative.brief import BRIEF_STATUSES, EDITABLE_FIELDS, validate_brief
+from ..creative.review import save_review
+from ..ml import is_real_backend
 from ..progress import ProgressBroker
 from ..projects import ProjectStore
 from ..templates import (
@@ -1085,6 +1090,80 @@ class UpdatePlanArgs(BaseModel):
     )
 
 
+class UnderstandProjectArgs(BaseModel):
+    """Argumentos para la herramienta `understand_project` (M7, brief creativa)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(
+        default="",
+        max_length=8000,
+        description="Prompt del usuario para derivar la intención (piece type, restricciones).",
+    )
+    asset_ids: list[str] = Field(
+        default_factory=list,
+        max_length=500,
+        description="Subconjunto de assets a analizar (vacío = todos los del proyecto).",
+    )
+
+
+class CreateCreativeBriefArgs(BaseModel):
+    """Argumentos para la herramienta `create_creative_brief` (M7)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        max_length=8000,
+        description=(
+            "Prompt del usuario, ambiguo o específico. Las restricciones explícitas "
+            "(duración, formato, música, subtítulos, idioma, plataforma) se conservan "
+            "como user_constraints y prevalecen sobre las inferencias del sistema."
+        ),
+    )
+    asset_ids: list[str] = Field(
+        default_factory=list,
+        max_length=500,
+        description="Assets a considerar (vacío = todos los del proyecto).",
+    )
+    overrides: dict[str, Any] | None = Field(
+        default=None,
+        description="Campos del brief a fijar explícitamente (decisiones del usuario).",
+    )
+
+
+class UpdateCreativeBriefArgs(BaseModel):
+    """Argumentos para la herramienta `update_creative_brief` (M7)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    changes: dict[str, Any] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Campos editables del brief a modificar (purpose, tone, editorial, status, "
+            f"etc.; editables: {sorted(EDITABLE_FIELDS)}). Cada cambio crea una nueva versión."
+        ),
+    )
+
+
+class ReviewOutputArgs(BaseModel):
+    """Argumentos para la herramienta `review_output` (M7)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        description=(
+            "Asset renderizado a revisar contra el brief activo "
+            "(mediciones ffprobe reales)."
+        ),
+    )
+
+
 RoleLiteral = Literal["director", "editor", "artist3d"]
 
 ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
@@ -1106,6 +1185,10 @@ ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
         "extract_keyframes",
         "find_shots_text",
         "search_assets",
+        "understand_project",
+        "create_creative_brief",
+        "update_creative_brief",
+        "review_output",
     ),
     "artist3d": (
         "enqueue_render",
@@ -2713,6 +2796,203 @@ async def _handle_delegate_role(
     return {"role": args.role, "task": args.task, **result}
 
 
+def _brief_ml_simulated() -> bool:
+    """True si el pod corre backends ML simulados (sin pesos reales cargados)."""
+    try:
+        return not is_real_backend()
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _brief_vector_store(context: ToolContext) -> Any | None:
+    """Vector store del pod; None (degradado) si sqlite-vec no está disponible."""
+    try:
+        return _get_vector_store(context)
+    except ToolExecutionError:
+        return None
+
+
+async def _handle_understand_project(
+    args: UnderstandProjectArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    understanding = await run_in_threadpool(
+        build_understanding,
+        context.store,
+        context.project_id,
+        asset_ids=args.asset_ids or None,
+        prompt=args.prompt,
+        vector_store=_brief_vector_store(context),
+        ml_simulated=_brief_ml_simulated(),
+    )
+    context.store.set_meta(context.project_id, "creative_understanding", understanding)
+    context.broker.publish(
+        "brief",
+        {
+            "project_id": context.project_id,
+            "action": "understood",
+            "assets": understanding["counts"]["assets"],
+            "facts": understanding["counts"]["facts"],
+            "duplicates": understanding["counts"]["duplicates"],
+            "invalid": len(understanding["invalid"]),
+        },
+    )
+    return {
+        "status": "understood",
+        "project_id": context.project_id,
+        "understanding": understanding,
+    }
+
+
+async def _handle_create_creative_brief(
+    args: CreateCreativeBriefArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    understanding = await run_in_threadpool(
+        build_understanding,
+        context.store,
+        context.project_id,
+        asset_ids=args.asset_ids or None,
+        prompt=args.prompt,
+        vector_store=_brief_vector_store(context),
+        ml_simulated=_brief_ml_simulated(),
+    )
+    editorial = await run_in_threadpool(
+        build_direction, understanding.get("intent") or {}, understanding
+    )
+    brief = await run_in_threadpool(
+        build_brief,
+        project_id=context.project_id,
+        prompt=args.prompt,
+        evidence=understanding,
+        editorial=editorial,
+        overrides=args.overrides,
+    )
+    prefs = context.store.get_meta(context.project_id, "creative_feedback", [])
+    brief["learned_preferences"] = prefs if isinstance(prefs, list) else []
+    try:
+        saved = context.store.save_creative_brief(
+            context.project_id,
+            prompt=args.prompt,
+            brief=brief,
+            evidence=understanding,
+            changes=[
+                {
+                    "action": "created",
+                    "source": "system",
+                    "at": datetime.now(UTC).isoformat(),
+                    "note": "brief generado desde prompt + evidencia multimodal",
+                }
+            ],
+            status=brief.get("status") or "draft",
+        )
+    except (ValueError, LookupError) as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    context.store.set_meta(context.project_id, "creative_understanding", understanding)
+    context.broker.publish(
+        "brief",
+        {
+            "project_id": context.project_id,
+            "action": "created",
+            "brief_id": saved["id"],
+            "version": saved["version"],
+            "status": saved["status"],
+            "piece_type": brief.get("piece_type"),
+        },
+    )
+    return {"status": "created", "project_id": context.project_id, "brief": saved}
+
+
+async def _handle_update_creative_brief(
+    args: UpdateCreativeBriefArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    latest = context.store.get_latest_creative_brief(context.project_id)
+    if latest is None:
+        raise ToolExecutionError(
+            "No hay brief activo en el proyecto; usa create_creative_brief primero."
+        )
+    brief = dict(latest["brief"])
+    changes: list[dict[str, Any]] = []
+    for key, value in args.changes.items():
+        if key not in EDITABLE_FIELDS:
+            raise ToolExecutionError(
+                f"Campo no editable: {key!r}. Editables: {sorted(EDITABLE_FIELDS)}"
+            )
+        changes.append({
+            "field": key,
+            "from": brief.get(key),
+            "to": value,
+            "source": "user",
+            "at": datetime.now(UTC).isoformat(),
+        })
+        brief[key] = value
+    if brief.get("status") not in BRIEF_STATUSES:
+        raise ToolExecutionError(f"status inválido: {brief.get('status')!r}")
+    try:
+        validate_brief(brief)
+    except ValueError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    try:
+        saved = context.store.save_creative_brief(
+            context.project_id,
+            prompt=latest["prompt"],
+            brief=brief,
+            evidence=latest["evidence"],
+            changes=changes,
+            status=brief["status"],
+        )
+    except (ValueError, LookupError) as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    context.broker.publish(
+        "brief",
+        {
+            "project_id": context.project_id,
+            "action": "updated",
+            "brief_id": saved["id"],
+            "version": saved["version"],
+            "fields": [c["field"] for c in changes],
+            "source": "user",
+        },
+    )
+    return {"status": "updated", "project_id": context.project_id, "brief": saved}
+
+
+async def _handle_review_output(
+    args: ReviewOutputArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    latest = context.store.get_latest_creative_brief(context.project_id)
+    if latest is None:
+        raise ToolExecutionError(
+            "No hay brief activo en el proyecto; no se puede revisar contra el brief."
+        )
+    try:
+        report = await run_in_threadpool(
+            review_output,
+            context.store,
+            context.project_id,
+            latest["brief"],
+            args.asset_id.strip(),
+        )
+        await run_in_threadpool(
+            save_review, context.store, context.project_id, args.asset_id.strip(), report
+        )
+    except LookupError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    context.broker.publish(
+        "review",
+        {
+            "project_id": context.project_id,
+            "asset_id": args.asset_id,
+            "passed": report["summary"]["passed"],
+            "errors": report["summary"]["errors"],
+            "warnings": report["summary"]["warnings"],
+        },
+    )
+    return {"status": "reviewed", "project_id": context.project_id, "report": report}
+
+
 def create_restricted_belt(base_belt: ToolBelt, role: str) -> ToolBelt:
     """Construye un tool-belt restringido al subconjunto de herramientas de un rol."""
     allowed = ROLE_TOOL_SUBSETS.get(role, ())
@@ -3217,6 +3497,60 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=DelegateRoleArgs,
             handler=_handle_delegate_role,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="understand_project",
+            description=(
+                "Construye la comprensión multimodal del proyecto con evidencia trazable "
+                "(metadatos ffprobe, hashes/duplicados, transcripciones con hablantes e "
+                "intervalos, shots CLIP e identidades). Cada hecho conserva asset_id, "
+                "intervalo, método y estado real/simulado. Úsalo antes de decidir la pieza."
+            ),
+            args_model=UnderstandProjectArgs,
+            handler=_handle_understand_project,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="create_creative_brief",
+            description=(
+                "Crea un brief creativo persistente (versionado) desde el prompt del usuario "
+                "y los assets: intención, restricciones explícitas, hechos respaldados por "
+                "evidencia, supuestos visibles, dirección editorial y criterios de aceptación. "
+                "Ante prompts ambiguos propone decisiones razonables con supuestos visibles."
+            ),
+            args_model=CreateCreativeBriefArgs,
+            handler=_handle_create_creative_brief,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="update_creative_brief",
+            description=(
+                "Edita el brief activo (cada cambio crea una nueva versión con traza "
+                "source=user). Para peticiones como 'menos publicidad', 'más emoción', "
+                "'conserva la voz original' o 'usa solo estos clips' sin reconstruir todo."
+            ),
+            args_model=UpdateCreativeBriefArgs,
+            handler=_handle_update_creative_brief,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="review_output",
+            description=(
+                "Revisa el render REAL de un asset contra el brief (ffprobe + criterios del "
+                "brief): separa mediciones técnicas de la evaluación editorial pendiente de "
+                "humano/VLM y propone correcciones localizadas (qué tramo/corte tocar)."
+            ),
+            args_model=ReviewOutputArgs,
+            handler=_handle_review_output,
             parallel_safe=False,
         )
     )
