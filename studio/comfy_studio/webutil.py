@@ -12,8 +12,10 @@ import binascii
 import logging
 import os
 import secrets
+import shutil
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import aclosing
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -534,6 +536,46 @@ def _install_bounded_form_parser(
     request._get_form = _bounded_get_form  # type: ignore[method-assign]
 
 
+#: Margen de seguridad en el volumen de datos antes de aceptar una subida:
+#: cubre WAL de SQLite, spools temporales y escrituras concurrentes de ffmpeg.
+_DISK_SAFETY_MARGIN_BYTES = 1024**3  # 1 GiB
+
+
+def _check_upload_free_disk(
+    headers: Headers,
+    data_dir: Path,
+    margin_bytes: int = _DISK_SAFETY_MARGIN_BYTES,
+) -> None:
+    """507 si el volumen de datos no tiene sitio para el cuerpo declarado.
+
+    nginx tiene `client_max_body_size 0`, así que el límite de bytes lo pone la app;
+    este guard añade el límite de *espacio libre real* para que una subida grande
+    no llene el volumen que comparten studio.db, index.db y el staging de la Fase 3.
+    Sin cabecera Content-Length (chunked) no se puede estimar: se omite aquí y el
+    parser acotado por stream sigue aplicando los techos por archivo y totales.
+    """
+    raw_cl = headers.get("Content-Length", "").strip()
+    try:
+        content_length = int(raw_cl) if raw_cl else 0
+    except ValueError:
+        return
+    if content_length <= 0:
+        return
+    try:
+        free = shutil.disk_usage(data_dir).free
+    except OSError:
+        return
+    if free < content_length + margin_bytes:
+        raise HTTPException(
+            status_code=507,
+            detail=(
+                "Espacio insuficiente en el volumen de datos: "
+                f"libres={free} bytes, la subida declara {content_length} bytes "
+                f"(+ margen {margin_bytes}). Libera espacio o divide la subida."
+            ),
+        )
+
+
 class _BoundedUploadAPIRoute(APIRoute):
     """APIRoute que aplica recepción acotada antes de que FastAPI resuelva request.form()."""
 
@@ -545,6 +587,7 @@ class _BoundedUploadAPIRoute(APIRoute):
                 active_cfg: StudioConfig = request.app.state.config
                 limit = active_cfg.max_upload_bytes
                 _check_upload_content_length(request.headers, limit)
+                _check_upload_free_disk(request.headers, active_cfg.studio_data_dir)
                 _install_bounded_form_parser(
                     request,
                     limit,

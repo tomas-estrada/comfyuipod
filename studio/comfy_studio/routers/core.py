@@ -70,6 +70,12 @@ def register_routes(app: FastAPI) -> None:
                 "simulated": getattr(request.app.state, "perception_backend", "sim") == "sim",
             },
             "schema_version": active_store.get_schema_version(),
+            # Jobs en vuelo (queued/running/cancelling/fetching): lo usa el watchdog de
+            # idle de comfyctl para decidir si el pod está realmente inactivo.
+            "jobs_active": sum(
+                len(active_store.list_jobs(status=s))
+                for s in ("queued", "running", "cancelling", "fetching")
+            ),
             # M5-F7: estado por motor del roster (ready/stub/unwired) para que el
             # strict-check del supervisor observe cada motor, no solo que el studio vive.
             "engines": health_report(build_default_registry()),

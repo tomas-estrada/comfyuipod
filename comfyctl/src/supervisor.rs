@@ -116,7 +116,7 @@ pub fn write_supervisor_json(path: &Path, state: &SupervisorState) -> Result<(),
     sys::atomic_write(path, &bytes, 0o644)
 }
 
-fn log_sup(msg: &str) {
+pub(crate) fn log_sup(msg: &str) {
     let ts = sys::format_utc_log_ts(sys::now_unix_secs());
     let line = format!("[{ts}] [SUPERVISOR] {msg}\n");
     print!("{line}");
@@ -607,9 +607,11 @@ pub fn run_supervision_loop(
 ) -> Result<(), String> {
     let mut last_log_truncate = Instant::now();
     truncate_logs_if_needed(cfg.log_max_mb);
+    let mut idle_watcher = crate::idle::IdleWatcher::new(cfg);
     while !sys::is_shutdown_requested() {
         truncate_logs_periodic(cfg.log_max_mb, &mut last_log_truncate);
         supervise_studio_server_tick(cfg, studio_child);
+        idle_watcher.tick(cfg);
 
         let started_at = sys::now_unix_secs();
         let next_attempt = sup_state.attempt.saturating_add(1);
@@ -694,6 +696,7 @@ pub fn run_supervision_loop(
 
             supervise_studio_server_tick(cfg, studio_child);
             truncate_logs_periodic(cfg.log_max_mb, &mut last_log_truncate);
+            idle_watcher.tick(cfg);
 
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -757,6 +760,7 @@ pub fn run_supervision_loop(
             while !sys::is_shutdown_requested() {
                 supervise_studio_server_tick(cfg, studio_child);
                 truncate_logs_periodic(cfg.log_max_mb, &mut last_log_truncate);
+                idle_watcher.tick(cfg);
                 thread::sleep(Duration::from_millis(200));
             }
             break;
