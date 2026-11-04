@@ -209,10 +209,26 @@ CREATE TABLE IF NOT EXISTS project_meta (
     PRIMARY KEY (project_id, key)
 );
 
+-- M7 (Worker 7): briefs creativos versionados por proyecto (append-only: cada
+-- mutación inserta una nueva versión; `changes_json` describe el delta).
+CREATE TABLE IF NOT EXISTS creative_briefs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    prompt TEXT NOT NULL DEFAULT '',
+    brief_json TEXT NOT NULL DEFAULT '{}',
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    changes_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_assets_project_id ON assets(project_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_project_id ON jobs(project_id);
 CREATE INDEX IF NOT EXISTS idx_chat_project_id ON chat_messages(project_id);
 CREATE INDEX IF NOT EXISTS idx_plans_project_id ON plans(project_id);
+CREATE INDEX IF NOT EXISTS idx_creative_briefs_project_id ON creative_briefs(project_id);
 """
 
 
@@ -1837,4 +1853,120 @@ class ProjectStore:
             return json.loads(row["value_json"] or "null")
         except json.JSONDecodeError:
             return default
+
+    # --- Briefs creativos (M7, Worker 7) ---
+
+    def _row_to_creative_brief(self, row: sqlite3.Row) -> dict[str, Any]:
+        def _loads(raw: str, fallback: Any) -> Any:
+            try:
+                return json.loads(raw or "null") if raw else fallback
+            except json.JSONDecodeError:
+                return fallback
+
+        return {
+            "id": row["id"],
+            "project_id": row["project_id"],
+            "version": int(row["version"]),
+            "status": row["status"],
+            "prompt": row["prompt"],
+            "brief": _loads(row["brief_json"], {}),
+            "evidence": _loads(row["evidence_json"], {}),
+            "changes": _loads(row["changes_json"], []),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def save_creative_brief(
+        self,
+        project_id: str,
+        *,
+        prompt: str,
+        brief: dict[str, Any],
+        evidence: dict[str, Any] | None = None,
+        changes: list[dict[str, Any]] | None = None,
+        status: str = "draft",
+    ) -> dict[str, Any]:
+        """Inserta una NUEVA versión del brief creativo (append-only).
+
+        `changes` describe el delta respecto a la versión anterior (fuente
+        `user` para decisiones humanas, `system` para inferencias).
+        """
+        project = self.get_project(project_id)
+        if project is None:
+            raise LookupError(f"Proyecto '{project_id}' no encontrado")
+        pid = project["id"]
+        now = _utc_now_iso()
+        with self._connect() as conn:
+            row_ver = conn.execute(
+                "SELECT COALESCE(MAX(version), 0) AS max_ver "
+                "FROM creative_briefs WHERE project_id = ?",
+                (pid,),
+            ).fetchone()
+            next_version = int(row_ver["max_ver"] if row_ver else 0) + 1
+            brief_id = f"brief-{uuid.uuid4().hex[:12]}"
+            conn.execute(
+                "INSERT INTO creative_briefs "
+                "(id, project_id, version, status, prompt, brief_json, evidence_json, "
+                "changes_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    brief_id,
+                    pid,
+                    next_version,
+                    status.strip() or "draft",
+                    (prompt or "").strip(),
+                    json.dumps(brief or {}, ensure_ascii=False),
+                    json.dumps(evidence or {}, ensure_ascii=False),
+                    json.dumps(changes or [], ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM creative_briefs WHERE id = ? AND project_id = ?",
+                (brief_id, pid),
+            ).fetchone()
+        assert row is not None
+        return self._row_to_creative_brief(row)
+
+    def get_creative_brief(
+        self,
+        project_id: str,
+        version: int | str,
+    ) -> dict[str, Any] | None:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            if isinstance(version, int) or str(version).isdigit():
+                row = conn.execute(
+                    "SELECT * FROM creative_briefs WHERE project_id = ? AND version = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (pid, int(version)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM creative_briefs WHERE project_id = ? AND id = ?",
+                    (pid, str(version).strip()),
+                ).fetchone()
+        return self._row_to_creative_brief(row) if row is not None else None
+
+    def get_latest_creative_brief(self, project_id: str) -> dict[str, Any] | None:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM creative_briefs WHERE project_id = ? "
+                "ORDER BY version DESC, created_at DESC LIMIT 1",
+                (pid,),
+            ).fetchone()
+        return self._row_to_creative_brief(row) if row is not None else None
+
+    def list_creative_briefs(self, project_id: str) -> list[dict[str, Any]]:
+        pid = self._validate_project_id(project_id)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM creative_briefs WHERE project_id = ? "
+                "ORDER BY version DESC, created_at DESC",
+                (pid,),
+            ).fetchall()
+        return [self._row_to_creative_brief(r) for r in rows]
 
