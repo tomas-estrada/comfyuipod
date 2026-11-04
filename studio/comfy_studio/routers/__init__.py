@@ -10,6 +10,7 @@ from . import (
     core,
     jobs,
     media_ops,
+    montage,
     perception,
     productions,
     projects,
@@ -28,6 +29,7 @@ _MODULES = (
     perception,
     media_ops,
     review_pins,
+    montage,
 )
 
 
