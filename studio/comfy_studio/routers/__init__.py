@@ -14,6 +14,7 @@ from . import (
     perception,
     productions,
     projects,
+    review_pins,
     templates,
 )
 
@@ -27,6 +28,7 @@ _MODULES = (
     chat,
     perception,
     media_ops,
+    review_pins,
     montage,
 )
 
