@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from . import (
     ads,
     assets,
+    brief,
     chat,
     core,
     jobs,
@@ -29,6 +30,7 @@ _MODULES = (
     chat,
     perception,
     media_ops,
+    brief,
     ads,
     review_pins,
     montage,
