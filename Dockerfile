@@ -477,7 +477,6 @@ COPY config/nginx.conf /etc/nginx/nginx.conf
 COPY config/models-studio.json /etc/comfyui/models-studio.json
 COPY config/models-core.json /etc/comfyui/models-core.json
 COPY scripts/storage_requirement.py /usr/local/bin/storage_requirement.py
-COPY scripts/prune_model_cache.py /usr/local/bin/prune_model_cache.py
 COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
 COPY scripts/start.sh /start.sh
@@ -508,7 +507,7 @@ RUN sed -i 's/\r$//' \
     /opt/venvs/studio/bin/python -m compileall -q /opt/venvs/studio/lib && \
     /opt/venvs/studio/bin/python -m comfy_studio.templates && \
     IMAGE_TAG="${IMAGE_TAG}" BUILD_DATE="${BUILD_DATE}" python3 -c "import json, os, subprocess, torch; sha = subprocess.check_output(['git', '-C', '/opt/ComfyUI', 'rev-parse', 'HEAD'], text=True).strip(); json.dump({'tag': os.environ.get('IMAGE_TAG', 'dev'), 'built_at': os.environ.get('BUILD_DATE', 'unknown'), 'comfyui_sha': sha, 'pytorch': torch.__version__, 'cuda': str(torch.version.cuda), 'ubuntu': '24.04'}, open('/etc/comfyui/image.json', 'w', encoding='utf-8'), indent=2); pats = json.load(open('/etc/comfyui/triage_patterns.json', encoding='utf-8')); assert len(pats) >= 17; ms = json.load(open('/etc/comfyui/models-studio.json', encoding='utf-8')); mods = ms.get('models') or []; meta = ms.get('meta') or {}; default_n = meta.get('default_entries', -1); optin_n = meta.get('opt_in_entries', -1); assert default_n >= 0 and optin_n >= 0, 'models-studio.json sin meta de conteos'; assert len(mods) == default_n + optin_n, 'Conteo de models-studio.json inconsistente con su meta (entradas=%d, default=%d, opt_in=%d)' % (len(mods), default_n, optin_n); assert sum(m['bytes'] for m in mods if not m.get('opt_in')) == meta.get('default_bytes'), 'meta.default_bytes no cuadra con las entradas'; assert sum(m['bytes'] for m in mods if m.get('opt_in')) == meta.get('opt_in_bytes'), 'meta.opt_in_bytes no cuadra con las entradas'" && \
-    python3 /usr/local/bin/storage_requirement.py --all-profiles --out /etc/comfyui/storage-requirement.json && \
+    python3 /usr/local/bin/storage_requirement.py --manifest /etc/comfyui/models-studio.json --all-profiles --out /etc/comfyui/storage-requirement.json && \
     python3 -c "import json; d=json.load(open('/etc/comfyui/storage-requirement.json')); assert set(d['profiles']) >= {'all','general','realistic','anime','minimal','studio','unreal'}, d; assert all(p['start_gate_gb'] > 0 and p['min_volume_gb'] > 0 for p in d['profiles'].values()), d; print('[OK] requisito de almacenamiento derivado y horneado:', {k: (v['start_gate_gb'], v['min_volume_gb']) for k, v in sorted(d['profiles'].items())})" && \
     cp /etc/comfyui/extra_model_paths.yaml /opt/ComfyUI/extra_model_paths.yaml && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/__manager/config.ini && \
