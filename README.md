@@ -156,6 +156,8 @@ Todos los tamaños han sido verificados contra la cabecera `x-linked-size` de Hu
 | `SKIP_MODEL_DOWNLOAD` | `0` | Pon `1` para omitir por completo la descarga automática de modelos al arrancar. |
 | `HF_TOKEN` | *(Vacío)* | Token opcional de HuggingFace (leído automáticamente del entorno por `hf` sin exponerse en argumentos de proceso ni en `/report.md`). |
 | `COMFY_DATA_DIR` | `/workspace/comfyui-data` | Ruta donde se almacenan `models/`, `input/`, `output/` y `user/` (actualiza automáticamente `extra_model_paths.yaml`). |
+| `COMFY_VOLUME_WAIT_TRIES` / `COMFY_VOLUME_WAIT_SLEEP_S` | `12` / `5` | Guardia de montaje (M7-OPS-002): si `COMFY_DATA_DIR` está bajo `/workspace`, `start.sh` espera hasta `TRIES × SLEEP_S` (60 s por defecto) a que `/workspace` sea un punto de montaje real (no el overlay del contenedor) antes de escribir datos. En RunPod los Network Volumes tardan 30-60 s en montar; en Vast.ai no hay espera. Pon `COMFY_VOLUME_WAIT_TRIES=0` para no esperar. |
+| `COMFY_REQUIRE_PERSISTENT_VOLUME` | `0` | Pon `1` para abortar el arranque (`exit 1`) si tras la espera no hay volumen montado en `/workspace`: evita que modelos/outputs se escriban en el disco efímero del contenedor y se pierdan al detener el pod. Recomendado en RunPod. |
 | `COMFYUI_EXTRA_ARGS` | *(Vacío)* | Flags adicionales para `python3 main.py` de ComfyUI. Ejemplo útil en RTX 5090 ante errores `HostBuffer` / OOM inesperados: `--disable-pinned-memory` (ver sección 5.7). |
 | `PYTORCH_CUDA_ALLOC_CONF` | `expandable_segments:True` (fijado en la imagen) | Config del allocator de CUDA de PyTorch aplicada por defecto a ComfyUI y al studio-server (M7-OPS-001): mitiga los OOM por fragmentación en sesiones largas con cargas mixtas (sección 5.7). Sobrescribe con `-e PYTORCH_CUDA_ALLOC_CONF=...`; pon `-e PYTORCH_CUDA_ALLOC_CONF=` (vacío) para desactivarla. |
 | `COMFY_MAX_RESTARTS` | `5` | Número máximo de reinicios automáticos de ComfyUI ante caídas antes de pasar a estado `exhausted` (manteniendo Nginx, `/home` y `/status` activos para diagnóstico). |
@@ -322,6 +324,15 @@ Cuando alquilas con `comfy rent studio` y abres `comfy studio` (`/studio/`), pue
 14. **Descarga tus resultados** desde la UI: clic derecho sobre la salida de `Video Combine` / `Save Image` (o en **Queue → History**) → **Save**. Todo lo que quede en `/workspace/comfyui-data/output` se pierde con la instancia.
 15. Pulsa **Destroy** (icono de papelera), **no Stop**. Con *Stop* sigues pagando el almacenamiento (120 GB) y, si el host alquila esa GPU a otro usuario mientras tanto, no podrás reanudar la instancia. Este proyecto está diseñado para descargar los modelos en cada arranque, así que *Destroy* es el cierre normal.
 16. Si en el futuro quieres conservar los modelos entre sesiones, Vast.ai ofrece **Volumes** persistentes que podrían montarse en `/workspace/comfyui-data`; la imagen ya está preparada para ello (los datos viven fuera de `/opt/ComfyUI`). Es una decisión pendiente (OPS-04), no una función activa.
+
+#### B6. La misma imagen en un RunPod GPU Pod (M7-OPS-002)
+
+La imagen es agnóstica de proveedor: sirve igual en un **RunPod GPU Pod** persistente:
+
+1. Crea una **Pod Template** con la imagen publicada en GHCR (`ghcr.io/tomas-estrada/comfyuipod:<tag>`), **HTTP port 8188** expuesto y un **Network Volume** (o Volume Disk) montado en **`/workspace`** — `COMFY_DATA_DIR` ya vale `/workspace/comfyui-data` por defecto, así que modelos, outputs y estado de Studio persisten entre pods.
+2. Variables recomendadas: `COMFY_PASS=<valor fuerte>` (o déjala autogenerar), `MODEL_PROFILE=studio|all|...`, y `COMFY_REQUIRE_PERSISTENT_VOLUME=1` para que el arranque aborte en lugar de escribir en el disco efímero si el volumen aún no montó (los Network Volumes de RunPod pueden tardar 30-60 s; `start.sh` ya espera ese montaje, ver `COMFY_VOLUME_WAIT_TRIES`).
+3. Accede por `https://<pod-id>-8188.proxy.runpod.net/` (HTTPS automático de RunPod) o con `COMFY_TLS=1`. El health check del pod es `GET /healthz` (sin auth, HEAD a ComfyUI).
+4. Al terminar, **Stop** (conserva el volumen, no paga GPU) o **Terminate** (borra el Volume Disk; el Network Volume sobrevive si lo mantienes).
 
 > **Advertencia de seguridad: Basic Auth sobre HTTP plano (sin TLS)**
 > En la IP pública de Vast.ai el portal va por HTTP sin TLS (sin dominio propio no hay certificado), así que el usuario y la contraseña de Basic Auth viajan **en claro** por la red. Para uso sensible, accede por **túnel SSH**: `vastai ssh <id>` con un forward local del 8188 (p. ej. `ssh -L 8188:127.0.0.1:8188`) y abre `http://127.0.0.1:8188` en tu Mac. Para sesiones cortas con contraseña autogenerada de un solo uso, el riesgo es aceptable y está documentado. **`ENABLE_WEB_TERMINAL=1` (shell root) actívalo únicamente a través de un túnel SSH**, nunca directo sobre la IP pública.
