@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
+from ..cache_policy import record_use
 from ..comfyui_client import ComfyUIClient
 from ..config import StudioConfig
 from ..creative import build_brief, build_direction, build_understanding, review_output
@@ -1454,8 +1455,22 @@ def _get_vector_store(context: ToolContext):
         return store
 
 
-async def _handle_enqueue_render(
-    args: EnqueueRenderArgs,
+def _record_template_use(template_id: str, context: ToolContext) -> None:
+    """Marca como usados los activos que declara una plantilla.
+
+    Falla en silencio a propósito: el ledger de uso es una optimización de
+    retención, nunca debe tumbar un render.
+    """
+    try:
+        definition = get_default_registry().get_raw_definition(template_id)
+        models = list((definition or {}).get("models") or [])
+        if models:
+            record_use(models)
+    except Exception:  # noqa: BLE001 - el ledger nunca rompe la herramienta
+        return
+
+
+async def _handle_enqueue_render(    args: EnqueueRenderArgs,
     context: ToolContext,
 ) -> dict[str, Any]:
     if args.template_id != "hunyuan3d_image_to_3d" and not (
@@ -1481,6 +1496,10 @@ async def _handle_enqueue_render(
         )
     except (TemplateNotFoundError, TemplateParamError, LookupError) as exc:
         raise ToolExecutionError(str(exc)) from exc
+
+    # Uso real: un render de esta plantilla cuenta como uso de sus activos, que
+    # es la señal que alimenta la política de retención (LRU).
+    _record_template_use(args.template_id, context)
 
     return {
         "status": submission["status"],

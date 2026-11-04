@@ -28,6 +28,7 @@
 - `scripts/storage_requirement.py` — requisito de almacenamiento derivado
 - `scripts/check_models_manifest.py` — validador del manifiesto (clases, bytes, integridad)
 - `scripts/pin_manifest_integrity.py` — fija `revision` + hash en los manifiestos
+- `scripts/prune_model_cache.py` — política de retención de caché (dry-run por defecto)
 
 ## Architecture & Resource Policy
 [`docs/POLITICA_ARQUITECTURA_RECURSOS.md`](docs/POLITICA_ARQUITECTURA_RECURSOS.md) is the source of truth for what is prepared at build time, what is downloaded on demand, what may run, and what hardware to rent. Key rules that are enforced in code:
@@ -47,6 +48,7 @@ pytest studio/tests -q
 python -m py_compile config/probes/*.py scripts/check_models_manifest.py
 python -m comfy_studio.templates
 python scripts/check_models_manifest.py --fixture --offline
+python scripts/prune_model_cache.py --json   # plan de retención (no borra nada)
 ```
 
 2. **Rust**:

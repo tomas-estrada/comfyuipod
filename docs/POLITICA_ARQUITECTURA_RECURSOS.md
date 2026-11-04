@@ -216,13 +216,41 @@ declarado se acepta («where available»): el tamaño exacto ya está verificado
 El validador exige `revision` (SHA-1 de git de 40 hex) y al menos un hash, con
 el algoritmo coherente con la longitud.
 
+### Retención de caché decidida a propósito
+
+«Choose cache retention deliberately. Retain reusable weights when doing so is
+economical; remove replaceable cached weights under a clear policy. Preserve
+user media, project state and outputs.»
+
+[`studio/comfy_studio/cache_policy.py`](../studio/comfy_studio/cache_policy.py)
+implementa esa política, y [`scripts/prune_model_cache.py`](../scripts/prune_model_cache.py)
+la aplica (**dry-run por defecto**):
+
+1. Solo se consideran rutas **declaradas en los manifiestos**. Media del
+   usuario, proyectos, salidas, bases de datos y venvs quedan fuera por
+   construcción, no por una lista de exclusiones que haya que mantener.
+2. `bootstrap` y `optional` **se conservan siempre**: lo primero es necesario
+   para operar, lo segundo lo pidió el operador.
+3. `task` se conserva mientras quepa. Solo por encima del presupuesto se
+   expulsan, por **último uso real** (LRU).
+4. El staging es parcial reanudable: se limpia solo si lleva inactivo más de 7
+   días, porque borrarlo antes tira el trabajo de una descarga interrumpida.
+
+El «uso real» viene de un ledger (`${COMFY_DATA_DIR}/.model-usage.json`) que se
+escribe cuando un activo se descarga y cuando se renderiza la plantilla que lo
+declara — no de `atime`, que con `relatime` no es fiable. El registro falla en
+silencio a propósito: una optimización de retención nunca debe tumbar un render.
+
+```bash
+scripts/prune_model_cache.py                  # plan, no borra nada
+scripts/prune_model_cache.py --budget-gb 120  # con presupuesto
+scripts/prune_model_cache.py --apply          # ejecuta
+```
+
 ### Pendiente
 
-- **Retención de caché**: no hay política de expulsión; hoy todo se conserva
-  hasta que el operador interviene.
 - **Clasificar las Fases 1/2 por perfil**: el manifiesto core declara `class`,
   pero la selección por `MODEL_PROFILE` sigue viviendo en bash.
-
 ## 5. Hardware objetivo
 
 El objetivo preferido es **una GPU de consumo con ~32 GB de VRAM** y RAM de host
