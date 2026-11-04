@@ -20,13 +20,19 @@ en cada paso — demostrando que el lazo del Eje 4 corre de punta a punta.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
 from comfy_studio.orchestration.state import ProductionState
 
+logger = logging.getLogger(__name__)
+
 #: un nodo transforma el estado y lo devuelve.
 NodeFn = Callable[[ProductionState], ProductionState]
+
+#: hook opcional llamado tras cada paso (checkpoint incluido) para progreso en vivo.
+StepHook = Callable[[ProductionState], None]
 
 #: nombre del nodo terminal.
 END = "__end__"
@@ -58,6 +64,8 @@ class ProductionGraph:
         self._entry: str | None = None
         self.checkpointer = checkpointer
         self.max_steps = max_steps
+        #: hook de progreso por paso (p.ej. publicar SSE); nunca rompe el grafo.
+        self.on_step: StepHook | None = None
 
     # -- construcción --------------------------------------------------------
 
@@ -98,6 +106,11 @@ class ProductionGraph:
                 raise RuntimeError(f"nodo desconocido: {current}")
             state = node(state)
             self._checkpoint(state)
+            if self.on_step is not None:
+                try:
+                    self.on_step(state)
+                except Exception:
+                    logger.exception("on_step del grafo falló en el paso %s", current)
             current = self._router(state)
             steps += 1
         return state

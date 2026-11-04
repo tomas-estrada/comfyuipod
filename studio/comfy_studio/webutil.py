@@ -70,6 +70,22 @@ class ProductionPlanRequest(BaseModel):
     )
 
 
+class ProductionShotEdit(BaseModel):
+    """Edición de un shot del plan (solo mientras la producción espera aprobación)."""
+
+    id: str = Field(..., min_length=1, max_length=64)
+    description: str | None = Field(default=None, min_length=1, max_length=500)
+    duration_s: float | None = Field(default=None, ge=1.0, le=120.0)
+    remove: bool = Field(default=False)
+
+
+class ProductionPlanUpdateRequest(BaseModel):
+    """Cuerpo para editar el plan de una producción en `awaiting_approval`."""
+
+    idea: str | None = Field(default=None, min_length=1, max_length=4000)
+    shots: list[ProductionShotEdit] | None = Field(default=None, max_length=200)
+
+
 class JobCreateRequest(BaseModel):
     kind: str = Field(default="render", max_length=64)
     project_id: str | None = None

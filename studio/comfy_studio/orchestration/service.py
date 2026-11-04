@@ -28,6 +28,7 @@ from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
 from comfy_studio.orchestration.conductor import Collaborators, build_production_graph
 from comfy_studio.orchestration.planner import plan_production as _plan
 from comfy_studio.orchestration.state import ProductionState, ShotStatus
+from comfy_studio.progress import ProgressBroker
 
 
 class ProductionNotFoundError(RuntimeError):
@@ -36,6 +37,18 @@ class ProductionNotFoundError(RuntimeError):
 
 class ProductionNotApprovedError(RuntimeError):
     """Se intentó correr el lazo caro sin aprobación del storyboard."""
+
+
+class ProductionPlanNotEditableError(RuntimeError):
+    """El plan solo es editable mientras la producción espera aprobación."""
+
+
+class ProductionAlreadyTerminalError(RuntimeError):
+    """La producción ya terminó (done/failed/cancelled/halted): no admite cancel."""
+
+
+#: fases terminales: no admiten edición de plan ni cancelación.
+_TERMINAL_PHASES = frozenset({"done", "failed", "cancelled", "halted"})
 
 
 def _gate_key(production_id: str) -> str:
@@ -51,6 +64,7 @@ class ProductionService:
         checkpointer: ProductionCheckpointer | None = None,
         collaborators: Collaborators | None = None,
         store: Any | None = None,
+        broker: ProgressBroker | None = None,
     ) -> None:
         self.checkpointer = checkpointer or ProductionCheckpointer()
         self.collaborators = collaborators or Collaborators()
@@ -58,8 +72,15 @@ class ProductionService:
         # registrar; CI/stubs). Los renders de una producción aprobada pasan a
         # ser assets de primera clase: buscables, descargables, vision_check.
         self.store = store
+        # Broker SSE opcional para eventos de ciclo de vida y progreso por paso.
+        self.broker = broker
         # puertas de storyboard por producción (serializadas junto al estado).
         self._gates: dict[str, StoryboardGate] = {}
+
+    def _publish(self, event_type: str, data: dict[str, Any]) -> None:
+        """Publica un evento de producción en el bus SSE (thread-safe si hay loop)."""
+        if self.broker is not None:
+            self.broker.publish_threadsafe(event_type, data)
 
     # -- tool: plan_production ----------------------------------------------
 
@@ -90,6 +111,15 @@ class ProductionService:
         state.phase = "awaiting_approval"
         state.record("await_approval", shots=len(state.all_shots()))
         self.checkpointer.save(state)
+        self._publish(
+            "production_planned",
+            {
+                "production_id": state.id,
+                "project_id": state.metadata.get("project_id"),
+                "phase": state.phase,
+                "shots": len(state.all_shots()),
+            },
+        )
         return {
             "production_id": state.id,
             "phase": state.phase,
@@ -105,9 +135,125 @@ class ProductionService:
 
     # -- tool: approve_plan --------------------------------------------------
 
+    def list_productions(
+        self,
+        *,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Lista producciones (checkpoints), opcionalmente filtradas por proyecto."""
+        out: list[dict[str, Any]] = []
+        wanted = max(limit, 1)
+        for pid in self.checkpointer.list_ids(limit=max(wanted * 4, 100)):
+            state = self.checkpointer.load(pid)
+            if state is None:
+                continue
+            if project_id and state.metadata.get("project_id") != project_id:
+                continue
+            out.append(self._status_dict(state))
+            if len(out) >= wanted:
+                break
+        return out
+
+    def update_plan(
+        self,
+        production_id: str,
+        *,
+        idea: str | None = None,
+        shots: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Edita el plan SOLO en `awaiting_approval`; persiste vía checkpointer.
+
+        `shots` es una lista de ediciones {id, description?, duration_s?, remove?}
+        sobre los shots existentes. Fail-closed: cualquier id desconocido aborta
+        toda la edición (no se guarda nada parcial).
+        """
+        state = self._load(production_id)
+        if state.phase != "awaiting_approval":
+            raise ProductionPlanNotEditableError(
+                f"el plan solo es editable en awaiting_approval, no en {state.phase}"
+            )
+        if idea is not None:
+            state.idea = idea
+        if shots is not None:
+            by_id = {s.id: s for s in state.all_shots()}
+            for edit in shots:
+                shot = by_id.get(str(edit.get("id") or ""))
+                if shot is None:
+                    raise LookupError(
+                        f"shot {edit.get('id')!r} no existe en la producción"
+                    )
+                if edit.get("remove"):
+                    for seq in state.sequences:
+                        if shot in seq.shots:
+                            seq.shots.remove(shot)
+                            break
+                    for other in state.all_shots():
+                        if shot.id in other.depends_on:
+                            other.depends_on.remove(shot.id)
+                    continue
+                if edit.get("description") is not None:
+                    shot.description = str(edit["description"])
+                if edit.get("duration_s") is not None:
+                    shot.duration_s = float(edit["duration_s"])
+            if not state.all_shots():
+                raise ValueError("el plan no puede quedar sin shots")
+        state.record(
+            "plan_updated",
+            idea=idea is not None,
+            edits=len(shots or []),
+        )
+        self.checkpointer.save(state)
+        self._publish(
+            "production_plan_updated",
+            {
+                "production_id": state.id,
+                "project_id": state.metadata.get("project_id"),
+                "phase": state.phase,
+                "shots": len(state.all_shots()),
+            },
+        )
+        return {
+            "production_id": production_id,
+            "phase": state.phase,
+            "plan": state.to_dict(),
+        }
+
+    def cancel_production(self, production_id: str) -> dict[str, Any]:
+        """Cancela la producción: terminal si espera aprobación, cooperativo si ejecuta."""
+        state = self._load(production_id)
+        if state.phase in _TERMINAL_PHASES:
+            raise ProductionAlreadyTerminalError(
+                f"la producción ya es terminal ({state.phase}); no admite cancelación"
+            )
+        if state.phase == "awaiting_approval":
+            state.phase = "cancelled"
+            state.record("cancelled", stage="awaiting_approval")
+            event = "production_cancelled"
+        else:
+            state.metadata["cancel_requested"] = True
+            state.record("cancel_requested", stage=state.phase)
+            event = "production_cancel_requested"
+        self.checkpointer.save(state)
+        self._publish(
+            event,
+            {
+                "production_id": state.id,
+                "project_id": state.metadata.get("project_id"),
+                "phase": state.phase,
+            },
+        )
+        return self._status_dict(state)
+
     def approve_plan(self, production_id: str) -> dict[str, Any]:
         """El humano aprueba; corre el lazo caro y devuelve el resultado."""
         state = self._load(production_id)
+        # una producción cancelada por el humano no se puede aprobar (fail-closed);
+        # el resto de fases terminales (done/failed) mantienen el approve idempotente.
+        if state.phase == "cancelled":
+            raise ProductionNotApprovedError(
+                "la producción fue cancelada; no se puede aprobar"
+            )
         # hidratar la puerta: primero la de RAM; si el pod reinició, desde el
         # estado persistido en el checkpoint (M6-SCR-002).
         gate = self._gates.get(production_id)
@@ -138,9 +284,31 @@ class ProductionService:
             checkpointer=self.checkpointer,
             collaborators=self.collaborators,
         )
+        if self.broker is not None:
+            # progreso en vivo por SSE: un evento por paso persistido del grafo.
+            graph.on_step = lambda st: self._publish(
+                "production_step", self._status_dict(st)
+            )
+        self._publish(
+            "production_approved",
+            {
+                "production_id": production_id,
+                "project_id": state.metadata.get("project_id"),
+                "phase": state.phase,
+            },
+        )
         final = graph.run(state)
         registered = self._register_outputs_in_gallery(final)
         self.checkpointer.save(final)
+        self._publish(
+            "production_finished",
+            {
+                "production_id": final.id,
+                "project_id": final.metadata.get("project_id"),
+                "phase": final.phase,
+                "output_asset_ids": registered,
+            },
+        )
         return {
             "production_id": production_id,
             "phase": final.phase,
@@ -252,6 +420,7 @@ class ProductionService:
             "shots_accepted": accepted,
             "shots_by_status": by_status,
             "storyboard_approved": state.storyboard_approved,
+            "cancel_requested": bool(state.metadata.get("cancel_requested")),
             "final_output_path": state.final_output_path,
             "output_asset_ids": state.metadata.get("output_asset_ids") or [],
             "complete": state.is_complete(),
