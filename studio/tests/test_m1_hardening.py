@@ -300,6 +300,8 @@ def test_parallel_safe_defaults_to_serial_and_readonly_tools_opt_in() -> None:
         # Lecturas puras añadidas por el resolvedor de capacidades: consultan
         # manifiestos y disco, nunca mutan.
         "list_capabilities",
+        # Recetas medidas: lee `render_measurements`, no ejecuta nada.
+        "render_recipes",
     }
     spec_default = type(belt.get("tag_asset")).__dataclass_fields__["parallel_safe"]
     assert spec_default.default is False
