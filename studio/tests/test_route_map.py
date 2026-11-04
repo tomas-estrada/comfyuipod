@@ -1,0 +1,109 @@
+"""M7-SCR-002: paridad del mapa de rutas tras la extracción de app.py a routers/.
+
+Lista dorada (método + path) generada con el `app.py` monolítico original; la app
+tras el split debe exponer exactamente las mismas rutas.
+"""
+
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+EXPECTED_ROUTES: list[str] = [
+    "DELETE /studio/api/projects/{project_id}",
+    "DELETE /studio/api/projects/{project_id}/assets/{asset_id}",
+    "DELETE /studio/api/projects/{project_id}/chat",
+    "DELETE /studio/api/projects/{project_id}/identities/{identity_id}",
+    "DELETE /studio/api/projects/{project_id}/media/{asset_id}",
+    "DELETE /studio/api/projects/{project_id}/pins/{pin_id}",
+    "DELETE,GET,PATCH,POST,PUT /studio/api/{unknown_path:path}",
+    "GET /favicon.ico",
+    "GET /health",
+    "GET /studio",
+    "GET /studio/",
+    "GET /studio/api/agent/tools",
+    "GET /studio/api/health",
+    "GET /studio/api/jobs",
+    "GET /studio/api/jobs/{job_id}",
+    "GET /studio/api/mcp",
+    "GET /studio/api/mcp/health",
+    "GET /studio/api/productions",
+    "GET /studio/api/productions/{production_id}",
+    "GET /studio/api/productions/{production_id}/status",
+    "GET /studio/api/progress",
+    "GET /studio/api/projects",
+    "GET /studio/api/projects/{project_id}",
+    "GET /studio/api/projects/{project_id}/assets",
+    "GET /studio/api/projects/{project_id}/assets/{asset_id}",
+    "GET /studio/api/projects/{project_id}/assets/{asset_id}/file",
+    "GET /studio/api/projects/{project_id}/chat",
+    "GET /studio/api/projects/{project_id}/edl",
+    "GET /studio/api/projects/{project_id}/gallery",
+    "GET /studio/api/projects/{project_id}/identities",
+    "GET /studio/api/projects/{project_id}/keyframes",
+    "GET /studio/api/projects/{project_id}/media",
+    "GET /studio/api/projects/{project_id}/media/{asset_id}",
+    "GET /studio/api/projects/{project_id}/media/{asset_id}/file",
+    "GET /studio/api/projects/{project_id}/perception/search",
+    "GET /studio/api/projects/{project_id}/pins",
+    "GET /studio/api/projects/{project_id}/pins/summary",
+    "GET /studio/api/projects/{project_id}/transcriptions",
+    "GET /studio/api/projects/{project_id}/transcriptions/{transcription_id}/subtitles",
+    "GET /studio/api/status",
+    "GET /studio/api/templates",
+    "GET /studio/api/templates/{template_id}",
+    "GET /studio/api/tools",
+    "GET /studio/api/view",
+    "GET,HEAD /docs",
+    "GET,HEAD /docs/oauth2-redirect",
+    "GET,HEAD /openapi.json",
+    "GET,HEAD /redoc",
+    "PATCH /studio/api/productions/{production_id}/plan",
+    "PATCH /studio/api/projects/{project_id}",
+    "PATCH /studio/api/projects/{project_id}/identities/{identity_id}",
+    "PATCH /studio/api/projects/{project_id}/pins/{pin_id}",
+    "POST /studio/api/jobs",
+    "POST /studio/api/jobs/{job_id}/progress",
+    "POST /studio/api/mcp",
+    "POST /studio/api/perception/reindex",
+    "POST /studio/api/productions",
+    "POST /studio/api/productions/{production_id}/approve",
+    "POST /studio/api/productions/{production_id}/cancel",
+    "POST /studio/api/projects",
+    "POST /studio/api/projects/{project_id}/assets",
+    "POST /studio/api/projects/{project_id}/chat",
+    "POST /studio/api/projects/{project_id}/diarize",
+    "POST /studio/api/projects/{project_id}/edl",
+    "POST /studio/api/projects/{project_id}/edl/build",
+    "POST /studio/api/projects/{project_id}/edl/highlights",
+    "POST /studio/api/projects/{project_id}/edl/{version}/render",
+    "POST /studio/api/projects/{project_id}/faces/index",
+    "POST /studio/api/projects/{project_id}/identities",
+    "POST /studio/api/projects/{project_id}/keyframes/extract",
+    "POST /studio/api/projects/{project_id}/media",
+    "POST /studio/api/projects/{project_id}/perception/index",
+    "POST /studio/api/projects/{project_id}/perception/search",
+    "POST /studio/api/projects/{project_id}/pins",
+    "POST /studio/api/projects/{project_id}/search/combined",
+    "POST /studio/api/projects/{project_id}/search/faces",
+    "POST /studio/api/projects/{project_id}/templates/{template_id}/submit",
+    "POST /studio/api/projects/{project_id}/transcribe",
+    "POST /studio/api/projects/{project_id}/uploads",
+    "POST /studio/api/templates/{template_id}/submit",
+    "PUT /studio/api/projects/{project_id}",
+]
+
+
+def _flatten(routes) -> list[str]:
+    out: list[str] = []
+    for route in routes:
+        if hasattr(route, "path") and hasattr(route, "methods"):
+            out.append(",".join(sorted(route.methods)) + " " + route.path)
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            out.extend(_flatten(inner.routes))
+    return out
+
+
+def test_route_map_matches_monolithic_app(app: FastAPI) -> None:
+    actual = sorted(_flatten(app.routes))
+    assert actual == sorted(EXPECTED_ROUTES)

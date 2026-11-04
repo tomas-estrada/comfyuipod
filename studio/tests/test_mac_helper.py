@@ -184,6 +184,10 @@ def _run_comfy(
         "STUDIO_LLM_FALLBACK_MODEL",
         "STUDIO_INCLUDE_ANIMATE",
         "STUDIO_STUB_LLM",
+        "STUDIO_RESUME_JOBS",
+        "STUDIO_RESUME_DELAY_S",
+        "STUDIO_WEBHOOK_URL",
+        "STUDIO_WEBHOOK_SECRET",
         "COMFY_DISK_GB",
     ):
         env.pop(k, None)
@@ -323,6 +327,8 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     synthetic_llm_key = "sk" + "-studio-unit-secret-key-9988776655"
     synthetic_fallback_key = "sk" + "-studio-fallback-secret-key-1122334455"
     synthetic_pod_pass = "pod-secret-pass-44332211"
+    synthetic_webhook_secret = "webhook-secret-9988776655"
+    synthetic_webhook_url = "https://hooks.example.test/comfy"
 
     # 1. Dry-run leyendo la llave desde stdin (read -r -s) y con STUDIO_LLM_FALLBACK_KEY definida
     dry = _run_comfy(
@@ -335,6 +341,10 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
             "STUDIO_LLM_BASE_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             "STUDIO_LLM_MODEL": "qwen3-vl-plus",
             "STUDIO_LLM_FALLBACK_KEY": synthetic_fallback_key,
+            "STUDIO_RESUME_JOBS": "0",
+            "STUDIO_RESUME_DELAY_S": "15",
+            "STUDIO_WEBHOOK_URL": synthetic_webhook_url,
+            "STUDIO_WEBHOOK_SECRET": synthetic_webhook_secret,
         },
         stdin_text=f"{synthetic_llm_key}\n",
     )
@@ -345,11 +355,17 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
         synthetic_fallback_key not in combined_dry
     ), "La llave STUDIO_LLM_FALLBACK_KEY se filtró en dry-run"
     assert synthetic_pod_pass not in combined_dry, "COMFY_PASS se filtró en dry-run"
+    assert synthetic_webhook_secret not in combined_dry
+    assert synthetic_webhook_url not in combined_dry
     assert "[DRY-RUN]" in dry.stdout
     assert "105" in dry.stdout  # Oferta 105 seleccionada tras filtrar 101..104
     assert "200" in dry.stdout
     assert "STUDIO_LLM_KEY=<definida>" in dry.stdout
     assert "STUDIO_LLM_FALLBACK_KEY=<definida>" in dry.stdout
+    assert "STUDIO_RESUME_JOBS='0'" in dry.stdout
+    assert "STUDIO_RESUME_DELAY_S='15'" in dry.stdout
+    assert "STUDIO_WEBHOOK_URL=<definida>" in dry.stdout
+    assert "STUDIO_WEBHOOK_SECRET=<definida>" in dry.stdout
 
     # Verificar que no se escribió al archivo HISTFILE
     hist_file = state_dir / "bash_history"
@@ -371,6 +387,10 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
             "STUDIO_LLM_FALLBACK_BASE_URL": "https://api.deepseek.com",
             "STUDIO_LLM_FALLBACK_KEY": synthetic_fallback_key,
             "STUDIO_LLM_FALLBACK_MODEL": "deepseek-chat",
+            "STUDIO_RESUME_JOBS": "0",
+            "STUDIO_RESUME_DELAY_S": "15",
+            "STUDIO_WEBHOOK_URL": synthetic_webhook_url,
+            "STUDIO_WEBHOOK_SECRET": synthetic_webhook_secret,
         },
         stdin_text=f"{synthetic_llm_key}\n",
     )
@@ -381,6 +401,7 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
         synthetic_fallback_key not in combined_sim
     ), "STUDIO_LLM_FALLBACK_KEY se imprimió en terminal"
     assert synthetic_pod_pass not in combined_sim, "COMFY_PASS se imprimió en terminal"
+    assert synthetic_webhook_secret not in combined_sim
 
     calls = [
         json.loads(line)
@@ -412,6 +433,10 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     assert '-e MODEL_PROFILE="studio"' in env_arg
     assert f'-e STUDIO_LLM_KEY="{synthetic_llm_key}"' in env_arg
     assert f'-e STUDIO_LLM_FALLBACK_KEY="{synthetic_fallback_key}"' in env_arg
+    assert '-e STUDIO_RESUME_JOBS="0"' in env_arg
+    assert '-e STUDIO_RESUME_DELAY_S="15"' in env_arg
+    assert f'-e STUDIO_WEBHOOK_URL="{synthetic_webhook_url}"' in env_arg
+    assert f'-e STUDIO_WEBHOOK_SECRET="{synthetic_webhook_secret}"' in env_arg
     assert f'-e COMFY_PASS="{synthetic_pod_pass}"' in env_arg
     assert '-e STUDIO_LLM_MODEL="qwen3-vl-plus"' in env_arg
     assert '-e STUDIO_LLM_FALLBACK_MODEL="deepseek-chat"' in env_arg
@@ -1157,4 +1182,3 @@ def test_comfy_fetch_outputs_warns_on_empty_remote_archive(tmp_path: Path) -> No
     )
     assert res.returncode != 0
     assert "vacío" in res.stderr or "válido" in res.stderr
-

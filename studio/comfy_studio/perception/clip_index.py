@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 import unicodedata
@@ -10,13 +11,49 @@ from pathlib import Path
 from typing import Any
 
 from .. import SIMULATED_ML_NOTICE
+from ..media_bins import find_ffmpeg
 from ..ml import is_real_backend, require_real_payload, run_worker
 from ..projects import ProjectStore
-from .keyframes import extract_image_rgb_signature, extract_video_keyframes
+from .keyframes import (
+    extract_image_rgb_signature,
+    extract_video_keyframes,
+    keyframe_extraction_cache_key,
+)
 from .store import CLIP_EMBED_DIM, PerceptionVectorStore
 
 CLIP_MODEL_ID = "openai/clip-vit-large-patch14"
 CLIP_LOCAL_REL_DIR = "models/clip/clip-vit-large-patch14"
+
+
+def _image_embedding_cache_key(
+    image_path: Path | None,
+    *,
+    caption: str,
+    visual_tags: list[str],
+    rgb_mean: list[float] | None,
+    metadata: dict[str, Any],
+) -> str | None:
+    if image_path is None or not image_path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with image_path.open("rb") as image_file:
+        for chunk in iter(lambda: image_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    options = {
+        "content_sha256": digest.hexdigest(),
+        "caption": caption,
+        "visual_tags": visual_tags,
+        "rgb_mean": rgb_mean,
+        "metadata_inputs": {
+            key: metadata.get(key)
+            for key in ("caption", "description", "scene", "label", "tags", "dominant_color")
+        },
+        "model": CLIP_MODEL_ID,
+        "backend": "real" if is_real_backend() else "sim",
+    }
+    packed = json.dumps(options, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(packed.encode("utf-8")).hexdigest()
+
 
 # Ejes conceptuales compartidos imagen <-> texto (dimensiones 0..15)
 _CONCEPT_AXES: dict[int, set[str]] = {
@@ -407,6 +444,25 @@ class ClipVisualIndex:
             if not rgb_mean:
                 rgb_mean = sig_info.get("rgb_mean")
 
+        image_path = Path(path) if path is not None else None
+        embedding_cache_key = _image_embedding_cache_key(
+            image_path,
+            caption=caption,
+            visual_tags=visual_tags,
+            rgb_mean=rgb_mean if isinstance(rgb_mean, list) else None,
+            metadata=meta,
+        )
+        existing = self.vector_store.get_clip_shot_by_keyframe(aid)
+        if (
+            embedding_cache_key
+            and existing is not None
+            and existing["project_id"] == project_id
+            and existing["source_asset_id"] == source_asset_id
+            and (existing.get("metadata") or {}).get("image_embedding_cache_key")
+            == embedding_cache_key
+        ):
+            return existing
+
         emb = embed_image_clip(
             path,
             caption=caption,
@@ -433,6 +489,7 @@ class ClipVisualIndex:
                 "original_filename": keyframe_asset.get("original_filename"),
                 "preview_url": keyframe_asset.get("preview_url"),
                 "view_url": keyframe_asset.get("view_url"),
+                "image_embedding_cache_key": embedding_cache_key,
             },
         )
         return record
@@ -489,13 +546,32 @@ class ClipVisualIndex:
         extracted_keyframes: list[dict[str, Any]] = []
         if extract_missing_keyframes:
             existing_kfs = self.store.list_assets(project_id, category="keyframes")
-            sources_with_kfs = {
-                str((kf.get("metadata") or {}).get("source_asset_id") or "") for kf in existing_kfs
-            }
+            keyframes_by_source: dict[str, list[dict[str, Any]]] = {}
+            for keyframe in existing_kfs:
+                source_id = str((keyframe.get("metadata") or {}).get("source_asset_id") or "")
+                keyframes_by_source.setdefault(source_id, []).append(keyframe)
             for asset in selected_assets:
-                if asset.get("kind") == "video" and (
-                    asset_ids is not None or asset["id"] not in sources_with_kfs
-                ):
+                if asset.get("kind") != "video":
+                    continue
+                video_path = self.store.get_asset_path(project_id, asset["id"])
+                cache_key = (
+                    keyframe_extraction_cache_key(
+                        video_path,
+                        scene_threshold=scene_threshold,
+                        interval_sec=interval_sec,
+                        ffmpeg_bin=find_ffmpeg(),
+                    )
+                    if video_path is not None
+                    else None
+                )
+                cached_frames = keyframes_by_source.get(asset["id"], [])
+                cache_is_current = bool(cache_key and cached_frames) and all(
+                    (keyframe.get("metadata") or {}).get("keyframe_extraction_cache_key")
+                    == cache_key
+                    and self._keyframe_file_exists(project_id, keyframe)
+                    for keyframe in cached_frames
+                )
+                if not cache_is_current:
                     kfs = extract_video_keyframes(
                         self.store,
                         project_id,
@@ -570,6 +646,15 @@ class ClipVisualIndex:
             "simulated": True,
             "simulation_notice": SIMULATED_ML_NOTICE,
         }
+
+    def _keyframe_file_exists(self, project_id: str, keyframe: dict[str, Any]) -> bool:
+        """Check persisted frame paths without an additional asset-row lookup."""
+        rel_path = keyframe.get("rel_path")
+        if not isinstance(rel_path, str) or not rel_path:
+            return False
+        root = self.store.project_dir(project_id)
+        path = (self.store.data_dir / rel_path).resolve()
+        return path.is_relative_to(root) and path.is_file()
 
     def find_shots_text(
         self,

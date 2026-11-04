@@ -1367,10 +1367,17 @@
                 return;
             }
             const result = await resp.json();
-            setToast(
-                `Job encolado: ${result.job_id} (${templateId}). La salida se registrará en Galería al completarse.`,
-                "success"
-            );
+            if (resp.status === 202) {
+                setToast(
+                    `Render encolado en segundo plano: ${result.job_id} (${templateId}). Sigue el progreso en Jobs (SSE); la salida irá a Galería al completarse.`,
+                    "success"
+                );
+            } else {
+                setToast(
+                    `Job encolado: ${result.job_id} (${templateId}). La salida se registrará en Galería al completarse.`,
+                    "success"
+                );
+            }
             if (state.activeProjectId === projectId) {
                 await selectProject(projectId, false);
                 await refreshJobs();

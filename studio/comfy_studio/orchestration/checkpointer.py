@@ -60,6 +60,8 @@ class ProductionCheckpointer:
             base = _default_checkpoint_dir()
             base.mkdir(parents=True, exist_ok=True)
             db_path = base / "checkpoints.sqlite3"
+        else:
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.db_path = str(db_path)
         self._ensure_schema()
 

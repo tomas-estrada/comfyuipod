@@ -459,7 +459,7 @@ class TemplateRegistry:
 
         return _substitute_placeholders(copy.deepcopy(tpl["workflow"]), context)
 
-    async def submit_render(
+    async def enqueue_render(
         self,
         template_id: str,
         raw_params: dict[str, Any] | None,
@@ -473,7 +473,15 @@ class TemplateRegistry:
         animate_available: bool = True,
         minimax_available: bool = True,
     ) -> dict[str, Any]:
-        """Valida params, sube assets de entrada, encola job y registra salidas en galería."""
+        """Valida params, sube assets de entrada y crea el job en SQLite (SIN ejecutarlo).
+
+        M7-SCR-001: devuelve `{"job_id", "project_id", "template_id", "status",
+        "params"}` para que el llamador decida si espera (`submit_render` /
+        `?wait=1`) o lo ejecuta en segundo plano (`execute_render_job`). El
+        workflow se renderiza ya aquí para fallar pronto si la plantilla no casa
+        con los params; el ejecutor lo reconstruye desde los params persistidos
+        (igual que hace `recovery.py` tras un reinicio).
+        """
         tpl = self.get_raw_definition(template_id)
         weights_reason = template_weights_unavailable_reason(tpl)
         weights_ok = (
@@ -572,26 +580,65 @@ class TemplateRegistry:
                 },
             )
 
-        workflow = self.render_workflow(
+        # Render temprano: valida que la plantilla casa con los params antes de
+        # devolver el job (el ejecutor re-renderiza desde los params persistidos).
+        self.render_workflow(
             tpl["id"],
             validated_params,
             project_id=eff_project_id,
             job_id=job["id"],
             strict=False,
         )
+        return {
+            "job_id": job["id"],
+            "project_id": eff_project_id,
+            "template_id": tpl["id"],
+            "status": job["status"],
+            "params": validated_params,
+        }
 
+    async def execute_render_job(
+        self,
+        job_id: str,
+        *,
+        store: ProjectStore,
+        comfyui_client: ComfyUIClient,
+        broker: ProgressBroker | None = None,
+    ) -> dict[str, Any]:
+        """Ejecuta un job `render` ya encolado y registra las salidas en la galería.
+
+        Reconstruye el workflow desde los params persistidos del job (mismo
+        mecanismo que `recovery.py`), lo envía a ComfyUI con `execute_prompt_job`
+        y devuelve el mismo shape que devolvía `submit_render`.
+        """
+        job = store.get_job(job_id)
+        if job is None:
+            raise LookupError(f"Job {job_id!r} no encontrado")
+        if job.get("kind") != "render" or not job.get("template_id"):
+            raise TemplateParamError(
+                f"El job {job_id!r} no es un render con plantilla; no se puede ejecutar.",
+                errors=[{"field": "job_id", "reason": "value_error.not_render_job"}],
+            )
+        eff_project_id = str(job.get("project_id") or "default")
+        tpl_id = str(job["template_id"])
+        workflow = self.render_workflow(
+            tpl_id,
+            dict(job.get("params") or {}),
+            project_id=eff_project_id,
+            job_id=job_id,
+            strict=False,
+        )
         exec_result = await comfyui_client.execute_prompt_job(
             workflow,
-            job_id=job["id"],
+            job_id=job_id,
             project_id=eff_project_id,
-            template_id=tpl["id"],
+            template_id=tpl_id,
         )
-
-        updated_job = store.get_job(job["id"]) or job
+        updated_job = store.get_job(job_id) or job
         gallery_assets = [
             a
             for a in store.list_assets(eff_project_id, category="outputs")
-            if a.get("job_id") == job["id"]
+            if a.get("job_id") == job_id
         ]
         outputs_list = [
             o.model_dump() if hasattr(o, "model_dump") else dict(o)
@@ -599,15 +646,53 @@ class TemplateRegistry:
         ]
         return {
             "status": updated_job["status"],
-            "job_id": job["id"],
+            "job_id": job_id,
             "prompt_id": exec_result.prompt_id,
             "project_id": eff_project_id,
-            "template_id": tpl["id"],
-            "params": validated_params,
+            "template_id": tpl_id,
+            "params": job.get("params") or {},
             "workflow": workflow,
             "outputs": outputs_list,
             "gallery_assets": gallery_assets,
         }
+
+    async def submit_render(
+        self,
+        template_id: str,
+        raw_params: dict[str, Any] | None,
+        *,
+        project_id: str | None,
+        store: ProjectStore,
+        comfyui_client: ComfyUIClient,
+        broker: ProgressBroker | None = None,
+        strict: bool = True,
+        three_d_available: bool = True,
+        animate_available: bool = True,
+        minimax_available: bool = True,
+    ) -> dict[str, Any]:
+        """Modo síncrono (compatibilidad): encola el render y espera a que termine.
+
+        Equivalente a `enqueue_render` + `execute_render_job`; lo usan las
+        herramientas del agente y el endpoint HTTP con `?wait=1`.
+        """
+        enqueued = await self.enqueue_render(
+            template_id,
+            raw_params,
+            project_id=project_id,
+            store=store,
+            comfyui_client=comfyui_client,
+            broker=broker,
+            strict=strict,
+            three_d_available=three_d_available,
+            animate_available=animate_available,
+            minimax_available=minimax_available,
+        )
+        return await self.execute_render_job(
+            enqueued["job_id"],
+            store=store,
+            comfyui_client=comfyui_client,
+            broker=broker,
+        )
 
 
 _DEFAULT_REGISTRY: TemplateRegistry | None = None

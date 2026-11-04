@@ -179,6 +179,12 @@ code {
     border-bottom-color: var(--accent);
 }
 
+a.nav-tab-link {
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+
 /* Toast / Feedback Bar */
 .studio-toast {
     background: var(--bg-elevated);

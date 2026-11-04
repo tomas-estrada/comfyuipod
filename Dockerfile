@@ -24,6 +24,12 @@ FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04@sha256:44e43f0e0bcca1fc6fdc775e6002c
 LABEL org.opencontainers.image.title="ComfyUI Everything-Ready (Vast.ai RTX 5090 / 4090)"
 LABEL org.opencontainers.image.description="ComfyUI (/opt/ComfyUI) + ComfyUI-Manager + ffmpeg (libx264/nvenc) + Nginx Basic Auth + Top Custom Nodes & Auto-Models"
 
+# M7-OPS-001: allocator de CUDA con segmentos expandibles por defecto (torch >= 2.2).
+# Debe fijarse ANTES de importar torch: reduce los OOM por fragmentacion del caching
+# allocator en sesiones largas con cargas mixtas (ver README seccion 5.7). Es un default
+# de imagen: se sobrescribe con `-e PYTORCH_CUDA_ALLOC_CONF=...` y se desactiva con
+# `-e PYTORCH_CUDA_ALLOC_CONF=` (vacio). Lo heredan ComfyUI (hijo de comfyctl) y el
+# studio-server, porque Rust `Command` hereda el entorno salvo lo que se elimine.
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -35,7 +41,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     VHS_USE_IMAGEIO_FFMPEG=0 \
     COMFY_APP_DIR=/opt/ComfyUI \
     COMFY_DATA_DIR=/workspace/comfyui-data \
-    OPEN_BUTTON_PORT=8188
+    OPEN_BUTTON_PORT=8188 \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -136,6 +143,15 @@ RUN pip3 install --upgrade --ignore-installed pip setuptools wheel \
         accelerate \
         diffusers \
         pytorch-lightning
+
+# M7-OPS-003: registrar los flags de VRAM que soporta EXACTAMENTE el SHA fijado de
+# ComfyUI en nodes.lock, para que operadores y triage usen flags reales (no docs
+# desactualizadas). Falla el build si el SHA no expone ningun flag *vram*.
+# Verificado contra bdc63e72 (2026-11): --reserve-vram, --vram-headroom,
+# --disable-dynamic-vram, --enable-dynamic-vram, --highvram/--lowvram/--novram.
+RUN grep -ohE '\-\-[a-z0-9-]*vram[a-z0-9-]*' /opt/ComfyUI/comfy/cli_args.py \
+        | sort -u | tee /etc/comfyui/comfyui-vram-flags.txt \
+    && test -s /etc/comfyui/comfyui-vram-flags.txt
 
 # 4. Preinstalar los 12 Custom Nodes fijados por SHA en config/nodes.lock (REP-01 / MED-03 / CRIT-02)
 #    - Soporta tanto requirements.txt como requirements-no-cupy.txt (ComfyUI-Frame-Interpolation).

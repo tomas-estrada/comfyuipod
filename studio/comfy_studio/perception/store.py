@@ -400,6 +400,15 @@ class PerceptionVectorStore:
             ).fetchall()
         return [self._row_to_clip_shot(r) for r in rows]
 
+    def get_clip_shot_by_keyframe(self, keyframe_asset_id: str) -> dict[str, Any] | None:
+        """Return an indexed shot by its unique keyframe asset ID, if present."""
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM clip_shots WHERE keyframe_asset_id = ?",
+                (keyframe_asset_id,),
+            ).fetchone()
+        return self._row_to_clip_shot(row) if row is not None else None
+
     def search_clip_shots(
         self,
         project_id: str,
@@ -410,27 +419,51 @@ class PerceptionVectorStore:
     ) -> list[dict[str, Any]]:
         query_blob = pack_float32_vector(query_embedding, CLIP_EMBED_DIM)
         query_vec = unpack_float32_vector(query_blob, CLIP_EMBED_DIM)
+        requested = max(1, int(top_k))
         with self._connection() as conn:
             total_row = conn.execute("SELECT COUNT(*) AS c FROM vec_clip_shots").fetchone()
             total_count = int(total_row["c"]) if total_row else 0
             if total_count == 0:
                 return []
-            k_Fetch = max(top_k * 4, min(total_count, 200))
-            knn_rows = conn.execute(
-                "SELECT rowid, distance FROM vec_clip_shots WHERE embedding MATCH ? AND k = ?",
-                (query_blob, k_Fetch),
-            ).fetchall()
-            distance_by_rowid = {int(r["rowid"]): float(r["distance"]) for r in knn_rows}
-
             clauses = ["project_id = ?"]
             params: list[Any] = [project_id]
             if source_asset_id:
                 clauses.append("source_asset_id = ?")
                 params.append(source_asset_id)
-            shot_rows = conn.execute(
-                f"SELECT * FROM clip_shots WHERE {' AND '.join(clauses)}",
+            where_sql = " AND ".join(clauses)
+            scoped_count_row = conn.execute(
+                f"SELECT COUNT(*) AS c FROM clip_shots WHERE {where_sql}",
                 params,
-            ).fetchall()
+            ).fetchone()
+            scoped_count = int(scoped_count_row["c"]) if scoped_count_row else 0
+            if scoped_count == 0:
+                return []
+
+            wanted = min(requested, scoped_count)
+            candidate_k = min(total_count, max(wanted * 4, min(total_count, 200)))
+            shot_rows: list[sqlite3.Row] = []
+            distance_by_rowid: dict[int, float] = {}
+            while True:
+                knn_rows = conn.execute(
+                    "SELECT rowid, distance FROM vec_clip_shots "
+                    "WHERE embedding MATCH ? AND k = ? ORDER BY distance ASC",
+                    (query_blob, candidate_k),
+                ).fetchall()
+                distance_by_rowid = {
+                    int(row["rowid"]): float(row["distance"]) for row in knn_rows
+                }
+                if not distance_by_rowid:
+                    return []
+                row_ids = list(distance_by_rowid)
+                placeholders = ", ".join("?" for _ in row_ids)
+                shot_rows = conn.execute(
+                    f"SELECT * FROM clip_shots WHERE rowid IN ({placeholders}) "
+                    f"AND {where_sql}",
+                    [*row_ids, *params],
+                ).fetchall()
+                if len(shot_rows) >= wanted or candidate_k >= total_count:
+                    break
+                candidate_k = min(total_count, max(candidate_k + 1, candidate_k * 2))
 
         results: list[dict[str, Any]] = []
         for row in shot_rows:
@@ -445,7 +478,7 @@ class PerceptionVectorStore:
             results.append(item)
 
         results.sort(key=lambda x: (-x["similarity"], x["distance"], x["timestamp_sec"]))
-        return results[: max(1, int(top_k))]
+        return results[:requested]
 
     # ------------------------------------------------------------------
     # Face Identities & Detections (vec_face_identities + vec_face_detections)

@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from ..media_bins import find_ffmpeg
 from ..perception.keyframes import probe_media_info
 from ..projects import ProjectStore
 
@@ -162,7 +163,7 @@ def execute_edl_ffmpeg(
             f"El EDL tiene {len(raw_cuts)} cortes; máximo permitido: {MAX_EDL_CUTS} (M3-SCR-005)."
         )
 
-    ffmpeg_bin = shutil.which("ffmpeg")
+    ffmpeg_bin = find_ffmpeg()
     if not ffmpeg_bin:
         raise RuntimeError("No se encontró `ffmpeg` en el PATH para ejecutar el EDL.")
 
@@ -209,6 +210,10 @@ def execute_edl_ffmpeg(
                 probed_sources[src_path] = probe_media_info(
                     src_path, timeout_s=ffprobe_timeout_s
                 )
+                if not bool(probed_sources[src_path].get("probe_ok")):
+                    raise RuntimeError(
+                        f"El video fuente del corte #{idx + 1} no pudo verificarse con ffprobe."
+                    )
             src_has_audio = bool(probed_sources[src_path].get("has_audio"))
             if src_has_audio:
                 any_has_audio = True

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
-import shutil
 import struct
 import subprocess
 import tempfile
@@ -12,6 +12,7 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+from ..media_bins import find_ffmpeg, find_ffprobe
 from ..projects import ProjectStore
 
 _PTS_TIME_RE = re.compile(r"pts_time:\s*([0-9]+(?:\.[0-9]+)?)")
@@ -26,6 +27,33 @@ DEFAULT_FFMPEG_KEYFRAME_TIMEOUT_S = 60.0
 # M3-SCR-004: cota DURA del PNG de keyframe. Antes se pasaba max(10 MiB, len+1024) a
 # save_upload, que por construcción nunca rechaza; 32 MiB cubre un PNG 4K fotográfico.
 MAX_KEYFRAME_PNG_BYTES = 32 * 1024 * 1024  # 32 MiB
+
+
+def keyframe_extraction_cache_key(
+    source_path: Path | str,
+    *,
+    scene_threshold: float = 0.25,
+    interval_sec: float = 2.0,
+    max_keyframes: int = 30,
+    ffmpeg_bin: str | None = None,
+) -> str | None:
+    """Return a version key for reusable keyframes, or None if the source is missing."""
+    path = Path(source_path)
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    payload = {
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "ctime_ns": stat.st_ctime_ns,
+        "scene_threshold": round(max(0.05, min(0.95, float(scene_threshold))), 3),
+        "interval_sec": round(max(0.2, float(interval_sec)), 3),
+        "max_keyframes": int(max_keyframes),
+        "ffmpeg": ffmpeg_bin if ffmpeg_bin is not None else find_ffmpeg(),
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(serialized).hexdigest()
 
 
 def _make_solid_png(
@@ -54,7 +82,7 @@ def probe_media_info(
 ) -> dict[str, Any]:
     """Obtiene duración, dimensiones y streams de un archivo multimedia con ffprobe."""
     file_path = Path(path)
-    ffprobe_bin = shutil.which("ffprobe")
+    ffprobe_bin = find_ffprobe()
     if not ffprobe_bin or not file_path.is_file():
         # M3-SCR-006: metadatos de respaldo NO verificados (probe_ok=False); los
         # consumidores no deben presentarlos como verificación real del medio.
@@ -168,7 +196,7 @@ def extract_image_rgb_signature(
     timeout_s: float = DEFAULT_FFMPEG_SIGNATURE_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Extrae estadísticos RGB (media, cuadrantes y etiquetas semánticas de color) vía ffmpeg."""
-    ffmpeg_bin = shutil.which("ffmpeg")
+    ffmpeg_bin = find_ffmpeg()
     path = Path(image_path)
     pixels: list[tuple[int, int, int]] = []
 
@@ -348,7 +376,14 @@ def extract_video_keyframes(
     width = int(info.get("width") or 320)
     height = int(info.get("height") or 180)
 
-    ffmpeg_bin = shutil.which("ffmpeg")
+    ffmpeg_bin = find_ffmpeg()
+    extraction_cache_key = keyframe_extraction_cache_key(
+        video_path,
+        scene_threshold=scene_threshold,
+        interval_sec=interval_sec,
+        max_keyframes=effective_max,
+        ffmpeg_bin=ffmpeg_bin,
+    )
     extracted_frames: list[tuple[float, bytes]] = []
     # M1.7 (M3-SCR-007): el PNG de relleno NO es un plano real del clip. Se marca
     # para que `clip_index` lo excluya del índice CLIP: indexarlo produciría
@@ -470,6 +505,7 @@ def extract_video_keyframes(
                 "dominant_color": dominant,
                 "caption": caption,
                 "synthetic": synthetic_frames,
+                "keyframe_extraction_cache_key": extraction_cache_key,
             }
             if synthetic_frames:
                 # Honestidad explícita: este asset NO es un fotograma del clip.
