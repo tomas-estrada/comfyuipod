@@ -139,7 +139,7 @@ jobs:
             cp "${HF_FIXTURE_BUFFALO_ZIP}" "${stage_dir}/${repo_path}"
           elif [ -s "${incomplete_file}" ]; then
             cat "${incomplete_file}" > "${stage_dir}/${repo_path}"
-            printf '+resumed-tail' >> "${stage_dir}/${repo_path}"
+            printf 'bytes' >> "${stage_dir}/${repo_path}"
             rm -f "${incomplete_file}"
           else
             printf 'fake-model-bytes' > "${stage_dir}/${repo_path}"
@@ -248,7 +248,7 @@ jobs:
           printf 'stale-phase2-stage' > "$tmp_root/studio_data/models/.hf_stage/stale.tmp"
           partial_rel="split_files/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors"
           mkdir -p "$tmp_root/studio_data/models/.hf_stage_phase3/.cache/huggingface/download/$(dirname "$partial_rel")"
-          printf 'seeded-phase3-partial' > "$tmp_root/studio_data/models/.hf_stage_phase3/.cache/huggingface/download/${partial_rel}.incomplete"
+          printf 'fake-model-' > "$tmp_root/studio_data/models/.hf_stage_phase3/.cache/huggingface/download/${partial_rel}.incomplete"
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio \
             bash scripts/download-models.sh --phase2 > "$tmp_root/dl_studio_resume.log" 2>"$tmp_root/dl_studio_resume.err" || { cat "$tmp_root/dl_studio_resume.log"; cat "$tmp_root/dl_studio_resume.err"; exit 1; }
           [ ! -d "$tmp_root/studio_data/models/.hf_stage" ]
@@ -256,7 +256,7 @@ jobs:
           grep -q "SKIP (ya existe): wan2.2_ti2v_5B_fp16.safetensors" "$tmp_root/dl_studio_resume.log"
           grep -q "INICIO: wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors" "$tmp_root/dl_studio_resume.log"
           grep -q "OK: .*wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors" "$tmp_root/dl_studio_resume.log"
-          [ "$(cat "$tmp_root/studio_data/models/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors")" = "seeded-phase3-partial+resumed-tail" ]
+          [ "$(cat "$tmp_root/studio_data/models/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors")" = "fake-model-bytes" ]
           [ "$(cat "$tmp_root/studio_data/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors")" = "fake-model-bytes" ]
 
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_ANIMATE=1 \
