@@ -3,8 +3,9 @@
   "goal_revision": "upgrades-ultra-version @ PR#64 (merged)",
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
   "stage": "pre_gpu",
-  "overall": "IN_PROGRESS",
-  "updated_utc": "2026-11-05T08:20:00Z",
+  "overall": "BLOCKED_PRE_GPU",
+  "overall_note": "Infraestructura W00-W09 + imagen candidata con atlas offline integradas y verdes. Capacidades W06,W10-W23 pendientes/bloqueadas visibles. Ver docs/ultra/CLOSING.md.",
+  "updated_utc": "2026-11-05T08:45:00Z",
   "merged": {
     "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71)", "W04": "#69", "W05": "#72", "W07": "#70", "W08": "#74,#76", "W09_atlas": "#63 (+fix #78)"
   },
