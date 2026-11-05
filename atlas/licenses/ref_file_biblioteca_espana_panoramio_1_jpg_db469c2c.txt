@@ -1,0 +1,11 @@
+Referencia: Biblioteca espana - panoramio (1).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Biblioteca_espana_-_panoramio_(1).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/2/29/Biblioteca_espana_-_panoramio_%281%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Zack Knowles
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 11 October 2011 (captured)
+Subida: 2016-12-18T23:03:08Z
+sha256 enviado: 9cdefecabec4758f4aac0fd24c6f37cc8f160d607544cdf26f798c9c939ceb77
+sha1 original: db469c2c20e0af0ec3ceb17cae2ee6e648b10256
+Original: 3216x4288; enviado: 1536x2048 (derived_downscale)
+Atribución: Zack Knowles — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Biblioteca_espana_-_panoramio_(1).jpg

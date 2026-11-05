@@ -1,0 +1,11 @@
+Referencia: Marinilla - 1c.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Marinilla_-_1c.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/0/03/Marinilla_-_1c.jpg/3840px-Marinilla_-_1c.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: SajoR
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-05-05 09:04:59 (captured)
+Subida: 2024-01-13T18:15:07Z
+sha256 enviado: 85f60be65feb7036700ce86fab75b7c01cea87fe68ba82fccafea69a469d730d
+sha1 original: 25745bc3e19e4a911a0896b8e5e7404cb5ca0d9f
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: SajoR — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Marinilla_-_1c.jpg

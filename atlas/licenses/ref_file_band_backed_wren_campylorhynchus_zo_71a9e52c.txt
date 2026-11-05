@@ -1,0 +1,11 @@
+Referencia: Band-backed wren (Campylorhynchus zonatus brevirostris) Antioquia.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Band-backed_wren_(Campylorhynchus_zonatus_brevirostris)_Antioquia.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/2/2a/Band-backed_wren_%28Campylorhynchus_zonatus_brevirostris%29_Antioquia.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Charles J. Sharp
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-08-10 14:01:09 (captured)
+Subida: 2023-09-07T12:01:27Z
+sha256 enviado: e25abbbf1d807b7d48b6fa727c5473acf6b1b494e36b771ac1b7fec759357eed
+sha1 original: 71a9e52c984444ec64f5667bb92ecb180fdb4710
+Original: 2706x1804; enviado: 2048x1365 (derived_downscale)
+Atribución: Charles J. Sharp — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Band-backed_wren_(Campylorhynchus_zonatus_brevirostris)_Antioquia.jpg

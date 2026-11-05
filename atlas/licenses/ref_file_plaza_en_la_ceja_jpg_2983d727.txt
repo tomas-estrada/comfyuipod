@@ -1,0 +1,11 @@
+Referencia: Plaza en La Ceja.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Plaza_en_La_Ceja.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/3/38/Plaza_en_La_Ceja.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Xemenendura
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 11 July 2024 (according to Exif data) (captured)
+Subida: 2024-07-12T08:26:57Z
+sha256 enviado: e94dc39ede6f9023c169e958da160494ff3dc5129c0d1f2269fd2346755adc1d
+sha1 original: 2983d7275ce4b0306250e8940b81dd119939127c
+Original: 4000x3000; enviado: 2048x1536 (derived_downscale)
+Atribución: Xemenendura — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Plaza_en_La_Ceja.jpg

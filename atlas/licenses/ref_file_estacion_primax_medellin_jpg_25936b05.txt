@@ -1,0 +1,11 @@
+Referencia: Estación Primax Medellín.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Estación_Primax_Medellín.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/5/50/Estaci%C3%B3n_Primax_Medell%C3%ADn.jpg/3840px-Estaci%C3%B3n_Primax_Medell%C3%ADn.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Xemenendura
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 28 July 2025 (according to Exif data) (captured)
+Subida: 2025-07-29T02:05:54Z
+sha256 enviado: 02df682cf7b7f4f0857040180724e5951dd86a0be35113670b5066f6f714c3c2
+sha1 original: 25936b05344e73efe9bd795bf74c0c942baf86a2
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: Xemenendura — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Estación_Primax_Medellín.jpg

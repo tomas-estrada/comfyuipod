@@ -1,0 +1,11 @@
+Referencia: Chicharrón en La Gloria de Gloria.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Chicharrón_en_La_Gloria_de_Gloria.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/8/8b/Chicharr%C3%B3n_en_La_Gloria_de_Gloria.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Futbolero
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-12-13 13:00:49 (captured)
+Subida: 2024-02-01T03:58:47Z
+sha256 enviado: 11b35657634775638e58e8a74127093d21c32cf789bae645e9ce201ab8ca4fe1
+sha1 original: 5c175f19f969ff47b9680c258fb51a7a533e2997
+Original: 4096x2304; enviado: 2048x1152 (derived_downscale)
+Atribución: Futbolero — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Chicharrón_en_La_Gloria_de_Gloria.jpg

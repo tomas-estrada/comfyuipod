@@ -1,0 +1,11 @@
+Referencia: Medellin de Noche - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Medellin_de_Noche_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/8/8f/Medellin_de_Noche_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled
+Autor: Ricardo Astrauskas
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 23 August 2009 (captured)
+Subida: 2017-02-09T22:44:17Z
+sha256 enviado: 6603c2e9f6ee25a348de53d5d1f1001d2ba4ff744614496d73795224a50bc35a
+sha1 original: 7efa785d480919f44f094621b458d7917b0db45f
+Original: 3264x2040; enviado: 2048x1280 (derived_downscale)
+Atribución: Ricardo Astrauskas — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Medellin_de_Noche_-_panoramio.jpg

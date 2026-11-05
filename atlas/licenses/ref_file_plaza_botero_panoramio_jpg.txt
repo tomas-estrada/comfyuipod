@@ -1,0 +1,11 @@
+Referencia: Plaza Botero - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Plaza_Botero_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/c/c5/Plaza_Botero_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Zack Knowles
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 9 October 2011 (captured)
+Subida: 2016-12-17T22:58:28Z
+sha256 enviado: 60a135162408c11824343d29f7fbb9d98b4835e08e9eaa9f2e8a16c1a373fb75
+sha1 original: 17b7bc66dcac5429a36cd315c319e69d49a747c9
+Original: 4288x3216; enviado: 2048x1536 (derived_downscale)
+Atribución: Zack Knowles — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Plaza_Botero_-_panoramio.jpg

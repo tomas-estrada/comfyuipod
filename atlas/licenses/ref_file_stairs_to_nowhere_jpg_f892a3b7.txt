@@ -1,0 +1,11 @@
+Referencia: Stairs To Nowhere.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Stairs_To_Nowhere.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f8/Stairs_To_Nowhere.jpg/3840px-Stairs_To_Nowhere.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Mussi Katz
+Licencia: CC0 (http://creativecommons.org/publicdomain/zero/1.0/deed.en)
+Captura: Taken on 2 October 2022, 10:32:42 (captured)
+Subida: 2025-01-08T13:32:09Z
+sha256 enviado: 263f9e910c7d766ad46fda65035e1c9171c1275081a1142bbefebf2fe9d7b64c
+sha1 original: f892a3b7ecec062bdd0533c67c7d247a810f8c61
+Original: 3840x2560; enviado: 2048x1365 (derived_downscale)
+Atribución: Mussi Katz — CC0 — https://commons.wikimedia.org/wiki/File:Stairs_To_Nowhere.jpg

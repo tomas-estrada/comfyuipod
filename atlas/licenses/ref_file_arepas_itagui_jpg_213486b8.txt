@@ -1,0 +1,11 @@
+Referencia: Arepas (Itagüí).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Arepas_(Itagüí).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/3/38/Arepas_%28Itag%C3%BC%C3%AD%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Eddy Milfort
+Licencia: CC BY-SA 2.0 (https://creativecommons.org/licenses/by-sa/2.0)
+Captura: 2013-01-09 23:10:48 (captured)
+Subida: 2023-06-14T23:59:46Z
+sha256 enviado: ba1046124c154773f4c07eb3713feaecb1a1786b7b5bcc42b681f240e1174f8a
+sha1 original: 213486b81d48e6ddf9bb9e29f8a5f038edd2d51d
+Original: 3912x2204; enviado: 2048x1154 (derived_downscale)
+Atribución: Eddy Milfort — CC BY-SA 2.0 — https://commons.wikimedia.org/wiki/File:Arepas_(Itagüí).jpg

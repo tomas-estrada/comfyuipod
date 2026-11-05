@@ -1,0 +1,11 @@
+Referencia: VISTA BARRIO URBANO MEDELLIN 2016.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:VISTA_BARRIO_URBANO_MEDELLIN_2016.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/9/91/VISTA_BARRIO_URBANO_MEDELLIN_2016.jpg/3840px-VISTA_BARRIO_URBANO_MEDELLIN_2016.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: ALONSOZAR
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2015-12-20 13:30:49 (captured)
+Subida: 2017-01-20T15:16:41Z
+sha256 enviado: cd2450b319b07167c61abea22136b7642334d923e9bbe501717b7170d502501b
+sha1 original: 9c84e0fc5a76f1a68bd5dea8c0d2da735e6e7086
+Original: 3840x2160; enviado: 2048x1152 (derived_downscale)
+Atribución: ALONSOZAR — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:VISTA_BARRIO_URBANO_MEDELLIN_2016.jpg

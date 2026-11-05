@@ -1,0 +1,11 @@
+Referencia: Panorámica desde el Cerro El Volador hacia el noroccidente.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Panorámica_desde_el_Cerro_El_Volador_hacia_el_noroccidente.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/1/16/Panor%C3%A1mica_desde_el_Cerro_El_Volador_hacia_el_noroccidente.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2018-01-21 16:59:10 (captured)
+Subida: 2018-03-26T01:36:09Z
+sha256 enviado: 4b5f12f0394d4056dc764b25025fe389a8c226e53b43cdb063e23795c8b625f1
+sha1 original: 6a3ccc8152f9a4f82c84cb1d46e45d56d82f8377
+Original: 4160x3120; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Panorámica_desde_el_Cerro_El_Volador_hacia_el_noroccidente.jpg

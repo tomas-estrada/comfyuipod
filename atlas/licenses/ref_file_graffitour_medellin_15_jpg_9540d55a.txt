@@ -1,0 +1,11 @@
+Referencia: Graffitour, Medellín 15.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Graffitour,_Medellín_15.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/f/fd/Graffitour%2C_Medell%C3%ADn_15.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-07-08 17:40:47 (captured)
+Subida: 2024-01-22T03:33:28Z
+sha256 enviado: 8b42573e7cd4759788f798dcfca4fe88c26b760421817a09674101fa860f5eec
+sha1 original: 9540d55a46778744db2b4490fc3c41605cf5b677
+Original: 3456x4608; enviado: 1536x2048 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Graffitour,_Medellín_15.jpg

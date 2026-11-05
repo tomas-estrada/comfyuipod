@@ -1,0 +1,11 @@
+Referencia: Puesta de Sol Medellin.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Puesta_de_Sol_Medellin.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/3/3f/Puesta_de_Sol_Medellin.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Cristian David Beltran Niño
+Licencia: CC0 (http://creativecommons.org/publicdomain/zero/1.0/deed.en)
+Captura: 2025-02-19 17:41:53 (captured)
+Subida: 2025-02-20T13:53:07Z
+sha256 enviado: 74ac5dd83b6882c39288f336fbb7073121767a644ebb36f532e15892588f5812
+sha1 original: 3fab23a95b8167e6b145b1b66251331639898a43
+Original: 4000x3000; enviado: 2048x1536 (derived_downscale)
+Atribución: Cristian David Beltran Niño — CC0 — https://commons.wikimedia.org/wiki/File:Puesta_de_Sol_Medellin.jpg

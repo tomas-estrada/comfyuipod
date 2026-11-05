@@ -1,0 +1,11 @@
+Referencia: Vista Picacho.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Vista_Picacho.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/9/9b/Vista_Picacho.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Camilogc04
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2015-08-27 (captured)
+Subida: 2017-01-10T15:40:01Z
+sha256 enviado: 9d4a2ece341fc60b2b69305d88432f9e599ce16e677d131f0ac0f86464f24d0e
+sha1 original: d6fb33cc5a744b3494f7ad2e52926e9d37013f11
+Original: 3072x1728; enviado: 2048x1152 (derived_downscale)
+Atribución: Camilogc04 — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Vista_Picacho.jpg

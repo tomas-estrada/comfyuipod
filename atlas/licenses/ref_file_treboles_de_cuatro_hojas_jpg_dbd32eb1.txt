@@ -1,0 +1,11 @@
+Referencia: Tréboles de cuatro hojas.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Tréboles_de_cuatro_hojas.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/0/02/Tr%C3%A9boles_de_cuatro_hojas.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: El Gonzalo de Antioquia
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2019-04-14 10:50:27 (captured)
+Subida: 2019-05-04T18:13:27Z
+sha256 enviado: 4175e37d758b50291ad6e92996b3b1b72faea9206a985465c90acd6c46a78e35
+sha1 original: dbd32eb10cca90fd68eb265736d733ad0cd50d7c
+Original: 4032x3024; enviado: 2048x1536 (derived_downscale)
+Atribución: El Gonzalo de Antioquia — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Tréboles_de_cuatro_hojas.jpg

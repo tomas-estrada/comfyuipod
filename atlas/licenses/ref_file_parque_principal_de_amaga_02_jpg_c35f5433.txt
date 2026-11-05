@@ -1,0 +1,11 @@
+Referencia: Parque Principal de Amagá-02.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Parque_Principal_de_Amagá-02.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/8/8e/Parque_Principal_de_Amag%C3%A1-02.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2016-07-16 (captured)
+Subida: 2016-07-16T18:27:44Z
+sha256 enviado: 3ee04dd3dc322a4e306b12286c302f67b2fb8cf334ed169d2d43b6a1a451da0d
+sha1 original: c35f5433ab1d6bed762f4522947cfb4b93fb5431
+Original: 3264x1836; enviado: 2048x1152 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Parque_Principal_de_Amagá-02.jpg

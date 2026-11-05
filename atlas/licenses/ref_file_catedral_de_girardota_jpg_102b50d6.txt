@@ -1,0 +1,11 @@
+Referencia: Catedral de girardota.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Catedral_de_girardota.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/2/2f/Catedral_de_girardota.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled
+Autor: Erickdaniel50
+Licencia: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0)
+Captura: 2024-03-09 17:30:43 (captured)
+Subida: 2024-05-12T01:18:43Z
+sha256 enviado: af7960b014db62be5f88067246a6fbc6235a00ca0041c7f30e10f7971e49249f
+sha1 original: 102b50d6ed50e3a4127c509f123b20f0a39c612b
+Original: 2664x3834; enviado: 1423x2048 (derived_downscale)
+Atribución: Erickdaniel50 — CC BY 4.0 — https://commons.wikimedia.org/wiki/File:Catedral_de_girardota.jpg

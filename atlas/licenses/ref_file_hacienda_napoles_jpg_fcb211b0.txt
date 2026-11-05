@@ -1,0 +1,11 @@
+Referencia: Hacienda Nápoles.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Hacienda_Nápoles.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/9/9b/Hacienda_N%C3%A1poles.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled
+Autor: Federico Builes
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2017-02-06 18:13:59 (captured)
+Subida: 2017-02-07T04:55:01Z
+sha256 enviado: 88716c37622c513468ff9fedf06ce0a9b5b47451846220cb5b2e152a0c211bdd
+sha1 original: fcb211b01a7a817de8339829d64a2569d42bae41
+Original: 3421x1797; enviado: 2048x1076 (derived_downscale)
+Atribución: Federico Builes — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Hacienda_Nápoles.jpg

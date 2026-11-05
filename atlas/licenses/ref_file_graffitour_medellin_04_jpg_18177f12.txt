@@ -1,0 +1,11 @@
+Referencia: Graffitour, Medellín 04.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Graffitour,_Medellín_04.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/f/f0/Graffitour%2C_Medell%C3%ADn_04.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-07-08 17:41:04 (captured)
+Subida: 2024-01-22T03:33:30Z
+sha256 enviado: aae995a2a145215fe1109a28147d6116a230e92ebcf6565f47b3a83ac7c695a4
+sha1 original: 18177f12e393b47a542c2679ecc871553ac63819
+Original: 3456x4608; enviado: 1536x2048 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Graffitour,_Medellín_04.jpg

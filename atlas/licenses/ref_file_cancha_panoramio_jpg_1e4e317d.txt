@@ -1,0 +1,11 @@
+Referencia: Cancha - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Cancha_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/a/a3/Cancha_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: sckarmax
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 26 June 2010 (captured)
+Subida: 2016-12-15T07:06:27Z
+sha256 enviado: a952978b864e06c8e95e51bb78ee221a6ba50358b6b5f0077ef5b658aab9f51a
+sha1 original: 1e4e317da8727b6dc755545e4093d674df693c43
+Original: 3648x2736; enviado: 2048x1536 (derived_downscale)
+Atribución: sckarmax — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Cancha_-_panoramio.jpg

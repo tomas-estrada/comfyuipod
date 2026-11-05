@@ -1,0 +1,11 @@
+Referencia: Envigado above.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Envigado_above.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/e/e0/Envigado_above.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Castillogrande
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2022-08-16 (captured)
+Subida: 2022-08-16T23:59:20Z
+sha256 enviado: d8b24c1018605f94383c5fd58fd3124a31080dd3ee417ecd89f937456fcabf0a
+sha1 original: f4b03bf7da457229793a33fd28fd003c1233e992
+Original: 4128x3096; enviado: 2048x1536 (derived_downscale)
+Atribución: Castillogrande — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Envigado_above.jpg

@@ -1,0 +1,11 @@
+Referencia: Christmaslights med19.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Christmaslights_med19.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/f/f3/Christmaslights_med19.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Staticshakedown
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-05 17:59:41 (captured)
+Subida: 2020-07-22T16:49:44Z
+sha256 enviado: 02e03d4c1c34d97a70974fc9fefd8d99b0fc4f7e6e3959e340659bbad7051769
+sha1 original: 39b721f38be312cf830af84bdc0e4dee483ffcc0
+Original: 4032x2268; enviado: 2048x1152 (derived_downscale)
+Atribución: Staticshakedown — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Christmaslights_med19.jpg

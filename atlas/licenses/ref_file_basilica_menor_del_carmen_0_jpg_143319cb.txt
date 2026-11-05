@@ -1,0 +1,11 @@
+Referencia: Basilica menor del Carmen 0.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Basilica_menor_del_Carmen_0.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/8/88/Basilica_menor_del_Carmen_0.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Xemenendura
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 11 July 2024 (according to Exif data) (captured)
+Subida: 2024-07-12T14:19:00Z
+sha256 enviado: c65511cbafa62ae5dc648fc50b9466dcd09a6489a98f5aff0b8a0add59e83c13
+sha1 original: 143319cb493da9c33e813a9566eb87d03e0e99cc
+Original: 4000x3000; enviado: 2048x1536 (derived_downscale)
+Atribución: Xemenendura — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Basilica_menor_del_Carmen_0.jpg

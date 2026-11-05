@@ -1,0 +1,11 @@
+Referencia: Polvora en Medellin - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Polvora_en_Medellin_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/5/59/Polvora_en_Medellin_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled
+Autor: Ricardo Astrauskas
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: 28 January 2011 (original upload date) (captured)
+Subida: 2016-11-09T17:19:27Z
+sha256 enviado: 4563f4cd7690a7ac34764ed9bb523c816130a5c2159a9f5040995994fd9632e6
+sha1 original: 1e9cab0bd2afabee39c8c70c33203dfe9edd74ad
+Original: 3264x2040; enviado: 2048x1280 (derived_downscale)
+Atribución: Ricardo Astrauskas — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Polvora_en_Medellin_-_panoramio.jpg

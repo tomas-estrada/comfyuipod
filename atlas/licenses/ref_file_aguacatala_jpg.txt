@@ -1,0 +1,11 @@
+Referencia: Aguacatala.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Aguacatala.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/d/db/Aguacatala.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Aguacatala
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 20 April 2020 (captured)
+Subida: 2020-04-25T20:12:49Z
+sha256 enviado: ecc03d85d8f38631795b49f5a42ef3b1e2d9a4fcd009363e10a5baeb82daf09c
+sha1 original: d9b7ad05c8f6818421ec7f4944693ecb1054e2e4
+Original: 4128x3096; enviado: 2048x1536 (derived_downscale)
+Atribución: Aguacatala — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Aguacatala.jpg

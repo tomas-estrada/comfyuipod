@@ -1,0 +1,11 @@
+Referencia: Hormiga en la estación Oriente, tranvía de Ayacucho (Medellín).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Hormiga_en_la_estación_Oriente,_tranvía_de_Ayacucho_(Medellín).jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d1/Hormiga_en_la_estaci%C3%B3n_Oriente%2C_tranv%C3%ADa_de_Ayacucho_%28Medell%C3%ADn%29.jpg/3840px-Hormiga_en_la_estaci%C3%B3n_Oriente%2C_tranv%C3%ADa_de_Ayacucho_%28Medell%C3%ADn%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2022-01-01 12:06:17 (captured)
+Subida: 2022-01-02T02:14:42Z
+sha256 enviado: ba76307fb780ed2fb5c62905906fdccad9fbf73a9b83e3cf3aaacb39560e03ea
+sha1 original: f7268d3227d0765611f297d6dc4efa4b17d35552
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Hormiga_en_la_estación_Oriente,_tranvía_de_Ayacucho_(Medellín).jpg

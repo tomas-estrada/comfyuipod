@@ -1,0 +1,11 @@
+Referencia: Comuna 13, Medellín 01.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Comuna_13,_Medellín_01.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/4/40/Comuna_13%2C_Medell%C3%ADn_01.jpg/3840px-Comuna_13%2C_Medell%C3%ADn_01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Bernard Gagnon
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-24 (captured)
+Subida: 2021-01-30T19:11:12Z
+sha256 enviado: 294b0a53968b80aa497c1f8f50514b574e41f88b61f3d36fb5cbddc1f5f932e2
+sha1 original: d9f3ab246e81de301fb694b0a2b60f8f0df80841
+Original: 3840x1810; enviado: 2048x965 (derived_downscale)
+Atribución: Bernard Gagnon — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Comuna_13,_Medellín_01.jpg

@@ -1,0 +1,11 @@
+Referencia: La pupa.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:La_pupa.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/8/88/La_pupa.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Lojujone
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2024-08-18 11:50:21 (captured)
+Subida: 2025-02-25T02:44:37Z
+sha256 enviado: 11e88cf3b139f78b1d447300e1937829752547076a45a449f94a509c95939326
+sha1 original: c5da3e085e3febb3fe1b1d6a854d477b64e6a5c0
+Original: 4080x3060; enviado: 2048x1536 (derived_downscale)
+Atribución: Lojujone — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:La_pupa.jpg

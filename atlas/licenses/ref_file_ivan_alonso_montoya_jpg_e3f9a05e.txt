@@ -1,0 +1,11 @@
+Referencia: Ivan alonso montoya.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Ivan_alonso_montoya.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/c/cb/Ivan_alonso_montoya.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: IvanAlonsoMontoya
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2016-04-30 (captured)
+Subida: 2017-08-18T19:37:49Z
+sha256 enviado: cf210e2c541d64526ecc6e5d3515fcc1e7a15fd7e052fbd9eab4fd7560b4f7f1
+sha1 original: e3f9a05ea7337e6f656761f80b3dfc00f85ff35c
+Original: 3264x2448; enviado: 2048x1536 (derived_downscale)
+Atribución: IvanAlonsoMontoya — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Ivan_alonso_montoya.jpg

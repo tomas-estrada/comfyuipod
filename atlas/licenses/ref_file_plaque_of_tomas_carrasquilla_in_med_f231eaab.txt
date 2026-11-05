@@ -1,0 +1,11 @@
+Referencia: Plaque of Tomás Carrasquilla in Medellín.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Plaque_of_Tomás_Carrasquilla_in_Medellín.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/6/6c/Plaque_of_Tom%C3%A1s_Carrasquilla_in_Medell%C3%ADn.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Bernard Gagnon
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-24 (captured)
+Subida: 2021-01-30T20:29:20Z
+sha256 enviado: a5504c0d88ab5f3725d2f2b4f5081a18460b356628aeac18d90cbb5d260fa005
+sha1 original: f231eaab6676ac6974ff8ab699b7d1aa22c690f8
+Original: 2107x2195; enviado: 1966x2048 (derived_downscale)
+Atribución: Bernard Gagnon — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Plaque_of_Tomás_Carrasquilla_in_Medellín.jpg

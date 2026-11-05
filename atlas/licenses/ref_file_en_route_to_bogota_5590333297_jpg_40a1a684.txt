@@ -1,0 +1,11 @@
+Referencia: En route to Bogota (5590333297).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:En_route_to_Bogota_(5590333297).jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c7/En_route_to_Bogota_%285590333297%29.jpg/3840px-En_route_to_Bogota_%285590333297%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: William Neuheisel from DC, US
+Licencia: CC BY 2.0 (https://creativecommons.org/licenses/by/2.0)
+Captura: 2011-02-16 06:05 (captured)
+Subida: 2015-05-28T12:54:57Z
+sha256 enviado: ce27e077993f8dca2bce24fa118076f40227485a870f0aa53053c28bcc97e54c
+sha1 original: 40a1a68420b5d3f628b4fd8d1c2de5c7b85817f5
+Original: 3840x2560; enviado: 2048x1365 (derived_downscale)
+Atribución: William Neuheisel from DC, US — CC BY 2.0 — https://commons.wikimedia.org/wiki/File:En_route_to_Bogota_(5590333297).jpg

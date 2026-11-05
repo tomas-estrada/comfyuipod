@@ -1,0 +1,11 @@
+Referencia: Medellín sep 2025 - imagen 74.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Medellín_sep_2025_-_imagen_74.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/5/57/Medell%C3%ADn_sep_2025_-_imagen_74.jpg/3840px-Medell%C3%ADn_sep_2025_-_imagen_74.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Robot8A
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2025-09-03 15:05:34 (captured)
+Subida: 2025-09-10T17:20:01Z
+sha256 enviado: a5b448df4fb792cbde9ecad5328711fce42e4eacd9b737bc4a7149ab0f21fc48
+sha1 original: dc2ce5b07d151c4d79a8ea9f99cb02e59c9d990b
+Original: 3840x5120; enviado: 1536x2048 (derived_downscale)
+Atribución: Robot8A — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Medellín_sep_2025_-_imagen_74.jpg
