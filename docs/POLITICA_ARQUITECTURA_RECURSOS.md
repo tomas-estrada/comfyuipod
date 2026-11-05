@@ -604,13 +604,13 @@ Los siete pasos están implementados y verificados en CI.
 | A. Perfil 96 efectivo, RAM 128/256, admisión con límites y reserva | **Hecho** | `hardware_profile.py`: default 96 GB / 128 GB, 94 GB y 120 GB utilizables; `RAM_OPTIONS_GB=(128,256)`; 4 pruebas de control de exclusión GPU (pico 1, liberación tras fallo y tras cancelación) |
 | B. Arranque con pesos vacíos, sin descarga task/optional | **Hecho** | `--bootstrap` con el manifiesto real: 0 archivos, 0 descargas; con una entrada bootstrap: 1 descarga y promoción atómica |
 | C. Capacidad elegida: dependencias, reutilización, corrupción, cancelación, disco lleno | **Hecho** | Descarga real de un activo público de 32 B (`ByteDance/LatentSync-1.6 config.json`, pin sha1) → `downloaded`; segundo intento `skipped` con 0 descargas; destino corrupto → se re-descarga y restaura; volumen de 40 MB con margen de 10 GiB → `failed` con «espacio insuficiente» y ningún parcial promocionado |
-| D. Grafo final con procesamiento real en CPU | **Pendiente** | Requiere el grafo consumiendo los activos declarados con el stack existente |
+| D. Grafo final con procesamiento real en CPU | **Hecho** | `image.generate` resuelve a motor `comfyui` + plantilla `sdxl_image` con el perfil de 96 GB propagado, y declara un activo `task` de 7.1 GB con su destino resuelto. El grafo final (7 nodos) lo consume en `CheckpointLoaderSimple.ckpt_name`, que es exactamente el fichero que declara la capacidad: no hay activo en el grafo que la capacidad no haya declarado ni activo declarado que el grafo no use. El procesamiento real en CPU lo demuestra `test_composicion_asset_alfa_sobre_fondo_real`, que compone un asset con alfa sobre un fondo real del bundle con Pillow y verifica con sha256 que los píxeles fuera del asset quedan idénticos |
 | E. GPU pesada serializada, liberación tras fallo, mediciones simuladas separadas | **Hecho** | 4 pruebas de control; `assess_vram_fit` con `fits: null` y nota explícita cuando no hay medición |
 | F. Paquete instalado e imagen candidata en CI | **Hecho** | PR #106 fusionado en `main` como `957d6e6`; los tres jobs en verde sobre el SHA final (`63096e0`), sobre el merge (`957d6e6`) y sobre la cabeza de `main` tras el cierre del registro (`7dc6b83`). La build del SHA de la arquitectura (`957d6e6`) publicó `ghcr.io/tomas-estrada/comfyuipod:sha-957d6e6` con digest `sha256:4f99cd5ceb320052262440bb592007be01cf8ed98bc7b97ba59304fe174323a6`. `:latest` es una etiqueta móvil que sigue a la cabeza de `main`, así que su digest cambia con cada commit aunque el contenido ejecutable no cambie: el digest de una build concreta se lee del log del job, no de la API de paquetes. El atlas se verifica **dentro** de la imagen candidata (`verify-bundle` + `serve-check` sobre `/opt/studio-atlas`), así que solo se anuncia incluido si pertenece a ese commit y a esa imagen |
 
 Queda pendiente solo el precio real de egress del proveedor (hoy se usa un precio
-por GB orientativo), más las mediciones GPU reales, el diagnóstico Blackwell
-específico en `comfyctl strict-check` y el criterio D (grafo final consumiendo
-los activos declarados con procesamiento real en CPU). **No hay ejecución GPU
-validada**: `assess_vram_fit` sigue devolviendo `fits: null` hasta que exista un
-render medido, y ninguna prueba de este lote usó GPU.
+por GB orientativo), más las mediciones GPU reales y el diagnóstico Blackwell
+específico en `comfyctl strict-check`. Los seis criterios de aceptación previa a
+GPU (A–F) quedan demostrados. **No hay ejecución GPU validada**: `assess_vram_fit`
+sigue devolviendo `fits: null` hasta que exista un render medido, y ninguna prueba
+de este lote usó GPU.
