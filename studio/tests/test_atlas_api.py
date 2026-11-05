@@ -7,17 +7,17 @@ usan un atlas sintético en tmp vía STUDIO_ATLAS_DIR (sin red, sin GPU).
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from test_atlas_core import _ref, make_png  # noqa: F401  (helpers compartidos)
 
 from comfy_studio.app import create_app
 from comfy_studio.atlas.agent_tools import (
-    handle_atlas_prepare_shot,
     AtlasPrepareShotArgs,
+    handle_atlas_prepare_shot,
     reset_shared_atlas_service,
     shared_atlas_service,
 )
@@ -28,7 +28,6 @@ from comfy_studio.orchestration.adapters import EngineRunnerAdapter
 from comfy_studio.orchestration.planner import StubPlannerLLM, plan_production
 from comfy_studio.orchestration.state import ProductionState
 from comfy_studio.stubs.comfyui import ComfyUIStubState, create_stub_comfyui_app
-import httpx
 
 
 @pytest.fixture()
@@ -161,7 +160,7 @@ def test_api_select_view_y_selection(client: TestClient) -> None:
         "heading": 90,
     })
     assert r.status_code == 200 and r.json()["status"] == "ok"
-    assert any(l["code"] == "heading_unknown" for l in r.json()["limitations"])
+    assert any(lim["code"] == "heading_unknown" for lim in r.json()["limitations"])
     sel = client.get("/studio/api/atlas/selection")
     assert sel.json()["place_id"] == "plc_medellin_puente_4sur"
     assert sel.json()["view_id"].startswith("view_ref_")
@@ -263,7 +262,9 @@ def test_planner_inyecta_contexto_atlas_y_serialize(
     assert gen2.params["atlas"]["ref_id"] == gen.params["atlas"]["ref_id"]
 
 
-def test_executor_resuelve_fondo_atlas_real(atlas_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_executor_resuelve_fondo_atlas_real(
+    atlas_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("STUDIO_ATLAS_DIR", str(atlas_root))
     reset_shared_atlas_service()
     captured: list[dict] = []
