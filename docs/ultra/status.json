@@ -1,0 +1,38 @@
+{
+  "schema": "ultra-status/1",
+  "goal_revision": "upgrades-ultra-version @ PR#64 (merged)",
+  "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
+  "stage": "pre_gpu",
+  "overall": "IN_PROGRESS",
+  "updated_utc": "2026-11-05T06:35:00Z",
+  "work_items": {
+    "W00": {"title": "Baseline y reconciliacion de PRs", "status": "done", "level": "L1"},
+    "W01": {
+      "title": "Integridad transaccional de modelos",
+      "status": "in_review",
+      "pr": "#65",
+      "p0_fixed": ["cache corrupta en skip", "hf download sin --revision", "EXDEV destruye destino previo"],
+      "level": "L1"
+    },
+    "W02": {
+      "title": "Hardware, sizing y recetas con evidencia real",
+      "status": "in_review",
+      "prs": ["#66 (recetas+hardware_detect)", "sizing-coherent (start_gate)"],
+      "p0_fixed": [
+        "P0 #4 simulated->measured excluido",
+        "P0 #5 recetas agregadas por clave de entorno",
+        "P0 #7 hardware_detect intersecta con nvidia-smi+cgroup",
+        "P0 #6 start_gate no arrastra staging de Fase3 (background); volumen cuenta el mayor staging"
+      ],
+      "level": "L1",
+      "gpu_pending": false
+    }
+  },
+  "next_batch": ["W03 scheduler/lease GPU", "W04 contratos/DAG", "W07 fabrica engines/build"],
+  "blockers": [],
+  "known_env_issues": [
+    "test_mac_helper 3 tests fallan SOLO en Windows (fixture _clear_env quita SYSTEMROOT -> subprocess python exit 2). Pasan en CI Linux (autoridad). Preexistente, no introducido por Ultra.",
+    "test_capability_resolver test_real_download_process_is_killed_on_cancel: POSIX-only, skip en Windows, corre en CI Linux."
+  ],
+  "notes": "No GPU rentada, no APIs facturadas. Verificacion CPU local venv Py3.11 Windows; CI Linux autoridad de merge."
+}
