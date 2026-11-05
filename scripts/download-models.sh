@@ -108,7 +108,14 @@ DISK_SAFETY_MARGIN_BYTES="${HF_DISK_MARGIN_BYTES:-$((10 * 1024 * 1024 * 1024))}"
 HF_DISK_GUARD="${HF_DISK_GUARD:-1}"
 
 disk_free_bytes() {
-    df -Pk "$1" 2>/dev/null | awk 'NR==2 {print $4}'
+    local path="$1"
+    while [ -n "${path}" ] && [ ! -e "${path}" ]; do
+        local parent
+        parent="$(dirname "${path}")"
+        [ "${parent}" = "${path}" ] && break
+        path="${parent}"
+    done
+    df -Pk "${path}" 2>/dev/null | awk 'NR==2 {print $4}'
 }
 
 # require_disk_space <path> [expected_bytes] -> 0 si hay sitio, 1 si no.
