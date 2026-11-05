@@ -222,6 +222,36 @@ def acquire(
     return report
 
 
+def git_blob_sha1(path: Path) -> str:
+    """SHA-1 del objeto blob de Git para el fichero en `path`.
+
+    **No es el SHA-1 crudo de sus bytes.** Git antepone la cabecera
+    ``blob <tamaño>\0`` antes de calcular el hash:
+
+        sha1(b"blob " + str(len(content)) + b"\0" + content)
+
+    Verificado contra la API de HuggingFace: para un fichero guardado en git (no
+    LFS), el `X-Linked-Etag` que publica es exactamente este valor, no el SHA-1
+    del contenido. Confundirlos hacía fallar la verificación de todos los activos
+    con hash SHA-1.
+    """
+    size = path.stat().st_size
+    digest = hashlib.sha1()
+    digest.update(b"blob %d\x00" % size)
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _raw_digest(path: Path, algorithm: str) -> str:
+    digest = hashlib.new(algorithm)
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _verify_integrity(path: Path, need: Any) -> str | None | bool:
     """Compara el hash del fichero con el que declara el manifiesto.
 
@@ -229,19 +259,41 @@ def _verify_integrity(path: Path, need: Any) -> str | None | bool:
     mensaje de error si no. Un activo sin hash se acepta: la política dice
     «where available», y exigirlo bloquearía activos que HuggingFace solo
     sirve por tamaño.
+
+    **Semántica del hash, que no es la misma en los dos casos:**
+
+    - `sha256` (64 hex) es el oid del objeto **LFS**, que sí es el SHA-256 crudo
+      del contenido del fichero.
+    - `sha1` (40 hex) es el OID del **blob de git**, que lleva la cabecera
+      ``blob <tamaño>\0``. Calcular el SHA-1 crudo aquí haría fallar la
+      verificación de todos los activos con hash SHA-1.
+
+    Verificado contra la API de HuggingFace en vivo (ver
+    `test_etag_is_the_git_blob_sha1_not_the_raw_one`).
     """
-    expected = getattr(need, "sha256", None) or getattr(need, "sha1", None)
-    if not expected:
+    expected_sha256 = getattr(need, "sha256", None)
+    expected_sha1 = getattr(need, "sha1", None)
+    if not expected_sha256 and not expected_sha1:
         return True
-    algorithm = "sha256" if getattr(need, "sha256", None) else "sha1"
-    digest = hashlib.new(algorithm)
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    actual = digest.hexdigest()
-    if actual == str(expected).lower():
+
+    if expected_sha256:
+        actual = _raw_digest(path, "sha256")
+        if actual == str(expected_sha256).lower():
+            return True
+        return (
+            f"sha256 (LFS) esperado {expected_sha256}, obtenido {actual}"
+        )
+
+    expected = str(expected_sha1).lower()
+    actual = git_blob_sha1(path)
+    if actual == expected:
         return True
-    return f"{algorithm} esperado {expected}, obtenido {actual}"
+    # Se muestran los dos valores calculados: si alguien fijó alguna vez un
+    # SHA-1 crudo, el mensaje lo dice en vez de degradarse a «no coincide».
+    return (
+        f"sha1 (blob de git) esperado {expected}, obtenido {actual} "
+        f"(SHA-1 crudo de los bytes: {_raw_digest(path, 'sha1')})"
+    )
 
 
 def _terminate_tree(proc: subprocess.Popen[str]) -> None:

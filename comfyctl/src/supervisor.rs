@@ -269,17 +269,21 @@ fn run_model_downloads_if_enabled(cfg: &RuntimeConfig) {
         return;
     }
 
-    println!("[6/7] Ejecutando Fase 1 de descarga de modelos críticos (2.79 GiB)...");
-    // `set -o pipefail`: sin él, bash devuelve el estado de `tee` (casi siempre 0)
-    // y la detección de fallo/timeout de Fase 1 sería código muerto.
+    // El arranque descarga SOLO lo que el manifiesto declara bootstrap. Ni un
+    // VAE ni un restaurador facial son requisito para abrir la API y descubrir
+    // capacidades; un modelo task/optional no se descarga sin petición explícita
+    // de capacidad. Antes aquí se lanzaban `--phase1` (bloqueante) y `--phase2`
+    // en segundo plano, y `--phase2` arrastraba además Fase 3 en studio/unreal:
+    // el catálogo completo se convertía en requisito de disco de cualquier tarea.
+    println!("[6/7] Arranque: solo bootstrap imprescindible del manifiesto...");
     let status = Command::new("bash")
         .args([
             "-c",
-            "set -o pipefail; timeout 600 /usr/local/bin/download-models.sh --phase1 2>&1 | tee -a /var/log/download-models.log",
+            "set -o pipefail; timeout 600 /usr/local/bin/download-models.sh --bootstrap 2>&1 | tee -a /var/log/download-models.log",
         ])
         .status();
     if !matches!(status, Ok(s) if s.success()) {
-        let warn = "[WARN] Fase 1 terminó con advertencias o timeout; continuando con el arranque de ComfyUI...\n";
+        let warn = "[WARN] El arranque de bootstrap terminó con advertencias o timeout; continuando con el arranque de ComfyUI...\n";
         print!("{warn}");
         if let Ok(mut f) = OpenOptions::new()
             .create(true)
@@ -289,23 +293,6 @@ fn run_model_downloads_if_enabled(cfg: &RuntimeConfig) {
             let _ = f.write_all(warn.as_bytes());
         }
     }
-
-    if sys::is_shutdown_requested() {
-        return;
-    }
-
-    println!(
-        "[6/7] Lanzando Fase 2 de descarga de checkpoints en segundo plano (Perfil: {})...",
-        cfg.model_profile.as_str()
-    );
-    let _ = Command::new("setsid")
-        .args([
-            "-f",
-            "bash",
-            "-c",
-            "exec /usr/local/bin/download-models.sh --phase2 >> /var/log/download-models.log 2>&1 < /dev/null",
-        ])
-        .status();
 }
 
 fn sleep_interruptible(seconds: u64) -> bool {
