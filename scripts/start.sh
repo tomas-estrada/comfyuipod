@@ -30,6 +30,12 @@ export VHS_FORCE_FFMPEG_PATH="/usr/bin/ffmpeg"
 export VHS_USE_IMAGEIO_FFMPEG="0"
 export NVIDIA_DRIVER_CAPABILITIES="all"
 
+# Guardia de idempotencia: si ComfyUI ya está bajo supervisión, no levantar otro.
+if pgrep -x "comfyctl" >/dev/null 2>&1; then
+    echo "[WARN] comfyctl ya está en ejecución; start.sh saliendo sin duplicar procesos."
+    exit 0
+fi
+
 # ------------------------------------------------------------------------------
 # 0. Inicializar archivos de log en /var/log y redirigir salida a start.log (§5.1 / O-10)
 # ------------------------------------------------------------------------------
