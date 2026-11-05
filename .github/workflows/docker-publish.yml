@@ -789,12 +789,6 @@ jobs:
           timeout 300 docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
             "import torch, onnxruntime as ort, insightface, cv2, huggingface_hub, hf_xet; print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'CV2:', cv2.__version__, 'HF:', huggingface_hub.__version__, 'ORT:', ort.get_available_providers())"
           timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
-          # Atlas: la imagen candidata debe contener el bundle real y verificable
-          # (bloquea la promoción si falta algún archivo, hash, licencia u OSM).
-          timeout 900 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
-            -m comfy_studio.atlas verify-bundle --root /opt/studio-atlas
-          timeout 300 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
-            -m comfy_studio.atlas serve-check --root /opt/studio-atlas
 
           echo "=== Iniciando Smoke Test Full-Stack del contenedor (§9.2) ==="
           # docker run -d acotado a 300s y con diagnóstico visible si wedgea
@@ -1114,6 +1108,18 @@ jobs:
           done
           timeout 300 docker run --rm --entrypoint /usr/local/bin/comfyctl "${CANDIDATE_TAG}" diag | grep -q "\[DIAG\] resumen:"
           echo "[OK] Paso 14: Paridad de esquemas congelados, 11 cabeceras de /report.md y comfyctl diag verificada"
+
+      - name: Smoke Test del atlas dentro de la imagen candidata (bloquea promoción si falta algo)
+        # El bundle del atlas debe estar físicamente en /opt/studio-atlas y ser
+        # verificable (archivos+sha256+licencias+OSM) ANTES de promover a latest.
+        run: |
+          set -euo pipefail
+          CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
+          echo "Verificando atlas en: ${CANDIDATE_TAG}"
+          timeout 900 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
+            -m comfy_studio.atlas verify-bundle --root /opt/studio-atlas
+          timeout 300 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
+            -m comfy_studio.atlas serve-check --root /opt/studio-atlas
 
       - name: Smoke Test E2E con MODEL_PROFILE=studio y ComfyUI simulado (VAL-PROFILE-001 / VAL-PROFILE-005 / VAL-SERVER-002 / VAL-CROSS-003)
         run: |
