@@ -2985,11 +2985,20 @@ async def _handle_render_recipes(
             if recipe is not None:
                 recipes.append(recipe)
 
+    # Punto 5: ¿cabe en el GPU objetivo (~32 GB) y qué medir antes de subir de
+    # hardware? Se calcula aquí porque el objetivo es de configuración.
+    target_gb = float(getattr(context.config, "target_vram_gb", 32) or 32)
+    for recipe in recipes:
+        fit = recipe.get("vram_fit")
+        if isinstance(fit, dict):
+            recipe["vram_fit"] = dict(fit, target_vram_gb=target_gb)
+
     return {
         "status": "ok",
         "project_id": context.project_id,
         "template_id": args.template_id,
         "recipes": recipes,
+        "target_vram_gb": target_gb,
         "measurements": [
             {
                 "template_id": m.get("template_id"),

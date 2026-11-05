@@ -334,6 +334,27 @@ el rendimiento sin ganar nada. Controlable con `STUDIO_UNLOAD_WHEN_IDLE`
 (por defecto `1`) y silencioso si ComfyUI no responde: liberar VRAM es una
 optimización, nunca debe tumbar un render ya terminado.
 
+### ¿Cabe en el GPU objetivo?
+
+Punto 5: «Before recommending more expensive hardware, investigate supported
+combinations of…». Las recetas medidas publican ahora `vram_fit`, que responde
+con la medición real:
+
+- `fits` / `headroom_mb` / `utilisation_pct` contra `STUDIO_TARGET_VRAM_GB`
+  (por defecto **32 GB**, el objetivo de la política);
+- si no cabe, la lista ordenada de optimizaciones que hay que **medir** antes de
+  recomendar hardware más caro: precisión/cuantización, descarga secuencial,
+  offloading, componentes en CPU, VAE tiling y parámetros de carga.
+
+Deliberadamente **ninguna se marca como válida**: son específicas del modelo y la
+política prohíbe aplicar flags genéricos a ciegas, tratar la RAM de host como
+VRAM o afirmar compatibilidad universal. Cada una lleva por escrito por qué
+podría no servir. Sin medición, `fits` es `null` y se dice que hay que ejecutar
+una vez para medir.
+
+La RAM de host medida viaja con la receta (`ram_peak_mb`) porque hay que
+verificarla en cada oferta; el almacén no sabe cuánta RAM tiene la máquina.
+
 ### Cancelación durante la descarga
 
 Punto 4: «Support progress, **cancellation**, recovery and reuse.» La cancelación

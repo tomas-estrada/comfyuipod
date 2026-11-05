@@ -123,9 +123,18 @@ def register_routes(app: FastAPI) -> None:
             # Activos de modelo como dependencias de tarea: qué se pidió, qué
             # está en disco y en qué clase cae cada grupo (política de recursos).
             "model_assets": model_assets_summary(),
-            # Recetas medidas: resultados reales por plantilla (política, punto 5).
+            # Recetas medidas: resultados reales por plantilla (política, punto 5),
+            # con el ajuste al GPU objetivo (~32 GB) y qué medir si no cabe.
             "recipes": [
-                recipe
+                dict(
+                    recipe,
+                    vram_fit={
+                        **recipe["vram_fit"],
+                        "target_vram_gb": float(active_cfg.target_vram_gb or 32),
+                    },
+                )
+                if isinstance(recipe.get("vram_fit"), dict)
+                else recipe
                 for recipe in (
                     active_store.recipe_for_template(t)
                     for t in sorted(
@@ -137,6 +146,7 @@ def register_routes(app: FastAPI) -> None:
                 )
                 if recipe is not None
             ][:20],
+            "target_vram_gb": float(active_cfg.target_vram_gb or 32),
         }
         return active_redactor.redact_value(payload)
     @app.get("/studio/api/agent/tools")
