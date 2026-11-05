@@ -55,7 +55,15 @@ def curate_refs(store: AtlasStore, max_shipped: int) -> list:
     ]
     without_gps: list = []
     with_gps.sort(key=lambda r: (r.quality, r.width or 0), reverse=True)
-    without_gps.sort(key=lambda r: (r.quality, r.width or 0), reverse=True)
+    # primero: la mejor referencia de CADA lugar con vistas, para que ningún
+    # lugar fotOGRáficamente utilizable se quede fuera del bundle
+    best_per_place: dict[str, object] = {}
+    for r in with_gps:
+        if r.place_id and r.place_id not in best_per_place:
+            best_per_place[r.place_id] = r
+    guaranteed = list(best_per_place.values())
+    rest = [r for r in with_gps if r not in guaranteed]
+    with_gps = guaranteed + rest
     # round-robin por municipio sobre los GPS para diversidad real
     by_mun: dict[str, list] = {}
     for r in with_gps:
@@ -91,12 +99,11 @@ def build_bundle(
     for sub in ("files", "previews", "licenses", "osm", "geodata"):
         (dest / sub).mkdir(parents=True, exist_ok=True)
 
-    # catálogo copiado y reescrito
+    # catálogo copiado y reescrito (checkpoint WAL primero: sin él se pierden commits)
+    src_store = AtlasStore(src_root / "catalog.db")
+    src_store._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    src_store.close()
     shutil.copy2(src_root / "catalog.db", dest / "catalog.db")
-    for extra in ("catalog.db-wal", "catalog.db-shm"):
-        p = src_root / extra
-        if p.exists():
-            shutil.copy2(p, dest / extra)
     store = AtlasStore(dest / "catalog.db")
     shipped = curate_refs(store, max_shipped)
     shipped_ids = {r.ref_id for r in shipped}

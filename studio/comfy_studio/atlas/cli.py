@@ -182,12 +182,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--root", default=None,
         help="raíz del atlas (default: $STUDIO_ATLAS_DIR o /opt/studio-atlas)",
     )
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--root", default=None, help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("stats", help="inventario medido del atlas")
+    def sub_cmd(name: str, help_text: str) -> argparse.ArgumentParser:
+        return sub.add_parser(name, parents=[common], help=help_text)
+
+    p = sub_cmd("stats", "inventario medido del atlas")
     p.set_defaults(func=cmd_stats)
 
-    p = sub.add_parser("search", help="busca lugares por texto/municipio/entorno")
+    p = sub_cmd("search", "busca lugares por texto/municipio/entorno")
     p.add_argument("q", nargs="?", default=None)
     p.add_argument("--municipality")
     p.add_argument("--environment")
@@ -195,16 +200,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=50)
     p.set_defaults(func=cmd_search)
 
-    p = sub.add_parser("resolve", help="resuelve un nombre a lugar (sin sustituir en silencio)")
+    p = sub_cmd("resolve", "resuelve un nombre a lugar (sin sustituir en silencio)")
     p.add_argument("query")
     p.add_argument("--municipality")
     p.set_defaults(func=cmd_resolve)
 
-    p = sub.add_parser("place", help="detalle de un lugar (cobertura, vistas, escenarios)")
+    p = sub_cmd("place", "detalle de un lugar (cobertura, vistas, escenarios)")
     p.add_argument("place_id")
     p.set_defaults(func=cmd_place)
 
-    p = sub.add_parser("select-view", help="elige vista/cámara para un lugar")
+    p = sub_cmd("select-view", "elige vista/cámara para un lugar")
     p.add_argument("place_id")
     p.add_argument("--lat", type=float)
     p.add_argument("--lon", type=float)
@@ -212,9 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fov", type=float)
     p.set_defaults(func=cmd_select_view)
 
-    p = sub.add_parser(
-        "prepare-shot", help="prepara un plano con fondo local verificado"
-    )
+    p = sub_cmd("prepare-shot", "prepara un plano con fondo local verificado")
     p.add_argument("--place")
     p.add_argument("--place-id")
     p.add_argument("--view-id")
@@ -225,8 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-verify", action="store_true")
     p.set_defaults(func=cmd_prepare_shot)
 
-    p = sub.add_parser(
-        "verify", help="integridad del catálogo y archivos (bloquea promoción si falla)"
+    p = sub_cmd(
+        "verify",
+        "integridad del catálogo y archivos (bloquea promoción si falla)",
     )
     p.add_argument(
         "--no-files", action="store_true", help="no exigir bytes de fotos (solo metadatos)"
@@ -234,32 +238,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-hashes", action="store_true")
     p.set_defaults(func=cmd_verify)
 
-    p = sub.add_parser("manifest", help="escribe manifest.json con sha256 de todo el bundle")
+    p = sub_cmd("manifest", "escribe manifest.json con sha256 de todo el bundle")
     p.set_defaults(func=cmd_manifest)
 
-    p = sub.add_parser("map", help="renderiza el mapa SVG local (datos propios)")
+    p = sub_cmd("map", "renderiza el mapa SVG local (datos propios)")
     p.add_argument("--out")
     p.set_defaults(func=cmd_map)
 
-    p = sub.add_parser("acquire", help="adquisición reanudable desde fuentes gratuitas")
+    p = sub_cmd("acquire", "adquisición reanudable desde fuentes gratuitas")
     p.add_argument("--source", default="all", help="commons|osm|geomedellin|all")
     p.add_argument("--max-refs", type=int, default=650)
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_acquire)
 
-    p = sub.add_parser("package", help="cura y empaqueta el bundle publicable (atlas/)")
+    p = sub_cmd("package", "cura y empaqueta el bundle publicable (atlas/)")
     p.add_argument("--dest", required=True)
     p.add_argument("--max-shipped", type=int, default=620)
     p.set_defaults(func=cmd_package)
 
-    p = sub.add_parser(
+    p = sub_cmd(
         "verify-bundle",
-        help="verificación completa del bundle (bloquea promoción si falla)",
+        "verificación completa del bundle (bloquea promoción si falla)",
     )
     p.add_argument("--no-files", action="store_true")
     p.set_defaults(func=cmd_verify_bundle)
 
-    p = sub.add_parser("serve-check", help="diagnóstico del atlas dentro del pod (offline)")
+    p = sub_cmd("serve-check", "diagnóstico del atlas dentro del pod (offline)")
     p.set_defaults(func=cmd_serve_check)
 
     return parser

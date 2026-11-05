@@ -819,3 +819,11 @@ a:focus-visible {
 .flex-1-280 { flex: 1 1 280px; }
 .row-center-gap05 { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .row-between-gap04 { display: flex; justify-content: space-between; align-items: center; gap: 0.4rem; }
+
+/* --- Atlas georreferenciado --- */
+.atlas-list { list-style: none; margin: 12px 0 0; padding: 0; max-height: 420px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.atlas-item { display: flex; }
+.atlas-views-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.atlas-view-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.atlas-view-card img { width: 100%; border-radius: 6px; aspect-ratio: 4 / 3; object-fit: cover; background: #0e1420; }
+.badge { background: var(--accent, #2c6); color: #04140b; border-radius: 999px; padding: 2px 10px; font-size: 12px; align-self: center; }

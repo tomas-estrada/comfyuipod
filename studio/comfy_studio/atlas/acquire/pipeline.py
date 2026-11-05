@@ -310,6 +310,17 @@ class AcquisitionPipeline:
             norm = normalize_text(name)
             existing = store.get_place_by_norm_name(norm, municipality)
             if existing:
+                ex = existing[0]
+                changed = False
+                if ex.lat != lat or ex.lon != lon or sorted(ex.aliases) != sorted(aliases):
+                    ex.lat, ex.lon = lat, lon
+                    ex.aliases = list(aliases)
+                    ex.provenance = {**(ex.provenance or {}), "source": "seed",
+                                     "assign_radius_m": radius, "refined": True}
+                    store.upsert_place(ex)
+                    changed = True
+                if changed:
+                    created += 1
                 continue
             mun_slug = normalize_text(municipality).replace(" ", "-")[:12]
             store.upsert_place(Place(
@@ -765,6 +776,49 @@ class AcquisitionPipeline:
         ref = store.get_reference(view.ref_id)
         return ref.capture_date if ref else None
 
+    def refine_seed_coordinates(
+        self, *, min_refs: int = 2, max_shift_m: int = 2000
+    ) -> dict[str, int]:
+        """Refina la coordenada de cada semilla con el centroide GPS de las
+        referencias cuyo título coincide con el nombre/alias (evidencia real,
+        registrada en provenance)."""
+        store = self.svc.store
+        refs = [r for r in store.all_references(usable_only=True)
+                if r.gps_lat is not None and r.gps_lon is not None]
+        seeds = [p for p in store.list_places(limit=100000)
+                 if (p.provenance or {}).get("source") == "seed"]
+        moved = 0
+        with store.batch():
+            for seed in seeds:
+                if seed.lat is None or seed.lon is None:
+                    continue
+                tokens = set(normalize_text(seed.name).split())
+                for a in seed.aliases:
+                    tokens.update(normalize_text(a).split())
+                tokens = {t for t in tokens if len(t) >= 4}
+                if not tokens:
+                    continue
+                hits = [
+                    r for r in refs
+                    if tokens and all(t in normalize_text(r.title) for t in list(tokens)[:3])
+                ]
+                if len(hits) < min_refs:
+                    continue
+                lat = sum(r.gps_lat for r in hits) / len(hits)
+                lon = sum(r.gps_lon for r in hits) / len(hits)
+                if haversine_m(seed.lat, seed.lon, lat, lon) > max_shift_m:
+                    continue
+                seed.lat, seed.lon = lat, lon
+                seed.provenance = {
+                    **seed.provenance,
+                    "source": "seed+commons_gps_cluster",
+                    "method": "centroid of matching geotagged references",
+                    "refs": len(hits),
+                }
+                store.upsert_place(seed)
+                moved += 1
+        return {"seeds_refined": moved}
+
     def fix_place_municipalities(self) -> dict[str, int]:
         """Reetiqueta el municipio de cada lugar con la regla de bbox específica."""
         store = self.svc.store
@@ -848,22 +902,76 @@ class AcquisitionPipeline:
         places = store.list_places(limit=100000)
         pts = [(p, p.lat, p.lon) for p in places if p.lat is not None and p.lon is not None]
         stats = {"reassigned": 0, "unassigned": 0, "views_created": 0}
+        seed_tokens: dict[str, set[str]] = {}
+        for p in places:
+            if (p.provenance or {}).get("source") == "seed" and p.lat is not None:
+                toks = set(normalize_text(p.name).split())
+                phrases = {normalize_text(p.name)}
+                for a in p.aliases:
+                    toks.update(normalize_text(a).split())
+                    phrases.add(normalize_text(a))
+                toks.update(t for t in phrases if len(t) >= 4)
+                seed_tokens[p.place_id] = {t for t in toks if len(t) >= 3}
         with store.batch():
             for ref in store.all_references(usable_only=True):
                 if ref.gps_lat is None or ref.gps_lon is None:
                     continue
+                # coincidencia de título con una semilla curada (p.ej. "4 sur")
+                ref_norm = normalize_text(ref.title)
+                title_hit = None
+                for pid, toks in seed_tokens.items():
+                    if toks and any(t in ref_norm for t in toks if len(t) >= 4):
+                        seed_p = next(p for p in places if p.place_id == pid)
+                        if haversine_m(ref.gps_lat, ref.gps_lon, seed_p.lat, seed_p.lon) <= 2500:
+                            title_hit = (seed_p, "title_match")
+                            break
+                if title_hit is not None:
+                    chosen, method = title_hit
+                    if ref.place_id != chosen.place_id:
+                        ref.place_id = chosen.place_id
+                        store.upsert_reference(ref)
+                        stats["reassigned"] += 1
+                        store.set_view_place(f"view_{ref.ref_id}", ref.place_id)
+                    if store.get_view(f"view_{ref.ref_id}") is None:
+                        store.upsert_view(View(
+                            view_id=f"view_{ref.ref_id}", place_id=ref.place_id,
+                            ref_id=ref.ref_id, label=ref.title[:120],
+                            lat=ref.gps_lat, lon=ref.gps_lon,
+                            calib_state="uncalibrated", method=method,
+                        ))
+                        stats["views_created"] += 1
+                    continue
                 best = None
+                best_seed = None
+                best_landmark = None
                 best_fallback = None
+                landmark_kinds = {"bridge", "mirador", "plaza", "park", "road_corridor",
+                                  "river", "street", "intersection", "hub"}
                 for p, plat, plon in pts:
                     d = haversine_m(ref.gps_lat, ref.gps_lon, plat, plon)
-                    if (p.provenance or {}).get("source") == "seed":
-                        radius = int((p.provenance or {}).get("assign_radius_m", 500))
-                    else:
-                        radius = 400
-                    if d <= radius and (best is None or d < best[1]):
-                        best = (p, d)
-                    if d <= fallback_radius_m and (best_fallback is None or d < best_fallback[1]):
+                    is_seed = (p.provenance or {}).get("source") == "seed"
+                    radius = (
+                        int((p.provenance or {}).get("assign_radius_m", 500))
+                        if is_seed else 400
+                    )
+                    if is_seed and d <= radius and (best_seed is None or d < best_seed[1]):
+                        best_seed = (p, d)
+                    if not is_seed and d <= radius:
+                        if best is None or d < best[1]:
+                            best = (p, d)
+                        if str(p.kind) in landmark_kinds and (
+                            best_landmark is None or d < best_landmark[1]
+                        ):
+                            best_landmark = (p, d)
+                    if d <= fallback_radius_m and (
+                        best_fallback is None or d < best_fallback[1]
+                    ):
                         best_fallback = (p, d)
+                # las semillas curadas (puentes, avenidas, plazas) ganan sobre nodos OSM
+                if best_seed is not None:
+                    best = best_seed
+                elif best_landmark is not None:
+                    best = best_landmark
                 chosen, method = (best, "nearest_in_radius") if best else (
                     (best_fallback, "nearest_place_fallback") if best_fallback else (None, None)
                 )
@@ -874,6 +982,7 @@ class AcquisitionPipeline:
                     ref.place_id = chosen[0].place_id
                     store.upsert_reference(ref)
                     stats["reassigned"] += 1
+                    store.set_view_place(f"view_{ref.ref_id}", ref.place_id)
                 existing = store.get_view(f"view_{ref.ref_id}")
                 if existing is None:
                     store.upsert_view(View(

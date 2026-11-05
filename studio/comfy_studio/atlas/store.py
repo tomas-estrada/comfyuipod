@@ -447,6 +447,13 @@ class AtlasStore:
             row = self._conn.execute("SELECT * FROM views WHERE view_id=?", (view_id,)).fetchone()
             return _row_to_view(row) if row else None
 
+    def set_view_place(self, view_id: str, place_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE views SET place_id=? WHERE view_id=?", (place_id, view_id)
+            )
+            self._commit()
+
     def views_for_place(self, place_id: str, *, usable_only: bool = True) -> list[View]:
         sql = "SELECT * FROM views WHERE place_id=?"
         if usable_only:
@@ -673,10 +680,13 @@ class AtlasStore:
                 "SELECT COUNT(*) FROM atlas_refs WHERE usable=1"
             ).fetchone()[0]
             views = self._conn.execute(
-                "SELECT COUNT(*) FROM views WHERE usable=1"
+                "SELECT COUNT(*) FROM views v JOIN atlas_refs r ON r.ref_id=v.ref_id "
+                "WHERE v.usable=1 AND r.usable=1"
             ).fetchone()[0]
             places_with_views = self._conn.execute(
-                "SELECT COUNT(DISTINCT place_id) FROM views WHERE usable=1"
+                "SELECT COUNT(DISTINCT v.place_id) FROM views v "
+                "JOIN atlas_refs r ON r.ref_id=v.ref_id "
+                "WHERE v.usable=1 AND r.usable=1"
             ).fetchone()[0]
             by_mun = {
                 r[0]: r[1]

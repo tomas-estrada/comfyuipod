@@ -15,3 +15,13 @@ studio/tests
 **/.pytest_cache/
 **/.ruff_cache/
 **/*.egg-info/
+# El atlas sí entra completo (incluye *.md/*.txt de licencias y avisos):
+!atlas
+!atlas/**
+!atlas/**/*.md
+!atlas/**/*.txt
+!atlas/**/*.json
+!atlas/**/*.db
+!atlas/**/*.pbf
+!atlas/**/*.gz
+!atlas/**/*.jpg

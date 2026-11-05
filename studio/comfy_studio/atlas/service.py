@@ -142,7 +142,7 @@ class AtlasService:
             if scanned >= offset + limit + offset and len(out) >= limit:
                 break
             scanned += 1
-            views = store.views_for_place(p.place_id)
+            views = self._usable_views(p.place_id)
             cov = store.get_coverage(p.place_id)
             if min_views and len(views) < min_views:
                 continue
@@ -188,7 +188,7 @@ class AtlasService:
         if len(exact) > 1:
             return {
                 "status": "ambiguous",
-                "candidates": [self._place_summary(p, views=len(store.views_for_place(p.place_id)),
+                "candidates": [self._place_summary(p, views=len(self._usable_views(p.place_id)),
                                                    coverage=store.get_coverage(p.place_id))
                                for p in exact],
                 "hint": "Indica municipio o coordenadas para desambiguar",
@@ -203,7 +203,7 @@ class AtlasService:
         if len(alias_hits) > 1:
             return {
                 "status": "ambiguous",
-                "candidates": [self._place_summary(p, views=len(store.views_for_place(p.place_id)),
+                "candidates": [self._place_summary(p, views=len(self._usable_views(p.place_id)),
                                                    coverage=store.get_coverage(p.place_id))
                                for p in alias_hits],
             }
@@ -217,7 +217,7 @@ class AtlasService:
         if fts:
             return {
                 "status": "ambiguous",
-                "candidates": [self._place_summary(p, views=len(store.views_for_place(p.place_id)),
+                "candidates": [self._place_summary(p, views=len(self._usable_views(p.place_id)),
                                                    coverage=store.get_coverage(p.place_id))
                                for p in fts],
             }
@@ -228,7 +228,7 @@ class AtlasService:
         place = store.get_place(place_id)
         if place is None:
             raise KeyError(f"lugar desconocido: {place_id}")
-        views = store.views_for_place(place_id)
+        views = self._usable_views(place_id)
         refs = store.references_for_place(place_id)
         cov = store.get_coverage(place_id)
         scenarios = store.scenarios_for_place(place_id)
@@ -239,6 +239,15 @@ class AtlasService:
             "scenarios": [s.to_dict() for s in scenarios],
             "provenance": place.provenance,
         }
+
+    def _usable_views(self, place_id: str) -> list[View]:
+        """Vistas de un lugar cuya referencia está usable (enviada en el bundle)."""
+        out = []
+        for v in self.store.views_for_place(place_id):
+            ref = self.store.get_reference(v.ref_id)
+            if ref is not None and ref.usable and v.usable and ref.place_id == v.place_id:
+                out.append(v)
+        return out
 
     def _view_dict(self, view: View, store: AtlasStore) -> dict[str, Any]:
         ref = store.get_reference(view.ref_id)
@@ -275,7 +284,7 @@ class AtlasService:
         place = store.get_place(place_id)
         if place is None:
             raise KeyError(f"lugar desconocido: {place_id}")
-        views = store.views_for_place(place_id)
+        views = self._usable_views(place_id)
         if not views:
             return {
                 "status": "no_views",

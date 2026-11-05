@@ -1,0 +1,11 @@
+Referencia: GRANADA - Flickr - ^Iván Erre Jota.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:GRANADA_-_Flickr_-_^Iván_Erre_Jota.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/4/4e/GRANADA_-_Flickr_-_%5EIv%C3%A1n_Erre_Jota.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: *Iván Erre Jota* from Medellín, Colombia
+Licencia: CC BY-SA 2.0 (https://creativecommons.org/licenses/by-sa/2.0)
+Captura: Taken on 20 October 2013, 09:48 (captured)
+Subida: 2020-07-24T08:00:08Z
+sha256 enviado: f506efd66c1e021fb834d03b9aea6f9d008ff1b876ccac3b7cf847b0dd6dec0b
+sha1 original: f0990bb72c211a72f2ad8b059f86dec64b080cb3
+Original: 2592x1944; enviado: 2048x1536 (derived_downscale)
+Atribución: *Iván Erre Jota* from Medellín, Colombia — CC BY-SA 2.0 — https://commons.wikimedia.org/wiki/File:GRANADA_-_Flickr_-_^Iván_Erre_Jota.jpg

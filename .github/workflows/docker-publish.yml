@@ -380,6 +380,9 @@ jobs:
               exit 1
             fi
           done
+          # Atlas: el bundle commiteado debe estar integro (archivos+hashes+licencias+OSM).
+          /tmp/studio-ci-venv/bin/python -m comfy_studio.atlas verify-bundle --root atlas
+          /tmp/studio-ci-venv/bin/python -m comfy_studio.atlas stats --root atlas | head -n 5
           rm -rf /tmp/studio-ci-venv
 
       - name: Smoke test de arranque del studio-server (M7-OPS-006)
@@ -767,6 +770,12 @@ jobs:
           timeout 300 docker run --rm --entrypoint python3 "${CANDIDATE_TAG}" -c \
             "import torch, onnxruntime as ort, insightface, cv2, huggingface_hub, hf_xet; print('Torch:', torch.__version__, 'CUDA:', torch.version.cuda, 'CV2:', cv2.__version__, 'HF:', huggingface_hub.__version__, 'ORT:', ort.get_available_providers())"
           timeout 300 docker run --rm --entrypoint cat "${CANDIDATE_TAG}" /etc/comfyui/requirements.lock > requirements.lock
+          # Atlas: la imagen candidata debe contener el bundle real y verificable
+          # (bloquea la promoción si falta algún archivo, hash, licencia u OSM).
+          timeout 900 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
+            -m comfy_studio.atlas verify-bundle --root /opt/studio-atlas
+          timeout 300 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
+            -m comfy_studio.atlas serve-check --root /opt/studio-atlas
 
           echo "=== Iniciando Smoke Test Full-Stack del contenedor (§9.2) ==="
           # docker run -d acotado a 300s y con diagnóstico visible si wedgea

@@ -131,7 +131,7 @@
     }
 
     function switchView(viewName) {
-        const validViews = ["projects", "chat", "jobs", "gallery", "edl", "ads", "login"];
+        const validViews = ["projects", "chat", "jobs", "gallery", "edl", "ads", "atlas", "login"];
         const target = validViews.includes(viewName) ? viewName : "projects";
         state.activeView = target;
 
@@ -159,6 +159,8 @@
             refreshEdl();
         } else if (target === "ads") {
             refreshAds();
+        } else if (target === "atlas") {
+            refreshAtlas();
         } else if (target === "login") {
             refreshHealthAndStatus();
         }
@@ -2485,6 +2487,146 @@
         }
     }
 
+    /* --- ATLAS GEORREFERENCIADO (Valle de Aburrá) --- */
+    async function refreshAtlas() {
+        const map = document.getElementById("atlas-map");
+        if (map) {
+            map.src = "/studio/api/atlas/map.svg?ts=" + Date.now();
+        }
+        try {
+            const h = await apiFetch("/studio/api/atlas/health");
+            if (h.available) {
+                const line = document.getElementById("atlas-stats-line");
+                if (line) {
+                    line.textContent =
+                        `v${h.atlas_version} — ${h.places} lugares, ${h.places_with_usable_views} con vistas, ` +
+                        `${h.references_usable} referencias y ${h.views_usable} vistas (local, sin red externa).`;
+                }
+            }
+        } catch (err) { /* atlas no disponible: se muestra en la lista */ }
+        try {
+            const sel = await apiFetch("/studio/api/atlas/selection");
+            const badge = document.getElementById("atlas-selection-badge");
+            if (badge && sel && sel.place_id) {
+                badge.hidden = false;
+                badge.textContent = `Vista activa: ${sel.place_id} / ${sel.view_id}`;
+            }
+        } catch (err) { /* sin selección previa */ }
+        await loadAtlasPlaces();
+    }
+
+    async function loadAtlasPlaces() {
+        const list = document.getElementById("atlas-places");
+        if (!list) return;
+        const params = new URLSearchParams();
+        const q = document.getElementById("atlas-q").value.trim();
+        const mun = document.getElementById("atlas-municipality").value;
+        const env = document.getElementById("atlas-environment").value;
+        const minViews = document.getElementById("atlas-min-views").value || "1";
+        if (q) params.set("q", q);
+        if (mun) params.set("municipality", mun);
+        if (env) params.set("environment", env);
+        params.set("min_views", minViews);
+        params.set("limit", "200");
+        list.innerHTML = "<li>Cargando lugares del atlas…</li>";
+        let data;
+        try {
+            data = await apiFetch("/studio/api/atlas/places?" + params.toString());
+        } catch (err) {
+            list.innerHTML = "<li>Atlas no disponible en este pod (503).</li>";
+            return;
+        }
+        if (!data.places || data.places.length === 0) {
+            list.innerHTML = "<li>Sin lugares con esos filtros.</li>";
+            return;
+        }
+        list.innerHTML = "";
+        for (const p of data.places) {
+            const li = document.createElement("li");
+            li.className = "atlas-item";
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "btn btn-secondary btn-sm";
+            btn.setAttribute("data-atlas-place", p.place_id);
+            btn.textContent = `${p.name} — ${p.municipality} [${p.kind}] (${p.views_usable} vistas)`;
+            li.appendChild(btn);
+            list.appendChild(li);
+        }
+    }
+
+    async function showAtlasPlace(placeId) {
+        const title = document.getElementById("atlas-place-title");
+        const sub = document.getElementById("atlas-place-subtitle");
+        const detail = document.getElementById("atlas-place-detail");
+        if (!detail) return;
+        detail.innerHTML = "<p>Cargando lugar…</p>";
+        let d;
+        try {
+            d = await apiFetch("/studio/api/atlas/places/" + encodeURIComponent(placeId));
+        } catch (err) {
+            detail.innerHTML = "<p>No se pudo cargar el lugar.</p>";
+            return;
+        }
+        if (title) title.textContent = `${d.name} (${d.municipality})`;
+        if (sub) {
+            sub.textContent = `${d.kind} — ${d.views_usable} vistas, ${d.references_usable} referencias` +
+                (d.coverage && d.coverage.evidence_newest ? ` — evidencia más reciente: ${d.coverage.evidence_newest}` : "");
+        }
+        detail.innerHTML = "";
+        if (!d.views || d.views.length === 0) {
+            detail.innerHTML = "<p>Este lugar aún no tiene vistas fotográficas utilizables.</p>";
+            return;
+        }
+        const grid = document.createElement("div");
+        grid.className = "atlas-views-grid";
+        for (const v of d.views) {
+            const card = document.createElement("div");
+            card.className = "atlas-view-card";
+            const img = document.createElement("img");
+            img.src = v.preview;
+            img.alt = v.label || v.view_id;
+            img.loading = "lazy";
+            const meta = document.createElement("p");
+            meta.className = "card-subtitle";
+            meta.textContent = `${v.label || v.ref_id} — ${v.license || "?"}` +
+                (v.capture_date ? ` — captura ${v.capture_date}` : "") +
+                ` — ${v.calib_state}`;
+            const use = document.createElement("button");
+            use.type = "button";
+            use.className = "btn btn-primary btn-sm";
+            use.setAttribute("data-atlas-view", v.view_id);
+            use.setAttribute("data-atlas-place", placeId);
+            use.textContent = "Usar esta vista";
+            card.appendChild(img);
+            card.appendChild(meta);
+            card.appendChild(use);
+            grid.appendChild(card);
+        }
+        detail.appendChild(grid);
+    }
+
+    async function selectAtlasView(placeId, viewId) {
+        const badge = document.getElementById("atlas-selection-badge");
+        try {
+            const res = await apiFetch("/studio/api/atlas/select-view", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ place_id: placeId, view_id: viewId }),
+            });
+            if (badge) {
+                badge.hidden = false;
+                badge.textContent = res.status === "ok"
+                    ? `Vista activa: ${res.view.place_id} / ${res.view.view_id}`
+                    : `Sin vista utilizable (${res.status})`;
+            }
+        } catch (err) {
+            if (badge) {
+                badge.hidden = false;
+                badge.textContent = "No se pudo fijar la vista activa";
+            }
+        }
+    }
+
     /* --- EVENT LISTENERS & INITIALIZATION --- */
     function bindEvents() {
         // Navegación principal por pestañas
@@ -2492,6 +2634,32 @@
             btn.addEventListener("click", () => {
                 switchView(btn.getAttribute("data-view"));
             });
+        });
+
+        const refreshAtlasBtn = document.getElementById("refresh-atlas-btn");
+        if (refreshAtlasBtn) {
+            refreshAtlasBtn.addEventListener("click", () => { refreshAtlas(); });
+        }
+        const atlasFilters = document.getElementById("atlas-filters");
+        if (atlasFilters) {
+            atlasFilters.addEventListener("submit", (event) => {
+                event.preventDefault();
+                loadAtlasPlaces();
+            });
+        }
+        document.addEventListener("click", (event) => {
+            const viewBtn = event.target.closest("[data-atlas-view]");
+            if (viewBtn) {
+                selectAtlasView(
+                    viewBtn.getAttribute("data-atlas-place"),
+                    viewBtn.getAttribute("data-atlas-view"),
+                );
+                return;
+            }
+            const placeBtn = event.target.closest("[data-atlas-place]");
+            if (placeBtn) {
+                showAtlasPlace(placeBtn.getAttribute("data-atlas-place"));
+            }
         });
 
         // Delegación global de clics para botones dinámicos y navegación interna
