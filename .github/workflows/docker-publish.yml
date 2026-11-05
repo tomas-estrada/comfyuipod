@@ -136,20 +136,43 @@ jobs:
             incomplete_file="${stage_dir}/${repo_path}.incomplete"
           fi
           if [[ "$repo_path" == *.zip ]]; then
-            python3 - "${stage_dir}/${repo_path}" << 'PY'
-          import sys, zipfile
-          with zipfile.ZipFile(sys.argv[1], "w") as zf:
-              zf.writestr("buffalo_l/det_10g.onnx", b"fake-onnx-bytes")
-          PY
+            cp "${HF_FIXTURE_BUFFALO_ZIP}" "${stage_dir}/${repo_path}"
           elif [ -s "${incomplete_file}" ]; then
             cat "${incomplete_file}" > "${stage_dir}/${repo_path}"
-            printf '+resumed-tail' >> "${stage_dir}/${repo_path}"
+            printf 'bytes' >> "${stage_dir}/${repo_path}"
             rm -f "${incomplete_file}"
           else
             printf 'fake-model-bytes' > "${stage_dir}/${repo_path}"
           fi
           EOF
           chmod +x "$tmp_root/bin/fake-hf"
+          # Test manifests retain real repo/path/revision mappings while replacing
+          # model bytes and hashes with tiny deterministic fixtures. The production
+          # acquirer still verifies every fixture before publishing it.
+          python3 - "$tmp_root" <<'PY'
+          import hashlib, json, pathlib, sys, zipfile
+          root = pathlib.Path(sys.argv[1])
+          archive = root / "buffalo-fixture.zip"
+          with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as zf:
+              info = zipfile.ZipInfo("buffalo_l/det_10g.onnx", (1980, 1, 1, 0, 0, 0))
+              info.compress_type = zipfile.ZIP_STORED
+              zf.writestr(info, b"fake-onnx-bytes")
+          archive_bytes = archive.read_bytes()
+          payloads = {"default": b"fake-model-bytes", "buffalo": archive_bytes}
+          for source, target in (("config/models-core.json", "models-core.json"), ("config/models-studio.json", "models-studio.json")):
+              data = json.loads(pathlib.Path(source).read_text(encoding="utf-8"))
+              for model in data["models"]:
+                  payload = payloads["buffalo"] if model.get("remote_path") == "models/buffalo_l.zip" else payloads["default"]
+                  model["bytes"] = len(payload)
+                  model["sha256"] = hashlib.sha256(payload).hexdigest()
+                  model.pop("sha1", None)
+              (root / target).write_text(json.dumps(data), encoding="utf-8")
+          PY
+          export PYTHONPATH="$GITHUB_WORKSPACE/studio"
+          export STUDIO_CORE_MANIFEST="$tmp_root/models-core.json"
+          export STUDIO_MANIFEST="$tmp_root/models-studio.json"
+          export HF_FIXTURE_BUFFALO_ZIP="$tmp_root/buffalo-fixture.zip"
+          bash scripts/download-models.sh --selftest
           # stdout (trazas [MODELS]) a dl.log; stderr aparte (ruido de /root sin permisos, etc.)
           COMFY_DATA_DIR="$tmp_root/data" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=general \
             bash scripts/download-models.sh --phase1 > "$tmp_root/dl.log" 2>"$tmp_root/dl.err" || { cat "$tmp_root/dl.log"; cat "$tmp_root/dl.err"; exit 1; }
@@ -225,7 +248,7 @@ jobs:
           printf 'stale-phase2-stage' > "$tmp_root/studio_data/models/.hf_stage/stale.tmp"
           partial_rel="split_files/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors"
           mkdir -p "$tmp_root/studio_data/models/.hf_stage_phase3/.cache/huggingface/download/$(dirname "$partial_rel")"
-          printf 'seeded-phase3-partial' > "$tmp_root/studio_data/models/.hf_stage_phase3/.cache/huggingface/download/${partial_rel}.incomplete"
+          printf 'fake-model-' > "$tmp_root/studio_data/models/.hf_stage_phase3/.cache/huggingface/download/${partial_rel}.incomplete"
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio \
             bash scripts/download-models.sh --phase2 > "$tmp_root/dl_studio_resume.log" 2>"$tmp_root/dl_studio_resume.err" || { cat "$tmp_root/dl_studio_resume.log"; cat "$tmp_root/dl_studio_resume.err"; exit 1; }
           [ ! -d "$tmp_root/studio_data/models/.hf_stage" ]
@@ -233,7 +256,7 @@ jobs:
           grep -q "SKIP (ya existe): wan2.2_ti2v_5B_fp16.safetensors" "$tmp_root/dl_studio_resume.log"
           grep -q "INICIO: wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors" "$tmp_root/dl_studio_resume.log"
           grep -q "OK: .*wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors" "$tmp_root/dl_studio_resume.log"
-          [ "$(cat "$tmp_root/studio_data/models/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors")" = "seeded-phase3-partial+resumed-tail" ]
+          [ "$(cat "$tmp_root/studio_data/models/diffusion_models/wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors")" = "fake-model-bytes" ]
           [ "$(cat "$tmp_root/studio_data/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors")" = "fake-model-bytes" ]
 
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_ANIMATE=1 \
