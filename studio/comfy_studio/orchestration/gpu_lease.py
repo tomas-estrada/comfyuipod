@@ -235,9 +235,12 @@ class GpuLease:
         current = 0
         if self._token_file.exists():
             try:
-                current = int(self._token_file.read_text(encoding="utf-8").strip() or "0")
-            except (OSError, ValueError):
-                current = 0
+                raw = self._token_file.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise LeaseError("no se pudo leer la secuencia de fencing") from exc
+            if not raw or not raw.isascii() or not raw.isdigit():
+                raise LeaseError("secuencia de fencing ilegible; recuperación manual requerida")
+            current = int(raw)
         nxt = current + 1
         # tmp único por proceso: aunque hoy solo el dueño del lock llama aquí,
         # un nombre por-PID evita que dos escrituras colisionen en el replace.

@@ -20,6 +20,7 @@ from comfy_studio.orchestration.gpu_lease import (
     FencingError,
     GpuLease,
     LeaseAdmissionError,
+    LeaseError,
     LeaseUnavailable,
     lock_dir_for,
 )
@@ -71,6 +72,17 @@ def test_admission_rejects_over_budget(tmp_path: Path) -> None:
         lease.acquire(owner="x", engine="huge", vram_mb=200000, ram_mb=16000)
     with pytest.raises(LeaseAdmissionError):
         lease.acquire(owner="x", engine="huge", vram_mb=1000, ram_mb=999999)
+
+
+def test_corrupt_fencing_sequence_fails_closed(tmp_path: Path) -> None:
+    lease = _lease(tmp_path)
+    lease._token_file.write_text("not-a-token", encoding="utf-8")
+
+    with pytest.raises(LeaseError, match="secuencia de fencing ilegible"):
+        lease.acquire(owner="x", engine="e", vram_mb=1000, ram_mb=1000)
+
+    assert lease.current() is None
+    assert not lease._lock_file.exists()
 
 
 # --------------------------------------------------------------------------
