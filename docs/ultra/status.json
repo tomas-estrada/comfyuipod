@@ -4,33 +4,24 @@
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
   "stage": "pre_gpu",
   "overall": "IN_PROGRESS",
-  "updated_utc": "2026-11-05T07:55:00Z",
+  "updated_utc": "2026-11-05T08:20:00Z",
+  "merged": {
+    "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71)", "W04": "#69", "W07": "#70"
+  },
   "work_items": {
-    "W00": {"title": "Baseline y reconciliacion de PRs", "status": "done", "level": "L1"},
-    "W01": {"title": "Integridad transaccional de modelos", "status": "merged", "pr": "#65", "level": "L1"},
-    "W02": {"title": "Hardware, sizing y recetas", "status": "merged", "prs": ["#66", "#67"], "level": "L1"},
-    "W03": {"title": "Scheduler/lease global de GPU", "status": "merged", "pr": "#68", "level": "L1"},
-    "W04": {"title": "Contratos, persistencia y DAG", "status": "merged", "pr": "#69", "level": "L1"},
-    "W07": {
-      "title": "Fabrica de engines y build reproducible",
+    "W05": {
+      "title": "Archivo semantico e ingesta de medios",
       "status": "in_review",
-      "pr": "feat/ultra-w07-engine-factory",
-      "delivered": [
-        "scripts/check_engines_manifest.py: release gate de engines.json (88 engines, 57 build_selected). Valida disposicion/licencia(terms_review)/capability/contadores y SEPARA incoherencias (fatales) de bloqueos de release esperados (locks de codigo sin fijar)"
-      ],
-      "findings": "manifiesto COHERENTE; 57 release_blockers declarados = locks de codigo pendientes de fijar antes del build (estado esperado W07, visible no escondido)",
-      "pending_integration": [
-        "fijar code_revision/lock por familia de engine (cierra los 57 release_blockers)",
-        "protocolo uniforme describe/execute/cancel/unload sobre Engine base",
-        "build representativo real + sizing (lo valida el workflow docker de CI, ~15 min)"
-      ],
-      "tests": "test_engines_manifest.py 7 passed",
+      "pr": "feat/ultra-w05-media-archive",
+      "delivered": ["ingest.py: orquestador de ingesta tolerante a fallos - dedup por sha256, clasificacion por tipo, corruptos/no-soportados aislados sin romper el lote, segmentos con evidencia (asr/keyframe/clip/ocr), transforms declarados (rotacion/VFR), backpressure. Sin pesos -> pending_weights honesto (no embedding inventado)"],
+      "tests": "test_ingest_archive.py 8 passed (fixture mixto 97 assets con dups+corrupto, A08)",
+      "pending_integration": "enganchar a perception/asr backends reales (extraccion semantica con pesos); exponer en API/agente",
       "level": "L1"
     }
   },
-  "next_batch": ["W07 fijar locks por familia", "W07 protocolo describe/execute/cancel/unload", "fan-out: W05 ingesta, W06 inspiracion, W08 base AV, W09 atlas, W10 3D"],
+  "capability_fan_out_remaining": ["W06 inspiracion", "W08 base AV (LTX/Wan adapters)", "W09 atlas (reusa #63)", "W10 3D", "W11-W23 (camaras,fisica,movimiento,audio,capas,luz,cara,memoria,montaje,UI,director,investigador)"],
+  "sub_items_pending": ["fijar 57 engine locks", "protocolo describe/execute/cancel/unload", "integrar lease+lineage+ingest en executor", "LangGraph real en imagen", "provider profiles A06"],
   "blockers": [],
-  "release_blockers_known": "57 engine locks sin fijar (engines.json code_revision=null) - trabajo W07 pendiente, no impide merge de la infraestructura",
   "known_env_issues": ["test_mac_helper 3 tests fallan SOLO en Windows (SYSTEMROOT); pasan en CI Linux."],
-  "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad. W00-W04 en main; W07 en review."
+  "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad. 7 PRs mergeados. Infraestructura (W00-W04,W07) + W05 ingesta. Fan-out de capacidades = grueso restante del backlog."
 }
