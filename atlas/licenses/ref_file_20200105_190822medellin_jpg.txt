@@ -1,0 +1,11 @@
+Referencia: 20200105 190822Medellin.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:20200105_190822Medellin.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/1/12/20200105_190822Medellin.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Staticshakedown
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-05 19:08:22 (captured)
+Subida: 2020-07-22T20:56:07Z
+sha256 enviado: 07edafe2f545c7ff8a7897fec66d01274d0d8879cf5cb4eaf15445d3baa3dab0
+sha1 original: 5f6581a654a336eb90d9eadd1b38b967200252c2
+Original: 4032x2268; enviado: 2048x1152 (derived_downscale)
+Atribución: Staticshakedown — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:20200105_190822Medellin.jpg

@@ -1,0 +1,11 @@
+Referencia: Restaurante La Gloria de Gloria Envigado.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Restaurante_La_Gloria_de_Gloria_Envigado.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/d/df/Restaurante_La_Gloria_de_Gloria_Envigado.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Futbolero
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-12-13 12:54:33 (captured)
+Subida: 2024-02-01T03:59:59Z
+sha256 enviado: 68ae0c1df581fb180977ef736636446e61a94edf6297b26358629a97c263328f
+sha1 original: 0c21682bb3a6d24d1936d8d8ab6a97531c505d2e
+Original: 4096x2304; enviado: 2048x1152 (derived_downscale)
+Atribución: Futbolero — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Restaurante_La_Gloria_de_Gloria_Envigado.jpg

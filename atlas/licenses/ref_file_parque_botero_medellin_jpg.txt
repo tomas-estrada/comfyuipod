@@ -1,0 +1,11 @@
+Referencia: Parque Botero, Medellin.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Parque_Botero,_Medellin.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/0/0b/Parque_Botero%2C_Medellin.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Reg Natarajan
+Licencia: CC BY 2.0 (https://creativecommons.org/licenses/by/2.0)
+Captura: 2019-07-19 12:21:38 (captured)
+Subida: 2026-04-16T20:08:55Z
+sha256 enviado: f5979397b89f30fb01c654061c979d9fb6dd1602814e541efc29fee7c8a18bd3
+sha1 original: 9d939ccf221a07b99db811fc5657fdd8a67dc937
+Original: 3665x3072; enviado: 2048x1717 (derived_downscale)
+Atribución: Reg Natarajan — CC BY 2.0 — https://commons.wikimedia.org/wiki/File:Parque_Botero,_Medellin.jpg

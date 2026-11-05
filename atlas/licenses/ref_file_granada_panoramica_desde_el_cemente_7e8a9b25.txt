@@ -1,0 +1,11 @@
+Referencia: Granada - panorámica desde el cementerio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Granada_-_panorámica_desde_el_cementerio.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/9/96/Granada_-_panor%C3%A1mica_desde_el_cementerio.jpg/3840px-Granada_-_panor%C3%A1mica_desde_el_cementerio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2021-03-06 16:26:40 (captured)
+Subida: 2021-04-13T08:45:57Z
+sha256 enviado: 93cf1efaef0308490cd75e891d8e077ad30b607e641c3fe21fc9929ee88e0c47
+sha1 original: 7e8a9b25f3f7c63693e9679ba8777894a0821e9e
+Original: 3840x1622; enviado: 2048x865 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Granada_-_panorámica_desde_el_cementerio.jpg

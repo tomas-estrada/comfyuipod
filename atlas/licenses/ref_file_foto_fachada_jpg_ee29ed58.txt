@@ -1,0 +1,11 @@
+Referencia: Foto-fachada.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Foto-fachada.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6a/Foto-fachada.jpg/3840px-Foto-fachada.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Mattelsa
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2016-09-26 15:15:13 (captured)
+Subida: 2017-03-30T14:44:43Z
+sha256 enviado: d92792f6875ba817b9691cc969de73a2f37db8e23e5a28a99add017cda8293ca
+sha1 original: ee29ed589abbbdad2e601d7d5eb77b99ee27e6ce
+Original: 3840x2560; enviado: 2048x1365 (derived_downscale)
+Atribución: Mattelsa — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Foto-fachada.jpg

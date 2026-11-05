@@ -1,0 +1,11 @@
+Referencia: Bicho canasto.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Bicho_canasto.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bf/Bicho_canasto.jpg/1920px-Bicho_canasto.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Lojujone
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2025-01-13 08:46:46 (captured)
+Subida: 2025-02-25T02:44:53Z
+sha256 enviado: 095f1ac2891a8586121f20b801f806cf0a195baf25e31a87e7c170b1717e7926
+sha1 original: afd00272839a1e9d49df7a2f9ea126cf88cd83fc
+Original: 1920x2560; enviado: 1536x2048 (derived_downscale)
+Atribución: Lojujone — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Bicho_canasto.jpg

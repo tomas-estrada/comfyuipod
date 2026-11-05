@@ -1,0 +1,11 @@
+Referencia: Navarra - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Navarra_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/4/44/Navarra_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: sckarmax
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 26 June 2010 (captured)
+Subida: 2016-12-15T07:02:08Z
+sha256 enviado: cb2bcd016c997a6cda4eac32421ec78cf1f4b21c9fed0875fa7e1ddf2a5e4b71
+sha1 original: c722ccaa40b0c30f5b616e7a3417d6382be2bb59
+Original: 3648x2736; enviado: 2048x1536 (derived_downscale)
+Atribución: sckarmax — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Navarra_-_panoramio.jpg

@@ -297,6 +297,13 @@ def test_parallel_safe_defaults_to_serial_and_readonly_tools_opt_in() -> None:
         "plan_long_render",
         "list_identities",
         "list_review_pins",
+        # atlas: sólo lectura (M-atlas)
+        "atlas_stats",
+        "atlas_search_places",
+        "atlas_resolve_place",
+        "atlas_place_detail",
+        "atlas_select_view",
+        "atlas_verify",
         # Lecturas puras añadidas por el resolvedor de capacidades: consultan
         # manifiestos y disco, nunca mutan.
         "list_capabilities",

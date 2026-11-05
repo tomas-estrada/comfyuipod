@@ -1,0 +1,11 @@
+Referencia: Parque de Envigado.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Parque_de_Envigado.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/5/52/Parque_de_Envigado.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Juan Felipe Correa Escobar
+Licencia: CC BY-SA 2.0 (https://creativecommons.org/licenses/by-sa/2.0)
+Captura: 2012-08-22 14:22:46 (captured)
+Subida: 2016-07-08T18:41:08Z
+sha256 enviado: d97817ba50ac262cabd34fe1d344d0d4409061c58dbfa03f914d1715761957f6
+sha1 original: f3c28b20985d6f778bc0b6eb750fbe41588cffe6
+Original: 2191x2716; enviado: 1652x2048 (derived_downscale)
+Atribución: Juan Felipe Correa Escobar — CC BY-SA 2.0 — https://commons.wikimedia.org/wiki/File:Parque_de_Envigado.jpg

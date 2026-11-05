@@ -1,0 +1,11 @@
+Referencia: 20200105 181147Medellin.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:20200105_181147Medellin.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/1/1d/20200105_181147Medellin.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Staticshakedown
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-05 18:11:46 (captured)
+Subida: 2020-07-22T19:31:54Z
+sha256 enviado: 85f1166a59e6b564d2ab1fb075bd566b6c6505658fd25d6f5f7ab0e63826e265
+sha1 original: bd991e1b67bb6235302ce1f493be2a44fd406ffb
+Original: 4032x2268; enviado: 2048x1152 (derived_downscale)
+Atribución: Staticshakedown — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:20200105_181147Medellin.jpg

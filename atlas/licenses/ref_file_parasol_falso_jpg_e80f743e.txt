@@ -1,0 +1,11 @@
+Referencia: Parasol falso.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Parasol_falso.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1b/Parasol_falso.jpg/1920px-Parasol_falso.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Lojujone
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2025-02-23 12:41:09 (captured)
+Subida: 2025-02-25T02:44:46Z
+sha256 enviado: 14237e77e6fe266f62e7974efb992d583d75ddff4bae75530831fe1085b34b7f
+sha1 original: e80f743e5899963f97d8c596ea61965fcd644c76
+Original: 1920x2560; enviado: 1536x2048 (derived_downscale)
+Atribución: Lojujone — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Parasol_falso.jpg

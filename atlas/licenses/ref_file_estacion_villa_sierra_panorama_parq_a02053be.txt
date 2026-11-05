@@ -1,0 +1,11 @@
+Referencia: Estación Villa Sierra - panorama parque.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Estación_Villa_Sierra_-_panorama_parque.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/2/27/Estaci%C3%B3n_Villa_Sierra_-_panorama_parque.jpg/3840px-Estaci%C3%B3n_Villa_Sierra_-_panorama_parque.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Edgar Jiménez from Milton Keynes, UK
+Licencia: CC BY-SA 2.0 (https://creativecommons.org/licenses/by-sa/2.0)
+Captura: 28 June 2018, 15:20:07 (according to Exif data) (captured)
+Subida: 2018-07-31T04:56:30Z
+sha256 enviado: b9be70ded842d6c4bc1a3e4d4f585bbdee9c0e688b420445f113153899b5fa2e
+sha1 original: a02053be0238c980bdc0877d4558e8a93e66c3d7
+Original: 3840x1072; enviado: 2048x572 (derived_downscale)
+Atribución: Edgar Jiménez from Milton Keynes, UK — CC BY-SA 2.0 — https://commons.wikimedia.org/wiki/File:Estación_Villa_Sierra_-_panorama_parque.jpg

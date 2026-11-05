@@ -1,0 +1,11 @@
+Referencia: Vista desde Robledo - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Vista_desde_Robledo_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/c/cc/Vista_desde_Robledo_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Ricardo Astrauskas
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: 28 January 2011 (original upload date) (captured)
+Subida: 2016-11-09T17:21:27Z
+sha256 enviado: c7a25958517fa39baddd9942e4a3a83dbe9a759f38660d927012cde6ff7f76d8
+sha1 original: 5acf38acaf9cd7d6fa7e7cbea7158c76ac9ad490
+Original: 3264x2040; enviado: 2048x1280 (derived_downscale)
+Atribución: Ricardo Astrauskas — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Vista_desde_Robledo_-_panoramio.jpg

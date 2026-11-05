@@ -61,6 +61,11 @@ BELT_TOOLS_EXPOSED: tuple[str, ...] = (
     "list_identities",
     "system_status",
     "tag_asset",
+    "atlas_stats",
+    "atlas_search_places",
+    "atlas_resolve_place",
+    "atlas_place_detail",
+    "atlas_select_view",
 )
 
 _EXTRA_TOOLS_SCHEMA: list[dict[str, Any]] = [

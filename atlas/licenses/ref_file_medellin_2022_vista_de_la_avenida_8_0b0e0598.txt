@@ -1,0 +1,11 @@
+Referencia: Medellín, 2022 - vista de la Avenida 80 en Robledo.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Medellín,_2022_-_vista_de_la_Avenida_80_en_Robledo.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/1/18/Medell%C3%ADn%2C_2022_-_vista_de_la_Avenida_80_en_Robledo.jpg/3840px-Medell%C3%ADn%2C_2022_-_vista_de_la_Avenida_80_en_Robledo.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2022-01-20 11:51:54 (captured)
+Subida: 2022-01-21T04:08:44Z
+sha256 enviado: 169f74a3a84aa48b88bed4f87b4d178b32137418877b55dc7742080a7fc17a93
+sha1 original: 0b0e0598fbbb58d04b3cb4c5aae5b67158152503
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Medellín,_2022_-_vista_de_la_Avenida_80_en_Robledo.jpg

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from . import (
     ads,
     assets,
+    atlas,
     brief,
     chat,
     core,
@@ -22,6 +23,7 @@ from . import (
 
 _MODULES = (
     core,
+    atlas,
     projects,
     productions,
     assets,

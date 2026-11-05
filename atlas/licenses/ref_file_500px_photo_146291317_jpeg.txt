@@ -1,0 +1,11 @@
+Referencia: 500px photo (146291317).jpeg
+Fuente: https://commons.wikimedia.org/wiki/File:500px_photo_(146291317).jpeg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/2/2f/500px_photo_%28146291317%29.jpeg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Luis Sánchez
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: 31 January 2016, 04:28:11 (UTC) (captured)
+Subida: 2018-10-22T20:09:08Z
+sha256 enviado: 435f690dcf6d6452e27fab677890cdc470fe05ef4b60e385dd1189d29e423ce0
+sha1 original: 92bd3f17867be6e73266cd506feba4ffabbd66a0
+Original: 2048x1408; enviado: 2048x1408 (original)
+Atribución: Luis Sánchez — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:500px_photo_(146291317).jpeg

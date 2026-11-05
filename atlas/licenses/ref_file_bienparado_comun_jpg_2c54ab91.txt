@@ -1,0 +1,11 @@
+Referencia: BIENPARADO COMUN.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:BIENPARADO_COMUN.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/3/38/BIENPARADO_COMUN.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Saltamontesybr
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2026 (captured)
+Subida: 2026-07-15T17:32:30Z
+sha256 enviado: 28d560d3bfa8a6c74ef7235b04d3fc002825981f7fd662dc12a9ba3bd44b58d9
+sha1 original: 2c54ab912e13a0cbaa88af4bd420dc9214c478a1
+Original: 4608x2592; enviado: 2048x1152 (derived_downscale)
+Atribución: Saltamontesybr — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:BIENPARADO_COMUN.jpg

@@ -1,0 +1,11 @@
+Referencia: Estación Oriente (Metro de Medellín).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Estación_Oriente_(Metro_de_Medellín).jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c3/Estaci%C3%B3n_Oriente_%28Metro_de_Medell%C3%ADn%29.jpg/3840px-Estaci%C3%B3n_Oriente_%28Metro_de_Medell%C3%ADn%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Jdapenao
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2017-01-06 12:19:18 (captured)
+Subida: 2017-01-13T15:20:15Z
+sha256 enviado: fbaf3636b78524ed95d7e9e5216dca19fce6d5cb7ca4047b610b2be915b9896f
+sha1 original: 3c9658574e84646c0fbfe2a84ac99e483b5672ec
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: Jdapenao — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Estación_Oriente_(Metro_de_Medellín).jpg

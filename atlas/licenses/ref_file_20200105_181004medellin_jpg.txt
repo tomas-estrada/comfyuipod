@@ -1,0 +1,11 @@
+Referencia: 20200105 181004Medellin.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:20200105_181004Medellin.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/1/16/20200105_181004Medellin.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Staticshakedown
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-05 18:10:04 (captured)
+Subida: 2020-07-22T19:26:00Z
+sha256 enviado: 5e3144c4b53674658048529bf8a1f525823e3034d12803eca7ccca898ddfe2bd
+sha1 original: d1fbee6fd587cb20ddd064f95ba49c5cb1b31b31
+Original: 4032x2268; enviado: 2048x1152 (derived_downscale)
+Atribución: Staticshakedown — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:20200105_181004Medellin.jpg

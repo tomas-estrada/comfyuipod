@@ -1,0 +1,11 @@
+Referencia: Colombia - Medellin El Poblado - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Colombia_-_Medellin_El_Poblado_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/1/14/Colombia_-_Medellin_El_Poblado_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: randreu
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: Taken on 2 July 2012 (captured)
+Subida: 2017-02-23T21:37:04Z
+sha256 enviado: 27e0e37004248422cb650d973956a3728893001cdf4b7768bc59f797310932f4
+sha1 original: 61537c2afbf622d3065cbffd85a3883ca56bb4d1
+Original: 3648x2056; enviado: 2048x1154 (derived_downscale)
+Atribución: randreu — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:Colombia_-_Medellin_El_Poblado_-_panoramio.jpg

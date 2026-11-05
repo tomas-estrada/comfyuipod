@@ -1,0 +1,11 @@
+Referencia: El trebol - panoramio - sckarmax.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:El_trebol_-_panoramio_-_sckarmax.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/4/46/El_trebol_-_panoramio_-_sckarmax.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled
+Autor: sckarmax
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 13 March 2010 (captured)
+Subida: 2016-11-05T15:33:29Z
+sha256 enviado: b3cd1a5ab0ea5f10a2c36abe4b442479e4be5819da1bddee8d2d931112c2c99e
+sha1 original: e983cc07a65ed380c021fc1406d37fe0429ad98b
+Original: 3648x2736; enviado: 2048x1536 (derived_downscale)
+Atribución: sckarmax — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:El_trebol_-_panoramio_-_sckarmax.jpg

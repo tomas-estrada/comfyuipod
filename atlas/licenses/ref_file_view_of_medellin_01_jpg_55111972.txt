@@ -1,0 +1,11 @@
+Referencia: View of Medellín 01.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:View_of_Medellín_01.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0a/View_of_Medell%C3%ADn_01.jpg/3840px-View_of_Medell%C3%ADn_01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Bernard Gagnon
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-24 (captured)
+Subida: 2021-01-29T18:07:04Z
+sha256 enviado: 68bcde7ea97d9e91f536aeec655e22e86644c41c965d40fbf98013d27fb4e908
+sha1 original: 551119728494468db413d0932eeb8fdf987cf2ae
+Original: 3840x1134; enviado: 2048x605 (derived_downscale)
+Atribución: Bernard Gagnon — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:View_of_Medellín_01.jpg

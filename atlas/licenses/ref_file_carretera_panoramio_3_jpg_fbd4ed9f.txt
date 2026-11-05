@@ -1,0 +1,11 @@
+Referencia: Carretera - panoramio (3).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Carretera_-_panoramio_(3).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/7/78/Carretera_-_panoramio_%283%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Luis Agudelo
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: Taken on 30 June 2012 (captured)
+Subida: 2017-01-07T09:49:14Z
+sha256 enviado: e23195688cf1dc3797ce91154f7d4cb7e1f975de219655556dbd7c6f307fd164
+sha1 original: fbd4ed9fc17378120d173c99139313af8105c12b
+Original: 2592x1944; enviado: 2048x1536 (derived_downscale)
+Atribución: Luis Agudelo — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:Carretera_-_panoramio_(3).jpg

@@ -1,0 +1,11 @@
+Referencia: Carretera Concepción - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Carretera_Concepción_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/3/36/Carretera_Concepci%C3%B3n_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Luis Agudelo
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: Taken on 21 April 2011 (captured)
+Subida: 2016-12-12T14:56:20Z
+sha256 enviado: f300780a48a932c406aef7c1e96317a3cecf6a608afbcb9806b0a60c377c180c
+sha1 original: ca6b6c697312047e0205b3ef0671b043d326cfae
+Original: 2592x1944; enviado: 2048x1536 (derived_downscale)
+Atribución: Luis Agudelo — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:Carretera_Concepción_-_panoramio.jpg

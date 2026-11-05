@@ -1,0 +1,11 @@
+Referencia: Estación Santo Domingo, Medellín 03.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Estación_Santo_Domingo,_Medellín_03.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/1/19/Estaci%C3%B3n_Santo_Domingo%2C_Medell%C3%ADn_03.jpg/3840px-Estaci%C3%B3n_Santo_Domingo%2C_Medell%C3%ADn_03.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Bernard Gagnon
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-24 (captured)
+Subida: 2021-01-29T20:09:01Z
+sha256 enviado: 508eac39fbd6bf93434a8a9fd86e37dd6c074582ce565728a65c0e7d4033959f
+sha1 original: faaaa41bacdca095e719e900fec9d185d0590769
+Original: 3840x2556; enviado: 2048x1363 (derived_downscale)
+Atribución: Bernard Gagnon — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Estación_Santo_Domingo,_Medellín_03.jpg

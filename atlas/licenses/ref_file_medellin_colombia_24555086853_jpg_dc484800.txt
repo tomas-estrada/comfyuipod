@@ -1,0 +1,11 @@
+Referencia: Medellin, Colombia (24555086853).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Medellin,_Colombia_(24555086853).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/9/96/Medellin%2C_Colombia_%2824555086853%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Pedro Szekely from Los Angeles, USA
+Licencia: CC BY-SA 2.0 (https://creativecommons.org/licenses/by-sa/2.0)
+Captura: 2014-06-17 12:24 (captured)
+Subida: 2019-10-09T17:15:48Z
+sha256 enviado: 7aab76e8d6368853226112982a85e28cbc91ca7e7e796c0b0b07669d32ae2ddd
+sha1 original: dc48480046ef8bc1fe4116904895b35496ab8373
+Original: 3650x1519; enviado: 2048x852 (derived_downscale)
+Atribución: Pedro Szekely from Los Angeles, USA — CC BY-SA 2.0 — https://commons.wikimedia.org/wiki/File:Medellin,_Colombia_(24555086853).jpg

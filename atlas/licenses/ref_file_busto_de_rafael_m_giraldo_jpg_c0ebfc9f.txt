@@ -1,0 +1,11 @@
+Referencia: Busto de Rafael M. Giraldo.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Busto_de_Rafael_M._Giraldo.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/c/cd/Busto_de_Rafael_M._Giraldo.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: SajoR
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-05-05 09:10:33 (captured)
+Subida: 2024-01-13T18:32:44Z
+sha256 enviado: 8521a926e5cac90865ad2ebc2860409c1d81a8dc2e809f00c17d8346f99f4729
+sha1 original: c0ebfc9fd2cc85596ee6412797178c6811bbaeed
+Original: 4000x3000; enviado: 2048x1536 (derived_downscale)
+Atribución: SajoR — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Busto_de_Rafael_M._Giraldo.jpg

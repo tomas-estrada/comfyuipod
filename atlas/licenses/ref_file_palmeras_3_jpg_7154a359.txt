@@ -1,0 +1,11 @@
+Referencia: Palmeras 3.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Palmeras_3.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6a/Palmeras_3.jpg/1920px-Palmeras_3.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Xemenendura
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 14 July 2025 (according to Exif data) (captured)
+Subida: 2025-07-14T20:46:59Z
+sha256 enviado: 41cc76f1d02050254edcb88c80c0f1d06a5a022e433dc7f723e449ba6f6217c3
+sha1 original: 7154a35920f7d84271f3fedc7ca1a7493e34d0df
+Original: 1920x2560; enviado: 1536x2048 (derived_downscale)
+Atribución: Xemenendura — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Palmeras_3.jpg

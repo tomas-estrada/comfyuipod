@@ -1,0 +1,18 @@
+{
+  "generated_ts": 1793838729.7295952,
+  "sources": [
+    {
+      "source_id": "osm_geofabrik_colombia",
+      "name": "OpenStreetMap extracto Colombia 261103 (Geofabrik) recortado al Valle de Aburrá",
+      "kind": "osm_extract",
+      "url": "https://download.geofabrik.de/south-america/colombia-261103.osm.pbf",
+      "license": "ODbL 1.0",
+      "license_url": "https://www.openstreetmap.org/copyright",
+      "terms": "© OpenStreetMap contributors (ODbL 1.0)",
+      "extract_date": "261103",
+      "sha256": "c8dcb40d997e67c64bbe33920346d9b0528db44314de1196a849c6138a884e62",
+      "fetched_ts": 1793836817.5556054,
+      "notes": "clip bbox=[5.95, 6.55, -75.85, -75.1]"
+    }
+  ]
+}

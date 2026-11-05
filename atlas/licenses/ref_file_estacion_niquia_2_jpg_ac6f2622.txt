@@ -1,0 +1,11 @@
+Referencia: Estación Niquía 2.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Estación_Niquía_2.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9e/Estaci%C3%B3n_Niqu%C3%ADa_2.jpg/3840px-Estaci%C3%B3n_Niqu%C3%ADa_2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Muesli rott
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 1 March 2024 (according to Exif data) (captured)
+Subida: 2024-04-05T22:36:14Z
+sha256 enviado: 553c6eca997cda845a456ebefc16c79ee2b5f9834ff2e6668e89d7590a63f580
+sha1 original: ac6f2622ddff020e9490f2528f4b19b6fbc3c3ff
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: Muesli rott — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Estación_Niquía_2.jpg

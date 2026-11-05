@@ -1,0 +1,11 @@
+Referencia: Taxis in Medellín.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Taxis_in_Medellín.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9d/Taxis_in_Medell%C3%ADn.jpg/3840px-Taxis_in_Medell%C3%ADn.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Bernard Gagnon
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-24 (captured)
+Subida: 2021-01-29T20:22:44Z
+sha256 enviado: fab61b0f2fb48aaf0966f1248c6ce7d1ee3a08a36885d7f87976445fef8b3967
+sha1 original: f9da8cc3facde1d3cd38ce8dc05ee43dff1d171d
+Original: 3840x2560; enviado: 2048x1365 (derived_downscale)
+Atribución: Bernard Gagnon — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Taxis_in_Medellín.jpg

@@ -1,0 +1,11 @@
+Referencia: Colombia - Medellin - panoramio (2).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Colombia_-_Medellin_-_panoramio_(2).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/0/0c/Colombia_-_Medellin_-_panoramio_%282%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: randreu
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: Taken on 2 July 2012 (captured)
+Subida: 2017-02-23T21:38:24Z
+sha256 enviado: 287fcfef979527ce6e0e562c447cd41a049ba82ed2a6bd3d26c6f7ff1fc38b4e
+sha1 original: 7858dedf0438e9933cb920588c32ad999e08d9b8
+Original: 3648x2056; enviado: 2048x1154 (derived_downscale)
+Atribución: randreu — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:Colombia_-_Medellin_-_panoramio_(2).jpg

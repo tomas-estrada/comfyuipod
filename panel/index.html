@@ -46,6 +46,9 @@
             <button type="button" id="nav-ads" class="nav-tab" data-view="ads" aria-selected="false">
                 6. Anuncios
             </button>
+            <button type="button" id="nav-atlas" class="nav-tab" data-view="atlas" aria-selected="false">
+                7. Atlas Aburrá
+            </button>
             <button type="button" id="nav-login" class="nav-tab" data-view="login" aria-selected="false">
                 Acceso / Login
             </button>
@@ -726,6 +729,71 @@
         </section>
 
         <!-- VISTA 7: ACCESO / LOGIN (EDGE BASIC-AUTH DEL POD) -->
+        <section id="view-atlas" class="studio-view" data-view-panel="atlas" aria-labelledby="heading-atlas" hidden>
+            <div class="two-col-grid">
+                <div class="panel-card">
+                    <div class="card-header">
+                        <div>
+                            <h2 id="heading-atlas">Atlas audiovisual del Valle de Aburrá</h2>
+                            <p class="card-subtitle" id="atlas-stats-line">Biblioteca georreferenciada local (sin red externa): lugares, vistas y cobertura medida.</p>
+                        </div>
+                        <button type="button" id="refresh-atlas-btn" class="btn btn-secondary btn-sm">Actualizar</button>
+                    </div>
+                    <div class="panel-card" style="padding:0;border:none;background:transparent;box-shadow:none;">
+                        <img id="atlas-map" alt="Mapa del atlas con vías OSM locales y lugares" style="width:100%;border-radius:8px;border:1px solid var(--border);">
+                    </div>
+                    <form id="atlas-filters" class="studio-form" style="margin-top:12px;">
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="atlas-q">Buscar lugar</label>
+                                <input type="text" id="atlas-q" placeholder="puente de la 4 Sur, Envigado..." maxlength="120">
+                            </div>
+                            <div class="form-group">
+                                <label for="atlas-municipality">Municipio</label>
+                                <select id="atlas-municipality">
+                                    <option value="">Todos</option>
+                                    <option>Medellín</option><option>Envigado</option><option>Sabaneta</option>
+                                    <option>Itagüí</option><option>Bello</option><option>La Estrella</option>
+                                    <option>Caldas</option><option>Copacabana</option><option>Girardota</option>
+                                    <option>Barbosa</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="atlas-environment">Entorno</label>
+                                <select id="atlas-environment">
+                                    <option value="">Todos</option>
+                                    <option value="bridge">Puente</option>
+                                    <option value="road_corridor">Corredor vial</option>
+                                    <option value="plaza">Plaza</option>
+                                    <option value="mirador">Mirador</option>
+                                    <option value="park">Parque</option>
+                                    <option value="river">Río</option>
+                                    <option value="street">Calle</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="atlas-min-views">Vistas ≥</label>
+                                <input type="number" id="atlas-min-views" min="0" max="50" value="1" style="width:70px;">
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary btn-sm">Buscar en el atlas</button>
+                            <span id="atlas-selection-badge" class="badge" hidden></span>
+                        </div>
+                    </form>
+                    <ul id="atlas-places" class="atlas-list" aria-live="polite"></ul>
+                </div>
+                <div class="panel-card">
+                    <div class="card-header">
+                        <div>
+                            <h2 id="atlas-place-title">Lugar seleccionado</h2>
+                            <p class="card-subtitle" id="atlas-place-subtitle">Elige un lugar de la lista para ver cobertura, vistas y licencias.</p>
+                        </div>
+                    </div>
+                    <div id="atlas-place-detail" class="atlas-detail"></div>
+                </div>
+            </div>
+        </section>
         <section id="view-login" class="studio-view" data-view-panel="login" aria-labelledby="heading-login" hidden>
             <div class="two-col-grid">
                 <div class="panel-card">

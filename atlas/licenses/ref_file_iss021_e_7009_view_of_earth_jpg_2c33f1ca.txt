@@ -1,0 +1,11 @@
+Referencia: ISS021-E-7009 - View of Earth.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:ISS021-E-7009_-_View_of_Earth.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/d/dd/ISS021-E-7009_-_View_of_Earth.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Earth Science and Remote Sensing Unit , Lyndon B. Johnson Space Center
+Licencia: Public domain (sin URL)
+Captura: 2009-10-15 18:16:26 (captured)
+Subida: 2022-08-22T08:48:53Z
+sha256 enviado: 166cec893a5dcf440ded6cc7e4fa86862f438f92fa884698546bedaaef305a51
+sha1 original: 2c33f1ca0ff4465616ef03f6a0f5f544f1c4045d
+Original: 4288x2848; enviado: 2048x1360 (derived_downscale)
+Atribución: Earth Science and Remote Sensing Unit , Lyndon B. Johnson Space Center — Public domain — https://commons.wikimedia.org/wiki/File:ISS021-E-7009_-_View_of_Earth.jpg
