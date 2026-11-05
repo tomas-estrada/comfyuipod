@@ -25,3 +25,5 @@ studio/tests
 !atlas/**/*.pbf
 !atlas/**/*.gz
 !atlas/**/*.jpg
+# estado mutable del atlas (selecciones): no entra a la imagen
+atlas/selection*.json
