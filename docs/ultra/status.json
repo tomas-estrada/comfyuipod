@@ -4,24 +4,24 @@
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
   "stage": "pre_gpu",
   "overall": "IN_PROGRESS",
-  "updated_utc": "2026-11-05T07:12:00Z",
+  "updated_utc": "2026-11-05T07:18:00Z",
   "work_items": {
     "W00": {"title": "Baseline y reconciliacion de PRs", "status": "done", "level": "L1"},
     "W01": {"title": "Integridad transaccional de modelos", "status": "merged", "pr": "#65", "level": "L1"},
-    "W02": {
-      "title": "Hardware, sizing y recetas con evidencia real",
-      "status": "partially_merged",
-      "merged": ["#66 recetas+hardware_detect (P0 #4,#5,#7)"],
-      "in_review": ["#67 sizing/start_gate (P0 #6)"],
-      "p0_fixed": ["P0 #4 simulated->measured", "P0 #5 recetas por clave de entorno", "P0 #6 start_gate sin staging Fase3", "P0 #7 hardware_detect nvidia-smi+cgroup"],
-      "level": "L1"
-    },
-    "W03": {"title": "Scheduler/lease global de GPU", "status": "in_review", "pr": "#68", "tests": "test_gpu_lease.py 11 passed (ensayo multiproceso)", "level": "L1", "gpu_pending": "picos CUDA -> A29"}
+    "W02": {"title": "Hardware, sizing y recetas con evidencia real", "status": "merged", "prs": ["#66", "#67"], "p0_fixed": "4/4 (#4,#5,#6,#7)", "level": "L1"},
+    "W03": {
+      "title": "Scheduler, admision y lease global de GPU",
+      "status": "in_review",
+      "pr": "#68",
+      "delivered": ["orchestration/gpu_lease.py: lease entre procesos, owner+fencing, admision VRAM/RAM, huerfanos por PID, cancel/unload comprobado, stage CPU no toca lock; ensayo multiproceso real"],
+      "pending_integration": "enchufar executor/service y motores al arbitro (sub-item W03)",
+      "tests": "test_gpu_lease.py 11 passed",
+      "level": "L1",
+      "gpu_pending": "picos CUDA -> A29"
+    }
   },
   "next_batch": ["W03 integracion executor/motores", "W04 contratos/persistencia/DAG", "W07 fabrica engines/build"],
   "blockers": [],
-  "known_env_issues": [
-    "test_mac_helper 3 tests fallan SOLO en Windows (fixture _clear_env quita SYSTEMROOT); pasan en CI Linux."
-  ],
-  "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad de merge. 7/7 P0 corregidos."
+  "known_env_issues": ["test_mac_helper 3 tests fallan SOLO en Windows (SYSTEMROOT); pasan en CI Linux."],
+  "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad de merge. 7/7 P0 corregidos y W01/W02 en main."
 }
