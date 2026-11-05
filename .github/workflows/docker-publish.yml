@@ -454,8 +454,8 @@ jobs:
           if [ "${1:-}" = "search" ] && [ "${2:-}" = "offers" ]; then
             cat << 'JSON'
           [
-            {"id": 901, "gpu_name": "RTX_5090", "gpu_ram": 32768, "cpu_ram": 65536, "cuda_vers": 12.8, "disk_space": 150, "inet_down": 6000, "reliability": 0.99, "verified": true, "rentable": true, "dph_total": 0.40, "storage_cost": 0.15},
-            {"id": 902, "gpu_name": "RTX_5090", "gpu_ram": 32768, "cpu_ram": 65536, "cuda_vers": 12.8, "disk_space": 300, "inet_down": 6000, "reliability": 0.992, "verified": true, "rentable": true, "dph_total": 0.65, "storage_cost": 0.15}
+            {"id": 901, "gpu_name": "RTX PRO 6000", "num_gpus": 1, "gpu_ram": 98304, "cpu_ram": 131072, "cuda_vers": 12.8, "disk_space": 150, "inet_down": 6000, "reliability": 0.99, "verified": true, "rentable": true, "dph_total": 0.40, "storage_cost": 0.15},
+            {"id": 902, "gpu_name": "RTX PRO 6000", "num_gpus": 1, "gpu_ram": 98304, "cpu_ram": 131072, "cuda_vers": 12.8, "disk_space": 300, "inet_down": 6000, "reliability": 0.992, "verified": true, "rentable": true, "dph_total": 0.65, "storage_cost": 0.15}
           ]
           JSON
             exit 0

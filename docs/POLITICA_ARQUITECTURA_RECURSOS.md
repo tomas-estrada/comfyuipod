@@ -543,7 +543,17 @@ catálogo por una ruta mala). Los modos `--phase1/2/3/all` se conservan para
 operarios.
 
 La puerta de arranque (S5) se deriva de las descargas bootstrap reales, no de un
-número fijo: hoy **45.23 GB**, bajo el umbral declarado de 180 GB.
+número fijo: hoy **11 GB** (0 de descarga + 0 de pico de arranque + 10 GiB de
+margen), bajo el umbral declarado de 180 GB. Es la cifra honesta de «cuánto hace
+falta tener libre para abrir la API con los pesos vacíos»; el requisito del
+volumen es otro número y sigue siendo derivado (`min_volume_gb`: 231 GB para
+`studio`, 238 GB para `unreal`, 34 GB para `minimal`).
+
+La puerta **excluye** el pico de staging de la Fase 3: esa descarga corre en
+segundo plano *después* de que ComfyUI está listo, así que cobrarla inflaba el
+arranque con espacio que todavía no necesita. El volumen total sí reserva el
+mayor de los tres picos —arranque, tarea en segundo plano y demanda—, porque no
+coinciden en el tiempo.
 
 ### Pendiente
 
