@@ -21,6 +21,10 @@ dependencies = [
 dev = [
     "pytest==9.2.0",
     "ruff==0.17.3",
+    # Composición CPU del atlas (atlas_compose_shot / compose_over_background):
+    # el paquete la usa cuando Pillow está presente (la imagen lo trae vía ComfyUI);
+    # en dev/CI hace falta para ejecutar las pruebas de aceptación.
+    "pillow>=10.0.0",
 ]
 asr = [
     "whisperx==3.8.6",
