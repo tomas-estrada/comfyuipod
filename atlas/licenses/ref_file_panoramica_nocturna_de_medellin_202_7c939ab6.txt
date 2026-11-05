@@ -1,0 +1,11 @@
+Referencia: Panorámica nocturna de Medellín 2023.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Panorámica_nocturna_de_Medellín_2023.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/1/13/Panor%C3%A1mica_nocturna_de_Medell%C3%ADn_2023.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Futbolero
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-12-13 18:28:41 (captured)
+Subida: 2024-02-01T04:19:25Z
+sha256 enviado: 6a69e53aa8a08195da3577ea0fc04a19bdc8e469c1c0dcadc949b3107a2d02a1
+sha1 original: 7c939ab67f0499b9db622b11d6fe8d862a5f298e
+Original: 4096x2304; enviado: 2048x1152 (derived_downscale)
+Atribución: Futbolero — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Panorámica_nocturna_de_Medellín_2023.jpg

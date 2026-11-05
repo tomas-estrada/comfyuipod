@@ -1,0 +1,11 @@
+Referencia: Museo Geociencias.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Museo_Geociencias.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/3/34/Museo_Geociencias.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Lilayis
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-04-25 12:04:20 (captured)
+Subida: 2023-04-25T17:36:11Z
+sha256 enviado: 7fd5bc06fc0b4eb3d2a187b734e90d08abc86869f78a1e9e176f80229200256f
+sha1 original: 9bce6fa75a20a809da68c2af126b75a947f3c8f9
+Original: 4208x3120; enviado: 2048x1518 (derived_downscale)
+Atribución: Lilayis — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Museo_Geociencias.jpg

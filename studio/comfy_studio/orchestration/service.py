@@ -65,6 +65,7 @@ class ProductionService:
         collaborators: Collaborators | None = None,
         store: Any | None = None,
         broker: ProgressBroker | None = None,
+        atlas_service: Any | None = None,
     ) -> None:
         self.checkpointer = checkpointer or ProductionCheckpointer()
         self.collaborators = collaborators or Collaborators()
@@ -88,6 +89,47 @@ class ProductionService:
         # `cancel_production`; este set es la vía que sí llega al lazo vía
         # `graph.should_cancel`.
         self._cancel_requested: set[str] = set()
+        # Atlas georreferenciado: registra producciones que usaron el atlas
+        # (lugar/vista/ref/cámara quedan en el catálogo, recuperables).
+        self._atlas = atlas_service
+
+    def _record_atlas_production(self, state: ProductionState) -> None:
+        """Registra en el atlas la producción si usó lugar/vista (metadata['atlas']).
+
+        Recuperable tras reiniciar: queda en catalog.db (tabla productions) con
+        versión del atlas, cámara y referencias exactas. Nunca falla la producción
+        si el atlas no está disponible.
+        """
+        atlas_ctx = (state.metadata or {}).get("atlas")
+        if not atlas_ctx or self._atlas is None:
+            return
+        try:
+            from comfy_studio.atlas.models import ProductionRecord
+
+            if not self._atlas.available():
+                return
+            self._atlas.store.record_production(ProductionRecord(
+                prod_id=state.id,
+                atlas_version=self._atlas.atlas_version(),
+                place_id=atlas_ctx.get("place_id"),
+                view_id=atlas_ctx.get("view_id"),
+                scenario_id=atlas_ctx.get("scenario_id"),
+                camera=dict(atlas_ctx.get("camera") or {}),
+                params={
+                    "idea": state.idea[:500],
+                    "phase": state.phase,
+                    "ref_id": atlas_ctx.get("ref_id"),
+                    "background_path": atlas_ctx.get("background_path"),
+                    "limitations": atlas_ctx.get("limitations") or [],
+                },
+                result={
+                    "status": state.phase,
+                    "final_output_path": state.final_output_path,
+                },
+            ))
+            state.record("atlas_production_recorded", place_id=atlas_ctx.get("place_id"))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _publish(self, event_type: str, data: dict[str, Any]) -> None:
         """Publica un evento de producción en el bus SSE (thread-safe si hay loop)."""
@@ -163,6 +205,7 @@ class ProductionService:
             if state is None:
                 continue
             self._ensure_artifact_semantics(state)
+            self._record_atlas_production(state)
             if project_id and state.metadata.get("project_id") != project_id:
                 continue
             out.append(self._status_dict(state))

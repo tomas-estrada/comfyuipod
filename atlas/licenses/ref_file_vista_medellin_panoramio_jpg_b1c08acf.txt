@@ -1,0 +1,11 @@
+Referencia: Vista Medellin - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Vista_Medellin_-_panoramio.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Vista_Medellin_-_panoramio.jpg/3840px-Vista_Medellin_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Ricardo Astrauskas
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: 28 January 2011 (original upload date) (captured)
+Subida: 2016-11-09T17:21:48Z
+sha256 enviado: 14f0f56350ef4e0afaf143cae6e6e866631bd414403382854a984b4b1ced5d6a
+sha1 original: b1c08acf7616e5a375e24eb3b911b2c78fbbc9b8
+Original: 3840x912; enviado: 2048x486 (derived_downscale)
+Atribución: Ricardo Astrauskas — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Vista_Medellin_-_panoramio.jpg

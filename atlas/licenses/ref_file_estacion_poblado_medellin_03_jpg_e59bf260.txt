@@ -1,0 +1,11 @@
+Referencia: Estación Poblado, Medellín 03.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Estación_Poblado,_Medellín_03.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d7/Estaci%C3%B3n_Poblado%2C_Medell%C3%ADn_03.jpg/3840px-Estaci%C3%B3n_Poblado%2C_Medell%C3%ADn_03.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Bernard Gagnon
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-24 (captured)
+Subida: 2021-01-29T18:41:57Z
+sha256 enviado: f273cb1a238d8888a13929ca76818622046ccd7f7be9870896d894a4bae3c587
+sha1 original: e59bf260e2f0cfafbda7ea1eefca17a42443739b
+Original: 3840x2556; enviado: 2048x1363 (derived_downscale)
+Atribución: Bernard Gagnon — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Estación_Poblado,_Medellín_03.jpg

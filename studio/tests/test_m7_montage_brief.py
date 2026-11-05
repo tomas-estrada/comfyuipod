@@ -471,3 +471,46 @@ def test_montage_from_brief_edge_cases(client: TestClient, tmp_path: Path) -> No
         json={"brief": "incendio y fuego", "time_range_sec": [4.0, 2.0]},
     )
     assert bad_range.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Panel (M7): la vista EDL expone la UI del montaje desde brief
+# ---------------------------------------------------------------------------
+
+
+def test_panel_expone_ui_montaje_desde_brief_sin_inline_handlers() -> None:
+    import re
+
+    repo_root = Path(__file__).resolve().parents[2]
+    index_html = (repo_root / "panel" / "index.html").read_text(encoding="utf-8")
+    app_js = (repo_root / "panel" / "app.js").read_text(encoding="utf-8")
+    style_css = (repo_root / "panel" / "style.css").read_text(encoding="utf-8")
+
+    for marker in (
+        'id="montage-brief-form"',
+        'id="montage-brief-input"',
+        'id="montage-target-duration"',
+        'id="montage-aspect-select"',
+        'id="montage-render-checkbox"',
+        'id="montage-status"',
+        'id="montage-summary"',
+        'id="montage-cuts-list"',
+    ):
+        assert marker in index_html, f"falta {marker} en panel/index.html"
+
+    for marker in (
+        "/montage/from-brief",
+        "function runMontageFromBrief",
+        "function renderMontagePlan",
+        "function renderMontageEvidenceChip",
+        'addEventListener("montage"',
+        "evidence-chip",
+    ):
+        assert marker in app_js, f"falta {marker} en panel/app.js"
+
+    assert ".evidence-chip" in style_css
+
+    inline_styles = re.findall(r'style="[^"]*"', app_js)
+    allowed = [s for s in inline_styles if s.startswith('style="width:${')]
+    assert inline_styles == allowed, f"app.js usa style inline no permitidos: {inline_styles}"
+    assert not re.search(r"\son(click|load|error|mouseover)=", app_js, re.I)

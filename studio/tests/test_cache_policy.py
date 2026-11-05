@@ -1105,3 +1105,145 @@ async def test_sampler_is_silent_when_comfyui_does_not_answer() -> None:
     peak = await sample_system_stats_peak(_Dead(), stop=asyncio.Event(), interval=0.01)
     assert peak["vram_peak_mb"] is None
     assert peak["samples"] == 0
+
+
+# --------------------------------------------------------------------------
+# W02 (plan Ultra) — regresiones P0 #4 y #5: honestidad de las recetas
+# --------------------------------------------------------------------------
+
+
+def test_w02_simulated_measurement_is_not_promoted_to_measured(tmp_path: Path) -> None:
+    """P0 #4: una muestra simulated=True no se convierte en measured/fits.
+
+    El agregador aceptaba cualquier fila con status ok y duración. Una medición
+    simulada (doble determinista de tests) producía measured=True y entraba en
+    vram_fit. Ahora los simulados se excluyen de la selección.
+    """
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "studio.db")
+    # Solo hay mediciones SIMULADAS.
+    store.record_render_measurement(
+        template_id="wan_t2v", duration_s=10.0, vram_peak_mb=9000,
+        gpu_name="sim", cuda="sim", simulated=True,
+    )
+    recipe = store.recipe_for_template("wan_t2v")
+    assert recipe is not None
+    assert recipe["measured"] is False, "un simulado no es una medición real"
+    assert recipe.get("simulated_samples") == 1
+
+    # Al añadir una REAL, esa manda y los simulados siguen fuera del agregado.
+    store.record_render_measurement(
+        template_id="wan_t2v", duration_s=40.0, vram_peak_mb=12000,
+        gpu_name="RTX PRO 6000", cuda="12.8", simulated=False,
+    )
+    recipe = store.recipe_for_template("wan_t2v")
+    assert recipe["measured"] is True
+    assert recipe["samples"] == 1, "solo la real cuenta para el agregado"
+    assert recipe["simulated_samples"] == 1
+    assert recipe["vram_peak_mb_max"] == 12000  # no el 9000 simulado
+
+
+def test_w02_incompatible_environments_are_not_aggregated(tmp_path: Path) -> None:
+    """P0 #5: no se mezclan recetas de GPU/resolución distintas.
+
+    Dos mediciones del mismo template pero en GPUs y resoluciones distintas no
+    son la misma receta. El agregador tomaba el max de todas, produciendo un
+    vram_peak engañoso. Ahora agrupa por entorno y reporta los excluidos.
+    """
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "studio.db")
+    # Entorno A: GPU grande, 4K (reciente -> entorno de referencia).
+    store.record_render_measurement(
+        template_id="wan_t2v", duration_s=50.0, vram_peak_mb=40000,
+        gpu_name="RTX PRO 6000", cuda="12.8",
+        params={"width": 3840, "height": 2160, "frames": 81},
+    )
+    # Entorno B: otra GPU, otra resolución (NO debe agregarse con A).
+    store.record_render_measurement(
+        template_id="wan_t2v", duration_s=20.0, vram_peak_mb=9000,
+        gpu_name="RTX 4090", cuda="12.4",
+        params={"width": 832, "height": 480, "frames": 81},
+    )
+    recipe = store.recipe_for_template("wan_t2v")
+    assert recipe["measured"] is True
+    # El entorno de referencia es el más reciente (B, el último insertado).
+    assert recipe["samples"] == 1
+    assert recipe["incompatible_env_samples_excluded"] == 1
+    # El peak reportado es el del entorno de referencia, no el máximo global.
+    assert recipe["vram_peak_mb_max"] == 9000
+
+    # Consultando explícitamente el entorno A, se obtiene SU medición.
+    key_a = ("RTX PRO 6000", "12.8", 3840, 2160, 81)
+    recipe_a = store.recipe_for_template("wan_t2v", env_key=key_a)
+    assert recipe_a["vram_peak_mb_max"] == 40000
+    assert recipe_a["samples"] == 1
+
+
+# --------------------------------------------------------------------------
+# W02 — regresión P0 #7: una variable no inventa VRAM/RAM
+# --------------------------------------------------------------------------
+
+
+def test_w02_env_cannot_invent_more_vram_than_detected(monkeypatch) -> None:
+    """P0 #7: el perfil efectivo nunca excede el hardware real detectado."""
+    from comfy_studio import hardware_detect
+    from comfy_studio.hardware_detect import DetectedHardware, effective_profile
+
+    # El entorno PIDE 96 GB VRAM / 256 GB RAM...
+    env = {
+        "STUDIO_HARDWARE_PROFILE": "blackwell-96-256",
+        "STUDIO_TARGET_VRAM_GB": "96",
+        "STUDIO_TARGET_RAM_GB": "256",
+    }
+    # ...pero la máquina real solo tiene 24 GB VRAM y 32 GB RAM.
+    detected = DetectedHardware(
+        gpu_available=True,
+        gpu_name="RTX 4090",
+        vram_total_mb=24 * 1024,
+        ram_limit_bytes=32 * hardware_detect.GiB,
+        source="nvidia-smi+cgroup",
+    )
+    eff = effective_profile(env, detected=detected)
+    assert eff.requested.vram_gb == 96
+    assert eff.effective.vram_gb == 24, "la env no puede inventar VRAM ausente"
+    assert eff.effective.ram_gb == 32, "la env no puede inventar RAM ausente"
+    assert eff.vram_capped is True
+    assert eff.ram_capped is True
+    assert eff.verified is True
+
+
+def test_w02_unmeasurable_hardware_is_unknown_not_emulated(monkeypatch) -> None:
+    """CPU-only / sin driver: unknown, no una GPU compatible inventada."""
+    from comfy_studio.hardware_detect import DetectedHardware, effective_profile
+
+    detected = DetectedHardware(
+        gpu_available=False,
+        gpu_name=None,
+        vram_total_mb=None,
+        ram_limit_bytes=None,
+        source="unknown",
+    )
+    eff = effective_profile({"STUDIO_HARDWARE_PROFILE": "blackwell-96-128"}, detected=detected)
+    # Sin medición no se recorta (no hay dato), pero se marca NO verificado.
+    assert eff.verified is False
+    assert eff.detected.gpu_available is False
+    assert eff.effective.vram_gb == 96  # nominal, pero verified=False lo delata
+
+
+def test_w02_detected_larger_than_requested_keeps_requested(monkeypatch) -> None:
+    """Si el hardware tiene MÁS que lo pedido, se respeta lo pedido."""
+    from comfy_studio import hardware_detect
+    from comfy_studio.hardware_detect import DetectedHardware, effective_profile
+
+    detected = DetectedHardware(
+        gpu_available=True,
+        gpu_name="RTX PRO 6000",
+        vram_total_mb=96 * 1024,
+        ram_limit_bytes=256 * hardware_detect.GiB,
+        source="nvidia-smi+cgroup",
+    )
+    eff = effective_profile({"STUDIO_HARDWARE_PROFILE": "consumer-gpu-32"}, detected=detected)
+    assert eff.effective.vram_gb == 32  # pedido < detectado => se respeta pedido
+    assert eff.vram_capped is False

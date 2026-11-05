@@ -529,6 +529,14 @@ RUN sed -i 's/\r$//' \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini && \
     pip3 freeze > /etc/comfyui/requirements.lock
 
+# Atlas audiovisual georreferenciado del Valle de Aburrá: los BYTES REALES del
+# bundle (catálogo SQLite, fotos, licencias, OSM) dentro de la imagen en una ruta
+# inmutable. Capa tardía a propósito: cambiar una fotografía no reconstruye los
+# motores pesados. El build FALLA si el bundle está incompleto o sin licencias.
+COPY atlas/ /opt/studio-atlas/
+ENV STUDIO_ATLAS_DIR=/opt/studio-atlas
+RUN /opt/venvs/studio/bin/python -m comfy_studio.atlas verify-bundle --root /opt/studio-atlas     && /opt/venvs/studio/bin/python -m comfy_studio.atlas stats --root /opt/studio-atlas | head -n 30
+
 EXPOSE 8188
 
 # BAJA-02: start-period=900s superior al timeout de 600s de la Fase 1.

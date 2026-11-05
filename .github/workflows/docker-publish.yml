@@ -396,6 +396,9 @@ jobs:
               exit 1
             fi
           done
+          # Atlas: el bundle commiteado debe estar integro (archivos+hashes+licencias+OSM).
+          /tmp/studio-ci-venv/bin/python -m comfy_studio.atlas verify-bundle --root atlas
+          /tmp/studio-ci-venv/bin/python -m comfy_studio.atlas stats --root atlas | head -n 5
           rm -rf /tmp/studio-ci-venv
 
       - name: Smoke test de arranque del studio-server (M7-OPS-006)
@@ -1105,6 +1108,18 @@ jobs:
           done
           timeout 300 docker run --rm --entrypoint /usr/local/bin/comfyctl "${CANDIDATE_TAG}" diag | grep -q "\[DIAG\] resumen:"
           echo "[OK] Paso 14: Paridad de esquemas congelados, 11 cabeceras de /report.md y comfyctl diag verificada"
+
+      - name: Smoke Test del atlas dentro de la imagen candidata (bloquea promoción si falta algo)
+        # El bundle del atlas debe estar físicamente en /opt/studio-atlas y ser
+        # verificable (archivos+sha256+licencias+OSM) ANTES de promover a latest.
+        run: |
+          set -euo pipefail
+          CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
+          echo "Verificando atlas en: ${CANDIDATE_TAG}"
+          timeout 900 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
+            -m comfy_studio.atlas verify-bundle --root /opt/studio-atlas
+          timeout 300 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
+            -m comfy_studio.atlas serve-check --root /opt/studio-atlas
 
       - name: Smoke Test E2E con MODEL_PROFILE=studio y ComfyUI simulado (VAL-PROFILE-001 / VAL-PROFILE-005 / VAL-SERVER-002 / VAL-CROSS-003)
         run: |

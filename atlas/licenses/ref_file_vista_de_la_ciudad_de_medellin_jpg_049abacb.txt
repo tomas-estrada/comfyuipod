@@ -1,0 +1,11 @@
+Referencia: Vista de la ciudad de Medellín.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Vista_de_la_ciudad_de_Medellín.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/c/c2/Vista_de_la_ciudad_de_Medell%C3%ADn.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Iván Erre Jota*
+Licencia: CC BY-SA 2.0 (https://creativecommons.org/licenses/by-sa/2.0)
+Captura: 2012-05-27 14:47:32 (captured)
+Subida: 2025-11-26T00:14:16Z
+sha256 enviado: cc59bd82edd67bde4cdf6be2ec03a2a13bcf740fc918e8830593e545a8c35f86
+sha1 original: 049abacbc9e00d29ca8c71a0c99e8e674c45114e
+Original: 2592x1944; enviado: 2048x1536 (derived_downscale)
+Atribución: Iván Erre Jota* — CC BY-SA 2.0 — https://commons.wikimedia.org/wiki/File:Vista_de_la_ciudad_de_Medellín.jpg

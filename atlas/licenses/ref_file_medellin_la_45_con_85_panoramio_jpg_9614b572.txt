@@ -1,0 +1,11 @@
+Referencia: Medellin la 45 con 85 - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Medellin_la_45_con_85_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/c/cb/Medellin_la_45_con_85_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: juanjavi41
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: Taken on 19 February 2008 (captured)
+Subida: 2016-10-22T14:06:31Z
+sha256 enviado: 21ddd08853e5cd3775f9b21def3c8320fafb4760ad506f74aa23530167421b10
+sha1 original: 9614b572bbce326ab4b939a71b08dcf3a72d28bf
+Original: 2816x2112; enviado: 2048x1536 (derived_downscale)
+Atribución: juanjavi41 — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:Medellin_la_45_con_85_-_panoramio.jpg

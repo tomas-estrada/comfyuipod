@@ -1,0 +1,11 @@
+Referencia: Vista nocturna de la Estación Industriales del Metroplús, 2021.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Vista_nocturna_de_la_Estación_Industriales_del_Metroplús,_2021.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/4/45/Vista_nocturna_de_la_Estaci%C3%B3n_Industriales_del_Metropl%C3%BAs%2C_2021.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2021-12-28 20:50:13 (captured)
+Subida: 2021-12-29T15:40:01Z
+sha256 enviado: f188728bf5fcfb4c8b53c114ab4131220821ebc6dfcd50c5664b5c5e4577ad65
+sha1 original: 69aef76795e22a66355a7c871141a13cb2b56ab3
+Original: 3968x2976; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Vista_nocturna_de_la_Estación_Industriales_del_Metroplús,_2021.jpg

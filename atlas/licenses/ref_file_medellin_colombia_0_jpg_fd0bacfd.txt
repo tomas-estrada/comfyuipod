@@ -1,0 +1,11 @@
+Referencia: Medellín Colombia 0.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Medellín_Colombia_0.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e8/Medell%C3%ADn_Colombia_0.jpg/3840px-Medell%C3%ADn_Colombia_0.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Xemenendura
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 28 July 2025 (according to Exif data) (captured)
+Subida: 2025-07-29T01:59:59Z
+sha256 enviado: 8373269bc4b076c124c8bbd1ab92a2ee4fb5899803fcecb671c2d24f1ea4ce0f
+sha1 original: fd0bacfd226ff33836776ffb91e4a1cbd11cd4df
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: Xemenendura — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Medellín_Colombia_0.jpg

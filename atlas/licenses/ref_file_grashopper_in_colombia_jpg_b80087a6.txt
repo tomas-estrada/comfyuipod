@@ -1,0 +1,11 @@
+Referencia: Grashopper in colombia.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Grashopper_in_colombia.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/a/aa/Grashopper_in_colombia.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Hannes wilms
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2025-07-20 17:44:15 (captured)
+Subida: 2026-01-20T22:20:37Z
+sha256 enviado: 921d3c33797b37e324badd8b6f0969d3244b8350d9540420883f97e8aad7f905
+sha1 original: b80087a6fa5342d3aa4c9914f3cbe4cd4ad07daf
+Original: 4000x2250; enviado: 2048x1152 (derived_downscale)
+Atribución: Hannes wilms — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Grashopper_in_colombia.jpg

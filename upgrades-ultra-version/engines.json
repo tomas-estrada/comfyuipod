@@ -1,0 +1,1957 @@
+{
+  "schema_version": "1.0",
+  "purpose": "Research-backed engine selection, not a runtime installed-engine manifest.",
+  "counts": {
+    "engines": 88,
+    "additional_candidates": 30,
+    "capabilities": 34
+  },
+  "policy": {
+    "required": "Engine code/environment/entrypoints must be built and integrated before pre-GPU acceptance; weights may await runtime and explicit terms, status remains accurate.",
+    "alternative": "Adopt only with a measured or specified distinct advantage and the same integration gates. Not silently obligatory.",
+    "conditional": "No public bundling or supported claim until named availability/license/hardware gate is resolved; preserve the mandatory capability with its actual primary route.",
+    "excluded": "No automatic installation, copying or inference. Primary permitted route replaces this option.",
+    "reference_only": "Not an implementable dependency at evidence snapshot."
+  },
+  "universal_fields_to_resolve_in_repo": [
+    "immutable code SHA",
+    "dependency lock with hashes",
+    "code/model/data license scopes and image redistribution decision",
+    "exact model files/revisions/size/integrity",
+    "GPU architecture and extension ABI matrix",
+    "input/output schemas with real artifacts",
+    "build recipe and measured installed bytes",
+    "health states and actual execute/cancel/unload protocol",
+    "CI semantic tests and GPU validation job specification"
+  ],
+  "engines": [
+    {
+      "id": "ffmpeg",
+      "name": "Media IO y render determinista",
+      "disposition": "required",
+      "source_ids": [
+        "K21"
+      ],
+      "scope": "FFmpeg/ffprobe locales, proxies, transcode, frame hashes, stems, mezcla y encode final.",
+      "terms_review": "Formato/rotación/VFR a timebase del proyecto; salida real decodificable; font/codec/avisos del build.",
+      "hardware_notes": "CPU; encoder GPU participa en admisión si se utiliza.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C01",
+        "C24",
+        "C31",
+        "C32"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "whisperx",
+      "name": "Transcripción y alineación",
+      "disposition": "required",
+      "source_ids": [
+        "K22"
+      ],
+      "scope": "Mantener ASR/diarización existentes detrás del contrato temporal.",
+      "terms_review": "Modelos alineador/ASR separados; idiomas y términos de componentes; no inferir datos comerciales por voz dudosa.",
+      "hardware_notes": "Tarea GPU programada o CPU con presupuesto; no carga silenciosa al boot.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C01",
+        "C27"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "qwen3-vl",
+      "name": "Comprensión multimodal",
+      "disposition": "required",
+      "source_ids": [
+        "S20"
+      ],
+      "scope": "Adaptador local y proveedor VLM intercambiable, muestreo de video y evidencia con timestamps.",
+      "terms_review": "Elegir variante/precisión y límites de contexto; archivos e índices locales; no un frame representa todos los assets.",
+      "hardware_notes": "Si es local, mismo lease/descarga de contexto que generación; no reserva VRAM ilimitada.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C01",
+        "C03"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "mission-compiler",
+      "name": "Compilador de misiones",
+      "disposition": "required",
+      "source_ids": [
+        "S43"
+      ],
+      "scope": "Desarrollo propio en la orquestación existente: brief→hipótesis→constraints→DAG.",
+      "terms_review": "Esquemas versionados, evidencia, presupuestos, idempotencia y errores tipados; no otra autoridad de estado.",
+      "hardware_notes": "CPU; LangGraph fijado y probado en la imagen de producción.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C03",
+        "C08"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "production-memory",
+      "name": "Memoria audiovisual y de decisiones",
+      "disposition": "required",
+      "source_ids": [
+        "S43"
+      ],
+      "scope": "Memoria de escenas/recetas/preferencias, separada de los checkpoints y los hechos observados.",
+      "terms_review": "Ámbito por proyecto, revisión/corrección, retención y exportación sin secretos.",
+      "hardware_notes": "CPU/SQLite existente; no servicio externo obligatorio.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C04",
+        "C06"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "reference-local",
+      "name": "Análisis local de referencias",
+      "disposition": "required",
+      "source_ids": [
+        "S26"
+      ],
+      "scope": "FFmpeg + cortes/ASR/OCR/flujo/beat map + LLM/VLM configurado → receta editable.",
+      "terms_review": "Entradas autorizadas; máscaras/OCR/tempos con confianza; red opcional con caché/quotas; no HyperFrames cloud.",
+      "hardware_notes": "CPU o stages GPU acotados según análisis.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C02"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "hyperframes",
+      "name": "Composiciones HTML locales",
+      "disposition": "required",
+      "source_ids": [
+        "S26"
+      ],
+      "scope": "Renderer, edición y medidas locales; templates y efectos parametrizados.",
+      "terms_review": "Código Apache-2.0. Desactivar publish/cloud y fuentes facturadas por defecto; bundle Node/browser/fonts y notices.",
+      "hardware_notes": "Chromium preparado en build; sandbox por trabajo y red restringida, no ejecutar HTML como host privilegiado.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C02",
+        "C31"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "evidence_code_revision": "7862e271d16baa9052c78d3b85535ebc725cd136",
+      "revision_policy": "evidence_revision; integration must lock tested code and hashes explicitly, not follow a moving branch"
+    },
+    {
+      "id": "remotion",
+      "name": "Composiciones React y exportación",
+      "disposition": "required",
+      "source_ids": [
+        "S40"
+      ],
+      "scope": "Mantener/ampliar engine y proyectos editables propios, sin usar packs comerciales como requisito.",
+      "terms_review": "Licencia propia: uso individual elegible no significa permiso genérico de redistribución/relicencia; conservar términos y revisar bundle.",
+      "hardware_notes": "Node/browser en build; rendering CPU y/o ruta GPU bajo scheduler.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C31"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "blender",
+      "name": "Escena física y rodaje virtual",
+      "disposition": "required",
+      "source_ids": [
+        "K23"
+      ],
+      "scope": "Animatics, rigs, pases, materiales, FX, cámara y render determinista.",
+      "terms_review": "Fijar versión/addons/exportadores; GPL y términos de assets; Blender en pod Linux, clientes agnósticos.",
+      "hardware_notes": "Ruta CPU para fixtures y GPU OptiX/CUDA sujeta a soporte Blackwell y lease.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C05",
+        "C08",
+        "C10",
+        "C11",
+        "C15",
+        "C18",
+        "C19",
+        "C31"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "opencode-ui",
+      "name": "Componentes de interfaz agéntica",
+      "disposition": "required",
+      "source_ids": [
+        "K04"
+      ],
+      "scope": "Reutilización auditada de UI/session patterns MIT; frontend propio con StudioClient.",
+      "terms_review": "Solid/Vite y dependencias workspace: adaptar a API/SSE del estudio; retener licencia y recursos locales; sin servidor coding implícito.",
+      "hardware_notes": "Build de frontend; no dependencia de GPU ni de OpenCode cloud.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "evidence_code_revision": "09dcb47861fe9253814dc85b12f31a5b2691eda6",
+      "revision_policy": "evidence_revision; integration must lock tested code and hashes explicitly, not follow a moving branch"
+    },
+    {
+      "id": "opentimelineio",
+      "name": "Intercambio de montaje",
+      "disposition": "required",
+      "source_ids": [
+        "S28"
+      ],
+      "scope": "EDL/OTIO como exportación/importación comprobada, con mapa de efectos soportados.",
+      "terms_review": "No prometer roundtrip perfecto de efectos ajenos; conservar fuentes/manifiesto propio.",
+      "hardware_notes": "CPU.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C32"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "opencolorio",
+      "name": "Gestión de color",
+      "disposition": "required",
+      "source_ids": [
+        "S29"
+      ],
+      "scope": "Transforms de color explícitos, perfiles locales y salida coherente entre motores.",
+      "terms_review": "Linear/scene/display, transfer, primaries y rango; no declarar HDR por poner metadata.",
+      "hardware_notes": "CPU/GPU según etapa; configuración incluida en imagen.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C32"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "atlas-offline",
+      "name": "Biblioteca de lugares del Aburrá",
+      "disposition": "required",
+      "source_ids": [
+        "R02"
+      ],
+      "scope": "Catálogo + medios + licencias + geometría cuando exista + selector de cobertura dentro de la imagen.",
+      "terms_review": "OSM no es fachada; cada archivo con origen/autor/licencia/hash; strict_exact no acepta datos de cámara desconocidos.",
+      "hardware_notes": "CPU; adquisición baseline en desarrollo/build; expansión validada y versionada por PR.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C07"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "depth-anything3",
+      "name": "Profundidad y geometría",
+      "disposition": "required",
+      "source_ids": [
+        "S05"
+      ],
+      "scope": "Profundidad/poses por receta con unidades/confianza y vínculo a imagen.",
+      "terms_review": "No convertir profundidad monocular en escala métrica sin calibración; variante exacta fijada.",
+      "hardware_notes": "GPU secuencial; número de frames/vistas acotado.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C07"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "vipe",
+      "name": "Cámaras y trayectoria desde video",
+      "disposition": "alternative",
+      "source_ids": [
+        "S06"
+      ],
+      "scope": "Alternativa o complemento a MapAnything/DA3 para poses en clips con movimiento.",
+      "terms_review": "Usar solo si mejora calibración/reconstrucción de un caso medido; no instalar dos rutas iguales por catálogo.",
+      "hardware_notes": "Extensiones/deps CUDA revisadas para Blackwell.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "trellis2",
+      "name": "Productos 3D y materiales",
+      "disposition": "required",
+      "source_ids": [
+        "S08"
+      ],
+      "scope": "Ruta principal imagen→activo 3D reutilizable con geometría/PBR/export.",
+      "terms_review": "MIT en modelo/código según README; nvdiffrast/nvdiffrec tienen términos propios; ocultos inferidos etiquetados.",
+      "hardware_notes": "Upstream probado Linux A100/H100 con ≥24 GB; Torch2.6/cu124 de ejemplo requiere adaptar Blackwell y medir.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C09"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "sam3d-objects",
+      "name": "Reconstrucción de objetos",
+      "disposition": "alternative",
+      "source_ids": [
+        "S07"
+      ],
+      "scope": "Alternativa de reconstrucción comparada con TRELLIS.2 en fidelidad al producto.",
+      "terms_review": "SAM y dependencias/gates separados; no sustitución automática si modifica forma/identidad.",
+      "hardware_notes": "Un stage; receta cuantificada solo tras medición.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "hunyuan3d21",
+      "name": "Reconstrucción 3D alternativa",
+      "disposition": "alternative",
+      "source_ids": [
+        "S09"
+      ],
+      "scope": "Ruta de respaldo si demuestra mejor detalle/material o compatibilidad.",
+      "terms_review": "Licencia y componentes propios, revisar variantes y territorio; no descargar todas las familias.",
+      "hardware_notes": "Aislar dependencias y no extrapolar consumo de una variante a otra.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "partcrafter",
+      "name": "Geometría por partes",
+      "disposition": "required",
+      "source_ids": [
+        "S10"
+      ],
+      "scope": "Partes con IDs/pivotes e integración de ensamblaje.",
+      "terms_review": "Un despiece generado no certifica estructura técnica real; conservar verificación por parte.",
+      "hardware_notes": "Adaptador real y checkpoint bajo demanda; no ejecutar training por defecto.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C10"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "skintokens",
+      "name": "Auto-rigging",
+      "disposition": "required",
+      "source_ids": [
+        "S11"
+      ],
+      "scope": "Malla→esqueleto/pesos y exportación retargetable.",
+      "terms_review": "Fijar licencia de código/modelos/cuerpos dependientes; pose/bind/sistema de ejes explícitos.",
+      "hardware_notes": "Entorno preparado en build; stage GPU cuando corresponda.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C11"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "sam3d-body",
+      "name": "Cuerpo desde imágenes",
+      "disposition": "required",
+      "source_ids": [
+        "S12"
+      ],
+      "scope": "Extracción de cuerpo/manos/pies como apoyo a recuperación y retargeting.",
+      "terms_review": "Modelo corporal/skeleton no intercambiable con SMPL-X por nombre; licencia/gates y transformador explícitos.",
+      "hardware_notes": "Residencia de pesos bajo lease; procesar lotes acotados.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C12"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "gvhmr",
+      "name": "Movimiento humano global",
+      "disposition": "required",
+      "source_ids": [
+        "S13"
+      ],
+      "scope": "Video a trayectoria/pose con separación de cámara y contacto.",
+      "terms_review": "SMPL/body assets requieren términos propios y acceso runtime autorizado; no incluir activos restringidos en imagen.",
+      "hardware_notes": "Stack antiguo y extensiones: ruta Blackwell probada posteriormente, sin asumir compatibilidad.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C12"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "hy-motion",
+      "name": "Movimiento desde texto",
+      "disposition": "required",
+      "source_ids": [
+        "S14"
+      ],
+      "scope": "Generación de coreografía/acciones; tiempos, escala y contactos retargetables.",
+      "terms_review": "Desactivar rewrite/estimación que exige host remoto o usar proveedor del estudio; modelos standard/lite separados.",
+      "hardware_notes": "Autores listan 26/24 GB; dato de receta upstream, no medida de Ultra.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C13"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "wan22",
+      "name": "Generación Wan",
+      "disposition": "required",
+      "source_ids": [
+        "S15"
+      ],
+      "scope": "Familia de video local y base para controles Wan seleccionados.",
+      "terms_review": "Elegir variante/tarea y componentes; presupuestar MoE/experts reales y no solo parámetros activos.",
+      "hardware_notes": "Preparar motores y nodos en build; quant/offload como receta, descarga por tarea.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C23"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "wan-animate",
+      "name": "Transferencia de actuación",
+      "disposition": "required",
+      "source_ids": [
+        "S15"
+      ],
+      "scope": "Animación/reemplazo de personaje con referencia y tracking.",
+      "terms_review": "Registrar referencias de identidad y límites de encuadre; no prometer preservación perfecta de logo/cara.",
+      "hardware_notes": "Motor Wan compartido cuando compatible; no duplicar pesos sin necesidad.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C14"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "wan-move",
+      "name": "Control de trayectorias",
+      "disposition": "required",
+      "source_ids": [
+        "S16"
+      ],
+      "scope": "Puntos/mascaras/profundidad y control de objetos convertido desde tracks o simulación.",
+      "terms_review": "Movimiento de puntos no prueba física; comparar con target proyectado y oclusiones.",
+      "hardware_notes": "No cargar concurrentemente con otro generador pesado.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C05",
+        "C15"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "infinitetalk",
+      "name": "Personajes hablantes",
+      "disposition": "required",
+      "source_ids": [
+        "S17"
+      ],
+      "scope": "Audio→actuación con hablantes separados, turnos y continuidad.",
+      "terms_review": "Consentimiento de voz/identidad y límites por receta; pipeline y base Wan con términos propios.",
+      "hardware_notes": "Validar duración, tiling y sincronía en la campaña GPU.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C16"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "ovow",
+      "name": "Reconstrucción 4D",
+      "disposition": "required",
+      "source_ids": [
+        "S18"
+      ],
+      "scope": "MP4→escena con objetos y transformaciones temporales, export y edición de cámara/retiming.",
+      "terms_review": "Release mixta research, no OSI global: MIT propio + FoundationPose/SpaTracker/Motion324/SAM y opcionales con términos distintos.",
+      "hardware_notes": "Autores recomiendan ≥40 GB y ~120 GB de disco con ~55 GB pesos; no ejecutar descargador de todo el paquete al boot.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C17"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "alayaworld",
+      "name": "Mundo con memoria espacial",
+      "disposition": "required",
+      "source_ids": [
+        "S03"
+      ],
+      "scope": "Escenarios generados con historial/poses, navegación y retorno medible.",
+      "terms_review": "Elegir stage y checkpoint; stage1 no implica teacher AR/student; fuentes inventadas nunca se registran como observadas.",
+      "hardware_notes": "README actual verifica Torch2.7.1/cu128; medir la receta de una GPU, no convertir tamaño de weights en peak.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C06"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "worldforge",
+      "name": "Trayectorias sobre H3",
+      "disposition": "conditional",
+      "source_ids": [
+        "S02"
+      ],
+      "scope": "Alternativa de control cinematográfico con cámara/LoRA.",
+      "terms_review": "Requiere MiniMax-H3 permitido y componentes propios; no satisface la ruta gratuita universal por defecto.",
+      "hardware_notes": "Ejemplo 80 GB y Torch2.6/cu124; adaptar kernels y verificar RAM/tiempo.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "worldcrafter",
+      "name": "Mundo con memoria por cámara",
+      "disposition": "conditional",
+      "source_ids": [
+        "S04"
+      ],
+      "scope": "Comparador para persistencia espacial, no reemplazo por defecto.",
+      "terms_review": "Demo upstream H200 no acredita RTX PRO 6000. Activar solo con receta de una GPU viable y licencia clara.",
+      "hardware_notes": "Si requiere hardware no disponible, bloquear esa ruta y conservar Alaya/escena persistente como principal.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "ltx25",
+      "name": "Generación audiovisual LTX-2.5",
+      "disposition": "required",
+      "source_ids": [
+        "S24"
+      ],
+      "scope": "Principal AV: distilled/DFR, referencias, Retake/DubIt y refinamiento según caso.",
+      "terms_review": "Código Apache/pesos licencia LTX2.x; encoder fino y LoRA/upsampler son componentes exactos separados.",
+      "hardware_notes": "4K nativo opcional; default HD/FHD y acabado. No asumir DFR completo en 96 GB sin medir.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C23",
+        "C24"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "evidence_code_revision": "c1b4675863c07c59c92e502446cccdaedbe5889c",
+      "revision_policy": "evidence_revision; integration must lock tested code and hashes explicitly, not follow a moving branch"
+    },
+    {
+      "id": "minimax-h3",
+      "name": "Generación H3 local",
+      "disposition": "conditional",
+      "source_ids": [
+        "S25"
+      ],
+      "scope": "Alternativa FL2VA/Ref2VA local si licencia/territorio permiten.",
+      "terms_review": "H3-Context-IR y Regenerate-2K no abiertos en revisión; no destilar sus outputs a modelos ajenos; runtime territory gate.",
+      "hardware_notes": "Solo receta local exacta y componentes necesarios; no ejecutar scripts multiGPU como garantía de una GPU.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "vace",
+      "name": "Edición con máscaras",
+      "disposition": "required",
+      "source_ids": [
+        "S31"
+      ],
+      "scope": "Inpaint/control por región y tiempo, preservando capas aprobadas.",
+      "terms_review": "Mapear condiciones a nodos reales; edición local no significa hash idéntico tras reencode completo.",
+      "hardware_notes": "Subgrafo Wan con consumo y etapas separados.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C24"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "diffusion-renderer",
+      "name": "Render neuronal guiado por atributos",
+      "disposition": "required",
+      "source_ids": [
+        "S21"
+      ],
+      "scope": "Ruta de relighting/guías físicas complementaria a V-RGBX.",
+      "terms_review": "Alcance y tipos de AOV documentados; fijar code/model terms y no atribuir materiales que el modelo no estima.",
+      "hardware_notes": "Deps NVIDIA y CUDA compiladas/preparadas para Blackwell durante build.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C21"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "light-x",
+      "name": "Cámara y luz sobre video",
+      "disposition": "alternative",
+      "source_ids": [
+        "S22"
+      ],
+      "scope": "Comparar con rutas principales para control conjunto.",
+      "terms_review": "Elegir solo si demuestra aporte distinto; mantener cámara y luz en contrato común.",
+      "hardware_notes": "No adoptar tiempos/promesas de autores como propios.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "id-v2v",
+      "name": "Restilización temporal",
+      "disposition": "required",
+      "source_ids": [
+        "S23"
+      ],
+      "scope": "Actuación+keyframes estilizados→video conservando movimiento.",
+      "terms_review": "Mantener alpha/identidad protegida donde proceda y medir drift temporal.",
+      "hardware_notes": "Modelo bajo demanda, un stage pesado.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C22"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "sam-audio",
+      "name": "Separación de sonido",
+      "disposition": "required",
+      "source_ids": [
+        "S32"
+      ],
+      "scope": "Aislar fuentes por texto/tiempo/video para stems.",
+      "terms_review": "SAM License separada, notices y acceso; no confundir separación con generar stems de música siempre.",
+      "hardware_notes": "CPU/GPU según ruta real; lease si usa GPU.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C25"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "mmaudio",
+      "name": "Foley audiovisual baseline",
+      "disposition": "required",
+      "source_ids": [
+        "S33"
+      ],
+      "scope": "Baseline local video→sonido para comparar dirección temporal.",
+      "terms_review": "Semillas y condiciones de video/texto reproducibles; términos de pesos dependientes.",
+      "hardware_notes": "Un stage; medir peaks y duración soportada.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C25"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "steam-audio",
+      "name": "Acústica espacial",
+      "disposition": "alternative",
+      "source_ids": [
+        "S34"
+      ],
+      "scope": "Aplicar acústica cuando exista geometría y fuentes temporalmente localizadas.",
+      "terms_review": "No aplicar reverberación falsa a un parque abierto como mejora universal; licencia SDK y integración.",
+      "hardware_notes": "CPU acotado; solo promover si mejora caso de uso.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "ace-step",
+      "name": "Música original",
+      "disposition": "required",
+      "source_ids": [
+        "S35"
+      ],
+      "scope": "Base/XL según receta, estructura musical y variantes con beat map.",
+      "terms_review": "Términos de componentes y datos/outputs en aprendizaje; no etiquetar stems sintéticos como separación exacta.",
+      "hardware_notes": "No ejecutar XL y generador video simultáneos; benchmark por variante.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C26"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "qwen3-tts",
+      "name": "Voz en español",
+      "disposition": "required",
+      "source_ids": [
+        "S36"
+      ],
+      "scope": "Síntesis/voz dirigida, léxico y variantes de pronunciación.",
+      "terms_review": "Clonación solo de voces autorizadas; no persistir muestras personales en artifacts públicos.",
+      "hardware_notes": "Modelos/variantes bajo demanda; comparación con IndexTTS existente antes de duplicar.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C16",
+        "C27"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "qwen-image21",
+      "name": "Keyframes y edición de imagen",
+      "disposition": "required",
+      "source_ids": [
+        "S44"
+      ],
+      "scope": "Fotogramas de dirección y salida RGBA según variante publicada.",
+      "terms_review": "Licencia Qwen Research, no Apache. Referencias y capacidades por checkpoint; pesos no en base image.",
+      "hardware_notes": "INT4/FP8 solo con backend soportado y prueba; no asumir tamaño de archivo=VRAM.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C28"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "flux2",
+      "name": "Keyframes alternativos",
+      "disposition": "alternative",
+      "source_ids": [
+        "S47"
+      ],
+      "scope": "FLUX.2 klein 4B como alternativa de licencia más permisiva donde cumpla el caso.",
+      "terms_review": "4B Apache y otras variantes NC no intercambiables en licencia/capacidad; registrar variante exacta.",
+      "hardware_notes": "Usar solo si aporta fallback funcional, no paquete entero.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "videomama",
+      "name": "Matting temporal",
+      "disposition": "required",
+      "source_ids": [
+        "S45"
+      ],
+      "scope": "Ruta propia desde repo original, alpha suave y composición.",
+      "terms_review": "Code/weights/base SVD tienen términos distintos; no copiar versión reempaquetada de CorridorKey sin revisar permisos.",
+      "hardware_notes": "Instalación en build; fixtures de bordes reales y campaña GPU para calidad.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C29"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "gvm",
+      "name": "Matting alternativo",
+      "disposition": "alternative",
+      "source_ids": [
+        "K16"
+      ],
+      "scope": "Alternativa desde aim-uofa/GVM si su contrato y términos permiten un fallback útil.",
+      "terms_review": "Verificar licencia en repo original y modelos/base, sin heredar conclusiones de un README tercero.",
+      "hardware_notes": "Adoptar solo tras comparativa de bordes y consistencia.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "corridorkey",
+      "name": "Referencia de keying",
+      "disposition": "excluded",
+      "source_ids": [
+        "S46"
+      ],
+      "scope": "Inspiración de producto/pruebas; no dependencia de producción distribuida.",
+      "terms_review": "Licencia adicional prohíbe reempaquetado/redistribución y productos competidores; no hay autorización general de inclusión en GHCR.",
+      "hardware_notes": "Usar VideoMaMa/GVM; no obtener permiso fingiendo o enviando emails automáticamente.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "must_not_bundle"
+    },
+    {
+      "id": "videomama-plusplus",
+      "name": "Matting futuro",
+      "disposition": "reference_only",
+      "source_ids": [
+        "S45b"
+      ],
+      "scope": "Referencia hasta código/pesos completos públicos y términos verificables.",
+      "terms_review": "No tratar una publicación incompleta como implementada.",
+      "hardware_notes": "No descargar/instalar por anuncio.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "flashvsr-plus",
+      "name": "Upscale temporal principal",
+      "disposition": "required",
+      "source_ids": [
+        "S37"
+      ],
+      "scope": "Acabado 4K local, tiling/precision y protección de detalle.",
+      "terms_review": "Preset/version seleccionados; garantizar temporalidad y no inventar factualidad; license/model terms fijados.",
+      "hardware_notes": "CUDA-only; Triton/SDPA cuando BSA no soporte la GPU. 4K/24GB RTX4090 es dato de autores, no SLA propio.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C30"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "seedvr2",
+      "name": "Restauración alternativa de acabado",
+      "disposition": "required",
+      "source_ids": [
+        "S38"
+      ],
+      "scope": "Ruta comparadora para restauración/upscale cuando mejore detalle y continuidad.",
+      "terms_review": "Tiling temporal y identidad bajo pruebas; disponer de una ruta primaria no oculta fallos del comparador.",
+      "hardware_notes": "Separar modelos y offload por receta; medir después.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C30"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "diffhdr",
+      "name": "Reexposición/HDR experimental",
+      "disposition": "alternative",
+      "source_ids": [
+        "S39"
+      ],
+      "scope": "Investigación de exposición temporal con escena/clip medible.",
+      "terms_review": "No prometer reconstrucción radiométrica exacta desde SDR ni marcar SDR como HDR.",
+      "hardware_notes": "Separar del export 4K SDR robusto.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "optuna",
+      "name": "Optimización experimental",
+      "disposition": "required",
+      "source_ids": [
+        "S41"
+      ],
+      "scope": "Búsqueda multiobjetivo y Pareto con límites, trials y prune.",
+      "terms_review": "Trials fallidos/OOM cuentan en coste; presupuesto y dataset split persistentes.",
+      "hardware_notes": "CPU orchestrator; no habilita inferencia/training GPU sin autorización.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C33"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "videoalign",
+      "name": "Evaluación de calidad",
+      "disposition": "required",
+      "source_ids": [
+        "S42"
+      ],
+      "scope": "VideoReward como una señal auxiliar de alineación/visual/movimiento.",
+      "terms_review": "Juez no sustituye tolerancias geométricas, identidad, errores de texto ni métricas humanas.",
+      "hardware_notes": "Pesos bajo demanda; evaluadores GPU se secuencian después de generadores.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C33"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "scene-optimizer",
+      "name": "Optimización de escena",
+      "disposition": "required",
+      "source_ids": [
+        "N17"
+      ],
+      "scope": "Desarrollo propio para cámara/luz/posición con restricciones y gradientes o búsqueda.",
+      "terms_review": "Unidad/frames/oclusiones y variable bounds explícitos; baseline + heldout.",
+      "hardware_notes": "CPU/Mitsuba CUDA bajo lease; optimización acotada.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C20"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "research-lab",
+      "name": "Investigador y promotor de adaptadores",
+      "disposition": "required",
+      "source_ids": [
+        "S41"
+      ],
+      "scope": "Hipótesis, experimentos, dataset split, reportes, promoción y rollback por repo.",
+      "terms_review": "Ningún auto-merge de weights sin procedencia/licencia; no auto-código de producción en caliente.",
+      "hardware_notes": "No foundation training; preparación de LoRA y pruebas GPU autorizadas en fase posterior.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C34"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "newton",
+      "name": "Simulación adicional",
+      "disposition": "alternative",
+      "source_ids": [
+        "S19"
+      ],
+      "scope": "Solvers cuando aporten una acción/efecto no cubierto adecuadamente por Blender/Chrono.",
+      "terms_review": "USD/esqueletos y sim-to-render propios; no preset cinematográfico por existir solver.",
+      "hardware_notes": "Simulación puede requerir GPU y convivencia de libs; medir antes de seleccionar.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "genesis",
+      "name": "Simulación diferenciable adicional",
+      "disposition": "alternative",
+      "source_ids": [
+        "S30"
+      ],
+      "scope": "Exploración de materiales/optimización diferenciable con caso concreto.",
+      "terms_review": "No duplicar solver sin demostrar ventaja; versiones/deps/code/model terms por componente.",
+      "hardware_notes": "No instalar compiladores al arranque.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "cosmos3",
+      "name": "World/control/teacher experimental",
+      "disposition": "conditional",
+      "source_ids": [
+        "S01"
+      ],
+      "scope": "Evaluar Nano/Super solo para tarea de transferencia/control/razonamiento no satisfecha.",
+      "terms_review": "Matriz NIM es evidencia de otra receta, no garantia propia; licencia/descarga/direct runtime verificados; no segundo contenedor obligatorio.",
+      "hardware_notes": "Autores recomiendan Nano por defecto en RTX PRO 6000; Super por necesidad explícita. 128/256 RAM no equivalentes.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "storymem",
+      "catalog_id": "N01",
+      "name": "StoryMem",
+      "disposition": "required",
+      "source_ids": [
+        "N01"
+      ],
+      "scope": "Memoria entre planos Wan con keyframes y referencias persistentes.",
+      "terms_review": "Code/checkpoints publicados; S-Lab NC. No prometer I2V exacta con un modo solo texto.",
+      "hardware_notes": "Single world_size=1 existe en pipeline; configuración multiGPU de ejemplo no es requisito universal.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "evidence_code_revision": "052c68d2627a22a95f79dbb4d3376cc30c96f1a3",
+      "revision_policy": "evidence_revision; integration must lock tested code and hashes explicitly, not follow a moving branch"
+    },
+    {
+      "id": "holocine",
+      "catalog_id": "N02",
+      "name": "HoloCine",
+      "disposition": "alternative",
+      "source_ids": [
+        "N02"
+      ],
+      "scope": "Generación multiplaño desde guion como comparador de consistencia.",
+      "terms_review": "No elegir para imponer un producto desde una imagen cuando esa condición no esté implementada.",
+      "hardware_notes": "Variantes 14B; seleccionar archivos exactos, no todas las versiones.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "shotstream",
+      "catalog_id": "N03",
+      "name": "ShotStream",
+      "disposition": "conditional",
+      "source_ids": [
+        "N03"
+      ],
+      "scope": "Streaming narrativo con memoria como experimento de latencia/continuidad.",
+      "terms_review": "Pesos Apache; alcance de licencia del código por aclarar antes de redistribuir.",
+      "hardware_notes": "Script de una GPU y base Wan1.3B; medir contexto/latencia, no extrapolar.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "cameraanything",
+      "catalog_id": "N04",
+      "name": "CameraAnything",
+      "disposition": "conditional",
+      "source_ids": [
+        "N04"
+      ],
+      "scope": "Reencuadre y trayectoria/focal sobre video existente.",
+      "terms_review": "Pesos CC BY-NC-SA; licencia de código no resuelta en revisión anterior. Alternativa principal cámara Blender+guías.",
+      "hardware_notes": "Lanzador reparte casos entre GPUs; eso no implica que un caso exija varias.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "v-rgbx",
+      "catalog_id": "N05",
+      "name": "V-RGBX",
+      "disposition": "required",
+      "source_ids": [
+        "N05"
+      ],
+      "scope": "Albedo/normales/material/irradiancia temporales y renderers de edición.",
+      "terms_review": "Código Apache, pesos/datos de muestra CC BY-NC. No todos los AOV son equivalentes a OpenPBR.",
+      "hardware_notes": "Dos renderers, Wan1.3B y stack Torch2.5/cu124: aislar y adaptar Blackwell.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C21"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "evidence_code_revision": "4de559b89f3ea469fc4659fc0d4adf47d1b708d3",
+      "revision_policy": "evidence_revision; integration must lock tested code and hashes explicitly, not follow a moving branch"
+    },
+    {
+      "id": "unirelight",
+      "catalog_id": "N06",
+      "name": "UniRelight",
+      "disposition": "alternative",
+      "source_ids": [
+        "N06"
+      ],
+      "scope": "Comparador de reiluminación temporal y albedo.",
+      "terms_review": "NVIDIA OneWay NC; no atribuir un set PBR completo a su salida.",
+      "hardware_notes": "Entrada de una GPU; base Cosmos y pesos por receta.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated",
+      "evidence_code_revision": "27d86df8e45d3ded6a6bab074edc83410cdf50b3",
+      "revision_policy": "evidence_revision; integration must lock tested code and hashes explicitly, not follow a moving branch"
+    },
+    {
+      "id": "generative-omnimatte",
+      "catalog_id": "N07",
+      "name": "Generative Omnimatte",
+      "disposition": "required",
+      "source_ids": [
+        "N07"
+      ],
+      "scope": "Capas de objeto, sombras/reflejos y fondo para edición causal.",
+      "terms_review": "Reimplementación pública basada en Casper; no afirmar igualdad con el Lumiere del paper original; términos por componente.",
+      "hardware_notes": "Generación/optimización distintas, stages separados con artifacts cacheados.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "void",
+      "catalog_id": "N08",
+      "name": "VOID",
+      "disposition": "required",
+      "source_ids": [
+        "N08"
+      ],
+      "scope": "Borrado causal de objeto y consecuencias con dos pases.",
+      "terms_review": "Reemplazar preparador dependiente de Gemini por SAM/mascaras + proveedor del estudio; base CogVideoX con términos propios.",
+      "hardware_notes": "Referencia upstream ≥40 GB; dos pases y contextos bajo lease, sin promesa de 4K nativo.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "evidence_code_revision": "e3914f8f551dd4b880661991fd6b28cd1699a97a",
+      "revision_policy": "evidence_revision; integration must lock tested code and hashes explicitly, not follow a moving branch"
+    },
+    {
+      "id": "videocof",
+      "catalog_id": "N09",
+      "name": "VideoCoF",
+      "disposition": "alternative",
+      "source_ids": [
+        "N09"
+      ],
+      "scope": "Edición temporal larga como comparador de reparación local.",
+      "terms_review": "Elegir solo si mejora un caso frente a VACE/Retake; conservar license/model dependencies.",
+      "hardware_notes": "Caso publicado <60 GB para 513 frames no equivale a cualquier resolución/duración.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "qwen-image-layered",
+      "catalog_id": "N10",
+      "name": "Qwen-Image-Layered",
+      "disposition": "required",
+      "source_ids": [
+        "N10"
+      ],
+      "scope": "Imagen a capas RGBA independientes y editables.",
+      "terms_review": "Apache según release; descomponer una imagen no es generar un video multicapa completo.",
+      "hardware_notes": "Adapter de capas/alpha y local checkpoint bajo demanda.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C28"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "map-anything",
+      "catalog_id": "N11",
+      "name": "MapAnything",
+      "disposition": "required",
+      "source_ids": [
+        "N11"
+      ],
+      "scope": "Geometría multivista con imágenes y opcionalmente poses/calibración/depth.",
+      "terms_review": "Seleccionar variante facebook/map-anything-apache y fijar términos de todo el stack.",
+      "hardware_notes": "Memoria crece con vistas; 2.000 vistas/140 GB documentados no caben como receta de 96 GB. Ventanas/grafo de poses.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C07"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "evidence_code_revision": "3d10cf7a3016fc0f9bb13a071ee66c47b10be0d9",
+      "revision_policy": "evidence_revision; integration must lock tested code and hashes explicitly, not follow a moving branch"
+    },
+    {
+      "id": "tapip3d",
+      "catalog_id": "N12",
+      "name": "TAPIP3D",
+      "disposition": "required",
+      "source_ids": [
+        "N12"
+      ],
+      "scope": "Tracking 3D persistente con compensación de cámara.",
+      "terms_review": "RGB requiere preparación geométrica; no confundir píxeles con puntos métricos.",
+      "hardware_notes": "Submuestras de puntos/frames y memoria por ventana.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C12"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "streetcrafter",
+      "catalog_id": "N13",
+      "name": "StreetCrafter",
+      "disposition": "conditional",
+      "source_ids": [
+        "N13"
+      ],
+      "scope": "Síntesis urbana condicionada por escena calibrada.",
+      "terms_review": "Requiere nube de puntos y calibración; fotos sueltas no cumplen automáticamente su dataset.",
+      "hardware_notes": "Referencia A100/A80080GB; adaptar extensión/deps y datos antes de prometer nueva vista.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "diffreg-pbir",
+      "catalog_id": "N14",
+      "name": "DiffReg-PBIR",
+      "disposition": "required",
+      "source_ids": [
+        "N14"
+      ],
+      "scope": "Ruta de inverse rendering comparada con ajuste Mitsuba propio.",
+      "terms_review": "Código CC BY-NC y términos de componentes; no inventar materiales de caras ocultas.",
+      "hardware_notes": "Upstream documenta cambios Blackwell/sm_120. Incluir patches/licencias y comprobar build.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "materialanything",
+      "catalog_id": "N15",
+      "name": "MaterialAnything",
+      "disposition": "alternative",
+      "source_ids": [
+        "N15"
+      ],
+      "scope": "Materiales de malla como alternativa a PBR inicial y ajuste físico.",
+      "terms_review": "Código MIT; revisar modelo y stack Blender/componentes antes de incluir.",
+      "hardware_notes": "Stack upstream antiguo; no forzar versiones incompatibles en env global.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "materialist",
+      "catalog_id": "N16",
+      "name": "Materialist",
+      "disposition": "alternative",
+      "source_ids": [
+        "N16"
+      ],
+      "scope": "Inverso de materiales desde una imagen, baseline de ambigüedad.",
+      "terms_review": "Código Apache; transparencia aproximada, no validación de refracción exacta.",
+      "hardware_notes": "Separar geometría/iluminación estimadas y registrar incertidumbre.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "mitsuba",
+      "catalog_id": "N17",
+      "name": "Mitsuba 3 / Dr.Jit",
+      "disposition": "required",
+      "source_ids": [
+        "N17"
+      ],
+      "scope": "Optimización diferenciable de cámara/material/luz con verdad sintética.",
+      "terms_review": "Licencias propias de renderer/deps y mapping explícito OpenPBR; ajustar parámetros observables, no todos a la vez.",
+      "hardware_notes": "Ruta CPU de fixture y CUDA/OptiX Blackwell de campaña posterior.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C20"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "motionbricks",
+      "catalog_id": "N18",
+      "name": "MotionBricks",
+      "disposition": "required",
+      "source_ids": [
+        "N18"
+      ],
+      "scope": "Encadenar acciones/poses con representación de escena.",
+      "terms_review": "Código Apache, pesos NVIDIA OMA y muestras de movimiento con términos separados/evaluación; no redistribuir datos de ejemplo por licencia de código.",
+      "hardware_notes": "ONNX/TensorRT, SOMA/G1 y demo RTX4090; no prometer entrenamiento de controlador completo.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C13"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "evidence_code_revision": "54fc563aeaaf819a753d72cc9fdc6713989cdd43",
+      "revision_policy": "evidence_revision; integration must lock tested code and hashes explicitly, not follow a moving branch"
+    },
+    {
+      "id": "remogen",
+      "catalog_id": "N19",
+      "name": "ReMoGen",
+      "disposition": "conditional",
+      "source_ids": [
+        "N19"
+      ],
+      "scope": "Reacciones humano-humano/escena como línea avanzada.",
+      "terms_review": "Licencia explícita del código por resolver; SMPL-X y datos protegidos; módulos por tarea.",
+      "hardware_notes": "Entorno Python3.8/Torch2.1/cu118: no nativo Blackwell; portar sin romper semántica o mantener bloqueado.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "intermimic",
+      "catalog_id": "N20",
+      "name": "InterMimic",
+      "disposition": "conditional",
+      "source_ids": [
+        "N20"
+      ],
+      "scope": "Contactos humanos/objetos controlados por física.",
+      "terms_review": "Código MIT, Isaac Gym/Lab y body/dataset terms distintos; no redistribuir componentes sin permiso.",
+      "hardware_notes": "Legacy Isaac Gym puede ser incompatibilidad real; elegir ruta soportada o alternativa física propia, no mentir.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "physx-anything",
+      "catalog_id": "N21",
+      "name": "PhysX-Anything",
+      "disposition": "conditional",
+      "source_ids": [
+        "N21"
+      ],
+      "scope": "Inferir articulaciones de un producto para simulación.",
+      "terms_review": "S-Lab NC; checkpoint no verificado por herramientas anteriores; modelo inferido no acredita mecanismo real.",
+      "hardware_notes": "No descargar indefinidamente; verificar acceso una vez y usar partes verificadas/Blender si no.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "audio2face3d",
+      "catalog_id": "N22",
+      "name": "Audio2Face-3D SDK",
+      "disposition": "required",
+      "source_ids": [
+        "N22"
+      ],
+      "scope": "Animación facial editable desde audio.",
+      "terms_review": "SDK MIT y modelos con términos propios; Audio2Emotion requiere aceptación. No incluir activos gated como libres.",
+      "hardware_notes": "CUDA/TensorRT y morph mapping; fallback facial Blender no se etiqueta como neuralmente equivalente.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "marcus-avatar",
+      "catalog_id": "N23",
+      "name": "MARCUS-Avatar",
+      "disposition": "conditional",
+      "source_ids": [
+        "N23"
+      ],
+      "scope": "Cabeza 3D y materiales recuperados como avatar reluminable.",
+      "terms_review": "Pesos/inferencia publicados; revisar topología/third-party assets antes de seleccionar para distribución.",
+      "hardware_notes": "MARCUS→rig facial requiere correspondencia propia; no suponer compatible Audio2Face.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "gtavatar",
+      "catalog_id": "N24",
+      "name": "GTAvatar",
+      "disposition": "conditional",
+      "source_ids": [
+        "N24"
+      ],
+      "scope": "Avatar gaussiano persistente desde video.",
+      "terms_review": "FLAME sujeto a registro/licencia research; no redistribuir body/topology restringidos ni ocultar requisito.",
+      "hardware_notes": "Entrenamiento/reconstrucción por sujeto solo con permiso y presupuesto GPU posterior.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "controlfoley",
+      "catalog_id": "N25",
+      "name": "ControlFoley",
+      "disposition": "required",
+      "source_ids": [
+        "N25"
+      ],
+      "scope": "Foley condicionado por video, texto y referencia con timeline común.",
+      "terms_review": "Código Apache, pesos CC BY-NC. Nodos oficiales existen; auto-fetch de código/deps debe trasladarse a build.",
+      "hardware_notes": "Modelos necesarios bajo demanda; eventos/ref audio y seed en artifact lineage.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C25"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "hunyuanvideo-foley",
+      "catalog_id": "N26",
+      "name": "HunyuanVideo-Foley",
+      "disposition": "alternative",
+      "source_ids": [
+        "N26"
+      ],
+      "scope": "Alternativa XL/XXL de sonido para escenas difíciles.",
+      "terms_review": "Verificar pesos y términos de terceros; no instalar ambas variantes sin caso de uso.",
+      "hardware_notes": "Referencias upstream 8–20 GB según offload; medir receta exacta.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "foley-omni",
+      "catalog_id": "N27",
+      "name": "Foley-Omni",
+      "disposition": "conditional",
+      "source_ids": [
+        "N27"
+      ],
+      "scope": "Banda conjunta con habla/efectos/música como experimento de coherencia.",
+      "terms_review": "Checkpoint público hasta10s; componentes third-party. Dividir/stitch no garantiza diálogos continuos.",
+      "hardware_notes": "No presentar duración arbitraria ni edición por stem si no las produce.",
+      "build_selected": false,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [],
+      "code_revision": null,
+      "lock_required_before_build": false,
+      "release_gate": "not_advertised_as_prepared_until_selected_and_gated"
+    },
+    {
+      "id": "vbench2",
+      "catalog_id": "N28",
+      "name": "VBench-2.0",
+      "disposition": "required",
+      "source_ids": [
+        "N28"
+      ],
+      "scope": "Dimensiones locales de física, control, identidad y anatomía para protocolos.",
+      "terms_review": "Evaluar solo dimensiones pertinentes, dependencias/licencias y límites de los jueces; no predictor de viralidad.",
+      "hardware_notes": "Jueces consumen GPU y descargan pesos: programar después, con presupuesto por dimensión.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C33"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "chrono",
+      "catalog_id": "N29",
+      "name": "Project Chrono / PyChrono",
+      "disposition": "required",
+      "source_ids": [
+        "N29"
+      ],
+      "scope": "Vehículos, suspensión, neumáticos y terreno con exportación Blender.",
+      "terms_review": "BSD-3; parametrización del vehículo necesaria, no sim realista por usar defaults.",
+      "hardware_notes": "Ruta CPU headless con estado temporal y unidades; preparar módulos/bindings durante build.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C18"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "sea-raft",
+      "catalog_id": "N30",
+      "name": "SEA-RAFT",
+      "disposition": "required",
+      "source_ids": [
+        "N30"
+      ],
+      "scope": "Flujo temporal para tracking, warping, reparaciones y evaluación.",
+      "terms_review": "Usar máscaras de oclusión/cortes; no penalizar movimiento legítimo o de cámara como flicker.",
+      "hardware_notes": "Código/modelos fijados; memoria acotada por frames/resolución.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C15"
+      ],
+      "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    }
+  ]
+}

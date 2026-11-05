@@ -1,0 +1,11 @@
+Referencia: Mirador del Cerro El Volador.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Mirador_del_Cerro_El_Volador.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/7/75/Mirador_del_Cerro_El_Volador.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2018-01-21 16:57:22 (captured)
+Subida: 2018-03-26T01:36:08Z
+sha256 enviado: e04d3d152f778fe6a4c5dc0c4f0bc579b5348056b85a5670b9105cebefc0d53f
+sha1 original: a3fd374134bcfc85b22763793f593e7398460df4
+Original: 4160x3120; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Mirador_del_Cerro_El_Volador.jpg

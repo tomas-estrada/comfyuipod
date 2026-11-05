@@ -1,0 +1,11 @@
+Referencia: Pava Andina.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Pava_Andina.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/f/f5/Pava_Andina.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: AmiGueko
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: 11 January 2026 (according to Exif data) (captured)
+Subida: 2026-05-15T04:28:23Z
+sha256 enviado: b26cb5b71f0ed7aa7178093069c90d0bc6eed9dcf72e36cdc753255da47ab41b
+sha1 original: c2093f1d3c1f29bebeed5473ca167a2ff76a9d12
+Original: 7481x4532; enviado: 2048x1241 (derived_downscale)
+Atribución: AmiGueko — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Pava_Andina.jpg

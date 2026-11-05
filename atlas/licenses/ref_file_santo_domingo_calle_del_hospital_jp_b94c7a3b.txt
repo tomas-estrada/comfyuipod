@@ -1,0 +1,11 @@
+Referencia: Santo Domingo - calle del hospital.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Santo_Domingo_-_calle_del_hospital.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/0/0b/Santo_Domingo_-_calle_del_hospital.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2019-02-10 17:10:50 (captured)
+Subida: 2019-02-12T00:27:42Z
+sha256 enviado: 5c5f0d10b12f2b141b7487314034332304e955a0a05df7ee0479d50f11a935de
+sha1 original: b94c7a3bd450df0ff6678ab1f5894ec91965ac97
+Original: 4160x3120; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Santo_Domingo_-_calle_del_hospital.jpg

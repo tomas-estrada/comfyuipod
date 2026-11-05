@@ -1,0 +1,11 @@
+Referencia: Atardecer en Medellin - Rojos, Negros y Azules - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Atardecer_en_Medellin_-_Rojos,_Negros_y_Azules_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/1/1a/Atardecer_en_Medellin_-_Rojos%2C_Negros_y_Azules_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: jstirador
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: Taken on 23 November 2008 (captured)
+Subida: 2016-10-28T08:23:21Z
+sha256 enviado: acfa4e86f540605c88249279d47441e61dc574d587c77cf2fb146736e503c945
+sha1 original: 0d4c74f3c3401e63b58e2180c5ee04ee55f94c1e
+Original: 3072x2304; enviado: 2048x1536 (derived_downscale)
+Atribución: jstirador — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:Atardecer_en_Medellin_-_Rojos,_Negros_y_Azules_-_panoramio.jpg

@@ -48,18 +48,46 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 FAKE_CONTENT = b"pesos-de-mentira"
 
 
+def _write_fake_hf(tmp_path: Path, payload: bytes = FAKE_CONTENT) -> Path:
+    """Cliente `hf` de mentira, portable (Python, no bash).
+
+    Replica `hf download <repo> <remote_path> ... --local-dir <dir>`: escribe
+    `payload` en `<dir>/<remote_path>`. Se usa un launcher Python en vez de un
+    script bash para que la suite corra igual en Linux (CI/pod) y en
+    Windows/macOS (desarrollo). El pod de producción es Linux; el cliente real
+    es el `hf` de verdad, este fake solo ejercita el cableado de adquisición.
+    """
+    helper = tmp_path / "fake_hf_impl.py"
+    helper.write_text(
+        "import sys, pathlib\n"
+        "args = sys.argv[1:]\n"
+        "remote = args[2]\n"
+        "local_dir = args[args.index('--local-dir') + 1]\n"
+        "payload = bytes.fromhex(args[args.index('--__payload_hex') + 1])"
+        " if '--__payload_hex' in args else b'" + payload.decode() + "'\n"
+        "target = pathlib.Path(local_dir) / remote\n"
+        "target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "target.write_bytes(payload)\n",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        launcher = tmp_path / "fake-hf.cmd"
+        launcher.write_text(
+            f'@echo off\r\n"{sys.executable}" "{helper}" %*\r\n', encoding="utf-8"
+        )
+    else:
+        launcher = tmp_path / "fake-hf"
+        launcher.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{helper}" "$@"\n', encoding="utf-8"
+        )
+        launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    return launcher
+
+
 @pytest.fixture()
 def fake_hf(tmp_path: Path) -> Path:
     """Cliente `hf` de mentira: crea el archivo remoto bajo --local-dir."""
-    script = tmp_path / "fake-hf"
-    script.write_text(
-        "#!/bin/bash\n"
-        'mkdir -p "$(dirname "$7/$3")"\n'
-        f'printf "{FAKE_CONTENT.decode()}" > "$7/$3"\n',
-        encoding="utf-8",
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    return script
+    return _write_fake_hf(tmp_path)
 
 
 def _env(fake_hf: Path, data_dir: Path) -> dict[str, str]:
@@ -1096,8 +1124,13 @@ def test_acquire_never_writes_outside_the_data_dir(data_dir: Path, fake_hf: Path
     assert not (REPO_ROOT / "models").exists()
 
 
-def test_acquire_without_hf_client_fails_closed(data_dir: Path) -> None:
-    env = {"COMFY_DATA_DIR": str(data_dir), "PATH": "/nonexistent-bin"}
+def test_acquire_without_hf_client_fails_closed(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Sin cliente de HuggingFace resoluble (portable: no depende de que el PATH
+    # del OS de desarrollo carezca de un `hf`), la adquisición falla cerrada.
+    monkeypatch.setattr(asset_acquire, "resolve_hf_cli", lambda env=None: None)
+    env = {"COMFY_DATA_DIR": str(data_dir)}
     report = asset_acquire.acquire(
         [
             AssetNeed(
@@ -1202,12 +1235,7 @@ def test_request_capability_tool_acquires_and_plans(
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    script = tmp_path / "fake-hf"
-    script.write_text(
-        "#!/bin/bash\nmkdir -p \"$(dirname \"$7/$3\")\"; printf pesos > \"$7/$3\"\n",
-        encoding="utf-8",
-    )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    script = _write_fake_hf(tmp_path, payload=b"pesos")
     os.environ["COMFY_DATA_DIR"] = str(data_dir)
     os.environ["HF_CLI"] = str(script)
     # El motor «preparado» exige un entrypoint real: se simula /opt/ComfyUI.
@@ -1385,6 +1413,10 @@ def test_cancel_midway_reports_cancelled_without_retrying(
     assert not any(stage.rglob("*.safetensors")), "quedó un parcial en staging"
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="usa grupos de proceso POSIX, kill(1) y sleep(1); el pod es Linux",
+)
 def test_real_download_process_is_killed_on_cancel() -> None:
     """El proceso real se mata en ~1 s, con su árbol y sin tocar grupos ajenos."""
     import os
@@ -2506,3 +2538,154 @@ def test_cancel_on_the_first_poll_reports_every_need(
     assert public["failed"] == []
     assert public["cancelled"] is True
     assert not any(Path(n.dest_path).exists() for n in needs)
+
+
+# W01 (plan Ultra) — regresiones de los 3 defectos P0 de integridad
+# Estas pruebas FALLAN en el código previo al fix y PASAN tras él.
+# --------------------------------------------------------------------------
+
+
+def test_w01_preexisting_corrupt_file_is_not_skipped_as_present(
+    data_dir: Path, fake_hf: Path, monkeypatch
+) -> None:
+    """P0 #1: un fichero existente con tamaño/hash incorrectos no es «present».
+
+    El skip inicial aceptaba cualquier fichero no vacío. Un parcial de 7 bytes
+    frente a 26 esperados se anunciaba como adquirido. Ahora se verifica tamaño
+    e integridad antes de hacer skip; si no cuadra, se re-descarga.
+    """
+    import hashlib
+
+    env = _env(fake_hf, data_dir)
+    resolution = resolve("video.face_restore", env=env)
+    need = resolution.missing[0]
+    # El manifiesto espera el hash del contenido real del fake-hf.
+    need.sha256 = hashlib.sha256(FAKE_CONTENT).hexdigest()
+    need.sha1 = None
+    need.bytes = len(FAKE_CONTENT)
+
+    # Sembramos un fichero CORRUPTO preexistente en el destino (no vacío, pero
+    # con otro contenido y otro tamaño).
+    dest = Path(need.dest_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(b"corrupto")  # 8 bytes != len(FAKE_CONTENT)
+
+    report = asset_acquire.acquire([need], env=env)
+    entry = report.entries[0]
+    # No debe quedar como «skipped» (eso sería aceptar el corrupto).
+    assert entry.status != "skipped", "un corrupto preexistente no es present"
+    # Se re-descargó y ahora el contenido es el correcto, verificado.
+    assert entry.status == "downloaded"
+    assert dest.read_bytes() == FAKE_CONTENT
+
+
+def test_w01_download_argv_includes_pinned_revision(
+    data_dir: Path, fake_hf: Path, monkeypatch
+) -> None:
+    """P0 #2: `hf download` recibe --revision cuando el manifiesto lo declara.
+
+    Omitir el pin baja el contenido de `main`, que puede diferir del hash
+    fijado. La prueba captura el argv real que se pasa al cliente.
+    """
+    import hashlib
+
+    env = _env(fake_hf, data_dir)
+    resolution = resolve("video.face_restore", env=env)
+    need = resolution.missing[0]
+    need.sha256 = hashlib.sha256(FAKE_CONTENT).hexdigest()
+    need.sha1 = None
+    need.revision = "a" * 40  # revisión fijada del manifiesto
+
+    captured: dict[str, list[str]] = {}
+
+    real = asset_acquire._run_hf_download
+
+    def _capture(argv, **kwargs):  # noqa: ANN001
+        captured["argv"] = list(argv)
+        return real(argv, **kwargs)
+
+    monkeypatch.setattr(asset_acquire, "_run_hf_download", _capture)
+    asset_acquire.acquire([need], env=env)
+
+    argv = captured.get("argv", [])
+    assert "--revision" in argv, f"el pin no llegó al CLI: {argv}"
+    assert argv[argv.index("--revision") + 1] == "a" * 40
+
+
+def test_w01_exdev_failure_preserves_previous_destination(tmp_path: Path) -> None:
+    """P0 #3: si la copia EXDEV falla a mitad, el destino previo sobrevive.
+
+    El fallback antiguo escribía directo sobre `dest`: una copia interrumpida
+    dejaba un parcial y destruía la versión válida anterior. Ahora copia a un
+    temporal same-fs y hace replace atómico; un fallo no toca `dest`.
+    """
+    import errno
+    import os as real_os
+
+    from comfy_studio.asset_acquire import _move
+
+    src = tmp_path / "src.bin"
+    dest = tmp_path / "dest.bin"
+    src.write_bytes(b"nuevo-contenido" * 1000)
+    previous = b"version-previa-valida" * 500
+    dest.write_bytes(previous)  # destino previo que NO debe perderse
+
+    real_replace = real_os.replace
+    calls = {"n": 0}
+
+    def _replace_exdev_then_fail(a, b):  # noqa: ANN001
+        # 1ª llamada: el os.replace(src, dest) del happy path -> EXDEV.
+        # 2ª llamada: el os.replace(tmp, dest) del fallback -> explota.
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    real_os.replace = _replace_exdev_then_fail
+    try:
+        raised = False
+        try:
+            _move(src, dest)
+        except OSError:
+            raised = True
+    finally:
+        real_os.replace = real_replace
+
+    assert raised, "un fallo a mitad de la publicación debe propagarse"
+    # El destino previo sigue intacto: no se publicó un parcial.
+    assert dest.read_bytes() == previous, "se destruyó/corrompió el destino previo"
+    # No quedó ningún temporal en el directorio.
+    leftovers = [p for p in dest.parent.iterdir() if p.name.startswith(f".{dest.name}.incoming")]
+    assert leftovers == [], f"quedó un temporal sin limpiar: {leftovers}"
+
+
+def test_w01_exdev_success_is_atomic_and_cleans_up(tmp_path: Path) -> None:
+    """La ruta EXDEV feliz publica el contenido nuevo y borra origen/temporal."""
+    import errno
+    import os as real_os
+
+    from comfy_studio.asset_acquire import _move
+
+    src = tmp_path / "src.bin"
+    dest = tmp_path / "dest.bin"
+    new_content = b"contenido-nuevo" * 1000
+    src.write_bytes(new_content)
+
+    real_replace = real_os.replace
+
+    def _exdev_once_then_real(a, b):  # noqa: ANN001
+        # Solo el primer replace(src,dest) finge EXDEV; el replace(tmp,dest) real.
+        if Path(a) == src:
+            raise OSError(errno.EXDEV, "cross-device")
+        return real_replace(a, b)
+
+    real_os.replace = _exdev_once_then_real
+    try:
+        _move(src, dest)
+    finally:
+        real_os.replace = real_replace
+
+    assert dest.read_bytes() == new_content
+    assert not src.exists(), "el origen debe desaparecer tras publicar"
+    leftovers = [p for p in dest.parent.iterdir() if ".incoming" in p.name]
+    assert leftovers == [], "no debe quedar temporal tras una publicación correcta"

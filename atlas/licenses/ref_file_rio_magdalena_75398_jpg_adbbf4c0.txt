@@ -1,0 +1,11 @@
+Referencia: Río Magdalena (75398).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Río_Magdalena_(75398).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/c/cd/R%C3%ADo_Magdalena_%2875398%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: AmiGueko
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: 18 October 2026 (according to Exif data) (captured)
+Subida: 2026-10-23T00:02:51Z
+sha256 enviado: 08de960c4baa6628264aae7420701abbe925cfea6b7d51af00124445e9626826
+sha1 original: adbbf4c03cbe4bcc308d1a33eeb9d805ea28127d
+Original: 4032x2268; enviado: 2048x1152 (derived_downscale)
+Atribución: AmiGueko — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Río_Magdalena_(75398).jpg

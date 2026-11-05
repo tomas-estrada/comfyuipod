@@ -1,0 +1,11 @@
+Referencia: Centro Comercial Santafé p.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Centro_Comercial_Santafé_p.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/9/95/Centro_Comercial_Santaf%C3%A9_p.jpg/3840px-Centro_Comercial_Santaf%C3%A9_p.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Xemenendura
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 20 July 2025 (according to Exif data) (captured)
+Subida: 2025-07-21T20:14:55Z
+sha256 enviado: 01b4655d16ea9d39654e209dc3f126998ff89162d0b5bb8a763e763bfd5314db
+sha1 original: 615bb5261e24f2936d50fbe868f23adbf7456fbb
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: Xemenendura — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Centro_Comercial_Santafé_p.jpg

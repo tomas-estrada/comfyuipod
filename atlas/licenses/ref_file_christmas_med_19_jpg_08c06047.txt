@@ -1,0 +1,11 @@
+Referencia: Christmas med 19.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Christmas_med_19.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/2/2a/Christmas_med_19.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Staticshakedown
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-05 17:59:59 (captured)
+Subida: 2020-07-22T16:54:40Z
+sha256 enviado: 6fa7c421916903708e61df6ac752d499eb4f13bfb79bb495d4312d9ba3e74f29
+sha1 original: 08c06047df4d2818397d0ecaf2170fb5f13b9316
+Original: 4032x2268; enviado: 2048x1152 (derived_downscale)
+Atribución: Staticshakedown — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Christmas_med_19.jpg

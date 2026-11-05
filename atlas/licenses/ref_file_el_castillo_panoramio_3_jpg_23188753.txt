@@ -1,0 +1,11 @@
+Referencia: El Castillo - panoramio (3).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:El_Castillo_-_panoramio_(3).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/d/d6/El_Castillo_-_panoramio_%283%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Zack Knowles
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 13 October 2011 (captured)
+Subida: 2016-12-18T10:33:17Z
+sha256 enviado: ee132e4a423c9ee054c863bb36350e973398301ec526aedab26eae444a3b1614
+sha1 original: 23188753bd96fb08cf7128d3aff6ba52e04390b3
+Original: 4288x3216; enviado: 2048x1536 (derived_downscale)
+Atribución: Zack Knowles — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:El_Castillo_-_panoramio_(3).jpg

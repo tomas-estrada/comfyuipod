@@ -140,7 +140,9 @@ def test_start_gate_ignores_the_dead_phase1_phase2_bootstrap() -> None:
     assert "bootstrap" not in components, "el nombre colisiona con la clase del manifiesto"
     assert components["startup_download"] == 0
     assert report["start_gate_bytes"] == (
-        components["startup_download"] + components["staging_peak"] + components["download_margin"]
+        components["startup_download"]
+        + report["boot_staging_bytes"]
+        + components["download_margin"]
     )
 
 
@@ -156,7 +158,7 @@ def test_the_gate_identity_holds_for_every_profile() -> None:
         components = report["components"]
         # `--bootstrap` ejecuta el mismo plan para todos los perfiles.
         assert components["startup_download"] == 0, profile
-        gate = components["startup_download"] + components["staging_peak"]
+        gate = components["startup_download"] + report["boot_staging_bytes"]
         gate += components["download_margin"]
         assert report["start_gate_bytes"] == gate, profile
         assert report["start_gate_gb"] == -(-gate // GB), profile
@@ -187,9 +189,14 @@ def test_bootstrap_bytes_are_derived_from_the_core_manifest(tmp_path: Path) -> N
     )
     components = report["components"]
     assert components["startup_download"] == 3 * GiB
-    # El pico es el archivo más grande que `all` puede pedir, no el del perfil ajeno.
+    # El pico del volumen es el archivo más grande que `all` puede pedir, no el
+    # del perfil ajeno.
     assert components["staging_peak"] == 2 * 5 * GiB
-    assert report["start_gate_bytes"] == 3 * GiB + 10 * GiB + 10 * GiB
+    # La puerta cobra el pico de ARRANQUE (la entrada `bootstrap` más grande
+    # coexistiendo con su `.incomplete`), no el pico a demanda: ese ocurre
+    # después, cuando una capacidad lo pide.
+    assert report["boot_staging_bytes"] == 2 * 3 * GiB
+    assert report["start_gate_bytes"] == 3 * GiB + 2 * 3 * GiB + 10 * GiB
 
 
 def test_staging_peak_comes_from_the_core_manifest_profiles() -> None:
@@ -924,3 +931,57 @@ def test_profile_is_selectable_by_name_and_ram_option() -> None:
     assert resolve_profile("consumer").vram_gb == 32
     assert resolve_profile("no-existe").vram_gb == 96  # cae al principal
     assert with_ram(resolve_profile("blackwell"), 256).ram_gb == 256
+
+
+# --------------------------------------------------------------------------
+# W02 (plan Ultra) — regresión P0 #6: la puerta de arranque no arrastra el
+# staging de la Fase 3 (que corre en segundo plano tras el arranque).
+# --------------------------------------------------------------------------
+
+
+def _run_sizing(args: list[str]) -> dict:
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), *args, "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+        cwd=str(REPO_ROOT),
+    )
+    return json.loads(out.stdout)
+
+
+def test_w02_start_gate_excludes_phase3_task_staging() -> None:
+    """El start gate usa el staging de ARRANQUE, no el de la tarea de Fase 3.
+
+    La Fase 3 (y su pico de staging ~35 GB) se descarga en segundo plano
+    DESPUÉS de que ComfyUI está listo; ese pico no pertenece a lo que debe estar
+    libre para arrancar. El volumen total sí cuenta el mayor de los dos stagings.
+    """
+    report = _run_sizing(["--profile", "studio"])
+    boot_staging = report["boot_staging_bytes"]
+    task_staging = report["task_staging_bytes"]
+    components = report["components"]
+
+    # El start gate = bootstrap + staging de ARRANQUE + margen; no incluye el
+    # staging de la tarea de Fase 3.
+    start_gate = report["start_gate_bytes"]
+    expected = components["startup_download"] + boot_staging + 10 * (1024**3)
+    assert start_gate == expected, (
+        f"start_gate {start_gate} debe ser bootstrap+boot_staging+margen {expected}, "
+        f"no incluir task_staging {task_staging}"
+    )
+
+    # El volumen total sí reserva el mayor pico de staging (pueden no coincidir
+    # en el tiempo, así que basta el mayor).
+    assert components["staging_peak"] == max(boot_staging, task_staging)
+
+    # Coherencia preservada: el umbral S5 declarado sigue cubriendo el gate.
+    assert report["start_gate_shortfall_gb"] == 0.0
+
+
+def test_w02_profile_without_phase3_has_no_task_staging() -> None:
+    """Un perfil sin Fase 3 no tiene staging de tarea; su gate es el de arranque."""
+    report = _run_sizing(["--profile", "general"])
+    assert report["task_staging_bytes"] == 0
+    assert report["components"]["task_models"] == 0

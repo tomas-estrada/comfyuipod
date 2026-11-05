@@ -445,9 +445,9 @@ def _drop_stale_partials(directory: Path, dest_name: str) -> None:
 
 
 def _move(src: Path, dest: Path) -> None:
-    """Mueve `src` a `dest`, aunque estén en filesystems distintos.
+    """Mueve `src` a `dest` de forma atómica, aunque estén en volúmenes distintos.
 
-    `os.replace` falla con `EXDEV` si staging y destino están en volúmenes
+    `os.replace` falla con `EXDEV` si staging y destino están en filesystems
     diferentes, que es perfectamente posible (`custom_nodes/*` vive bajo
     `COMFY_APP_DIR`). En ese caso **no** se escribe directo a `dest`: una copia
     interrumpida dejaría un parcial que el «skip» daría por bueno (F7). Se copia
@@ -1486,19 +1486,30 @@ def _terminate_tree(proc: subprocess.Popen[str]) -> None:
     grupo de procesos, pero **solo si el cliente lo lidera** (lo garantiza el
     `start_new_session=True` de `_run_hf_download`): un `killpg` sobre un grupo
     ajeno mataría procesos que no son nuestros, incluido el nuestro.
+
+    Portabilidad: `os.getpgid`/`os.killpg` y `SIGKILL` solo existen en POSIX.
+    En Windows no hay grupos de proceso POSIX ni `SIGKILL`; se cae a
+    `terminate()`/`kill()` del propio `Popen`, que allí usa `TerminateProcess`.
+    El pod de producción es Linux, pero el cliente debe poder ejecutarse (y
+    probarse) en Windows/macOS sin reventar por un atributo ausente.
     """
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            pgid = os.getpgid(proc.pid)
-        except OSError:
-            pgid = None
-        if pgid is not None and pgid == proc.pid:
+    hard_sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+    getpgid = getattr(os, "getpgid", None)
+    killpg = getattr(os, "killpg", None)
+    for sig in (signal.SIGTERM, hard_sig):
+        pgid = None
+        if getpgid is not None and killpg is not None:
             try:
-                os.killpg(pgid, sig)
+                pgid = getpgid(proc.pid)
             except OSError:
-                pass
+                pgid = None
+            if pgid is not None and pgid == proc.pid:
+                try:
+                    killpg(pgid, sig)
+                except OSError:
+                    pass
         try:
-            proc.kill() if sig is signal.SIGKILL else proc.terminate()
+            proc.kill() if sig is hard_sig else proc.terminate()
         except OSError:
             pass
         try:

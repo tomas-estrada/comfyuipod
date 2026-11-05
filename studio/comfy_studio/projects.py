@@ -2376,23 +2376,55 @@ class ProjectStore:
             ).fetchall()
         return [self._row_to_measurement(r) for r in rows]
 
+    @staticmethod
+    def _recipe_env_key(row: dict[str, Any]) -> tuple:
+        """Clave de entorno de una medición: lo que la hace comparable con otra.
+
+        Recetas de resolución, frames, GPU o driver distintos NO son la misma
+        receta: agregarlas bajo un único `template_id` mezcla peras con
+        manzanas y produce un `vram_peak` engañoso. La política (W02/A02) exige
+        «clave completa de receta/entorno y consulta compatible».
+        """
+        params = row.get("params") or {}
+        return (
+            row.get("gpu_name"),
+            row.get("cuda"),
+            params.get("width"),
+            params.get("height"),
+            params.get("frames") or params.get("length"),
+        )
+
     def recipe_for_template(
         self,
         template_id: str,
         *,
         profile: HardwareProfile | None = None,
+        env_key: tuple | None = None,
     ) -> dict[str, Any] | None:
         """Receta medida de una plantilla: ajustes declarados + resultados medidos.
 
         Es la unidad que la política pide reutilizar en lugar de razonar desde
         cero en cada despliegue.
+
+        Dos reglas de honestidad (W02/A02, defectos P0 #4 y #5):
+
+        - Una medición **simulada** (`simulated=True`) NUNCA entra en la
+          selección ni en `vram_fit`: es un doble determinista para tests, no
+          una medida de hardware. Se reporta aparte como `simulated_samples`.
+        - Solo se agregan mediciones del **mismo entorno** (GPU/driver/
+          resolución/frames). Si `env_key` se da, filtra por él; si no, se usa
+          el entorno de la medición real más reciente, para no mezclar GPUs ni
+          resoluciones distintas bajo una sola etiqueta.
         """
         rows = self.list_render_measurements(template_id=template_id, limit=50)
         if not rows:
             return None
+        simulated = [r for r in rows if r.get("simulated")]
+        real = [r for r in rows if not r.get("simulated")]
+        # P0 #4: los simulados jamas participan en seleccion/validacion.
         ok = [
             r
-            for r in rows
+            for r in real
             if r["status"] == MEASUREMENT_STATUS_OK and r["duration_s"] is not None
         ]
         if not ok:
@@ -2403,23 +2435,38 @@ class ProjectStore:
             # `measured: False` sin motivo y tenía que ir a buscarlo a la lista
             # paralela `measurements[]`. Se publica el error de la fila no-ok
             # MÁS RECIENTE (`rows` viene ordenado de más nueva a más vieja), que
-            # es el mismo `_DRAIN_LOST_REASON` que guarda la fila.
+            # es el mismo `_DRAIN_LOST_REASON` que guarda la fila. Un simulado
+            # nunca es la razón de una receta real, así que se busca primero
+            # entre las reales y solo en su defecto entre todas.
             lost = next(
+                (r for r in real if r["status"] != MEASUREMENT_STATUS_OK),
+                None,
+            ) or next(
                 (r for r in rows if r["status"] != MEASUREMENT_STATUS_OK),
                 None,
             )
             return {
                 "template_id": template_id,
-                "samples": len(rows),
+                "samples": len(real),
+                "simulated_samples": len(simulated),
                 "measured": False,
                 "reason": lost.get("error") if lost is not None else None,
             }
+        # P0 #5: agrupar solo el mismo entorno. Sin env_key explicito, se toma
+        # el de la medicion real mas reciente como entorno de referencia.
+        target_key = env_key if env_key is not None else self._recipe_env_key(ok[0])
+        compatible = [r for r in ok if self._recipe_env_key(r) == target_key]
+        incompatible_envs = len({self._recipe_env_key(r) for r in ok}) - 1
+        ok = compatible
         vram = [r["vram_peak_mb"] for r in ok if r["vram_peak_mb"] is not None]
         durations = [r["duration_s"] for r in ok if r["duration_s"] is not None]
         latest = ok[0]
         return {
             "template_id": template_id,
             "samples": len(ok),
+            "simulated_samples": len(simulated),
+            "env_key": list(target_key),
+            "incompatible_env_samples_excluded": incompatible_envs,
             "measured": True,
             "last": latest,
             "vram_peak_mb_max": max(vram) if vram else None,

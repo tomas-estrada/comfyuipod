@@ -1,0 +1,11 @@
+Referencia: Biblioteca Pública Piloto - Entrada principal - Medellin 1.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Biblioteca_Pública_Piloto_-_Entrada_principal_-_Medellin_1.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/7/77/Biblioteca_P%C3%BAblica_Piloto_-_Entrada_principal_-_Medellin_1.jpg/3840px-Biblioteca_P%C3%BAblica_Piloto_-_Entrada_principal_-_Medellin_1.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Alejandro Rojas (SajoR)
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2022-03-11 17:14:42 (captured)
+Subida: 2023-01-04T20:17:13Z
+sha256 enviado: 7ce2192ef4fd3692c3a37b83e19425b18290346397049f8caca77fc2223b743c
+sha1 original: 7cfa999d2a25ccefdd8a2a88d4c91d17b8b8863c
+Original: 3840x2159; enviado: 2048x1151 (derived_downscale)
+Atribución: Alejandro Rojas (SajoR) — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Biblioteca_Pública_Piloto_-_Entrada_principal_-_Medellin_1.jpg

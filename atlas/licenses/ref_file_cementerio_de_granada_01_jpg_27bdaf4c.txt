@@ -1,0 +1,11 @@
+Referencia: Cementerio de Granada - 01.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Cementerio_de_Granada_-_01.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/5/5e/Cementerio_de_Granada_-_01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2021-03-06 16:24:45 (captured)
+Subida: 2021-04-13T08:40:43Z
+sha256 enviado: 5f0055512c1b00231c03c4330ad80f1ed02ec50bc6c88fe403d0a295c7c07e35
+sha1 original: 27bdaf4c646e66fbce5ec1e8ebb9bf0a1cd59bcc
+Original: 3968x2976; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Cementerio_de_Granada_-_01.jpg

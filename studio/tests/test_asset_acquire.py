@@ -6180,6 +6180,11 @@ def test_a_models_entry_that_is_not_a_map_does_not_kill_the_storage_script(
         json.dumps({"models": [raro]}),
         encoding="utf-8",
     )
+    # El core se aísla a propósito: sin `--core-manifest`, el script resuelve el
+    # `config/models-core.json` del repo y `staging_peak` recoge su pico a
+    # demanda real, que es correcto pero esconde lo que esta prueba mira.
+    empty_core = tmp_path / "core-vacio.json"
+    empty_core.write_text(json.dumps({"models": []}), encoding="utf-8")
 
     done = subprocess.run(
         [
@@ -6187,6 +6192,8 @@ def test_a_models_entry_that_is_not_a_map_does_not_kill_the_storage_script(
             str(REPO_ROOT / "scripts" / "storage_requirement.py"),
             "--manifest",
             str(manifest),
+            "--core-manifest",
+            str(empty_core),
             "--profile",
             "studio",
             "--json",

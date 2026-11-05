@@ -1,0 +1,11 @@
+Referencia: Biblioteca de Bello - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Biblioteca_de_Bello_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/7/77/Biblioteca_de_Bello_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Shinji SajoR
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 13 November 2008 (captured)
+Subida: 2016-10-13T07:20:38Z
+sha256 enviado: 1ac18f5f0b5fc850b1c8fd8972bb0d85454d43398b28396920dac3bf5845b1a2
+sha1 original: b25640daf795c2f4a040668abbe96b84166c3cf5
+Original: 2592x1944; enviado: 2048x1536 (derived_downscale)
+Atribución: Shinji SajoR — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Biblioteca_de_Bello_-_panoramio.jpg

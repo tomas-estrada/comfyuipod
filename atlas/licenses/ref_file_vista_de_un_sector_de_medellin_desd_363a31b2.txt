@@ -1,0 +1,11 @@
+Referencia: Vista de un sector de Medellín, desde San Javier, 2022 - 01.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Vista_de_un_sector_de_Medellín,_desde_San_Javier,_2022_-_01.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8a/Vista_de_un_sector_de_Medell%C3%ADn%2C_desde_San_Javier%2C_2022_-_01.jpg/3840px-Vista_de_un_sector_de_Medell%C3%ADn%2C_desde_San_Javier%2C_2022_-_01.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2022-07-20 13:59:23 (captured)
+Subida: 2022-12-04T23:48:46Z
+sha256 enviado: 98b4f125ebb667ee12f1bac262d93328bebdeef2017a77fe191587b0710d8987
+sha1 original: 363a31b25ed36a9838f51e88403446ca43cbab7c
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Vista_de_un_sector_de_Medellín,_desde_San_Javier,_2022_-_01.jpg

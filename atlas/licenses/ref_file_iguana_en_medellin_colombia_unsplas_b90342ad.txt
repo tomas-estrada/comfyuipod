@@ -1,0 +1,11 @@
+Referencia: Iguana en Medellin, Colombia (Unsplash).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Iguana_en_Medellin,_Colombia_(Unsplash).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/3/3e/Iguana_en_Medellin%2C_Colombia_%28Unsplash%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Jairo Alzate jairoalzate
+Licencia: CC0 (http://creativecommons.org/publicdomain/zero/1.0/deed.en)
+Captura: 2015-11-08 (captured)
+Subida: 2017-08-13T01:02:36Z
+sha256 enviado: 60da6b42f9811311f370a202716494fd8a9d7d2e430e4b94b3dd0d216f1c51ef
+sha1 original: b90342ad00170d18fa46aa64d30c9bfe333b6e4d
+Original: 3545x2592; enviado: 2048x1497 (derived_downscale)
+Atribución: Jairo Alzate jairoalzate — CC0 — https://commons.wikimedia.org/wiki/File:Iguana_en_Medellin,_Colombia_(Unsplash).jpg

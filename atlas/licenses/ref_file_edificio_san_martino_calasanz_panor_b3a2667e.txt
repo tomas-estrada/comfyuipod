@@ -1,0 +1,11 @@
+Referencia: Edificio San Martino Calasanz - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Edificio_San_Martino_Calasanz_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/8/86/Edificio_San_Martino_Calasanz_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: dsov777
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 26 September 2010 (captured)
+Subida: 2016-11-11T12:03:15Z
+sha256 enviado: a16ed6c8fcd88bc2e47115d415810b2aac3003c6c7b467d98fedb8bdec700111
+sha1 original: b3a2667ef070b4b025fbb184ee3a1c976c7275c6
+Original: 3072x2304; enviado: 2048x1536 (derived_downscale)
+Atribución: dsov777 — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Edificio_San_Martino_Calasanz_-_panoramio.jpg

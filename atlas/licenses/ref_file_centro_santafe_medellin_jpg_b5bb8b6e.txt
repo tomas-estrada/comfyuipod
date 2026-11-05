@@ -1,0 +1,11 @@
+Referencia: Centro Santafé Medellín.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Centro_Santafé_Medellín.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9e/Centro_Santaf%C3%A9_Medell%C3%ADn.jpg/3840px-Centro_Santaf%C3%A9_Medell%C3%ADn.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Xemenendura
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 20 July 2025 (according to Exif data) (captured)
+Subida: 2025-07-21T20:11:14Z
+sha256 enviado: 3ec20f93a487a8c5d76945489c98ab92d6bf4af3d14230669dc68aa607bb9ad0
+sha1 original: b5bb8b6ebd2497a3b3c0911cc3ddf8a719df2588
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: Xemenendura — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Centro_Santafé_Medellín.jpg

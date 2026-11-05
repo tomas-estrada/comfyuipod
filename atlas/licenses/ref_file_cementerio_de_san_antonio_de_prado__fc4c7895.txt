@@ -1,0 +1,11 @@
+Referencia: Cementerio de San Antonio de Prado, Medellín - entrada.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Cementerio_de_San_Antonio_de_Prado,_Medellín_-_entrada.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3c/Cementerio_de_San_Antonio_de_Prado%2C_Medell%C3%ADn_-_entrada.jpg/3840px-Cementerio_de_San_Antonio_de_Prado%2C_Medell%C3%ADn_-_entrada.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2022-10-29 14:54:41 (captured)
+Subida: 2022-12-05T00:04:03Z
+sha256 enviado: eb4f62d41aaab516a60521e1e04c81cd6ef752464f18f0497475fc791fbd92e0
+sha1 original: fc4c7895ba5ff1d1ea961c23859eebacd15280da
+Original: 3840x2880; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Cementerio_de_San_Antonio_de_Prado,_Medellín_-_entrada.jpg

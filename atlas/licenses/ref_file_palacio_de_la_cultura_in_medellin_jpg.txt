@@ -1,0 +1,11 @@
+Referencia: Palacio de la Cultura in Medellín.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Palacio_de_la_Cultura_in_Medellín.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/1/18/Palacio_de_la_Cultura_in_Medell%C3%ADn.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Bernard Gagnon
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2020-01-24 (captured)
+Subida: 2021-01-30T00:36:22Z
+sha256 enviado: b87cd9eb7675837b12dd5097532f274c25b362259c1ec2e66fa82ca6610ef80e
+sha1 original: 10b424fee4081e0711363afa477370632571be20
+Original: 2644x3701; enviado: 1463x2048 (derived_downscale)
+Atribución: Bernard Gagnon — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Palacio_de_la_Cultura_in_Medellín.jpg

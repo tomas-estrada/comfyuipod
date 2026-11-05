@@ -1,0 +1,11 @@
+Referencia: Frisby storefront.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Frisby_storefront.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/6/61/Frisby_storefront.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Ramosc55
+Licencia: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0)
+Captura: 2025-11-07 11:02:51 (captured)
+Subida: 2026-01-05T15:13:08Z
+sha256 enviado: 78e1ce1bab0ee36fc8b9f8997f6295ddc57864f9831d84017c6f8f87773c7d6b
+sha1 original: 1fe9247b1dbb2583d0f2625404cf9c741fd9893e
+Original: 4032x3024; enviado: 2048x1536 (derived_downscale)
+Atribución: Ramosc55 — CC BY 4.0 — https://commons.wikimedia.org/wiki/File:Frisby_storefront.jpg

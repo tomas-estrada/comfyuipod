@@ -1,0 +1,11 @@
+Referencia: Bello, Antioquia, Colombia.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Bello,_Antioquia,_Colombia.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/3/3e/Bello%2C_Antioquia%2C_Colombia.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Reg Natarajan
+Licencia: CC BY 2.0 (https://creativecommons.org/licenses/by/2.0)
+Captura: 2019-08-18 13:36:17 (captured)
+Subida: 2026-03-10T06:53:47Z
+sha256 enviado: b0bb777d2e961af50bc9f4887532a0a9919c1a79c76be97d4b98de8cd52051f4
+sha1 original: 22a32dfd815811a543576c488a299674891d1eca
+Original: 4096x2978; enviado: 2048x1489 (derived_downscale)
+Atribución: Reg Natarajan — CC BY 2.0 — https://commons.wikimedia.org/wiki/File:Bello,_Antioquia,_Colombia.jpg

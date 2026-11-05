@@ -1,0 +1,11 @@
+Referencia: Biblioteca España - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Biblioteca_España_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/d/d2/Biblioteca_Espa%C3%B1a_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Ricardo Astrauskas
+Licencia: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0)
+Captura: Taken on 17 March 2010 (captured)
+Subida: 2017-03-14T08:26:49Z
+sha256 enviado: 77166a0e9b48eb0e9bde3278d949e7181c5566520de68c3a1520c647fdeed2c2
+sha1 original: 13894fa6dbd26d073c8c5c42152e0522e95ac224
+Original: 3264x2040; enviado: 2048x1280 (derived_downscale)
+Atribución: Ricardo Astrauskas — CC BY-SA 3.0 — https://commons.wikimedia.org/wiki/File:Biblioteca_España_-_panoramio.jpg

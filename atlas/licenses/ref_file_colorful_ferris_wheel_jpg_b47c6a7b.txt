@@ -1,0 +1,11 @@
+Referencia: Colorful Ferris wheel.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Colorful_Ferris_wheel.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/a/a8/Colorful_Ferris_wheel.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Luz V. from Medellin, Colombia
+Licencia: CC BY 2.0 (https://creativecommons.org/licenses/by/2.0)
+Captura: 2007-05-05 16:56 (captured)
+Subida: 2008-03-11T19:52:51Z
+sha256 enviado: c57e7ee930a765e0b7148fc6aded5c435df22ff969473567045fcd45944c4f5c
+sha1 original: b47c6a7b8a9a9c9ba6941222f308c0ac80894ac1
+Original: 2272x1280; enviado: 2048x1154 (derived_downscale)
+Atribución: Luz V. from Medellin, Colombia — CC BY 2.0 — https://commons.wikimedia.org/wiki/File:Colorful_Ferris_wheel.jpg

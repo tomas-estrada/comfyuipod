@@ -1,0 +1,11 @@
+Referencia: Clínica Antioquia, Itagüí, 2023.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Clínica_Antioquia,_Itagüí,_2023.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/c/c6/Cl%C3%ADnica_Antioquia%2C_Itag%C3%BC%C3%AD%2C_2023.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: XalD
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-03-04 13:41:12 (captured)
+Subida: 2023-03-09T00:23:32Z
+sha256 enviado: 4c53b13ed7f067d9684394cefedeb640ccf0f3362a3ffb05a2fae92873cac0b0
+sha1 original: f439c2c13ad1deaed4415fc20686362934a82f80
+Original: 4608x3456; enviado: 2048x1536 (derived_downscale)
+Atribución: XalD — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Clínica_Antioquia,_Itagüí,_2023.jpg

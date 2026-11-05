@@ -1,0 +1,858 @@
+{
+  "schema_version": "1.0",
+  "kind": "implementation_specification",
+  "warning": "Not an implementation report. Every C is mandatory; an alternative engine being blocked does not remove it.",
+  "capabilities": [
+    {
+      "id": "C01",
+      "name": "Archivo audiovisual semántico",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "qwen3-vl",
+        "whisperx",
+        "ffmpeg"
+      ],
+      "work_items": [
+        "W05"
+      ],
+      "programs": [
+        "P01",
+        "P14"
+      ],
+      "behavior": "Indexar archivos y segmentos con hashes, OCR, ASR, eventos y relaciones; recuperar evidencia por timestamp.",
+      "acceptance": "100 assets mixtos, duplicados, orientación móvil y un archivo corrupto; búsqueda devuelve segundos verificables, sin bloquear el proyecto entero.",
+      "sources": [
+        "S20"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C02",
+      "name": "Referencia a receta editable",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "reference-local",
+        "hyperframes"
+      ],
+      "work_items": [
+        "W06",
+        "W20"
+      ],
+      "programs": [
+        "P01",
+        "P07"
+      ],
+      "behavior": "Descomponer cortes, ritmo, cámara, texto y sonido y recompilar una receta para assets propios.",
+      "acceptance": "Referencia autorizada de 15 s: shot map medible, composición editable y rebuild local sin red ni cloud.",
+      "sources": [
+        "S26"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C03",
+      "name": "Dirección desde intención incompleta",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "mission-compiler",
+        "qwen3-vl"
+      ],
+      "work_items": [
+        "W22"
+      ],
+      "programs": [
+        "P01"
+      ],
+      "behavior": "Contrastar hipótesis de producto/evento/trend con citas del audio y los assets.",
+      "acceptance": "Brief ambiguo con afirmación comercial falsa: no inventa fecha/precio; selecciona un plan factible con incertidumbre explícita.",
+      "sources": [
+        "S20",
+        "S43"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C04",
+      "name": "Memoria de lenguaje audiovisual",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "production-memory"
+      ],
+      "work_items": [
+        "W04",
+        "W22"
+      ],
+      "programs": [
+        "P01",
+        "P07"
+      ],
+      "behavior": "Recuperar recetas, decisiones y preferencias compatibles sin copiar hechos de otro proyecto.",
+      "acceptance": "Dos proyectos con públicos distintos: memoria privada por proyecto y recuperación trazable, con eliminación y corrección.",
+      "sources": [
+        "S43"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C05",
+      "name": "Cámara cinematográfica dirigida",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "blender",
+        "wan-move"
+      ],
+      "work_items": [
+        "W11"
+      ],
+      "programs": [
+        "P06"
+      ],
+      "behavior": "Trayectoria/focal/encuadre explícitos, proxy y traducción a guía neural.",
+      "acceptance": "Trayectoria con obstáculos y producto: medir reproyección/visibilidad; no confundir prompt de cámara con trayectoria ejecutada.",
+      "sources": [
+        "S16",
+        "S02"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C06",
+      "name": "Mundos con memoria espacial",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "alayaworld",
+        "production-memory"
+      ],
+      "work_items": [
+        "W17"
+      ],
+      "programs": [
+        "P07",
+        "P08"
+      ],
+      "behavior": "Navegar y volver a zonas generadas manteniendo anclas, poses e historial separado de geografía observada.",
+      "acceptance": "Secuencia A→B→A: comparar retorno con anclas, registrar deriva y cobertura; mundo ficticio nunca contamina el atlas real.",
+      "sources": [
+        "S03",
+        "S04"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C07",
+      "name": "Lugares reales del Aburrá",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "atlas-offline",
+        "map-anything",
+        "depth-anything3"
+      ],
+      "work_items": [
+        "W09",
+        "W11"
+      ],
+      "programs": [
+        "P08"
+      ],
+      "behavior": "Resolver municipio/lugar/vista y usar evidencia local, geometría y calibración.",
+      "acceptance": "Offline, lugar nombrado contradice selección previa; rumbo inverso, nombre repetido y vista inexistente se rechazan o replanifican.",
+      "sources": [
+        "S05",
+        "S06",
+        "N11"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C08",
+      "name": "Animatic y ensayo virtual",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "blender",
+        "mission-compiler"
+      ],
+      "work_items": [
+        "W11",
+        "W22"
+      ],
+      "programs": [
+        "P01",
+        "P06"
+      ],
+      "behavior": "Ensayar poses, lentes, duración, contactos y composición antes del stage costoso.",
+      "acceptance": "Produce un animatic visible y sus cámaras; un plano imposible cambia de cámara o plan antes de inferencia.",
+      "sources": [
+        "S19"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C09",
+      "name": "Producto 3D reutilizable",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "trellis2"
+      ],
+      "work_items": [
+        "W10"
+      ],
+      "programs": [
+        "P05",
+        "P11"
+      ],
+      "behavior": "Inferir malla/materiales, identificar partes observadas/inferidas y reutilizar el mismo activo en planos.",
+      "acceptance": "Reutilizar un producto entre tres cámaras; render/cámara exportables y zonas ocultas etiquetadas, sin geometría distinta en cada plano.",
+      "sources": [
+        "S08",
+        "S07",
+        "S09"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C10",
+      "name": "Despiece y ensamblaje",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "partcrafter",
+        "blender"
+      ],
+      "work_items": [
+        "W10",
+        "W12"
+      ],
+      "programs": [
+        "P11"
+      ],
+      "behavior": "Representar partes, pivotes y jerarquía; generar secuencia de ensamblaje.",
+      "acceptance": "Producto de piezas conocidas: abrir/cerrar/despiece conservan IDs y transforms; no se presenta un despiece inferido como CAD verificado.",
+      "sources": [
+        "S10"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C11",
+      "name": "Rigging y deformación",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "skintokens",
+        "blender"
+      ],
+      "work_items": [
+        "W13"
+      ],
+      "programs": [
+        "P10",
+        "P11"
+      ],
+      "behavior": "Malla a esqueleto/pesos y retargeting documentado.",
+      "acceptance": "Exportar/reimportar rig, ejecutar poses extremas, medir penetración y deformación; esqueleto y bind pose persistentes.",
+      "sources": [
+        "S11"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C12",
+      "name": "Movimiento recuperado",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "gvhmr",
+        "sam3d-body",
+        "tapip3d"
+      ],
+      "work_items": [
+        "W13"
+      ],
+      "programs": [
+        "P10"
+      ],
+      "behavior": "Extraer cuerpos/acción/trayectorias de referencias autorizadas y convertir coordenadas.",
+      "acceptance": "Secuencia con cámara móvil: separar desplazamiento de cámara, escala y sujeto; retarget con apoyo de pies medido.",
+      "sources": [
+        "S12",
+        "S13",
+        "N12"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C13",
+      "name": "Coreografía generada",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "hy-motion",
+        "motionbricks"
+      ],
+      "work_items": [
+        "W13"
+      ],
+      "programs": [
+        "P10"
+      ],
+      "behavior": "Generar y componer acciones sincronizadas con beats y contactos.",
+      "acceptance": "Tres acciones encadenadas a música con tiempos de contacto y transición; no declarar éxito por recibir un archivo de poses.",
+      "sources": [
+        "S14",
+        "N18"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C14",
+      "name": "Transferencia de actuación",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "wan-animate"
+      ],
+      "work_items": [
+        "W13"
+      ],
+      "programs": [
+        "P10",
+        "P07"
+      ],
+      "behavior": "Aplicar actuación de referencia preservando identidad y encuadre compatibles.",
+      "acceptance": "Referencia de baile autorizada: comparación temporal, máscara, identidad y pies; no aplicar un esqueleto humano a un coche.",
+      "sources": [
+        "S15"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C15",
+      "name": "Trayectorias de objetos",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "wan-move",
+        "blender",
+        "sea-raft"
+      ],
+      "work_items": [
+        "W12",
+        "W13"
+      ],
+      "programs": [
+        "P06",
+        "P09"
+      ],
+      "behavior": "Controlar puntos, máscaras y profundidad de objetos según una trayectoria explícita.",
+      "acceptance": "Ruta simulada y transferencia neural: error de puntos y oclusión, límites de tolerancia definidos en el benchmark.",
+      "sources": [
+        "S16",
+        "N30"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C16",
+      "name": "Actores hablantes",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "infinitetalk",
+        "qwen3-tts"
+      ],
+      "work_items": [
+        "W14",
+        "W19"
+      ],
+      "programs": [
+        "P12"
+      ],
+      "behavior": "Dialogar con pistas separadas, turnos, voz e identidad persistentes.",
+      "acceptance": "Dos hablantes en español y plano de escucha; medir drift labial, identidad y errores de turnos.",
+      "sources": [
+        "S17",
+        "S36"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C17",
+      "name": "Video a escena 4D",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "ovow"
+      ],
+      "work_items": [
+        "W17"
+      ],
+      "programs": [
+        "P05",
+        "P07"
+      ],
+      "behavior": "Recuperar escena temporal editable con objetos, movimiento y cámaras; declarar inferencias.",
+      "acceptance": "Video sintético conocido con oclusión: reencuadre/retiming desde representación persistente y comparación con verdad, no solo replay del MP4.",
+      "sources": [
+        "S18"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C18",
+      "name": "Acciones y colisiones",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "blender",
+        "chrono"
+      ],
+      "work_items": [
+        "W12"
+      ],
+      "programs": [
+        "P09",
+        "P10",
+        "P11"
+      ],
+      "behavior": "Simular interacciones antes de generarlas o renderizarlas.",
+      "acceptance": "Caída, frenado y contacto: comprobar suelo, colisiones, unidades y causalidad, con log de estado físico.",
+      "sources": [
+        "S19",
+        "N29"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C19",
+      "name": "Efectos de materiales",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "blender"
+      ],
+      "work_items": [
+        "W12",
+        "W20"
+      ],
+      "programs": [
+        "P03",
+        "P09"
+      ],
+      "behavior": "Generar guías/pases de lluvia, partículas, tela u otro efecto con causas y seed.",
+      "acceptance": "Dos efectos completos con caché y exportación de pases; cambiar solo fuerza/tiempo sin rehacer el proyecto.",
+      "sources": [
+        "S19",
+        "S30"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C20",
+      "name": "Optimización de puesta en escena",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "mitsuba",
+        "scene-optimizer"
+      ],
+      "work_items": [
+        "W11",
+        "W22"
+      ],
+      "programs": [
+        "P01",
+        "P05",
+        "P06"
+      ],
+      "behavior": "Optimizar parámetros numéricos de cámara/luz/posiciones bajo restricciones.",
+      "acceptance": "Comparar búsqueda con baseline fijo sobre escenas heldout; objetivo y restricciones se registran antes del experimento.",
+      "sources": [
+        "N17",
+        "S41"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C21",
+      "name": "Reiluminación temporal",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "v-rgbx",
+        "diffusion-renderer"
+      ],
+      "work_items": [
+        "W16"
+      ],
+      "programs": [
+        "P04"
+      ],
+      "behavior": "Modificar luz/material manteniendo estructura, identidad y calibración.",
+      "acceptance": "Clip con logos y sombras: comparación temporal, partes no editadas y relighting contra una escena sintética reluminada.",
+      "sources": [
+        "S21",
+        "S22",
+        "N05",
+        "N06"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C22",
+      "name": "Restilizar una actuación",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "id-v2v"
+      ],
+      "work_items": [
+        "W16"
+      ],
+      "programs": [
+        "P04",
+        "P07"
+      ],
+      "behavior": "Aplicar keyframes de estilo con trayectoria y actuación como referencia.",
+      "acceptance": "Tres estilos sobre una actuación: flujo/pose temporal y regiones de identidad protegidas, no solo imágenes aisladas.",
+      "sources": [
+        "S23"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C23",
+      "name": "Generación audiovisual multirreferencia",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "ltx25",
+        "wan22"
+      ],
+      "work_items": [
+        "W08"
+      ],
+      "programs": [
+        "P01",
+        "P07"
+      ],
+      "behavior": "Seleccionar referencias según límites reales del modelo y generar video/audio local.",
+      "acceptance": "Proyecto con 100 assets compila subconjuntos por shot; no pasar 100 entradas a un modelo de capacidad menor ni ignorarlas en silencio.",
+      "sources": [
+        "S24",
+        "S25",
+        "S15"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C24",
+      "name": "Reparación localizada",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "vace",
+        "ltx25",
+        "ffmpeg"
+      ],
+      "work_items": [
+        "W15",
+        "W20"
+      ],
+      "programs": [
+        "P02",
+        "P03"
+      ],
+      "behavior": "Traducir QA a intervalos/máscaras y recomponer desde fuentes originales.",
+      "acceptance": "Cambiar 2 s de un clip de 15 s; hashes de frames/pases fuera del área editada se conservan antes de encode final.",
+      "sources": [
+        "S31",
+        "S24b"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C25",
+      "name": "Diseño de sonido por escena",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "controlfoley",
+        "mmaudio",
+        "sam-audio"
+      ],
+      "work_items": [
+        "W18"
+      ],
+      "programs": [
+        "P13"
+      ],
+      "behavior": "Crear/aislar eventos, stems y ambientes temporales con procedencia.",
+      "acceptance": "Video con pasos/frenado/ambiente: evento a tiempo y stems editables; medir onset, loudness y relación con acciones.",
+      "sources": [
+        "S32",
+        "S33",
+        "S34",
+        "N25"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C26",
+      "name": "Música original dirigida",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "ace-step"
+      ],
+      "work_items": [
+        "W19"
+      ],
+      "programs": [
+        "P13"
+      ],
+      "behavior": "Estructurar música según montaje, BPM, tensión, silencios y cierre.",
+      "acceptance": "Reel de 20 s con golpe y loop: beat map y variantes; stems solo si la ruta elegida realmente los produce.",
+      "sources": [
+        "S35"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C27",
+      "name": "Voz y pronunciación en español",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "qwen3-tts",
+        "whisperx"
+      ],
+      "work_items": [
+        "W19"
+      ],
+      "programs": [
+        "P12",
+        "P13"
+      ],
+      "behavior": "Voz dirigida con léxico colombiano, pausas y nombres propios.",
+      "acceptance": "Set de Sabaneta/Itagüí/Envigado, fechas y cifras: transcripción/inspección contra texto; no atribuir acento paisa por soporte de español.",
+      "sources": [
+        "S36"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C28",
+      "name": "Keyframes y RGBA",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "qwen-image21",
+        "qwen-image-layered"
+      ],
+      "work_items": [
+        "W08",
+        "W15"
+      ],
+      "programs": [
+        "P03",
+        "P07"
+      ],
+      "behavior": "Crear/editar fotogramas de dirección y descomponer elementos en capas.",
+      "acceptance": "Proyecto RGBA multicapa reconstruye composición y preserva alpha/color; límites de referencias y términos explícitos.",
+      "sources": [
+        "S44",
+        "S47",
+        "N10"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C29",
+      "name": "Matting de video",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "videomama"
+      ],
+      "work_items": [
+        "W15"
+      ],
+      "programs": [
+        "P03"
+      ],
+      "behavior": "Separar sujetos con alpha temporal y componerlos sobre fondos controlados.",
+      "acceptance": "Pelo, motion blur y oclusiones en fixture autorizado; metricar bordes/temporalidad y probar alpha premultiplicado.",
+      "sources": [
+        "S45",
+        "S46"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C30",
+      "name": "Restauración y acabado temporal",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "flashvsr-plus",
+        "seedvr2"
+      ],
+      "work_items": [
+        "W08",
+        "W20"
+      ],
+      "programs": [
+        "P04"
+      ],
+      "behavior": "Upscale/restauración temporal con protección de texto, producto, arquitectura y rostros.",
+      "acceptance": "Clip HD con patrón/texto conocido: 4K real decodificable, consistencia temporal y comparación de fidelidad, no score estético único.",
+      "sources": [
+        "S37",
+        "S38",
+        "S39"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C31",
+      "name": "Montaje y efectos programables",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "hyperframes",
+        "remotion",
+        "blender",
+        "ffmpeg"
+      ],
+      "work_items": [
+        "W20"
+      ],
+      "programs": [
+        "P01",
+        "P03"
+      ],
+      "behavior": "Generar presets/composiciones editables, captions y transiciones locales.",
+      "acceptance": "Título/caption/transición se editan por parámetro y renderizan offline; no CDN ni render cloud obligatorio.",
+      "sources": [
+        "S26",
+        "S40"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C32",
+      "name": "Entregables reproducibles",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "ffmpeg",
+        "opentimelineio",
+        "opencolorio"
+      ],
+      "work_items": [
+        "W20"
+      ],
+      "programs": [
+        "P01"
+      ],
+      "behavior": "Máster, versiones, subtítulos, stems, créditos y proyecto con manifiesto de reproducción.",
+      "acceptance": "16:9 y 9:16 en 4K, fps/color/audio correctos y safe areas por formato; reabrir proyecto y reproducir preview.",
+      "sources": [
+        "S28",
+        "S29"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C33",
+      "name": "Investigador Pareto de recetas",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "optuna",
+        "vbench2",
+        "videoalign"
+      ],
+      "work_items": [
+        "W23",
+        "W24"
+      ],
+      "programs": [
+        "P14"
+      ],
+      "behavior": "Elegir recetas por coste/tiempo/calidad con evaluaciones holdout y fallos incluidos.",
+      "acceptance": "Comparar baseline con variación en seeds/escenas separadas; evitar elegir receta por métricas simuladas o de otra GPU.",
+      "sources": [
+        "S41",
+        "S42",
+        "N28"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    },
+    {
+      "id": "C34",
+      "name": "Aprendizaje de adaptadores",
+      "mandatory": true,
+      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
+      "engines": [
+        "research-lab"
+      ],
+      "work_items": [
+        "W23"
+      ],
+      "programs": [
+        "P14"
+      ],
+      "behavior": "Entrenar/promover LoRA o adaptadores solo para hipótesis y datos permitidos, con rollback.",
+      "acceptance": "Preparar dataset split, licencia, código y protocolo; entrenamiento pendiente GPU; ninguna actualización automática desde datos del test ni pesos restringidos.",
+      "sources": [
+        "S35",
+        "S43"
+      ],
+      "status": "specified_not_implemented_by_this_package",
+      "gpu_evidence": "pending_separate_authorization"
+    }
+  ]
+}

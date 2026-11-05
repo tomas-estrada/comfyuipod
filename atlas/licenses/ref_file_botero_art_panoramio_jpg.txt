@@ -1,0 +1,11 @@
+Referencia: Botero Art - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Botero_Art_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/2/23/Botero_Art_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Lucas Migliorelli
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: Taken on 4 February 2011 (captured)
+Subida: 2016-11-10T05:37:58Z
+sha256 enviado: cd60361ab981cc8166bac8e03db7f089631a3188132da90b1f7e5005f595efe0
+sha1 original: 705c6c30878452f5b394206884ba56ebdb6d6e20
+Original: 4000x3000; enviado: 2048x1536 (derived_downscale)
+Atribución: Lucas Migliorelli — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:Botero_Art_-_panoramio.jpg

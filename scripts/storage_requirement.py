@@ -389,6 +389,22 @@ def bootstrap_download_bytes(core_manifest: dict[str, Any]) -> int:
     )
 
 
+def _largest_bootstrap_bytes(core_manifest: dict[str, Any]) -> int:
+    """Fichero `bootstrap` más grande: el pico de staging del arranque.
+
+    Durante una descarga coexisten el `.incomplete` y la copia final, así que el
+    arranque necesita el doble del mayor fichero que baja. Sale de las mismas
+    entradas que `bootstrap_download_bytes` para que la suma y el pico no puedan
+    discrepar; con bootstrap vacío es 0, que es la situación de hoy.
+    """
+    sizes = [
+        _entry_bytes(entry)
+        for entry in _manifest_models(core_manifest)
+        if _entry_field(entry, "class") == "bootstrap"
+    ]
+    return max(sizes) if sizes else 0
+
+
 def _is_on_demand(entry: object) -> bool:
     """True si la clase de la entrada es adquisible a demanda (R99).
 
@@ -472,10 +488,19 @@ def requirement_bytes(
     startup = bootstrap_download_bytes(core)
     uses_phase3 = profile in PHASE3_PROFILES
     models = (base_bytes + sum(opt_bytes.get(flag, 0) for flag in requested)) if uses_phase3 else 0
-    if uses_phase3:
-        staging = _largest_default_bytes(manifest) * staging_factor
-    else:
-        staging = on_demand_largest_bytes(core, profile=profile) * staging_factor
+    # Pico de staging del ARRANQUE: el fichero más grande que `--bootstrap`
+    # descarga de forma síncrona antes de dar ComfyUI por listo. Sale de las
+    # entradas `bootstrap` del propio manifiesto core, no de constantes por
+    # fase: la secuencia de arranque ya no baja Fase 1/2 (política, punto 4).
+    boot_staging = _largest_bootstrap_bytes(core) * staging_factor
+
+    # Pico de staging de la TAREA (Fase 3), que corre en segundo plano tras el
+    # arranque: el fichero más grande del manifiesto de perfil × factor.
+    task_staging = _largest_default_bytes(manifest) * staging_factor if uses_phase3 else 0
+
+    # Pico de staging de la adquisición A DEMANDA (perfiles sin Fase 3): el
+    # fichero más grande que una capacidad puede pedir del catálogo core.
+    on_demand_staging = on_demand_largest_bytes(core, profile=profile) * staging_factor
 
     components = {
         "image": image_bytes if image_on_volume else 0,
@@ -484,12 +509,19 @@ def requirement_bytes(
         # aquella significa «imprescindible para abrir la API» y está vacía; esta
         # es «lo que el arranque acaba bajando», que hoy también es 0.
         "startup_download": startup,
-        "staging_peak": staging,
+        # El volumen debe albergar el mayor pico de staging que pueda ocurrir:
+        # el de arranque, el de la tarea en segundo plano y el de la demanda no
+        # coinciden en el tiempo, así que basta el mayor de los tres.
+        "staging_peak": max(boot_staging, task_staging, on_demand_staging),
         "download_margin": DOWNLOAD_MARGIN_BYTES,
     }
     # Puerta de arranque: lo que debe estar LIBRE en el volumen de datos antes de
-    # servir la primera petición (arranque + pico de staging + margen de descarga).
-    start_gate = startup + staging + DOWNLOAD_MARGIN_BYTES
+    # servir la primera petición (arranque + pico de staging de arranque +
+    # margen de descarga). La Fase 3 y la adquisición a demanda corren DESPUÉS
+    # de que ComfyUI está listo, así que sus picos NO pertenecen a la puerta:
+    # mezclarlos inflaba el start gate con espacio que el arranque todavía no
+    # necesita. El volumen total sí cuenta el mayor de los tres.
+    start_gate = startup + boot_staging + DOWNLOAD_MARGIN_BYTES
     components["task_models"] = models
     components["working_reserve"] = WORKING_RESERVE_BYTES
     total = sum(components.values())
@@ -503,6 +535,10 @@ def requirement_bytes(
         # aunque no ocupe el volumen de datos.
         "image_bytes": image_bytes,
         "components": components,
+        # Desglose del staging para que la puerta de arranque sea auditable:
+        # el arranque solo necesita su propio pico, no el de la Fase 3 de fondo.
+        "boot_staging_bytes": boot_staging,
+        "task_staging_bytes": task_staging,
         "start_gate_bytes": start_gate,
         # Entero ya redondeado al alza: es lo que consume comfyctl (S5) y evita
         # casts en punto flotante en Rust.
