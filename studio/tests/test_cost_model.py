@@ -282,10 +282,16 @@ def test_recipe_reports_whether_it_fits_the_target_gpu(tmp_path: Path) -> None:
     recipe = store.recipe_for_template("wan_i2v")
     assert recipe is not None and recipe["measured"] is True
     fit = recipe["vram_fit"]
-    assert fit["target_vram_gb"] == 32
+    # Perfil vigente: 96 GB anunciados, 94 GB utilizables tras la reserva.
+    assert fit["target_vram_gb"] == 96
+    assert fit["target_vram_usable_gb"] == 94.0
     assert fit["fits"] is True
-    assert fit["headroom_mb"] == 32 * 1024 - 20_000
+    assert fit["headroom_mb"] == int(94 * 1024) - 20_000
     assert fit["optimisations"] == []
+    # La RAM se juzga aparte, contra el perfil de RAM del mismo perfil.
+    ram_fit = recipe["ram_fit"]
+    assert ram_fit["target_ram_gb"] == 128
+    assert ram_fit["fits"] is True
 
 
 def test_recipe_lists_optimisations_when_it_does_not_fit(tmp_path: Path) -> None:
@@ -295,15 +301,16 @@ def test_recipe_lists_optimisations_when_it_does_not_fit(tmp_path: Path) -> None
     store = ProjectStore(tmp_path / "db.sqlite3")
     store.record_render_measurement(
         template_id="wan_i2v",
-        params={"width": 1280, "frames": 121},
-        duration_s=900.0,
+        params={"width": 1920, "frames": 161},
+        duration_s=1800.0,
         status="ok",
-        vram_peak_mb=40_000,
+        vram_peak_mb=100_000,
     )
     recipe = store.recipe_for_template("wan_i2v")
     fit = recipe["vram_fit"]
     assert fit["fits"] is False
     assert fit["headroom_mb"] < 0
+    assert "96" in fit["note"] or "94" in fit["note"]
     ids = [o["id"] for o in fit["optimisations"]]
     # El orden es el de la política: de lo más barato a lo más invasivo.
     assert ids[0] == "precision_quantization"
@@ -333,15 +340,127 @@ def test_fit_without_measurement_says_so() -> None:
 
 
 def test_host_ram_is_not_treated_as_vram() -> None:
-    from comfy_studio.projects import assess_vram_fit
+    """El veredicto de RAM vive en su propia función, no dentro del de VRAM."""
+    from comfy_studio.hardware_profile import BLACKWELL_96_128
+    from comfy_studio.projects import assess_ram_fit, assess_vram_fit
 
-    fit = assess_vram_fit(vram_peak_mb=40_000, ram_peak_mb=60_000, host_ram_gb=64)
-    assert fit["host_ram"]["peak_mb"] == 60_000
-    assert "NO es intercambiable" in fit["host_ram"]["note"]
+    profile = BLACKWELL_96_128
+    vram = assess_vram_fit(vram_peak_mb=40_000, ram_peak_mb=60_000, profile=profile)
+    ram = assess_ram_fit(ram_peak_mb=60_000, profile=profile)
+    assert vram["fits"] is True
+    # La RAM medida viaja con la receta, pero su veredicto es aparte.
+    assert vram["ram_peak_mb"] == 60_000
+    assert "host_ram" not in vram
+    assert ram["fits"] is True
+    assert ram["target_ram_gb"] == 128
 
 
 def test_target_vram_is_configurable() -> None:
     from comfy_studio.config import StudioConfig
 
-    assert StudioConfig.from_env({}).target_vram_gb == 32
+    assert StudioConfig.from_env({}).target_vram_gb == 96
     assert StudioConfig.from_env({"STUDIO_TARGET_VRAM_GB": "48"}).target_vram_gb == 48
+
+
+# --------------------------------------------------------------------------
+# Perfil de hardware vigente: RTX PRO 6000 Blackwell 96 GB, RAM 128/256
+# --------------------------------------------------------------------------
+
+
+def test_default_profile_is_blackwell_96() -> None:
+    """La arquitectura vigente es 96 GB, no los ~32 GB del objetivo antiguo."""
+    from comfy_studio.hardware_profile import DEFAULT_PROFILE, RAM_OPTIONS_GB
+
+    assert DEFAULT_PROFILE.gpu.startswith("NVIDIA RTX PRO 6000 Blackwell")
+    assert DEFAULT_PROFILE.vram_gb == 96
+    assert DEFAULT_PROFILE.ram_gb in RAM_OPTIONS_GB
+    assert RAM_OPTIONS_GB == (128, 256)
+
+
+def test_usable_targets_apply_the_operational_reserve() -> None:
+    """Los GB del datasheet no son los utilizables: hay reserva explícita."""
+    from comfy_studio.hardware_profile import BLACKWELL_96_128
+
+    assert BLACKWELL_96_128.vram_usable_gb == 94.0
+    assert BLACKWELL_96_128.ram_usable_gb == 120.0
+    assert BLACKWELL_96_128.vram_usable_gb < BLACKWELL_96_128.vram_gb
+    assert BLACKWELL_96_128.ram_usable_gb < BLACKWELL_96_128.ram_gb
+
+
+def test_a_40gb_recipe_fits_the_96gb_profile() -> None:
+    """«Una receta no debe rechazarse por superar 32 GB cuando cabe en el perfil.»
+
+    Con el objetivo antiguo de 32 GB, una receta de 40 GB se marcaba «no cabe» y
+    sacaba la lista de optimizaciones. En el perfil vigente cabe de sobra.
+    """
+    from comfy_studio.hardware_profile import BLACKWELL_96_128
+    from comfy_studio.projects import assess_vram_fit
+
+    fit = assess_vram_fit(vram_peak_mb=40 * 1024, profile=BLACKWELL_96_128)
+    assert fit["fits"] is True
+    assert fit["optimisations"] == []
+    assert fit["utilisation_pct"] < 50
+
+
+def test_the_profile_must_be_propagated_to_the_recipe(tmp_path: Path) -> None:
+    """El veredicto se calcula con el perfil, no contra el objetivo por omisión.
+
+    `recipe_for_template` no pasaba el perfil a `assess_vram_fit`, así que la API
+    anunciaba un objetivo de 96 GB mientras la receta seguía diciendo «no cabe»
+    contra 32.
+    """
+    from comfy_studio.hardware_profile import CONSUMER_32, HardwareProfile
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "db.sqlite3")
+    store.record_render_measurement(
+        template_id="wan_i2v",
+        params={"width": 1280, "frames": 121},
+        duration_s=900.0,
+        status="ok",
+        vram_peak_mb=40_000,
+    )
+
+    without = store.recipe_for_template("wan_i2v")
+    assert without["vram_fit"]["fits"] is True  # el perfil por omisión ya es 96
+
+    with_32 = store.recipe_for_template("wan_i2v", profile=CONSUMER_32)
+    assert with_32["vram_fit"]["target_vram_gb"] == 32
+    assert with_32["vram_fit"]["fits"] is False
+    assert with_32["vram_fit"]["optimisations"], "en 32 GB debe sugerir cómo medir"
+
+    custom = HardwareProfile(name="x", gpu="x", vram_gb=96, ram_gb=128, vram_reserve_gb=0)
+    with_96 = store.recipe_for_template("wan_i2v", profile=custom)
+    assert with_96["vram_fit"]["target_vram_mb"] == 96 * 1024
+    assert with_96["vram_fit"]["fits"] is True
+
+
+def test_ram_and_vram_are_judged_separately() -> None:
+    """La RAM de host no amplía lo que cabe en el GPU."""
+    from comfy_studio.hardware_profile import BLACKWELL_96_256
+    from comfy_studio.projects import assess_ram_fit, assess_vram_fit
+
+    profile = BLACKWELL_96_256
+    assert profile.ram_gb == 256 and profile.vram_gb == 96
+
+    vram = assess_vram_fit(vram_peak_mb=90 * 1024, profile=profile)
+    ram = assess_ram_fit(ram_peak_mb=200 * 1024, profile=profile)
+    assert vram["fits"] is True
+    assert ram["fits"] is True
+
+    # 300 GB de RAM no arreglan una VRAM que no cabe.
+    vram_over = assess_vram_fit(vram_peak_mb=100 * 1024, profile=profile)
+    assert vram_over["fits"] is False
+    ram_under = assess_ram_fit(ram_peak_mb=250 * 1024, profile=profile)
+    assert ram_under["fits"] is False
+    assert "RAM" in ram_under["note"]
+
+
+def test_profile_is_selectable_by_name_and_ram_option() -> None:
+    from comfy_studio.hardware_profile import resolve_profile, with_ram
+
+    assert resolve_profile(None).vram_gb == 96
+    assert resolve_profile("blackwell").vram_gb == 96
+    assert resolve_profile("consumer").vram_gb == 32
+    assert resolve_profile("no-existe").vram_gb == 96  # cae al principal
+    assert with_ram(resolve_profile("blackwell"), 256).ram_gb == 256
