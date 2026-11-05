@@ -7,8 +7,9 @@
   "overall_note": "Infraestructura W00-W09 + imagen candidata con atlas offline integradas y verdes. Capacidades W06,W10-W23 pendientes/bloqueadas visibles. Ver docs/ultra/CLOSING.md.",
   "updated_utc": "2026-11-05T08:45:00Z",
   "merged": {
-    "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71)", "W04": "#69", "W05": "#72", "W07": "#70", "W08": "#74,#76", "W09_atlas": "#63 (+fix #78)"
+    "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71,#75)", "W04": "#69", "W05": "#72", "W06": "#82", "W07": "#70", "W08": "#74,#76", "W09_atlas": "#63 (+fix #78)", "W10": "#81"
   },
+  "capability_coverage": "C01(W05) C02(W06) C07(W09) C09/C10(W10) C23/C28/C30(W08) a nivel contrato L1; resto de C-ids pendientes en W11-W23",
   "candidate_image": {
     "main_sha": "1cbfb48",
     "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-1cbfb48",
