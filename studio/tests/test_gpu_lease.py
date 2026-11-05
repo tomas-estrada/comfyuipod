@@ -135,8 +135,8 @@ def test_release_runs_and_verifies_unload(tmp_path: Path) -> None:
     assert out["released"] is True and out["cleanup_failed"] is False
 
 
-def test_failed_unload_reports_cleanup_failed_but_frees_lock(tmp_path: Path) -> None:
-    """Un unload roto no deja la GPU bloqueada; se reporta cleanup_failed."""
+def test_failed_unload_reports_cleanup_failed_and_quarantines_lock(tmp_path: Path) -> None:
+    """Un unload no probado bloquea nuevas admisiones hasta limpiar (A04)."""
     lease = _lease(tmp_path)
     grant = lease.acquire(owner="comfyui", engine="e", vram_mb=1000, ram_mb=1000)
 
@@ -145,8 +145,14 @@ def test_failed_unload_reports_cleanup_failed_but_frees_lock(tmp_path: Path) -> 
 
     out = lease.release(grant, unload=_boom)
     assert out["cleanup_failed"] is True
-    assert out["released"] is True
-    assert lease.current() is None  # el lock se liberó pese al fallo
+    assert out["released"] is False
+    assert lease.current() == grant
+    with pytest.raises(LeaseUnavailable):
+        lease.acquire(owner="blender", engine="e", vram_mb=1000, ram_mb=1000)
+    # La limpieza puede reintentarse por el owner actual.
+    retried = lease.release(grant, unload=lambda: True)
+    assert retried["released"] is True and retried["cleanup_failed"] is False
+    assert lease.current() is None
 
 
 # --------------------------------------------------------------------------

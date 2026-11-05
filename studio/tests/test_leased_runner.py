@@ -97,7 +97,8 @@ def test_engine_exception_surfaces_cleanup_failure(tmp_path: Path) -> None:
         assert isinstance(exc.__cause__, RuntimeError)
     else:
         raise AssertionError("cleanup failure was hidden by the engine exception")
-    assert lease.current() is None
+    assert lease.current() is not None  # uncertain GPU state blocks later engines
+    assert lease.release(lease.current(), unload=lambda: True)["released"] is True
 
 
 def test_busy_gpu_returns_typed_failure_not_overwrite(tmp_path: Path) -> None:
@@ -140,7 +141,10 @@ def test_unload_failure_cannot_report_success(tmp_path: Path) -> None:
     assert result["lease"] == "cleanup_failed"
     assert result["lease_cleanup_failed"] is True
     assert "cleanup failed" in result["error"]
-    # GpuLease releases the arbitration lock even when unload cannot be proven.
+    # Uncertain GPU state remains quarantined until cleanup is verified.
+    grant = lease.current()
+    assert grant is not None
+    assert lease.release(grant, unload=lambda: True)["released"] is True
     assert lease.current() is None
 
 
@@ -155,7 +159,8 @@ def test_unload_exception_cannot_report_success(tmp_path: Path) -> None:
 
     assert result["ok"] is False
     assert result["lease"] == "cleanup_failed"
-    assert lease.current() is None
+    assert lease.current() is not None
+    assert lease.release(lease.current(), unload=lambda: True)["released"] is True
 
 
 def test_executor_end_to_end_with_leased_runner(tmp_path: Path) -> None:
