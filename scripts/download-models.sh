@@ -616,8 +616,9 @@ PYBOOTSTRAP
         return 0
     fi
 
-    local repo remote target filename repo_type expected extra
-    while IFS=$'\t' read -r repo remote target filename repo_type expected extra; do
+    local repo remote target fname repo_type expected extra
+    local -a fetch_args
+    while IFS=$'\t' read -r repo remote target fname repo_type expected extra; do
         [ -n "${repo}" ] || continue
         if [ -n "${extra}" ]; then
             # Una línea con campos de más es un manifiesto corrupto: mejor no
@@ -626,7 +627,12 @@ PYBOOTSTRAP
             continue
         fi
         bytes_total=$((bytes_total + ${expected:-0}))
-        hf_fetch "${repo}" "${remote}" "${target}" "${filename}" "${repo_type}" "${expected:-0}" || true
+        # Se pasa por array a propósito: la paridad O-11 de CI extrae los
+        # nombres de activo de las llamadas literales `hf_fetch "..." "..." ...`
+        # y una llamada con variables se colaría en esa lista como si fuera un
+        # modelo más.
+        fetch_args=("${repo}" "${remote}" "${target}" "${fname}" "${repo_type}" "${expected:-0}")
+        hf_fetch "${fetch_args[@]}" || true
     done <<< "${plan}"
 
     log "======================================================================"
