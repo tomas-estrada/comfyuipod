@@ -4,14 +4,15 @@
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
   "stage": "pre_gpu",
   "overall": "IN_PROGRESS",
-  "updated_utc": "2026-11-05T07:05:00Z",
+  "updated_utc": "2026-11-05T07:12:00Z",
   "work_items": {
     "W00": {"title": "Baseline y reconciliacion de PRs", "status": "done", "level": "L1"},
     "W01": {"title": "Integridad transaccional de modelos", "status": "merged", "pr": "#65", "level": "L1"},
     "W02": {
       "title": "Hardware, sizing y recetas con evidencia real",
-      "status": "in_review",
-      "prs": ["#66 recetas+hardware_detect", "#67 sizing/start_gate"],
+      "status": "partially_merged",
+      "merged": ["#66 recetas+hardware_detect (P0 #4,#5,#7)"],
+      "in_review": ["#67 sizing/start_gate (P0 #6)"],
       "p0_fixed": ["P0 #4 simulated->measured", "P0 #5 recetas por clave de entorno", "P0 #6 start_gate sin staging Fase3", "P0 #7 hardware_detect nvidia-smi+cgroup"],
       "level": "L1"
     },

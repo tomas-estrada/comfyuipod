@@ -141,23 +141,38 @@ def requirement_bytes(
     bootstrap = PROFILE_BOOTSTRAP_BYTES.get(profile, 0)
     uses_phase3 = profile in PHASE3_PROFILES
     models = (base_bytes + sum(opt_bytes.get(flag, 0) for flag in requested)) if uses_phase3 else 0
-    if uses_phase3:
-        staging = _largest_default_bytes(manifest) * staging_factor
-    elif profile == "minimal":
-        staging = PHASE1_LARGEST_BYTES * staging_factor
+
+    # Pico de staging de la TAREA (Fase 3): el fichero más grande del manifiesto
+    # × factor de coexistencia. Solo existe para perfiles con Fase 3.
+    task_staging = _largest_default_bytes(manifest) * staging_factor if uses_phase3 else 0
+
+    # Pico de staging del ARRANQUE: el fichero más grande que la secuencia de
+    # arranque descarga de forma síncrona antes de dar ComfyUI por listo.
+    #   - minimal: solo Fase 1;
+    #   - studio/unreal: Fase 1 + Fase 2 SDXL/ControlNet (<= PHASE2_LARGEST);
+    #   - resto: Fase 1 + Fase 2 completa.
+    if profile == "minimal":
+        boot_staging = PHASE1_LARGEST_BYTES * staging_factor
     else:
-        staging = PHASE2_LARGEST_BYTES * staging_factor
+        boot_staging = PHASE2_LARGEST_BYTES * staging_factor
 
     components = {
         "image": image_bytes if image_on_volume else 0,
         "filesystem_overhead": FILESYSTEM_OVERHEAD_BYTES if image_on_volume else 0,
         "bootstrap_phase1_2": bootstrap,
-        "staging_peak": staging,
+        # El volumen debe albergar el mayor pico de staging que pueda ocurrir:
+        # el de arranque y el de la tarea no coinciden en el tiempo (Fase 3 corre
+        # en segundo plano tras el arranque), así que para dimensionar el
+        # volumen basta el mayor de los dos.
+        "staging_peak": max(boot_staging, task_staging),
         "download_margin": DOWNLOAD_MARGIN_BYTES,
     }
-    # Puerta de arranque: lo que debe estar LIBRE en el volumen de datos antes
-    # de empezar a descargar (arranque + pico de staging + margen de descarga).
-    start_gate = bootstrap + staging + DOWNLOAD_MARGIN_BYTES
+    # Puerta de arranque (P0 #6): lo que debe estar LIBRE antes de arrancar. El
+    # arranque descarga Fase 1/2 de forma síncrona; la Fase 3 (y su staging de
+    # ~35 GB) corre en SEGUNDO PLANO después, así que su pico NO pertenece a la
+    # puerta de arranque. Mezclarlos inflaba el start gate con espacio que el
+    # arranque no necesita todavía. El volumen total sí cuenta el staging mayor.
+    start_gate = bootstrap + boot_staging + DOWNLOAD_MARGIN_BYTES
     components["task_models"] = models
     components["working_reserve"] = WORKING_RESERVE_BYTES
     total = sum(components.values())
@@ -171,6 +186,10 @@ def requirement_bytes(
         # aunque no ocupe el volumen de datos.
         "image_bytes": image_bytes,
         "components": components,
+        # Desglose del staging para que la puerta de arranque sea auditable:
+        # el arranque solo necesita su propio pico, no el de la Fase 3 de fondo.
+        "boot_staging_bytes": boot_staging,
+        "task_staging_bytes": task_staging,
         "start_gate_bytes": start_gate,
         # Entero ya redondeado al alza: es lo que consume comfyctl (S5) y evita
         # casts en punto flotante en Rust.
