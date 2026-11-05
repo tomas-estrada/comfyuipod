@@ -4,30 +4,24 @@
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
   "stage": "pre_gpu",
   "overall": "IN_PROGRESS",
-  "updated_utc": "2026-11-05T06:55:00Z",
+  "updated_utc": "2026-11-05T07:18:00Z",
   "work_items": {
     "W00": {"title": "Baseline y reconciliacion de PRs", "status": "done", "level": "L1"},
-    "W01": {"title": "Integridad transaccional de modelos", "status": "in_review", "pr": "#65", "level": "L1"},
-    "W02": {"title": "Hardware, sizing y recetas", "status": "in_review", "prs": ["#66", "#67"], "p0_fixed": "4/4 (#4,#5,#6,#7)", "level": "L1"},
+    "W01": {"title": "Integridad transaccional de modelos", "status": "merged", "pr": "#65", "level": "L1"},
+    "W02": {"title": "Hardware, sizing y recetas con evidencia real", "status": "merged", "prs": ["#66", "#67"], "p0_fixed": "4/4 (#4,#5,#6,#7)", "level": "L1"},
     "W03": {
       "title": "Scheduler, admision y lease global de GPU",
       "status": "in_review",
-      "pr": "feat/ultra-w03-gpu-lease",
-      "delivered": [
-        "orchestration/gpu_lease.py: arbitro entre procesos (lock en disco), owner+fencing token monotono, admision VRAM/RAM, deteccion de huerfanos por PID vivo, cancel/unload comprobado, stage CPU no toca el lock",
-        "ensayo multiproceso real (dos procesos, solo uno gana) - no mutex de thread ni cola de ComfyUI (A04)"
-      ],
-      "pending_integration": "enchufar executor/service y motores (ComfyUI/Blender/ML/audio/VLM/jueces) al mismo arbitro - siguiente sub-item de W03",
+      "pr": "#68",
+      "delivered": ["orchestration/gpu_lease.py: lease entre procesos, owner+fencing, admision VRAM/RAM, huerfanos por PID, cancel/unload comprobado, stage CPU no toca lock; ensayo multiproceso real"],
+      "pending_integration": "enchufar executor/service y motores al arbitro (sub-item W03)",
       "tests": "test_gpu_lease.py 11 passed",
       "level": "L1",
-      "gpu_pending": "picos CUDA reales -> A29 (campana GPU)"
+      "gpu_pending": "picos CUDA -> A29"
     }
   },
   "next_batch": ["W03 integracion executor/motores", "W04 contratos/persistencia/DAG", "W07 fabrica engines/build"],
   "blockers": [],
-  "known_env_issues": [
-    "test_mac_helper 3 tests fallan SOLO en Windows (fixture _clear_env quita SYSTEMROOT); pasan en CI Linux (preexistente).",
-    "test_real_download_process_is_killed_on_cancel y 1 test lease multiproceso: POSIX-friendly pero corren en ambos; verificados en Windows."
-  ],
-  "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad de merge."
+  "known_env_issues": ["test_mac_helper 3 tests fallan SOLO en Windows (SYSTEMROOT); pasan en CI Linux."],
+  "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad de merge. 7/7 P0 corregidos y W01/W02 en main."
 }
