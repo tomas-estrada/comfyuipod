@@ -61,6 +61,9 @@ VALID_OPT_IN_FLAGS = frozenset({
     "STUDIO_INCLUDE_MINIMAX",
 })
 
+# Manifiestos conocidos: `studio` (Fase 3, vídeo/voz) y `core` (Fases 1/2).
+VALID_PROFILES = frozenset({"studio", "core"})
+
 # Política de arquitectura: clases de activo admitidas. `bootstrap` reservado
 # para lo genuinamente necesario para operar; `task` se adquiere para la tarea
 # elegida; `optional` son variantes y mejoras (coincide con los grupos opt-in).
@@ -115,6 +118,55 @@ def fetch_head_size(url: str, timeout: float = 20.0, retries: int = 3) -> tuple[
     raise RuntimeError(f"Fallo tras {retries} intentos en {url}: {last_err}")
 
 
+HEX = set("0123456789abcdef")
+
+
+def _expected_url(
+    repo_id: str,
+    remote_path: str,
+    repo_type: object,
+    revision: object = None,
+) -> str:
+    """URL canónica del activo.
+
+    Los repositorios de tipo `dataset` se resuelven bajo `/datasets/`; el resto
+    (modelos, espacios) bajo la raíz. Aceptar solo la forma de modelo hacía
+    fallar los activos dataset correctamente declarados.
+
+    Con `revision` fijada la URL apunta a ese commit (inmutable) en lugar de a
+    `main`, que es lo que permite verificar integridad de forma determinista.
+    """
+    prefix = "datasets/" if str(repo_type or "").strip().lower() == "dataset" else ""
+    ref = str(revision) if revision else "main"
+    return f"https://huggingface.co/{prefix}{repo_id}/resolve/{ref}/{remote_path}"
+
+
+def _validate_integrity(entry: dict[str, Any], prefix: str, errors: list[str]) -> None:
+    """Revisión fijada e integridad, «where available» (política de activos).
+
+    HuggingFace publica el SHA-256 del objeto LFS o, para ficheros pequeños
+    guardados en git, el SHA-1 del blob. Se exige `revision` siempre y al menos
+    un hash; el algoritmo debe coincidir con la longitud.
+    """
+    revision = entry.get("revision")
+    if not isinstance(revision, str) or len(revision) != 40 or set(revision) > HEX:
+        errors.append(f"{prefix}: revision inválida {revision!r} (se esperaba un SHA-1 de git)")
+
+    digests = {
+        name: entry.get(name)
+        for name in ("sha256", "sha1")
+        if entry.get(name) is not None
+    }
+    if not digests:
+        errors.append(f"{prefix}: sin hash de integridad (sha256 o sha1)")
+    for name, value in digests.items():
+        expected_len = 64 if name == "sha256" else 40
+        if not isinstance(value, str) or len(value) != expected_len or set(value) > HEX:
+            errors.append(f"{prefix}: {name} inválido {value!r}")
+    if len(digests) > 1:
+        errors.append(f"{prefix}: hash redundante ({sorted(digests)}), deja uno")
+
+
 def validate_manifest_data(
     data: dict[str, Any],
     *,
@@ -125,10 +177,15 @@ def validate_manifest_data(
     """Valida el diccionario del manifiesto; devuelve lista de errores (vacía si todo es válido)."""
     errors: list[str] = []
 
-    if data.get("version") != 2:
-        errors.append(f"version inválida: {data.get('version')!r} (esperado 2)")
-    if data.get("profile") != "studio":
-        errors.append(f"profile inválido: {data.get('profile')!r} (esperado 'studio')")
+    version = data.get("version")
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        errors.append(f"version inválida: {version!r} (se esperaba un entero >= 1)")
+    elif data.get("profile") == "studio" and version != 2:
+        errors.append(f"version inválida: {version!r} (esperado 2 para 'studio')")
+
+    profile = data.get("profile")
+    if profile not in VALID_PROFILES:
+        errors.append(f"profile inválido: {profile!r} (esperado uno de {sorted(VALID_PROFILES)})")
 
     models = data.get("models")
     if not isinstance(models, list) or not models:
@@ -179,9 +236,13 @@ def validate_manifest_data(
         size = entry.get("bytes")
         opt_in = entry.get("opt_in")
 
-        expected_url = f"https://huggingface.co/{repo_id}/resolve/main/{remote_path}"
+        expected_url = _expected_url(
+            repo_id, remote_path, entry.get("repo_type"), entry.get("revision")
+        )
         if url != expected_url:
             errors.append(f"{prefix}: url {url!r} != {expected_url!r}")
+
+        _validate_integrity(entry, prefix, errors)
 
         expected_dest = f"{target_dir}/{filename}"
         if dest_path != expected_dest:
@@ -219,7 +280,7 @@ def validate_manifest_data(
 
     if require_all_categories:
         missing_cats = REQUIRED_CATEGORIES - set(cat_counts.keys())
-        if missing_cats:
+        if data.get("profile") == "studio" and missing_cats:
             errors.append(f"Faltan categorías requeridas: {sorted(missing_cats)}")
 
     if meta.get("default_entries") != default_entries:
@@ -332,7 +393,11 @@ def validate_manifest_data(
 
 def run_fixture_self_test() -> int:
     """Ejecuta pruebas unitarias deterministas sobre el validador."""
-    sample_url = "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/main/split_files/vae/wan2.2_vae.safetensors"
+    sample_revision = "ee6f4a40737a995bf5818954cfce6d59443b0f04"
+    sample_url = (
+        "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/"
+        f"{sample_revision}/split_files/vae/wan2.2_vae.safetensors"
+    )
     valid_manifest: dict[str, Any] = {
         "version": 2,
         "profile": "studio",
@@ -362,6 +427,8 @@ def run_fixture_self_test() -> int:
                 "filename": "wan2.2_vae.safetensors",
                 "dest_path": "models/vae/wan2.2_vae.safetensors",
                 "license": "Apache-2.0",
+                "revision": sample_revision,
+                "sha256": "e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156",
                 "class": "task",
                 "opt_in": None,
             },
@@ -373,14 +440,17 @@ def run_fixture_self_test() -> int:
                     "wan2.2_animate_14B_int8_convrot.safetensors"
                 ),
                 "url": (
-                    "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/main/"
-                    "split_files/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors"
+                    "https://huggingface.co/Comfy-Org/Wan-2.2/resolve/"
+                    f"{sample_revision}"
+                    "/split_files/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors"
                 ),
                 "bytes": 18413068672,
                 "target_dir": "models/diffusion_models",
                 "filename": "wan2.2_animate_14B_int8_convrot.safetensors",
                 "dest_path": "models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors",
                 "license": "Apache-2.0",
+                "revision": sample_revision,
+                "sha1": "135542a23eb13611cafa71878d3c33e355d896a7",
                 "class": "optional",
                 "opt_in": "STUDIO_INCLUDE_ANIMATE",
             },
@@ -434,12 +504,60 @@ def run_fixture_self_test() -> int:
     return 0
 
 
+MANIFESTS = ("config/models-studio.json", "config/models-core.json")
+
+
+def _validate_one(path: Path, *, offline: bool, workers: int) -> int:
+    if not path.is_file():
+        print(f"ERROR: No existe el manifiesto en {path}", file=sys.stderr)
+        return 1
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    head_callable = None if offline else fetch_head_size
+    errors = validate_manifest_data(
+        data,
+        require_all_categories=True,
+        head_fn=head_callable,
+        workers=workers,
+    )
+    if errors:
+        print(f"ERROR: {len(errors)} fallo(s) en {path}:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
+    meta = data["meta"]
+    classes = meta.get("classes") or {}
+    bootstrap = classes.get("bootstrap", {})
+    mode_label = "offline" if offline else "HEAD x-linked-size"
+    print(
+        f"OK [{mode_label}]: {meta['default_entries']} entradas por defecto "
+        f"({meta['default_bytes']:,} B = {meta['default_bytes'] / 1e9:.2f} GB) + "
+        f"{meta['opt_in_entries']} opt-in ({meta['opt_in_bytes']:,} B) "
+        f"verificadas en {path}; bootstrap={bootstrap.get('entries', 0)} "
+        f"({bootstrap.get('bytes', 0):,} B)."
+    )
+    return 0
+
+
+def _validate_all(args: argparse.Namespace) -> int:
+    status = 0
+    for name in MANIFESTS:
+        status |= _validate_one(Path(name), offline=args.offline, workers=args.workers)
+    return 1 if status else 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Verifica config/models-studio.json.")
+    parser = argparse.ArgumentParser(description="Verifica manifiestos de modelos.")
     parser.add_argument(
         "--manifest",
         default="config/models-studio.json",
         help="Ruta al archivo JSON del manifiesto (default: config/models-studio.json)",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Valida todos los manifiestos conocidos (studio + core)",
     )
     parser.add_argument(
         "--offline",
@@ -461,6 +579,9 @@ def main() -> int:
 
     if args.fixture:
         return run_fixture_self_test()
+
+    if args.all:
+        return _validate_all(args)
 
     manifest_path = Path(args.manifest)
     if not manifest_path.is_file():
