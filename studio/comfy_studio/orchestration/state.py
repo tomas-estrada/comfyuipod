@@ -70,6 +70,31 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
+#: Versión del esquema de `ProductionState` serializado. Se sube cuando cambia
+#: la forma persistida, y `migrate_state_dict` adapta los checkpoints viejos al
+#: cargarlos, para que un corte a mitad de un despliegue previo se reanude en vez
+#: de romper (plan Ultra, W04: «extender schemas con migraciones»).
+SCHEMA_VERSION = 2
+
+
+def migrate_state_dict(data: dict[str, Any]) -> dict[str, Any]:
+    """Adapta un checkpoint de un esquema anterior al vigente.
+
+    Es idempotente y conservador: solo rellena lo que falta, nunca descarta
+    datos del usuario. Un checkpoint sin `schema_version` se trata como v1 (el
+    formato original que no llevaba `lineage` ni `schema_version`).
+    """
+    version = int(data.get("schema_version", 1))
+    migrated = dict(data)
+    if version < 2:
+        # v1 -> v2: se añade el DAG de lineage y la versión explícita. Un estado
+        # viejo simplemente no tiene lineage todavía; se inicia vacío.
+        migrated.setdefault("lineage", {"nodes": []})
+        version = 2
+    migrated["schema_version"] = version
+    return migrated
+
+
 @dataclass(slots=True)
 class Layer:
     """Una capa dentro de un shot (gen, depth, relight, comp...)."""
@@ -150,6 +175,10 @@ class ProductionState:
     #: metadatos persistidos junto al estado (puerta de storyboard, contadores
     #: de reintento, etc.). Se serializa con el checkpoint para reanudar.
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: DAG de lineage serializado (W04): procedencia e invalidación selectiva.
+    #: Es un dict JSON (LineageGraph.to_dict()); esta capa no importa lineage
+    #: para no acoplar el contrato de datos a su lógica.
+    lineage: dict[str, Any] = field(default_factory=lambda: {"nodes": []})
 
     # -- helpers de recorrido ------------------------------------------------
 
@@ -183,6 +212,7 @@ class ProductionState:
     def to_dict(self) -> dict[str, Any]:
         """Estado como dict JSON-serializable (sin perder enums)."""
         return {
+            "schema_version": SCHEMA_VERSION,
             "id": self.id,
             "idea": self.idea,
             "phase": self.phase,
@@ -193,6 +223,7 @@ class ProductionState:
             "updated_at": self.updated_at,
             "log": list(self.log),
             "metadata": dict(self.metadata),
+            "lineage": dict(self.lineage),
             "sequences": [
                 {
                     "id": seq.id,
@@ -233,7 +264,12 @@ class ProductionState:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ProductionState:
-        """Reconstruye el estado desde un dict del checkpointer."""
+        """Reconstruye el estado desde un dict del checkpointer.
+
+        Aplica primero `migrate_state_dict`, de modo que un checkpoint de un
+        esquema anterior (p. ej. sin `lineage`) se reanuda en vez de romper.
+        """
+        data = migrate_state_dict(data)
         state = cls(
             idea=data["idea"],
             id=data.get("id") or _new_id("prod"),
@@ -245,6 +281,7 @@ class ProductionState:
             updated_at=float(data.get("updated_at", time.time())),
             log=list(data.get("log", [])),
             metadata=dict(data.get("metadata", {})),
+            lineage=dict(data.get("lineage", {"nodes": []})),
         )
         for seq_d in data.get("sequences", []):
             seq = Sequence(title=seq_d["title"], id=seq_d["id"])

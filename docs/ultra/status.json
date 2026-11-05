@@ -4,24 +4,31 @@
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
   "stage": "pre_gpu",
   "overall": "IN_PROGRESS",
-  "updated_utc": "2026-11-05T07:18:00Z",
+  "updated_utc": "2026-11-05T07:35:00Z",
   "work_items": {
     "W00": {"title": "Baseline y reconciliacion de PRs", "status": "done", "level": "L1"},
     "W01": {"title": "Integridad transaccional de modelos", "status": "merged", "pr": "#65", "level": "L1"},
-    "W02": {"title": "Hardware, sizing y recetas con evidencia real", "status": "merged", "prs": ["#66", "#67"], "p0_fixed": "4/4 (#4,#5,#6,#7)", "level": "L1"},
-    "W03": {
-      "title": "Scheduler, admision y lease global de GPU",
+    "W02": {"title": "Hardware, sizing y recetas", "status": "merged", "prs": ["#66", "#67"], "p0_fixed": "4/4", "level": "L1"},
+    "W03": {"title": "Scheduler/lease global de GPU", "status": "merged", "pr": "#68", "pending_integration": "enchufar lease a executor/motores", "level": "L1"},
+    "W04": {
+      "title": "Contratos, persistencia y DAG de produccion",
       "status": "in_review",
-      "pr": "#68",
-      "delivered": ["orchestration/gpu_lease.py: lease entre procesos, owner+fencing, admision VRAM/RAM, huerfanos por PID, cancel/unload comprobado, stage CPU no toca lock; ensayo multiproceso real"],
-      "pending_integration": "enchufar executor/service y motores al arbitro (sub-item W03)",
-      "tests": "test_gpu_lease.py 11 passed",
-      "level": "L1",
-      "gpu_pending": "picos CUDA -> A29"
+      "pr": "feat/ultra-w04-contracts-dag",
+      "delivered": [
+        "orchestration/lineage.py: DAG con invalidacion selectiva por fingerprint (cambiar titulo no recalcula ASR/geometria; cambiar luz solo invalida dependientes) - A05",
+        "state.py: SCHEMA_VERSION + migrate_state_dict (checkpoints v1 reanudan sin romper); campo lineage serializado"
+      ],
+      "pending_integration": [
+        "LangGraph real en imagen ejecutando la ruta efectiva (A05: fallback solo no basta) - verificable en build/pod",
+        "provider profiles intercambiables con contract server (A06) - sub-item W04",
+        "enganchar lineage al executor para saltar nodos no-stale en replan"
+      ],
+      "tests": "test_lineage_dag.py 10 passed; orquestacion existente 44 passed (retrocompat)",
+      "level": "L1"
     }
   },
-  "next_batch": ["W03 integracion executor/motores", "W04 contratos/persistencia/DAG", "W07 fabrica engines/build"],
+  "next_batch": ["W04 provider profiles (A06)", "W04 LangGraph real en imagen", "W07 fabrica engines/build", "integrar lease+lineage en executor"],
   "blockers": [],
   "known_env_issues": ["test_mac_helper 3 tests fallan SOLO en Windows (SYSTEMROOT); pasan en CI Linux."],
-  "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad de merge. 7/7 P0 corregidos y W01/W02 en main."
+  "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad. W00-W03 en main; W04 en review."
 }
