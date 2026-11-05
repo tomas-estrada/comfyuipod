@@ -4,13 +4,24 @@
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
   "stage": "pre_gpu",
   "overall": "BLOCKED_PRE_GPU",
-  "overall_note": "Infraestructura W00-W09 + imagen candidata con atlas offline integradas y verdes. Capacidades W06,W10-W23 pendientes/bloqueadas visibles. Ver docs/ultra/CLOSING.md.",
-  "updated_utc": "2026-11-05T08:45:00Z",
+  "overall_note": "Infraestructura W00-W09 + ruta esencial de capacidades (ingesta->inspiracion->generacion->camaras->fisica->movimiento->capas->luz->audio->montaje) + cara + 4D, todo a nivel contrato L1 y en la imagen candidata. Restan W21 UI, W22 director, W23 investigador + sub-items + validacion GPU (W26). Ver docs/ultra/CLOSING.md.",
+  "updated_utc": "2026-11-05T09:35:00Z",
   "merged": {
-    "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71,#75)", "W04": "#69", "W05": "#72", "W06": "#82", "W07": "#70", "W08": "#74,#76", "W09_atlas": "#63 (+fix #78)", "W10": "#81"
+    "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71,#75)", "W04": "#69", "W05": "#72", "W06": "#82", "W07": "#70", "W08": "#74,#76", "W09_atlas": "#63 (+fix #78)", "W10": "#81", "W11": "#84", "W12": "#85", "W13": "#86", "W14": "#92", "W15": "#87", "W16": "#88", "W17": "#93", "W18": "#89", "W19": "#90", "W20": "#91"
   },
-  "capability_coverage": "C01(W05) C02(W06) C07(W09) C09/C10(W10) C23/C28/C30(W08) a nivel contrato L1; resto de C-ids pendientes en W11-W23",
-  "candidate_image": {
+  "capability_coverage": "Gran parte de C01-C32 a nivel contrato L1: C01(W05) C02(W06) C05/C07/C08/C20(W11) C09/C10(W10) C11-C15(W13) C15/C18/C19(W12) C16(W14/W19) C06/C17(W17) C21/C22(W16) C23/C28/C30(W08) C24/C28/C29(W15) C25(W18) C26/C27(W19) C31/C32(W20). Restan C03/C04(W22) C33/C34(W23) y la UI (W21).",
+  "pending_capabilities": ["W21 UI agentica", "W22 director autonomo integrado (C03/C04)", "W23 investigador (C33/C34)"],
+  "candidate_image_current": {
+    "main_sha": "71822b7",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-71822b7",
+    "latest_manifest_digest": "sha256:ee60b4e67c594fa713b58988b3b95ac2b74bac1351399c02ab609ff71cfaa6bd",
+    "promoted_to_latest": true,
+    "build_run": "41999904964",
+    "smoke": "unit + full-stack E2E + MODEL_PROFILE=studio E2E verde (16m28s)",
+    "contains": "W00-W20 completos (infra + ruta esencial de capacidades + atlas offline + cara + 4D) a nivel contrato L1",
+    "note": "Imagen candidata reproducible con digest real y la cadena productiva completa a nivel contrato. Base para validacion GPU (W26), NO Ultra validada."
+  },
+  "candidate_image_previous": {
     "main_sha": "1cbfb48",
     "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-1cbfb48",
     "latest_manifest_digest": "sha256:6d0d84e06af370b9ebfc7a103ca6e243a62f743fba842428d71ecda2c7cd1ebf",
