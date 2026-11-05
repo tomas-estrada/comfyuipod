@@ -335,6 +335,10 @@ async def sample_system_stats_peak(
     """
     peak: dict[str, Any] = {"vram_peak_mb": None, "ram_peak_mb": None, "gpu_name": None,
                             "driver": None, "cuda": None, "samples": 0}
+    # El driver se mide en el mismo host y el mismo momento que el render. Las
+    # versiones de ComfyUI no publican la misma clave, así que se aceptan
+    # varias; si ninguna está, se queda a None en lugar de inventarlo.
+    driver_keys = ("driver_version", "driver", "nvidia_driver_version")
     while not stop.is_set():
         try:
             stats = await client.system_stats()
@@ -352,6 +356,11 @@ async def sample_system_stats_peak(
                     peak["vram_total_mb"] = int(vram_total / (1024 * 1024)) if vram_total else None
             if device.get("name"):
                 peak["gpu_name"] = device["name"]
+            if peak["driver"] is None:
+                for key in driver_keys:
+                    if device.get(key):
+                        peak["driver"] = str(device[key])
+                        break
         system = stats.get("system") or {}
         ram_used = system.get("ram_used")
         if ram_used:
@@ -1313,7 +1322,9 @@ class ComfyUIClient:
                 vram_peak_mb=peak.get("vram_peak_mb"),
                 ram_peak_mb=peak.get("ram_peak_mb"),
                 gpu_name=peak.get("gpu_name"),
-                driver=None,
+                # El driver sale de la medición, no de `strict-check`: la receta
+                # debe describir la máquina donde se midió de verdad.
+                driver=peak.get("driver"),
                 cuda=peak.get("cuda"),
                 status="ok",
             )

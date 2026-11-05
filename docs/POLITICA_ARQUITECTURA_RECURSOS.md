@@ -334,6 +334,18 @@ el rendimiento sin ganar nada. Controlable con `STUDIO_UNLOAD_WHEN_IDLE`
 (por defecto `1`) y silencioso si ComfyUI no responde: liberar VRAM es una
 optimización, nunca debe tumbar un render ya terminado.
 
+### El driver se mide, no se hereda
+
+La receta publicaba `driver: None` siempre: `_record_render_measurement` lo
+pasaba a `None` a mano, así que la máquina descrita era la de `strict-check`
+(S2) y no la del render. Ahora el muestreador lo lee de `/system_stats` **en el
+mismo host y el mismo momento** que mide VRAM y RAM.
+
+Las versiones de ComfyUI no publican la misma clave, así que se aceptan
+`driver_version`, `driver` y `nvidia_driver_version`. Si ninguna está, se queda
+a `None` en lugar de inventarlo: `comfyctl strict-check` sigue siendo la puerta
+autoritativa del driver, pero la receta ya no afirma uno que no midió.
+
 ### Filesystems distintos
 
 Punto 1: «Check usable space on **the actual filesystems** involved». La guarda
@@ -458,5 +470,4 @@ Pendiente: modelo de coste de transferencia/egress y de arranque en frío.
 > → los recursos se liberan y los activos reutilizables se retienen según política.
 
 Los siete pasos están implementados y verificados en CI. Queda pendiente solo el
-precio real de egress del proveedor (hoy se usa un precio por GB orientativo) y
-tomar el driver de la medición de render en lugar de `strict-check`.
+precio real de egress del proveedor (hoy se usa un precio por GB orientativo).
