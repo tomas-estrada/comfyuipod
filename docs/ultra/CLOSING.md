@@ -107,3 +107,67 @@ capacidades, con imagen candidata reproducible. **No** acredita capacidad
 neuronal validada. El éxito científico posterior se decide por resultados
 medidos en GPU, no por cantidad de módulos. Las capacidades obligatorias no
 implementadas quedan **bloqueadas y visibles**, no etiquetadas como completas.
+
+---
+
+## Actualización — capa de capacidades completa a nivel contrato (2026-11-05)
+
+Tras el informe inicial, se completó e integró TODA la capa de capacidades del
+backlog (W05–W23) a nivel **contrato L1**, con tests reales y cero mocks. Cada
+capacidad entró como un módulo verificable con su acceptance-check, respetando
+el orden de dependencias y la distinción preparado (L1/L2) vs validado-GPU (L3).
+
+### Capacidades integradas (módulo + acceptance)
+
+| W | Módulo | Acceptance | Capacidades |
+|---|--------|-----------|-------------|
+| W05 | `ingest.py` | A08 | C01 |
+| W06 | `inspiration.py` | A09 | C02 |
+| W08 | `av_recipes.py` + `recipe_binding.py` | A10 | C23, C28, C30 |
+| W09 | `atlas/` (PR #63) | A11 | C07 |
+| W10 | `assets3d.py` | A12 | C09, C10 |
+| W11 | `cinematography.py` | A13 | C05, C07, C08, C20 |
+| W12 | `physics.py` | A14 | C10, C15, C18, C19 |
+| W13 | `motion.py` | A15 | C11–C15 |
+| W14 | `face.py` | A16 | C16 |
+| W15 | `layers.py` | A17 | C24, C28, C29 |
+| W16 | `relight.py` | A18 | C21, C22 |
+| W17 | `spatial_memory.py` | A19 | C06, C17 |
+| W18 | `audio.py` | A20 | C25 |
+| W19 | `voice.py` | A21 | C16, C26, C27 |
+| W20 | `delivery_4k.py` | A22 | C02, C19, C24, C30–C32 |
+| W21 | `studio_client.py` | A23 | C12 |
+| W22 | `director.py` | A24 | C03, C04, C08, C20 |
+| W23 | `researcher.py` | A26 | C33, C34 |
+
+Más la infraestructura W00–W04, W07 y la cadena conectada
+`planner → bind_recipes → executor → LeasedEngineRunner → lease`.
+
+### Qué significa "a nivel contrato L1"
+
+Cada módulo implementa el CONTRATO verificable de su capacidad: tipos, estados
+honestos, invariantes del plan (procedencia observed/inferred, causalidad
+selectiva, presupuestos, idempotencia, no-promoción-desde-mocks, licencias que
+viajan con el proyecto, etc.), probados en CPU. La ejecución neuronal real
+(calidad de generación, kernels CUDA, medición de VRAM) es **L3 y pertenece a la
+campaña GPU (W26)**, que sigue fuera de esta fase por diseño.
+
+### Lo que todavía queda para `ACCEPTED_PRE_GPU` pleno
+
+1. **Sub-items de los paquetes** (no capacidades nuevas, sino profundizar los
+   contratos hasta L2 con los engines reales):
+   - fijar `code_revision`/lock por familia en `engines.json` (57 release-blockers);
+   - protocolo uniforme `describe`/`execute`/`cancel`/`unload` sobre `Engine`;
+   - LangGraph real ejecutando la ruta efectiva en la imagen;
+   - provider profiles LLM/VLM intercambiables (A06);
+   - enganchar cada contrato nuevo a su engine real en el executor.
+2. **W24** (banco de evaluación / demostraciones D01–D05 reproducibles).
+3. **W25** (release: la imagen candidata ya existe con digest; falta el reporte
+   final completo por C/P/N y las matrices).
+4. **W26 / validación GPU (L3-L4)**: campaña GPU autorizada.
+
+El estado honesto sigue siendo **BLOCKED_PRE_GPU**: la arquitectura y los
+contratos de las 34 capacidades existen y se prueban, con imagen candidata
+reproducible, pero la validación de calidad neuronal y el cierre de los
+sub-items de integración con engines reales siguen pendientes. Nada se etiqueta
+como validado-GPU sin medición.
