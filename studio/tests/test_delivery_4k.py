@@ -91,3 +91,18 @@ def test_empty_timeline_rejected() -> None:
 
 def test_duration_sums_clips() -> None:
     assert _spec().total_duration_s() == pytest.approx(6.0)
+
+
+def test_finishing_upscale_when_dimensions_mixed() -> None:
+    """Caso mixto (una dim >=, otra <): cae en else -> upscale, no crop."""
+    clip = Clip("c", "/out/x.mp4", 0.0, 3.0, src_width=3840, src_height=1080)
+    plan = finishing_plan(clip, "16:9")
+    assert plan["op"] == "upscale"
+    assert plan["target"] == [3840, 2160]
+    assert plan["source"] == [3840, 1080]
+
+
+def test_clip_duration_s_never_negative() -> None:
+    """duracion negativa se clamp a 0.0."""
+    clip = Clip("c", "/out/x.mp4", in_s=5.0, out_s=3.0)
+    assert clip.duration_s == 0.0
