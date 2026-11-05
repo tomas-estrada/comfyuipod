@@ -31,11 +31,11 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 #: Un heavy lease sin heartbeat durante este tiempo se considera abandonado
 #: (su proceso dueño además debe estar muerto para recuperarlo).
