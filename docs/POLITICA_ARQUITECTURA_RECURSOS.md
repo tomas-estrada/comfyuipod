@@ -334,6 +334,26 @@ el rendimiento sin ganar nada. Controlable con `STUDIO_UNLOAD_WHEN_IDLE`
 (por defecto `1`) y silencioso si ComfyUI no responde: liberar VRAM es una
 optimización, nunca debe tumbar un render ya terminado.
 
+### El SHA-1 de un blob de Git no es el SHA-1 crudo
+
+`asset_acquire` calculaba el SHA-1 **crudo** de los bytes y lo comparaba con el
+hash del manifiesto. Pero HuggingFace publica dos cosas distintas según el
+fichero:
+
+- **LFS** (`sha256`, 64 hex): el oid del objeto LFS, que **sí** es el SHA-256
+  crudo del contenido.
+- **git** (`sha1`, 40 hex): el OID del blob de git, que lleva la cabecera
+  `blob <tamaño>\0` antes de hashear. **No** es el SHA-1 crudo.
+
+Verificado contra la API de HuggingFace en vivo (test
+`test_etag_is_the_git_blob_sha1_not_the_raw_one`): el `X-Linked-Etag` de un
+`README.md` coincide con el OID del blob y no con el SHA-1 crudo.
+
+Consecuencia real: los **29 activos** con hash SHA-1 del manifiesto de studio
+fallaban todos la verificación y se borraban de staging. Ahora `_verify_integrity`
+calcula el hash del blob para las entradas SHA-1, y el error muestra ambos valores
+para que un fijado con la semántica equivocada se diagnostique.
+
 ### El driver se mide, no se hereda
 
 La receta publicaba `driver: None` siempre: `_record_render_measurement` lo

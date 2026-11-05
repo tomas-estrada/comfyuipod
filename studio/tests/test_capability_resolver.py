@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -146,12 +147,20 @@ def test_optional_group_is_classified_optional(data_dir: Path) -> None:
     assert classes["umt5_xxl_fp8_e4m3fn_scaled.safetensors"] == "task"
 
 
-def test_bootstrap_assets_are_the_small_set(data_dir: Path) -> None:
-    """La política prohíbe llamar bootstrap a una colección grande."""
+def test_bootstrap_is_empty_by_design(data_dir: Path) -> None:
+    """Nada es bootstrap: ni un VAE ni un restaurador facial lo son.
+
+    «Pertenecer a la Fase 1 no convierte un VAE o restaurador facial en requisito
+    para abrir la API y descubrir capacidades.» El arranque no descarga nada;
+    todo se pide por capacidad. La política prohíbe llamar bootstrap a una
+    colección grande, y aquí directamente no hay nada que lo sea.
+    """
     resolution = resolve("video.face_restore", env={"COMFY_DATA_DIR": str(data_dir)})
     bootstrap = [a for a in resolution.assets if a.asset_class == "bootstrap"]
-    assert bootstrap, "el stack facial/VAE debe ser bootstrap"
-    assert sum(a.bytes for a in bootstrap) < 5 * 1024**3
+    assert bootstrap == [], "el arranque no debe arrastrar ningún activo"
+    # Lo que antes era «bootstrap» ahora es task: se descarga si se pide.
+    task = [a for a in resolution.assets if a.asset_class == "task"]
+    assert task, "la capacidad debe seguir declarando sus dependencias"
 
 
 def test_engine_without_recipe_reports_no_assets(data_dir: Path) -> None:
@@ -646,3 +655,126 @@ def test_move_still_propagates_real_errors(tmp_path: Path) -> None:
     finally:
         real_os.replace = real_replace
     assert raised, "un error que no es EXDEV no debe degradarse a copia"
+
+
+# --------------------------------------------------------------------------
+# Semántica del hash: el SHA-1 de un blob de Git NO es el SHA-1 crudo
+# --------------------------------------------------------------------------
+
+
+class _Need:
+    """Mínimo que consume `_verify_integrity`."""
+
+    def __init__(self, *, sha256: str | None = None, sha1: str | None = None) -> None:
+        self.sha256 = sha256
+        self.sha1 = sha1
+
+
+def test_git_blob_sha1_is_not_the_raw_sha1(tmp_path: Path) -> None:
+    """Git antepone `blob <tamaño>\\0` antes de hashear.
+
+    Es la trampa clásica: el SHA-1 crudo de los bytes y el OID del blob de git
+    son distintos para el mismo contenido.
+    """
+    import hashlib
+
+    from comfy_studio.asset_acquire import git_blob_sha1
+
+    target = tmp_path / "fichero.bin"
+    content = b"hola mundo\n" * 7
+    target.write_bytes(content)
+
+    raw = hashlib.sha1(content).hexdigest()
+    blob = git_blob_sha1(target)
+    assert blob != raw, "si coinciden, la implementación está hasheando en crudo"
+    # Referencia independiente: `git hash-object`.
+    assert blob == subprocess.run(
+        ["git", "hash-object", str(target)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_sha1_entries_verify_as_git_blobs(tmp_path: Path) -> None:
+    """Un activo fijado con el SHA-1 del blob de git debe verificarse como tal.
+
+    Antes se calculaba el SHA-1 crudo y se comparaba contra el OID del blob:
+    los 29 activos con hash SHA-1 del manifiesto fallaban todos.
+    """
+    from comfy_studio.asset_acquire import _verify_integrity, git_blob_sha1
+
+    target = tmp_path / "config.json"
+    target.write_bytes(b'{"a": 1}\n')
+
+    assert _verify_integrity(target, _Need(sha1=git_blob_sha1(target))) is True
+    bad = _verify_integrity(target, _Need(sha1="0" * 40))
+    assert isinstance(bad, str)
+    assert "blob de git" in bad
+    # El error muestra también el SHA-1 crudo, para que un fijado con la
+    # semántica equivocada se diagnostique en vez de decir «no coincide».
+    assert "SHA-1 crudo" in bad
+
+
+def test_sha256_entries_verify_as_raw_content(tmp_path: Path) -> None:
+    """El oid LFS sí es el SHA-256 crudo del contenido."""
+    import hashlib
+
+    from comfy_studio.asset_acquire import _verify_integrity
+
+    target = tmp_path / "model.safetensors"
+    target.write_bytes(b"pesos" * 1000)
+    raw = hashlib.sha1(b"pesos" * 1000)  # noqa: F841 - solo para dejar claro que no se usa
+
+    ok = _verify_integrity(target, _Need(sha256=hashlib.sha256(b"pesos" * 1000).hexdigest()))
+    assert ok is True
+    bad = _verify_integrity(target, _Need(sha256="0" * 64))
+    assert isinstance(bad, str) and "LFS" in bad
+
+
+def test_assets_without_a_hash_are_accepted() -> None:
+    """«Where available»: un activo sin hash se acepta."""
+    import tempfile
+
+    from comfy_studio.asset_acquire import _verify_integrity
+
+    with tempfile.NamedTemporaryFile(suffix=".bin") as handle:
+        assert _verify_integrity(Path(handle.name), _Need()) is True
+
+
+def test_etag_is_the_git_blob_sha1_not_the_raw_one() -> None:
+    """Comprobado contra la API de HuggingFace, no contra una suposición.
+
+    Se descarga UN fichero público pequeño y se comparan las tres cosas: el
+    `X-Linked-Etag` que publica HuggingFace, el SHA-1 crudo de sus bytes y el
+    OID del blob de git. Si la semántica cambiara en HuggingFace, este test
+    falla y hay que revisar el verificador.
+    """
+    import hashlib
+    import urllib.error
+    import urllib.request
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):  # noqa: ANN001
+            return None
+
+    url = (
+        "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/"
+        "resolve/main/README.md"
+    )
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(urllib.request.Request(url, method="HEAD"), timeout=30) as resp:
+            etag = (resp.headers.get("x-linked-etag") or "").strip().strip('"').lower()
+    except urllib.error.HTTPError as exc:
+        etag = (exc.headers.get("x-linked-etag") or "").strip().strip('"').lower()
+    if not etag:
+        pytest.skip("HuggingFace no publicó X-Linked-Etag; no se puede verificar")
+
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        body = resp.read()
+    raw = hashlib.sha1(body).hexdigest()
+    blob = hashlib.sha1(b"blob %d\x00" % len(body) + body).hexdigest()
+
+    assert etag == blob, "el ETag debe ser el OID del blob de git"
+    assert etag != raw, "el ETag no es el SHA-1 crudo de los bytes"
