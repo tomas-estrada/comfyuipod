@@ -508,7 +508,7 @@ class AtlasService:
                         "bytes": p.stat().st_size,
                     })
         data_files: list[dict[str, Any]] = []
-        for sub in ("osm", "geodata"):
+        for sub in ("osm", "geodata", "examples"):
             d = self.root / sub
             if d.is_dir():
                 for p in sorted(d.rglob("*")):

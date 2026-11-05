@@ -1,0 +1,11 @@
+Referencia: Homenaje a Carlos Gardel - Obra de Salvador Arango (1).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Homenaje_a_Carlos_Gardel_-_Obra_de_Salvador_Arango_(1).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/a/ac/Homenaje_a_Carlos_Gardel_-_Obra_de_Salvador_Arango_%281%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled
+Autor: SajoR
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2023-01-20 13:47:33 (captured)
+Subida: 2023-01-23T19:04:27Z
+sha256 enviado: b8a2fae34eda20a8edb988a48903c2df6c17a57a1f8ceafa7a00ae1135f7c8ee
+sha1 original: c8ba9198c6c021bf267d1cc3c058c5f8f3bb35c5
+Original: 3000x4000; enviado: 1536x2048 (derived_downscale)
+Atribución: SajoR — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Homenaje_a_Carlos_Gardel_-_Obra_de_Salvador_Arango_(1).jpg

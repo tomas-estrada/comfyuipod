@@ -1,10 +1,10 @@
 {
   "atlas_version": "1.0.0",
-  "generated_ts": 1793841513.5695305,
+  "generated_ts": 1793843226.7378595,
   "root": "atlas",
   "stats": {
     "places": 10209,
-    "places_with_usable_views": 180,
+    "places_with_usable_views": 172,
     "references_total": 1203,
     "references_usable": 620,
     "views_usable": 620,
@@ -35,12 +35,12 @@
       "intersection": 1
     },
     "references_by_municipality": {
-      "Medellín": 437,
+      "Medellín": 448,
       "Bello": 56,
-      "Itagüí": 38,
+      "Itagüí": 31,
       "Sabaneta": 25,
-      "Envigado": 24,
-      "Copacabana": 24,
+      "Envigado": 22,
+      "Copacabana": 22,
       "Caldas": 9,
       "Girardota": 5,
       "La Estrella": 2
@@ -51,13 +51,13 @@
       "uploaded_only": 1
     },
     "references_by_license": {
-      "CC BY-SA 4.0": 383,
-      "CC BY-SA 3.0": 99,
-      "CC BY 4.0": 45,
-      "CC BY 3.0": 34,
-      "CC BY-SA 2.0": 25,
+      "CC BY-SA 4.0": 387,
+      "CC BY-SA 3.0": 98,
+      "CC BY 4.0": 42,
+      "CC BY 3.0": 35,
+      "CC BY-SA 2.0": 23,
       "CC0": 17,
-      "CC BY 2.0": 15,
+      "CC BY 2.0": 16,
       "Public domain": 2
     }
   },
@@ -103,6 +103,11 @@
       "bytes": 788993
     },
     {
+      "path": "files/re/ref_file_3_elegida_kata_jpg.jpg",
+      "sha256": "dd4259bea10398c05840dd818aabe21fdc737057025f3d7ce5c32771dc6af249",
+      "bytes": 277859
+    },
+    {
       "path": "files/re/ref_file_500px_photo_146291317_jpeg.jpg",
       "sha256": "435f690dcf6d6452e27fab677890cdc470fe05ef4b60e385dd1189d29e423ce0",
       "bytes": 269908
@@ -111,11 +116,6 @@
       "path": "files/re/ref_file_500px_photo_180445097_jpeg.jpg",
       "sha256": "19dfa5273819c83b259629a750b4877998b7735af70876048e8f9d1066d76e7c",
       "bytes": 313443
-    },
-    {
-      "path": "files/re/ref_file_abeja_europea_o_domestica_jpg.jpg",
-      "sha256": "82d23c99d6d54080a7283524481c92eeb7b82695f633c1b505311b080313d63b",
-      "bytes": 363296
     },
     {
       "path": "files/re/ref_file_acceso_estadio_metropolitano_ciudad_de_itag.jpg",
@@ -133,19 +133,9 @@
       "bytes": 478721
     },
     {
-      "path": "files/re/ref_file_adenaria_floribunda_36868555_jpg.jpg",
-      "sha256": "896b9afd32d2f87753a6ad01581524bde658deb524d4155822f315ecc459b125",
-      "bytes": 544119
-    },
-    {
       "path": "files/re/ref_file_aeropuerto_olaya_herrera_experior_1_jpg.jpg",
       "sha256": "2263ef47e8add812ec729b2e93cebd6b97a0202dc698df461da892d47dcd7dc9",
       "bytes": 715637
-    },
-    {
-      "path": "files/re/ref_file_agapornis_personatus_12406571_jpg.jpg",
-      "sha256": "9977629bcda61058843894bc98fa96df5e0360402503aed58443f4c14227de8e",
-      "bytes": 601105
     },
     {
       "path": "files/re/ref_file_aguacatala_jpg.jpg",
@@ -166,6 +156,11 @@
       "path": "files/re/ref_file_alexx1_en_los_40_principales_jpg.jpg",
       "sha256": "9626b27c1acbdb2f108eb2afc752123a0baa899b139966204595159c5b52d949",
       "bytes": 424049
+    },
+    {
+      "path": "files/re/ref_file_alexx1_en_telemedellin_jpg.jpg",
+      "sha256": "c704dc79f933c962e82bf5a53dc03b4ac0e2f9aecd1e382f3a7b3b0245dc209c",
+      "bytes": 737575
     },
     {
       "path": "files/re/ref_file_alto_de_matasano_panoramio_1_jpg.jpg",
@@ -418,21 +413,6 @@
       "bytes": 718005
     },
     {
-      "path": "files/re/ref_file_arbol_de_camelia_patio_de_la_casa_d_55a6eca7.jpg",
-      "sha256": "ed21db60a252c716783fa62bc925f1310c22f9a8fcb3416c3b58eb9183235aa4",
-      "bytes": 1160304
-    },
-    {
-      "path": "files/re/ref_file_arbol_de_navidad_unicentro_medellin_4abb238c.jpg",
-      "sha256": "c94444a332ed9c7e60f542de90d06d134f11caea727f5c3b0d1af34e39674c42",
-      "bytes": 782764
-    },
-    {
-      "path": "files/re/ref_file_arbol_florecido_medellin_jpg_b6dba91b.jpg",
-      "sha256": "7b26d62ca5e96fec512a4c8aa7823df093413d9888c92d429b49ea84c71630c1",
-      "bytes": 725063
-    },
-    {
       "path": "files/re/ref_file_arepas_itagui_jpg_213486b8.jpg",
       "sha256": "ba1046124c154773f4c07eb3713feaecb1a1786b7b5bcc42b681f240e1174f8a",
       "bytes": 570138
@@ -513,14 +493,54 @@
       "bytes": 581142
     },
     {
+      "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_19afe5c7.jpg",
+      "sha256": "70f08243561cf8ebb1c2da11d0067307e9a5a5414d219a68b9b0357360b49bd5",
+      "bytes": 540314
+    },
+    {
+      "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_2ae15072.jpg",
+      "sha256": "64f8c260ae83312dc5d9b7f04ed89dfac5413dba220c8e1af6c72ae0a49cc139",
+      "bytes": 910174
+    },
+    {
+      "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_2bf0f046.jpg",
+      "sha256": "48613a7ddc683af9cec858160c3ce5f1ad05ef6418b94c4fdfeb416a74220329",
+      "bytes": 613419
+    },
+    {
+      "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_336fe609.jpg",
+      "sha256": "710b16e6dad7018ada0faa1b6b8a296961f57f999a5de62696c48e7ab0d586fc",
+      "bytes": 546059
+    },
+    {
+      "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_515463c9.jpg",
+      "sha256": "4c6159a5a6316df51b424565ea3ebb3c4ff363d0a7e68e96bcfd7b2ede60b409",
+      "bytes": 896367
+    },
+    {
       "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_579b6b14.jpg",
       "sha256": "cc8408afb6deec9c54f0c0c5d7cb46b6dcd639e8e24db767aa80c28af493f40c",
       "bytes": 754255
     },
     {
+      "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_a5a8c3c1.jpg",
+      "sha256": "1ee1d2bdc8505b3bcb20ee313be8e2394e8fdf24bc253353d80c24d2fe8e3a92",
+      "bytes": 545875
+    },
+    {
       "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_adf082ca.jpg",
       "sha256": "4843faed56c9a652aec48904effe59eac0816c2489dcefd4b811ba896791f3b4",
       "bytes": 610391
+    },
+    {
+      "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_b6679caf.jpg",
+      "sha256": "38d56b12f51e6c5cb5f57a6948998e88a683bdfca643fc5828e8c403496d1ba6",
+      "bytes": 856053
+    },
+    {
+      "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_bf140bae.jpg",
+      "sha256": "f6cc82fe0810472374fc74994347433158c63633e9995094e46cc111a242b839",
+      "bytes": 923445
     },
     {
       "path": "files/re/ref_file_basilica_de_san_judas_tadeo_el_sant_e9b9e305.jpg",
@@ -593,11 +613,6 @@
       "bytes": 783778
     },
     {
-      "path": "files/re/ref_file_bichofue_urbano_jpg_352088b0.jpg",
-      "sha256": "04cfb1079cfa19fdefc5c9b499029a61e76198a4b1a81583614a4f4eb978375c",
-      "bytes": 186248
-    },
-    {
       "path": "files/re/ref_file_bienparado_comun_jpg_2c54ab91.jpg",
       "sha256": "28d560d3bfa8a6c74ef7235b04d3fc002825981f7fd662dc12a9ba3bd44b58d9",
       "bytes": 471321
@@ -648,11 +663,6 @@
       "bytes": 518150
     },
     {
-      "path": "files/re/ref_file_camera_107438493_jpeg_c6e1c745.jpg",
-      "sha256": "fcd76cce93b80638e3cfab28e28bef605b7241eefa9c707cd62203db2f80a0de",
-      "bytes": 838683
-    },
-    {
       "path": "files/re/ref_file_campana_bajale_al_ruido_3942245953__f9677662.jpg",
       "sha256": "3db74e2c680cd68cecb1ae9f7876da87ac3697156e68c116fb7c6d3eda5409ef",
       "bytes": 487281
@@ -698,16 +708,6 @@
       "bytes": 599653
     },
     {
-      "path": "files/re/ref_file_cara_frontal_estacion_del_ferrocarr_c7a85181.jpg",
-      "sha256": "ea68de151177ae53e967830bfe4f022cd6972f1013c2ac44ebc0edb0cc849cf4",
-      "bytes": 551169
-    },
-    {
-      "path": "files/re/ref_file_cara_lateral_estacion_del_ferrocarr_db3f8c1d.jpg",
-      "sha256": "fcc970d5857d7157a5c3e663324119b71110f60cb7d1ec0a766510b9186428d4",
-      "bytes": 886089
-    },
-    {
       "path": "files/re/ref_file_carcel_municipal_6_05_02_n_75_19_56_a0db8d90.jpg",
       "sha256": "d77c0cf70b5f7326284c898105d25c0674c3bd61c020d1fc7b375cccfe16a371",
       "bytes": 779275
@@ -731,6 +731,11 @@
       "path": "files/re/ref_file_carrera_67_aeropuerto_olaya_herrera_4e927c3a.jpg",
       "sha256": "1bf97a08b7b6dde84988c172c63b68211b26fcf6371ec08541110a0eabe82a83",
       "bytes": 636705
+    },
+    {
+      "path": "files/re/ref_file_carrera_en_el_carmen_jpg_10e3473c.jpg",
+      "sha256": "3f313e24f220316e7f184f6e54acebadec08b0662a209251126f6797783faa7e",
+      "bytes": 1013195
     },
     {
       "path": "files/re/ref_file_carretera_concepcion_panoramio_jpg_ca6b6c69.jpg",
@@ -773,6 +778,21 @@
       "bytes": 408828
     },
     {
+      "path": "files/re/ref_file_casa_de_la_cultura_jose_maria_cordo_a1ecba4c.jpg",
+      "sha256": "8e5b3dad91c93cd0726643067da52a24093acabcb7642dae25173c5f9a6429af",
+      "bytes": 476897
+    },
+    {
+      "path": "files/re/ref_file_casa_de_la_cultura_jose_maria_cordo_ab7f5e62.jpg",
+      "sha256": "92c532d926e3bf037b8c9ad9a18054e2530200efab4d92a328684dc4f8c3e624",
+      "bytes": 1386482
+    },
+    {
+      "path": "files/re/ref_file_casa_de_la_cultura_jose_maria_cordo_ac20dc31.jpg",
+      "sha256": "78b4adccea4d8948c2f7044b3e42637c8c095ced1a93622f9f1c06481bf18b79",
+      "bytes": 1425131
+    },
+    {
       "path": "files/re/ref_file_casa_de_la_cultura_jose_maria_cordo_b880f4e4.jpg",
       "sha256": "90ecba7a5ac4de6a5f69d8f400e09eabaf25a85b8f64c8f88684b1a83a37770d",
       "bytes": 753642
@@ -781,6 +801,11 @@
       "path": "files/re/ref_file_casa_de_la_cultura_jose_maria_cordo_bbdb3901.jpg",
       "sha256": "06519e887cad9ed7ab3f8e004ee78f5007098b47511065e65fa2980246d1e78c",
       "bytes": 1166540
+    },
+    {
+      "path": "files/re/ref_file_casa_de_la_cultura_jose_maria_cordo_d2975224.jpg",
+      "sha256": "b7aad23773b52574dc6467f92d4a5fbc4fb991e716b8e61429cb6665d0d7babf",
+      "bytes": 1038083
     },
     {
       "path": "files/re/ref_file_casa_de_tiquetes_estacion_barbosa_f_b47e0d71.jpg",
@@ -801,6 +826,16 @@
       "path": "files/re/ref_file_casa_el_jordan_medellin_octubre_de__b2e63cb0.jpg",
       "sha256": "c7029f6c6184cc8c731c87e90221b3c875c87e94d9aea26b661fa7d943e38c9d",
       "bytes": 927094
+    },
+    {
+      "path": "files/re/ref_file_castilla_medellin_panoramio_jpg_30e83f9d.jpg",
+      "sha256": "1477b9bcbd25a932f8f32ccced8887c906dac6bd78150bca68f827d892da9ea1",
+      "bytes": 536166
+    },
+    {
+      "path": "files/re/ref_file_castropol_medellin_medellin_antioqu_76c5ff9f.jpg",
+      "sha256": "ebd010aea6deb1e10125c4b35ce986b0b468c5df1ff7ad1f5e1453ccd6763267",
+      "bytes": 478785
     },
     {
       "path": "files/re/ref_file_catedral_de_girardota_jpg_102b50d6.jpg",
@@ -836,11 +871,6 @@
       "path": "files/re/ref_file_centro_comercial_santafe_la_eucaris_f4f05a9b.jpg",
       "sha256": "32b1c5a8f8b6b6c5e86ca8b6ed1e2351477805113092ba94bc07e4ad07196a16",
       "bytes": 678745
-    },
-    {
-      "path": "files/re/ref_file_centro_comercial_santafe_medellin_a_379c1a0a.jpg",
-      "sha256": "aca4eb041b330bec79059bb95121497c4bdc0a88acee72ed695b29dda1b31c00",
-      "bytes": 1164595
     },
     {
       "path": "files/re/ref_file_centro_comercial_santafe_p_jpg_615bb526.jpg",
@@ -1008,6 +1038,26 @@
       "bytes": 679366
     },
     {
+      "path": "files/re/ref_file_corazon_de_jesus_medellin_medellin__00016dd8.jpg",
+      "sha256": "a78ca3c6f4ec2b8dcbf7aa9e0b04dce59dfdb888d5a67de457e47f449b5be40e",
+      "bytes": 677370
+    },
+    {
+      "path": "files/re/ref_file_corazon_de_jesus_medellin_medellin__0ed9d1fa.jpg",
+      "sha256": "f4d2c21ce9f1dcd337f5ed92f8adab2dc1a7a70b8e19412228ecc459171b8d08",
+      "bytes": 373600
+    },
+    {
+      "path": "files/re/ref_file_corazon_de_jesus_medellin_medellin__2070568c.jpg",
+      "sha256": "e0e17229b1d141782f378dd2c7e4a2bd5393979487d82e3e5eb1cf2090b7968f",
+      "bytes": 803155
+    },
+    {
+      "path": "files/re/ref_file_corazon_de_jesus_medellin_medellin__d2182cca.jpg",
+      "sha256": "d4a51871342f2235f04704c24efe507a70e830c9f95242204d4b8ea9fbe4c091",
+      "bytes": 535840
+    },
+    {
       "path": "files/re/ref_file_daniel_lugo_jpg_7294531b.jpg",
       "sha256": "0e8665b883b86e1a32afeba3f6d67f641bf60896cec2796c562bc9c8b7003905",
       "bytes": 787564
@@ -1071,6 +1121,11 @@
       "path": "files/re/ref_file_drug_users_medellin_52417319486_jpg_7fade9df.jpg",
       "sha256": "cbb903b353674fef86646c541107fb6818805f1538768a8c194c2e248d3ca69c",
       "bytes": 500755
+    },
+    {
+      "path": "files/re/ref_file_edificio_inteligente_epm_and_parque_de_los_.jpg",
+      "sha256": "196b20471932974026891c39c01efa5d0e9395a9c42eaa37c829ef94a46b0feb",
+      "bytes": 456870
     },
     {
       "path": "files/re/ref_file_edificio_san_martino_calasanz_panor_b3a2667e.jpg",
@@ -1143,9 +1198,9 @@
       "bytes": 192140
     },
     {
-      "path": "files/re/ref_file_el_fin_antes_del_inicio_jpg_5a448c93.jpg",
-      "sha256": "7b4af90f52f68434e639515faa0ff725424944d3075a4f92e0107b0841b50895",
-      "bytes": 664134
+      "path": "files/re/ref_file_el_santuario_placa_en_homenaje_a_el_a09f381a.jpg",
+      "sha256": "b341a6d9a448336cf631fe6ebf17d715cffaf9687e3e759acfef146f38a056c1",
+      "bytes": 730571
     },
     {
       "path": "files/re/ref_file_el_trapiche_bello_antioquia_colombi_a4c7e5d0.jpg",
@@ -1211,11 +1266,6 @@
       "path": "files/re/ref_file_el_trebol_panoramio_sckarmax_jpg_e983cc07.jpg",
       "sha256": "b3cd1a5ab0ea5f10a2c36abe4b442479e4be5819da1bddee8d2d931112c2c99e",
       "bytes": 694669
-    },
-    {
-      "path": "files/re/ref_file_eli_bohorquez_jpg_a1809279.jpg",
-      "sha256": "ed0b251bfc71dccdb022067e842b95a279d82f0dc9dc23b9447ee349a8d45ad8",
-      "bytes": 435886
     },
     {
       "path": "files/re/ref_file_en_route_to_bogota_5590333297_jpg_40a1a684.jpg",
@@ -1493,14 +1543,14 @@
       "bytes": 317301
     },
     {
-      "path": "files/re/ref_file_hermano_caballo_rodrigo_arenas_beta_34b7db70.jpg",
-      "sha256": "e9fe38c13a1b85824b0e5e685ab89bd24d3a0b14c9fe62f9c95581e85ffc2c1f",
-      "bytes": 995693
+      "path": "files/re/ref_file_homenaje_a_carlos_gardel_obra_de_sa_11f5d380.jpg",
+      "sha256": "d5093f962a58989d91685376b7f4b9201cd4f4852892cfd422117375d928a313",
+      "bytes": 926390
     },
     {
-      "path": "files/re/ref_file_hermano_caballo_rodrigo_arenas_beta_90733033.jpg",
-      "sha256": "d1c51a0e652513f6b26f9f1758892e8928b24fb384d52613b2f4f25354ba2700",
-      "bytes": 1311536
+      "path": "files/re/ref_file_homenaje_a_carlos_gardel_obra_de_sa_c8ba9198.jpg",
+      "sha256": "b8a2fae34eda20a8edb988a48903c2df6c17a57a1f8ceafa7a00ae1135f7c8ee",
+      "bytes": 1071331
     },
     {
       "path": "files/re/ref_file_homenaje_a_carlos_gardel_obra_de_sa_dbbaa33f.jpg",
@@ -1521,11 +1571,6 @@
       "path": "files/re/ref_file_horizontes_1999_1999_by_carlos_uribe_museo_.jpg",
       "sha256": "415e8074d308b8f1945dd5169faef3e3c2f58c093037f93dcf3aace02f4f9899",
       "bytes": 464036
-    },
-    {
-      "path": "files/re/ref_file_hormiga_en_la_estacion_oriente_tran_f7268d32.jpg",
-      "sha256": "ba76307fb780ed2fb5c62905906fdccad9fbf73a9b83e3cf3aaacb39560e03ea",
-      "bytes": 1106120
     },
     {
       "path": "files/re/ref_file_huevos_de_insepto_jpg_f4d885a8.jpg",
@@ -1558,14 +1603,9 @@
       "bytes": 530390
     },
     {
-      "path": "files/re/ref_file_igl_de_jesus_nazareno_rionegro_nave_144a6a73.jpg",
-      "sha256": "c19c26b2a8473c79c6109178b17298f07b507090f13ab02ff6a3b3149d32f5b5",
-      "bytes": 482022
-    },
-    {
-      "path": "files/re/ref_file_igl_de_jesus_nazareno_rionegro_pavi_aae14588.jpg",
-      "sha256": "83050356000d0ce33202463091d141b0dcb75c7eb60a4a944ab37a5cae3996e4",
-      "bytes": 423772
+      "path": "files/re/ref_file_igl_ntra_sra_del_perpetuo_socorro_a_a7e310a9.jpg",
+      "sha256": "45687d19680dba3c7711dceedfd479005d1e9690e68e7756284cc8e633147cc4",
+      "bytes": 310518
     },
     {
       "path": "files/re/ref_file_igl_ntra_sra_del_perpetuo_socorro_a_b6fdee09.jpg",
@@ -1733,6 +1773,11 @@
       "bytes": 742921
     },
     {
+      "path": "files/re/ref_file_iglesia_de_nuestra_senora_del_rosar_2f536707.jpg",
+      "sha256": "b5daf839b267e2f9e7d0ea9e6c1a90d16737ffa1b6615396e799fa64aa0b91e7",
+      "bytes": 629483
+    },
+    {
       "path": "files/re/ref_file_iglesia_de_nuestra_senora_del_rosar_4c37dd05.jpg",
       "sha256": "34968b78cd77c539781123e7dbcc01d6d6ff6e3956b81cf7cbabf5c7900fd792",
       "bytes": 612588
@@ -1868,11 +1913,6 @@
       "bytes": 550461
     },
     {
-      "path": "files/re/ref_file_intercambio_de_los_fundadores_envig_47ee09af.jpg",
-      "sha256": "033fa33f9359b02f86084fa7ca121a722fabe5dd88371b19ac6d3c2faea7611c",
-      "bytes": 424105
-    },
-    {
       "path": "files/re/ref_file_iss021_e_7009_view_of_earth_jpg_2c33f1ca.jpg",
       "sha256": "166cec893a5dcf440ded6cc7e4fa86862f438f92fa884698546bedaaef305a51",
       "bytes": 515039
@@ -1958,11 +1998,6 @@
       "bytes": 499806
     },
     {
-      "path": "files/re/ref_file_la_pupa_jpg_c5da3e08.jpg",
-      "sha256": "11e88cf3b139f78b1d447300e1937829752547076a45a449f94a509c95939326",
-      "bytes": 634985
-    },
-    {
       "path": "files/re/ref_file_las_palmas_medellin_medellin_antioq_50424e82.jpg",
       "sha256": "c650e1b0afb3c875a6ec29815c0125b646e191bbd2022c50f2f6180e2cdcc003",
       "bytes": 711040
@@ -2023,26 +2058,6 @@
       "bytes": 454110
     },
     {
-      "path": "files/re/ref_file_marcha_lgbtiq_medellin_2025_16_jpg_09af627b.jpg",
-      "sha256": "7a5ecbf97ad096c7d3b2e2c82d6d2a8e2db9350302b8574f20170a6cff88d5fd",
-      "bytes": 953697
-    },
-    {
-      "path": "files/re/ref_file_marcha_lgbtiq_medellin_2025_34_jpg_b902c14a.jpg",
-      "sha256": "9b191faf57ca6c032edfe04e35b4f94ab4d62e47df631aa9fe5c1e185b206ab8",
-      "bytes": 953360
-    },
-    {
-      "path": "files/re/ref_file_marcha_lgbtiq_medellin_2025_45_jpg_f158a30d.jpg",
-      "sha256": "01d7a4c0e02b5bd625c1c7e3bdc462b45d3c0173a8498d0010946875b355085c",
-      "bytes": 536772
-    },
-    {
-      "path": "files/re/ref_file_marcha_lgbtiq_medellin_2025_53_jpg_08594a58.jpg",
-      "sha256": "79907305b21bbb5b3a5f55705f7f4b17699393bbe358898558a35b0e40497523",
-      "bytes": 912331
-    },
-    {
       "path": "files/re/ref_file_marinilla_1a_jpg_9cf66dca.jpg",
       "sha256": "c46efc074af48006cac376c7995d8904ba99e8040b3cce3b31c0ddcb6e084c49",
       "bytes": 708530
@@ -2083,11 +2098,6 @@
       "bytes": 491848
     },
     {
-      "path": "files/re/ref_file_medellin_2014_flickr_ivan_erre_jota_69f1cd9b.jpg",
-      "sha256": "0dcda8d2dbf171433b3be0363db28c1946056987a316ad4d2b127edc8fc9a5b3",
-      "bytes": 428170
-    },
-    {
       "path": "files/re/ref_file_medellin_2022_aspecto_pilarica_jpg_3087b2b1.jpg",
       "sha256": "46d5b954d2a53644b2ee140553e1c00820f83a638ce367a3423812ddad47476f",
       "bytes": 943056
@@ -2101,11 +2111,6 @@
       "path": "files/re/ref_file_medellin_2022_quebrada_malpaso_01_j_51ce004a.jpg",
       "sha256": "eb54191edac410f7681e4ed64a8d249a83b81bedda36690f526197c55d851990",
       "bytes": 1201989
-    },
-    {
-      "path": "files/re/ref_file_medellin_2022_vista_de_la_avenida_8_0b0e0598.jpg",
-      "sha256": "169f74a3a84aa48b88bed4f87b4d178b32137418877b55dc7742080a7fc17a93",
-      "bytes": 841485
     },
     {
       "path": "files/re/ref_file_medellin_2022_vista_hacia_el_volado_c5fe06e3.jpg",
@@ -2238,6 +2243,11 @@
       "bytes": 723282
     },
     {
+      "path": "files/re/ref_file_monumento_a_jose_maria_cordova_san__5b17013d.jpg",
+      "sha256": "de5efe9b687cb550614689863bf97ccc317d7cce3e89a1637ebaca596121dc28",
+      "bytes": 645703
+    },
+    {
       "path": "files/re/ref_file_monumento_a_los_marires_y_proceres__05310359.jpg",
       "sha256": "8a71103ef1aabc3a596380d1090aad0919fdda8cd58f500db2dd7f562650fab1",
       "bytes": 797144
@@ -2358,11 +2368,6 @@
       "bytes": 554337
     },
     {
-      "path": "files/re/ref_file_nave_central_iglesia_el_poblado_jpg_a5c3f05c.jpg",
-      "sha256": "d6f2d6d4e660e77e1d55424bc258964a76da59a0a64deed5be0cc8cd4970147b",
-      "bytes": 687105
-    },
-    {
       "path": "files/re/ref_file_navidad_en_parques_del_rio_medellin_3a046315.jpg",
       "sha256": "27963b230fd08b5dbc1664fa8109205ca74d0ab00ae6a80254f00ce792a528fc",
       "bytes": 494798
@@ -2473,11 +2478,6 @@
       "bytes": 673962
     },
     {
-      "path": "files/re/ref_file_panoramica_desde_el_cerro_el_volado_f688389a.jpg",
-      "sha256": "bf39db3c7d4864486cdfd57961697cb85786a1a70b55f24d286627e4e44c5c26",
-      "bytes": 481373
-    },
-    {
       "path": "files/re/ref_file_panoramica_el_carmen_de_viboral_201_468b8a15.jpg",
       "sha256": "bf591e30f1498471a58e49389ef2d40d5eed6711e980de817d94a4c66f539218",
       "bytes": 404454
@@ -2581,11 +2581,6 @@
       "path": "files/re/ref_file_peperomia_eburnea_in_colombia_jpg_e636e071.jpg",
       "sha256": "ce18bf99b6ea476d9d444683badd6c1d3501841d3ec7a0178160e81ff6ccdba1",
       "bytes": 710791
-    },
-    {
-      "path": "files/re/ref_file_perro_tomando_el_sol_san_vicente_jp_106ea276.jpg",
-      "sha256": "56bc1693d0797a1ee3f41e7650e519736394d55c75094a95af73842ec9cdcb7e",
-      "bytes": 784847
     },
     {
       "path": "files/re/ref_file_persea_caerulea_jpg_771c7312.jpg",
@@ -2763,11 +2758,6 @@
       "bytes": 258117
     },
     {
-      "path": "files/re/ref_file_rio_medellin_desde_la_avenida_33_20_835bbdd5.jpg",
-      "sha256": "cf11c99a00b956ed9f477eaaa45ec2e2a53606655db93d5870e3e11ae579fa43",
-      "bytes": 527069
-    },
-    {
       "path": "files/re/ref_file_rionegro_puente_mejia_jpg_47a1ac9c.jpg",
       "sha256": "884046695eef71c4df5184c841da52c2594136a5c32e379a0dd4fd168ca58694",
       "bytes": 846283
@@ -2813,14 +2803,14 @@
       "bytes": 529095
     },
     {
-      "path": "files/re/ref_file_santafe_zoo_69526517_jpeg_abd1634c.jpg",
-      "sha256": "3bcf1266bf6793c4016db56bcf8ddc955361b541d00081266c646644fbaec1bd",
-      "bytes": 435123
-    },
-    {
       "path": "files/re/ref_file_santo_domingo_alcaldia_jpg_3c7a90a8.jpg",
       "sha256": "7780873b8b4b1bcd27a6578e2ffd826aff07d7187c5f647e1418f4ffd4e72c98",
       "bytes": 498172
+    },
+    {
+      "path": "files/re/ref_file_santo_domingo_antioquia_jpg_c248f329.jpg",
+      "sha256": "660178fb60ea1cce3a8b755cce50b60cc3ccb024c683f856f0e02e15dab55063",
+      "bytes": 457841
     },
     {
       "path": "files/re/ref_file_santo_domingo_calle_del_hospital_jp_b94c7a3b.jpg",
@@ -2878,11 +2868,6 @@
       "bytes": 718151
     },
     {
-      "path": "files/re/ref_file_solanum_deflexiflorum_jpg_4d13f445.jpg",
-      "sha256": "3ab298c408fafc2aea69f4fd9e2cc62bab4f4073466f67fbb6f5c2307d9d0718",
-      "bytes": 525642
-    },
-    {
       "path": "files/re/ref_file_sotm_latam_2025_engeobeer6_jpg_42fbffa1.jpg",
       "sha256": "ed81958291c4a75d87c3c4d80417bad175ab042197176872df9276000582eb43",
       "bytes": 597127
@@ -2906,6 +2891,11 @@
       "path": "files/re/ref_file_statue_of_pedro_justo_berrio_parque_1536a52c.jpg",
       "sha256": "01043930b0b1a629db050fe643cae472ae36e440619e7943dcb62b697b79906e",
       "bytes": 507973
+    },
+    {
+      "path": "files/re/ref_file_stenochrus_portoricensis_25798156_j_4b99154f.jpg",
+      "sha256": "28fb02dc6a425e57bcb21807aa9fe3891ac19cafeb91c5daf3a14d619f2476ee",
+      "bytes": 550546
     },
     {
       "path": "files/re/ref_file_suburbio_medellin_2016_jpg_31924979.jpg",
@@ -2998,11 +2988,6 @@
       "bytes": 556034
     },
     {
-      "path": "files/re/ref_file_treboles_de_cuatro_hojas_jpg_dbd32eb1.jpg",
-      "sha256": "4175e37d758b50291ad6e92996b3b1b72faea9206a985465c90acd6c46a78e35",
-      "bytes": 521096
-    },
-    {
       "path": "files/re/ref_file_tribunal_administrativo_de_antioqui_42b02aaf.jpg",
       "sha256": "179edd14078f76a5625a91e610009a6dc5c9196da28f7250df7933811a930e7e",
       "bytes": 653000
@@ -3023,9 +3008,24 @@
       "bytes": 257121
     },
     {
+      "path": "files/re/ref_file_unalmed_bloque_11_oficinas_primer_p_1c173825.jpg",
+      "sha256": "93e614f78a23c3e0961ef4519b3aefd65675d8b1e2cc06c173bf3cf5b2f35e1d",
+      "bytes": 765651
+    },
+    {
       "path": "files/re/ref_file_unalmed_bloque_11_oficinas_primer_p_5f883908.jpg",
       "sha256": "4a233cac9864c7aefcd8ca90e20d19044084e7aea750233a9acdcbda1a1bd445",
       "bytes": 651753
+    },
+    {
+      "path": "files/re/ref_file_unalmed_bloque_12_durante_la_constr_818bf4bc.jpg",
+      "sha256": "5072c7ebcef336994a51409c125519c449ad1aec57b9bc6e34a40c9bcbfbcffb",
+      "bytes": 916800
+    },
+    {
+      "path": "files/re/ref_file_unalmed_bloque_12_durante_la_constr_be1b07ea.jpg",
+      "sha256": "efa0e39af319914cd3da34932685ebe217a2290a481cfb0147689bdece4a8d14",
+      "bytes": 916053
     },
     {
       "path": "files/re/ref_file_uva_huellas_de_vida_san_javier_mede_10a1e692.jpg",
@@ -3113,6 +3113,11 @@
       "bytes": 722657
     },
     {
+      "path": "files/re/ref_file_vista_hacia_el_sur_desde_la_goberna_18898581.jpg",
+      "sha256": "ae03a1681fac65cd7941733f42eb84fd9d691a39206350529a5b64176b1cb2b3",
+      "bytes": 586728
+    },
+    {
       "path": "files/re/ref_file_vista_hacia_el_sur_desde_la_goberna_841169b3.jpg",
       "sha256": "f95c489af788ec1ab067e5900ba70402e8ff1aa75f35e1607faeacc1faf5ff3c",
       "bytes": 595336
@@ -3121,11 +3126,6 @@
       "path": "files/re/ref_file_vista_hacia_el_sur_desde_la_goberna_e8b8f6bd.jpg",
       "sha256": "7bc65d618b97767ece436b1ab91372a65ab3543e850d9db7517a8ff841b9c6bb",
       "bytes": 539643
-    },
-    {
-      "path": "files/re/ref_file_vista_lateral_cara_norte_estacion_d_9cbbd54c.jpg",
-      "sha256": "8b0e6e5ee5b9edeb7fbd8f1bcc8341d451657967ef2b8ae557dc12d90f6805b2",
-      "bytes": 412637
     },
     {
       "path": "files/re/ref_file_vista_lateral_estacion_del_ferrocar_8070776e.jpg",
@@ -3205,6 +3205,11 @@
       "bytes": 25677
     },
     {
+      "path": "previews/ref_file_3_elegida_kata_jpg.jpg",
+      "sha256": "7ad2b4358a0bbcc5e0fb1acecdc2c11fb7046ef0c82c421c1a9bf074f263b679",
+      "bytes": 13486
+    },
+    {
       "path": "previews/ref_file_500px_photo_146291317_jpeg.jpg",
       "sha256": "bf8087cf3a47e28defefe412d5d3fd5c69c1a5184b7ca0fbff37c6bbff6a2bb6",
       "bytes": 15089
@@ -3213,11 +3218,6 @@
       "path": "previews/ref_file_500px_photo_180445097_jpeg.jpg",
       "sha256": "585bb21a2aa4e42ef93f23de3d75ef54da18958efff255720f7ef7009e529475",
       "bytes": 10970
-    },
-    {
-      "path": "previews/ref_file_abeja_europea_o_domestica_jpg.jpg",
-      "sha256": "261af0f21ea0b170f902d2c9728740fb44c809d4814e53dd33e6191f705c48d5",
-      "bytes": 23760
     },
     {
       "path": "previews/ref_file_acceso_estadio_metropolitano_ciudad_de_itag.jpg",
@@ -3235,19 +3235,9 @@
       "bytes": 18218
     },
     {
-      "path": "previews/ref_file_adenaria_floribunda_36868555_jpg.jpg",
-      "sha256": "5ba7d0a55bcea85a6074d96466a7331d6d400f050e6821af1755b78e883f6539",
-      "bytes": 30165
-    },
-    {
       "path": "previews/ref_file_aeropuerto_olaya_herrera_experior_1_jpg.jpg",
       "sha256": "0eae3769cad2e17f1996bd98e6f37b3aadd705fefee2d4779228b5ab319b21f5",
       "bytes": 21159
-    },
-    {
-      "path": "previews/ref_file_agapornis_personatus_12406571_jpg.jpg",
-      "sha256": "ce7cd61aeb4e17df3dba6e5473676d6517b83f3061c4e0d04dc5b9e97792b178",
-      "bytes": 18301
     },
     {
       "path": "previews/ref_file_aguacatala_jpg.jpg",
@@ -3268,6 +3258,11 @@
       "path": "previews/ref_file_alexx1_en_los_40_principales_jpg.jpg",
       "sha256": "b99775c54fceb2d21560866271ee77047b80fb83fab381fc4d7030f8551ae087",
       "bytes": 15724
+    },
+    {
+      "path": "previews/ref_file_alexx1_en_telemedellin_jpg.jpg",
+      "sha256": "2c104a33936fa0f89dd940ccd57fadcacd9585b7402de27bf87f5a888f5ea66a",
+      "bytes": 25951
     },
     {
       "path": "previews/ref_file_alto_de_matasano_panoramio_1_jpg.jpg",
@@ -3520,21 +3515,6 @@
       "bytes": 35303
     },
     {
-      "path": "previews/ref_file_arbol_de_camelia_patio_de_la_casa_d_55a6eca7.jpg",
-      "sha256": "9443f5f7390a75596475f90d69b334deb1d7a10885515c9782f36c0b29c8aa45",
-      "bytes": 42188
-    },
-    {
-      "path": "previews/ref_file_arbol_de_navidad_unicentro_medellin_4abb238c.jpg",
-      "sha256": "f2e2a476e8d7becc7e746a0ac5adaf2fecb6d7c7d83194c7d303309b14547d0a",
-      "bytes": 30308
-    },
-    {
-      "path": "previews/ref_file_arbol_florecido_medellin_jpg_b6dba91b.jpg",
-      "sha256": "a55486e6067ceedb85c0d1ff341eef5afccf81d61d37a345b10c3c316cbca334",
-      "bytes": 22768
-    },
-    {
       "path": "previews/ref_file_arepas_itagui_jpg_213486b8.jpg",
       "sha256": "9e8ff39b28c24f062604f4a5ff2d5b41277522388f69d2dc6d6c8f08467d919d",
       "bytes": 20707
@@ -3615,14 +3595,54 @@
       "bytes": 17850
     },
     {
+      "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_19afe5c7.jpg",
+      "sha256": "573e14d53a09beb2b58b8f4534b56cd9a0866e112968dd4d25adb15faf5b4f0d",
+      "bytes": 24477
+    },
+    {
+      "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_2ae15072.jpg",
+      "sha256": "77b565c96a6c6aadfa0f55ce777bab288e8f788c5a7f0826ff4d034f1b4d6c64",
+      "bytes": 30311
+    },
+    {
+      "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_2bf0f046.jpg",
+      "sha256": "4f4320537709558d7e144931c0aa205acd08561dcad5ec176ef4063c465e0ffd",
+      "bytes": 22989
+    },
+    {
+      "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_336fe609.jpg",
+      "sha256": "42c4564c54e05eee8511c7fccff29ff4d233f28a596743698034ded11104c62a",
+      "bytes": 27299
+    },
+    {
+      "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_515463c9.jpg",
+      "sha256": "a32f4ae3a755088e65a259f6e05732d9a892a2c38370acaf048bc09168e00331",
+      "bytes": 29833
+    },
+    {
       "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_579b6b14.jpg",
       "sha256": "bec970875005950941da65d935dc4a391e5bd13483c1950beec267ee67418023",
       "bytes": 23297
     },
     {
+      "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_a5a8c3c1.jpg",
+      "sha256": "7c773c63d4ce0840ac93180a7fccea5d89211f8450dc794fb6a4ee8adcb973ed",
+      "bytes": 17894
+    },
+    {
       "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_adf082ca.jpg",
       "sha256": "814107258a85e056d76f0b0c2a6e0b1226eb25f5b4048f1b0286178c757bc714",
       "bytes": 26443
+    },
+    {
+      "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_b6679caf.jpg",
+      "sha256": "7e320e2d88ca5de85af36dc48f69b23aca03199834ee9f4e2e7ce064c0766ab0",
+      "bytes": 27564
+    },
+    {
+      "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_bf140bae.jpg",
+      "sha256": "880194947872c1f75974d648c9cde1a9d23a31cda80449ece12ff4c41274f6aa",
+      "bytes": 29435
     },
     {
       "path": "previews/ref_file_basilica_de_san_judas_tadeo_el_sant_e9b9e305.jpg",
@@ -3695,11 +3715,6 @@
       "bytes": 30400
     },
     {
-      "path": "previews/ref_file_bichofue_urbano_jpg_352088b0.jpg",
-      "sha256": "eaff3d0570aa02b36903e284d81840f8cd1961b97d5b35fc60914b48647873aa",
-      "bytes": 8876
-    },
-    {
       "path": "previews/ref_file_bienparado_comun_jpg_2c54ab91.jpg",
       "sha256": "88c92b2c12863d11b703fb7d16072c2164af9449f727bb2285aefc277c09e5bc",
       "bytes": 23350
@@ -3750,11 +3765,6 @@
       "bytes": 20360
     },
     {
-      "path": "previews/ref_file_camera_107438493_jpeg_c6e1c745.jpg",
-      "sha256": "40518757d9f8cc0485c80acf1524fb205cda837b9855bfe4df0a430dfcf5846d",
-      "bytes": 21745
-    },
-    {
       "path": "previews/ref_file_campana_bajale_al_ruido_3942245953__f9677662.jpg",
       "sha256": "b0675d0d853592b6a451c7f512267af33d8d296ff840ca526a2a7908ab2a71b2",
       "bytes": 19388
@@ -3800,16 +3810,6 @@
       "bytes": 19549
     },
     {
-      "path": "previews/ref_file_cara_frontal_estacion_del_ferrocarr_c7a85181.jpg",
-      "sha256": "1deeeed35663765d0266ca73f99a247745fa47b967013513b7d4e281e059a951",
-      "bytes": 22399
-    },
-    {
-      "path": "previews/ref_file_cara_lateral_estacion_del_ferrocarr_db3f8c1d.jpg",
-      "sha256": "35951c5910d7898ea5a1cfa9d6d1bfe487f49ebd8ac2c471ac0a98d007740b89",
-      "bytes": 27578
-    },
-    {
       "path": "previews/ref_file_carcel_municipal_6_05_02_n_75_19_56_a0db8d90.jpg",
       "sha256": "c84b55581b0dd6fcaf6ecaf137210687e9c5a8c60b28dba9e27ff46537282476",
       "bytes": 22333
@@ -3833,6 +3833,11 @@
       "path": "previews/ref_file_carrera_67_aeropuerto_olaya_herrera_4e927c3a.jpg",
       "sha256": "706002e80ee926b6df787286e26ba4fd7657915e2d705aab4a4aa11450fabfe3",
       "bytes": 18765
+    },
+    {
+      "path": "previews/ref_file_carrera_en_el_carmen_jpg_10e3473c.jpg",
+      "sha256": "76b700d05ef14546df5b993c94e2d86954e21bf776e351eaa43f22e11f7ebe73",
+      "bytes": 37103
     },
     {
       "path": "previews/ref_file_carretera_concepcion_panoramio_jpg_ca6b6c69.jpg",
@@ -3875,6 +3880,21 @@
       "bytes": 14252
     },
     {
+      "path": "previews/ref_file_casa_de_la_cultura_jose_maria_cordo_a1ecba4c.jpg",
+      "sha256": "ee94fba2f7335ce9e413f9e20eeaf7b0441afb35c74d3d92b7d6907caa71bc0e",
+      "bytes": 16300
+    },
+    {
+      "path": "previews/ref_file_casa_de_la_cultura_jose_maria_cordo_ab7f5e62.jpg",
+      "sha256": "e03078a403bb41d8ac343633df714f881a87a0a1227413c2231e7aac574778c9",
+      "bytes": 38198
+    },
+    {
+      "path": "previews/ref_file_casa_de_la_cultura_jose_maria_cordo_ac20dc31.jpg",
+      "sha256": "c1d54418430423cdf069da72acbd209565f46b357116b37b26e5c294422a8a0d",
+      "bytes": 38655
+    },
+    {
       "path": "previews/ref_file_casa_de_la_cultura_jose_maria_cordo_b880f4e4.jpg",
       "sha256": "2b393af20a8552961b597e8bbdec782b784120ce70dcdeecc4d895ca6c098b2a",
       "bytes": 27281
@@ -3883,6 +3903,11 @@
       "path": "previews/ref_file_casa_de_la_cultura_jose_maria_cordo_bbdb3901.jpg",
       "sha256": "88da06b1903dd491bb7598deebd4de460a8b61f8b42d1ed576f85e10a3df43b3",
       "bytes": 33008
+    },
+    {
+      "path": "previews/ref_file_casa_de_la_cultura_jose_maria_cordo_d2975224.jpg",
+      "sha256": "87047b7b0a2ac79777dfc43e33e9c37350381c5ab11f91f4bf1aa58558a09bf1",
+      "bytes": 33110
     },
     {
       "path": "previews/ref_file_casa_de_tiquetes_estacion_barbosa_f_b47e0d71.jpg",
@@ -3903,6 +3928,16 @@
       "path": "previews/ref_file_casa_el_jordan_medellin_octubre_de__b2e63cb0.jpg",
       "sha256": "055bc0cdb1074b4433008876f5ef33b4eeb8c8b05630c0b13094488893fb20d6",
       "bytes": 28177
+    },
+    {
+      "path": "previews/ref_file_castilla_medellin_panoramio_jpg_30e83f9d.jpg",
+      "sha256": "f5a4924c43943b7a88765073189fa086205fca5fc1b1d73cfaa25055607673d5",
+      "bytes": 22308
+    },
+    {
+      "path": "previews/ref_file_castropol_medellin_medellin_antioqu_76c5ff9f.jpg",
+      "sha256": "230e397bd7092f86992b361e26365b52a5ac513e869918c9c1085b1aa6583586",
+      "bytes": 20302
     },
     {
       "path": "previews/ref_file_catedral_de_girardota_jpg_102b50d6.jpg",
@@ -3938,11 +3973,6 @@
       "path": "previews/ref_file_centro_comercial_santafe_la_eucaris_f4f05a9b.jpg",
       "sha256": "749292c5cae853bc10e0c87554183386b78e3fdf45d76effb3afe9dd1dbf87fd",
       "bytes": 30916
-    },
-    {
-      "path": "previews/ref_file_centro_comercial_santafe_medellin_a_379c1a0a.jpg",
-      "sha256": "2e128b2e4ebf454545771cc44eeac810c0b4d546494aa1ded590aa0d10152b49",
-      "bytes": 31516
     },
     {
       "path": "previews/ref_file_centro_comercial_santafe_p_jpg_615bb526.jpg",
@@ -4110,6 +4140,26 @@
       "bytes": 20701
     },
     {
+      "path": "previews/ref_file_corazon_de_jesus_medellin_medellin__00016dd8.jpg",
+      "sha256": "c22309d37afb73cf27bd9f9c1e87afe1df54e06968865e930615d562945c4aa2",
+      "bytes": 27110
+    },
+    {
+      "path": "previews/ref_file_corazon_de_jesus_medellin_medellin__0ed9d1fa.jpg",
+      "sha256": "d3e6ea8a3b787330402d3e6336c08261d033c0aad97b3b7156666064ff32d466",
+      "bytes": 17431
+    },
+    {
+      "path": "previews/ref_file_corazon_de_jesus_medellin_medellin__2070568c.jpg",
+      "sha256": "2764d75ca66aa3274d1ba6fd0cf3036e77b2cd576dbab2e2b9de011b66b5cb20",
+      "bytes": 32944
+    },
+    {
+      "path": "previews/ref_file_corazon_de_jesus_medellin_medellin__d2182cca.jpg",
+      "sha256": "ee4fc88e7b0448d58c0813ae981f335531522e5eb7942738cfcf964788911042",
+      "bytes": 24731
+    },
+    {
       "path": "previews/ref_file_daniel_lugo_jpg_7294531b.jpg",
       "sha256": "171e2f9ddc6a31d7cb543cf583a2220325541c541a73f364cb4cd82349edf2f1",
       "bytes": 15712
@@ -4173,6 +4223,11 @@
       "path": "previews/ref_file_drug_users_medellin_52417319486_jpg_7fade9df.jpg",
       "sha256": "0b31f3b4fcc1f2b8132f5129a0df5403ec79dc9dd7b36254bed2e33536f932cb",
       "bytes": 23795
+    },
+    {
+      "path": "previews/ref_file_edificio_inteligente_epm_and_parque_de_los_.jpg",
+      "sha256": "3439ce28635c925508cdeed083fa1c5c9351fe562fdd4c8adefd9656ab9c993c",
+      "bytes": 23114
     },
     {
       "path": "previews/ref_file_edificio_san_martino_calasanz_panor_b3a2667e.jpg",
@@ -4245,9 +4300,9 @@
       "bytes": 11019
     },
     {
-      "path": "previews/ref_file_el_fin_antes_del_inicio_jpg_5a448c93.jpg",
-      "sha256": "83fd464f7ec942876a0abee7803b3015e566bb9f799792aa74402c4ab2f8bda3",
-      "bytes": 30098
+      "path": "previews/ref_file_el_santuario_placa_en_homenaje_a_el_a09f381a.jpg",
+      "sha256": "27e7943bfdb5b0b93f6eb4e4700b0ee19d62a5b2a140e6d7aa2d182edbb9dd9a",
+      "bytes": 30853
     },
     {
       "path": "previews/ref_file_el_trapiche_bello_antioquia_colombi_a4c7e5d0.jpg",
@@ -4313,11 +4368,6 @@
       "path": "previews/ref_file_el_trebol_panoramio_sckarmax_jpg_e983cc07.jpg",
       "sha256": "3bc6c83d8c0eb9d2c7b6a1bafc2be1b0c7ee660386bfc9ff01e5dd177e84fb63",
       "bytes": 25869
-    },
-    {
-      "path": "previews/ref_file_eli_bohorquez_jpg_a1809279.jpg",
-      "sha256": "e5d9470bc09c6d4b775d8e7fbd1144c3ebdd3e01694acb54c697d629706d61b8",
-      "bytes": 16596
     },
     {
       "path": "previews/ref_file_en_route_to_bogota_5590333297_jpg_40a1a684.jpg",
@@ -4595,14 +4645,14 @@
       "bytes": 12789
     },
     {
-      "path": "previews/ref_file_hermano_caballo_rodrigo_arenas_beta_34b7db70.jpg",
-      "sha256": "974bf81019dfda1f72beb41e9ce44799d50c3dc4fa892756365d88fc711f949f",
-      "bytes": 33020
+      "path": "previews/ref_file_homenaje_a_carlos_gardel_obra_de_sa_11f5d380.jpg",
+      "sha256": "d474f342ffda0fc1eb5adfa9ce54e58e531d6ca24317a699f77e3f090aca6f55",
+      "bytes": 29058
     },
     {
-      "path": "previews/ref_file_hermano_caballo_rodrigo_arenas_beta_90733033.jpg",
-      "sha256": "b40b84a02b1db70a753cb9652d010e834d3ccfc751ef3771517d408e6931f7a6",
-      "bytes": 39704
+      "path": "previews/ref_file_homenaje_a_carlos_gardel_obra_de_sa_c8ba9198.jpg",
+      "sha256": "160d904e534f640ce2a487519c63585538e954ca39c72fc1cb533806a8624b5f",
+      "bytes": 33676
     },
     {
       "path": "previews/ref_file_homenaje_a_carlos_gardel_obra_de_sa_dbbaa33f.jpg",
@@ -4623,11 +4673,6 @@
       "path": "previews/ref_file_horizontes_1999_1999_by_carlos_uribe_museo_.jpg",
       "sha256": "e6a41b608e23362aadfa349d4f42552e2d897f7c1529fc8d37499df9bb59c2e0",
       "bytes": 14511
-    },
-    {
-      "path": "previews/ref_file_hormiga_en_la_estacion_oriente_tran_f7268d32.jpg",
-      "sha256": "901274fe548f888dc5916e56c2aac36e14615c24b7fabb93b472f90993527167",
-      "bytes": 30917
     },
     {
       "path": "previews/ref_file_huevos_de_insepto_jpg_f4d885a8.jpg",
@@ -4660,14 +4705,9 @@
       "bytes": 18233
     },
     {
-      "path": "previews/ref_file_igl_de_jesus_nazareno_rionegro_nave_144a6a73.jpg",
-      "sha256": "47b9b2a749642ac082c3def6d571324444f57b23a03808a324fe94190bfea864",
-      "bytes": 21075
-    },
-    {
-      "path": "previews/ref_file_igl_de_jesus_nazareno_rionegro_pavi_aae14588.jpg",
-      "sha256": "20e93627a1494d6018726acec0b831ce47fd47ff7409780ecd9c17bf0d38154e",
-      "bytes": 17816
+      "path": "previews/ref_file_igl_ntra_sra_del_perpetuo_socorro_a_a7e310a9.jpg",
+      "sha256": "116c6b8143d11952d8de773831c8dde8b67e1979e92661991f31a59b4f18aec3",
+      "bytes": 13498
     },
     {
       "path": "previews/ref_file_igl_ntra_sra_del_perpetuo_socorro_a_b6fdee09.jpg",
@@ -4835,6 +4875,11 @@
       "bytes": 27932
     },
     {
+      "path": "previews/ref_file_iglesia_de_nuestra_senora_del_rosar_2f536707.jpg",
+      "sha256": "ac03c5471ee55359f68ad2a97f33d069189033934f54c4b27decfc5311c7a11c",
+      "bytes": 24868
+    },
+    {
       "path": "previews/ref_file_iglesia_de_nuestra_senora_del_rosar_4c37dd05.jpg",
       "sha256": "891c66faf30b28873a350cc48a941baa498cd7a7744d21c5a02cf1a29c1dbd5f",
       "bytes": 24320
@@ -4970,11 +5015,6 @@
       "bytes": 25502
     },
     {
-      "path": "previews/ref_file_intercambio_de_los_fundadores_envig_47ee09af.jpg",
-      "sha256": "edeb1bc52145fea3ca4437ae08a65b2d087e88cc4bef8aba8f343dd2f968f467",
-      "bytes": 17533
-    },
-    {
       "path": "previews/ref_file_iss021_e_7009_view_of_earth_jpg_2c33f1ca.jpg",
       "sha256": "b7102d6c5226aa05c9aeac5281d404179d1bed10fbcb0e033229abc07986fb8a",
       "bytes": 21786
@@ -5060,11 +5100,6 @@
       "bytes": 20662
     },
     {
-      "path": "previews/ref_file_la_pupa_jpg_c5da3e08.jpg",
-      "sha256": "06ed3ea39fd3554d8034a07fad94f6d07f98925f8b30771736f117f26283942a",
-      "bytes": 21974
-    },
-    {
       "path": "previews/ref_file_las_palmas_medellin_medellin_antioq_50424e82.jpg",
       "sha256": "ea9e2d644a05bd3bd2498a879f425d2a3c5cb898fe3a23d02000ae9157c8e78a",
       "bytes": 26215
@@ -5125,26 +5160,6 @@
       "bytes": 22882
     },
     {
-      "path": "previews/ref_file_marcha_lgbtiq_medellin_2025_16_jpg_09af627b.jpg",
-      "sha256": "ceb145492da15a07603ddf1141a8106b0def21578ca6648205b1aebff28c23c4",
-      "bytes": 34422
-    },
-    {
-      "path": "previews/ref_file_marcha_lgbtiq_medellin_2025_34_jpg_b902c14a.jpg",
-      "sha256": "5eae778b945540d0cea44ccf66b1edbb4d8ff429b5c66c34b6f5d6fb23a42635",
-      "bytes": 38825
-    },
-    {
-      "path": "previews/ref_file_marcha_lgbtiq_medellin_2025_45_jpg_f158a30d.jpg",
-      "sha256": "974c9bbf4fef559e43503e6157dfd1ecb55150a7f7b0e716ef4e0d82c5d4007c",
-      "bytes": 26011
-    },
-    {
-      "path": "previews/ref_file_marcha_lgbtiq_medellin_2025_53_jpg_08594a58.jpg",
-      "sha256": "682bb409bcf4327c9e9faf822f70607db94f650ad539e614984ecdb82df28337",
-      "bytes": 34794
-    },
-    {
       "path": "previews/ref_file_marinilla_1a_jpg_9cf66dca.jpg",
       "sha256": "4570855ada506eab772193b5b4956032faac90e30f0a699bcdebd19da07c4562",
       "bytes": 26848
@@ -5185,11 +5200,6 @@
       "bytes": 16284
     },
     {
-      "path": "previews/ref_file_medellin_2014_flickr_ivan_erre_jota_69f1cd9b.jpg",
-      "sha256": "ff095f3eeab767656a735a72c8f50ae52b026419a5e4644de7fb7fcc531f58fb",
-      "bytes": 22661
-    },
-    {
       "path": "previews/ref_file_medellin_2022_aspecto_pilarica_jpg_3087b2b1.jpg",
       "sha256": "ba1bbdb7aa1b9a40b9494e35d58dd7a952733690eb4180465bce3f72fa06e50e",
       "bytes": 29003
@@ -5203,11 +5213,6 @@
       "path": "previews/ref_file_medellin_2022_quebrada_malpaso_01_j_51ce004a.jpg",
       "sha256": "527e4feb861b316e4ec9bf6cfe1743789508bc777393b4821f95acdb44cb003a",
       "bytes": 39238
-    },
-    {
-      "path": "previews/ref_file_medellin_2022_vista_de_la_avenida_8_0b0e0598.jpg",
-      "sha256": "b7e5ad8dc96a9e672ba77e5bb821174da79667d102fd5e33b2c93b66eab8c154",
-      "bytes": 27916
     },
     {
       "path": "previews/ref_file_medellin_2022_vista_hacia_el_volado_c5fe06e3.jpg",
@@ -5340,6 +5345,11 @@
       "bytes": 18693
     },
     {
+      "path": "previews/ref_file_monumento_a_jose_maria_cordova_san__5b17013d.jpg",
+      "sha256": "335fd1a4922731ba8bf81ef51c40220da96e413d0391c17439ee4d6e7b7d1e7a",
+      "bytes": 23515
+    },
+    {
       "path": "previews/ref_file_monumento_a_los_marires_y_proceres__05310359.jpg",
       "sha256": "eb6478497a6cfef3f60a1420708b4a2b71ef5dc45e93a7b335ab7bb926650942",
       "bytes": 26847
@@ -5460,11 +5470,6 @@
       "bytes": 21962
     },
     {
-      "path": "previews/ref_file_nave_central_iglesia_el_poblado_jpg_a5c3f05c.jpg",
-      "sha256": "06065768953a018a790cf93e5d01062f7926fef7ab2c1b25312617beb43271e6",
-      "bytes": 28648
-    },
-    {
       "path": "previews/ref_file_navidad_en_parques_del_rio_medellin_3a046315.jpg",
       "sha256": "9f0f898e99270a3a2d7dafb820b8a6360d278af9948d4a8bef99b1718403d3f2",
       "bytes": 22790
@@ -5575,11 +5580,6 @@
       "bytes": 23205
     },
     {
-      "path": "previews/ref_file_panoramica_desde_el_cerro_el_volado_f688389a.jpg",
-      "sha256": "2e7d1e07ae1ce3ec4f91125be0330ee28d1d4c9c626533aeb508903d709f478e",
-      "bytes": 24572
-    },
-    {
       "path": "previews/ref_file_panoramica_el_carmen_de_viboral_201_468b8a15.jpg",
       "sha256": "bc27ae1815f07cea03bba3434adc85ac154d9f5db5a8074edf490ace05bd3c3b",
       "bytes": 12895
@@ -5683,11 +5683,6 @@
       "path": "previews/ref_file_peperomia_eburnea_in_colombia_jpg_e636e071.jpg",
       "sha256": "9f178e9407545d5dbd49602f0f1449c0136cd498f75ca10debf81980e2a7d5bd",
       "bytes": 28169
-    },
-    {
-      "path": "previews/ref_file_perro_tomando_el_sol_san_vicente_jp_106ea276.jpg",
-      "sha256": "a6f660051aa136ad7606a0d3a7b4b48792e58cbd6c2f7a770efb6f6a848a5678",
-      "bytes": 14252
     },
     {
       "path": "previews/ref_file_persea_caerulea_jpg_771c7312.jpg",
@@ -5865,11 +5860,6 @@
       "bytes": 9828
     },
     {
-      "path": "previews/ref_file_rio_medellin_desde_la_avenida_33_20_835bbdd5.jpg",
-      "sha256": "7596cf6566eef3a348d74e6794e626bdf2376a573c8b2a0aa5a24c92d1bd9137",
-      "bytes": 18575
-    },
-    {
       "path": "previews/ref_file_rionegro_puente_mejia_jpg_47a1ac9c.jpg",
       "sha256": "1204068f07aba060975bf39777953ba3a4f8e2a58a6a65b6e8c73e96adfd09d4",
       "bytes": 30321
@@ -5915,14 +5905,14 @@
       "bytes": 20074
     },
     {
-      "path": "previews/ref_file_santafe_zoo_69526517_jpeg_abd1634c.jpg",
-      "sha256": "10990958b70ec44e7cbf2527f95604e0fff2892873b9893a267cca8821b8988e",
-      "bytes": 21293
-    },
-    {
       "path": "previews/ref_file_santo_domingo_alcaldia_jpg_3c7a90a8.jpg",
       "sha256": "c99887c46c09c7534db84c6664be06345084fe499cbee72a68d053904761e199",
       "bytes": 22679
+    },
+    {
+      "path": "previews/ref_file_santo_domingo_antioquia_jpg_c248f329.jpg",
+      "sha256": "d78de8bc17d9fdae53c6788e7389565375bedaff2d85c8fb4ea1dbf4b8f3001c",
+      "bytes": 19793
     },
     {
       "path": "previews/ref_file_santo_domingo_calle_del_hospital_jp_b94c7a3b.jpg",
@@ -5980,11 +5970,6 @@
       "bytes": 23682
     },
     {
-      "path": "previews/ref_file_solanum_deflexiflorum_jpg_4d13f445.jpg",
-      "sha256": "d1dec9dbe63181666b7e5daedab59cffba7052326994b93340820dbbcbe6a8c0",
-      "bytes": 28162
-    },
-    {
       "path": "previews/ref_file_sotm_latam_2025_engeobeer6_jpg_42fbffa1.jpg",
       "sha256": "4eaed6ee4ce03e826bdd01df70696ecb21202e48791aad3e09c5a9d9c44af1eb",
       "bytes": 25176
@@ -6008,6 +5993,11 @@
       "path": "previews/ref_file_statue_of_pedro_justo_berrio_parque_1536a52c.jpg",
       "sha256": "fc85b54519186c38d4f6bb370cffc06e354ec5792ee97691f25a51ab935908ff",
       "bytes": 17762
+    },
+    {
+      "path": "previews/ref_file_stenochrus_portoricensis_25798156_j_4b99154f.jpg",
+      "sha256": "f42279411b7761d7f629a25aa7ccabc9fecbb5a77bf1874f1447155563e848d8",
+      "bytes": 21996
     },
     {
       "path": "previews/ref_file_suburbio_medellin_2016_jpg_31924979.jpg",
@@ -6100,11 +6090,6 @@
       "bytes": 23756
     },
     {
-      "path": "previews/ref_file_treboles_de_cuatro_hojas_jpg_dbd32eb1.jpg",
-      "sha256": "a98f5d04c04b96a97aacdb98b85f3b84c4f7881ad9c2bc3c7daa8949c75d3738",
-      "bytes": 27513
-    },
-    {
       "path": "previews/ref_file_tribunal_administrativo_de_antioqui_42b02aaf.jpg",
       "sha256": "71cfe3cfcaa034cb20c7f5c4914796fbe017fff5c82c77afeec3b63aa6cab0ff",
       "bytes": 24242
@@ -6125,9 +6110,24 @@
       "bytes": 23278
     },
     {
+      "path": "previews/ref_file_unalmed_bloque_11_oficinas_primer_p_1c173825.jpg",
+      "sha256": "82b49e46fdb5ec0218a58f81d687eb4174df7793b1cc23fefd2f33cac0d743e6",
+      "bytes": 28705
+    },
+    {
       "path": "previews/ref_file_unalmed_bloque_11_oficinas_primer_p_5f883908.jpg",
       "sha256": "011bd4311fe520951f4641d532c77aa58d1de8336612418f3c6b6ce02197f349",
       "bytes": 26201
+    },
+    {
+      "path": "previews/ref_file_unalmed_bloque_12_durante_la_constr_818bf4bc.jpg",
+      "sha256": "dde4ced32d1f168a8b173daa9308099b56717473f703c18c21820376b53c66e5",
+      "bytes": 29278
+    },
+    {
+      "path": "previews/ref_file_unalmed_bloque_12_durante_la_constr_be1b07ea.jpg",
+      "sha256": "ec6af71630cc7d179b4ab7de68c422ddeda86541b2e8892699693f799b551715",
+      "bytes": 29927
     },
     {
       "path": "previews/ref_file_uva_huellas_de_vida_san_javier_mede_10a1e692.jpg",
@@ -6215,6 +6215,11 @@
       "bytes": 21416
     },
     {
+      "path": "previews/ref_file_vista_hacia_el_sur_desde_la_goberna_18898581.jpg",
+      "sha256": "fe606e03c5d2d73a2e2eab95570567374dda19d53a78c1e9703ac3cf9a2b9be2",
+      "bytes": 19760
+    },
+    {
       "path": "previews/ref_file_vista_hacia_el_sur_desde_la_goberna_841169b3.jpg",
       "sha256": "43c0e0052d5e11c764d99feca64929c930beb137db6f3b0f127fe096b318f55e",
       "bytes": 20290
@@ -6223,11 +6228,6 @@
       "path": "previews/ref_file_vista_hacia_el_sur_desde_la_goberna_e8b8f6bd.jpg",
       "sha256": "122c436291c052e94272b5a0bca72e2877d01d8317a2ab05e0ccf1f209b349cd",
       "bytes": 21123
-    },
-    {
-      "path": "previews/ref_file_vista_lateral_cara_norte_estacion_d_9cbbd54c.jpg",
-      "sha256": "0ec9df0277a6301d12981abcb8277cb1a2e8e1743a6770410d2744be808f9af7",
-      "bytes": 17971
     },
     {
       "path": "previews/ref_file_vista_lateral_estacion_del_ferrocar_8070776e.jpg",
@@ -6295,12 +6295,42 @@
       "path": "osm/roads.geojson.gz",
       "sha256": "43dcae1b3d4be8c93e5d4e32476c51f676eaef4c4620b178d10e1e6ae264cc06",
       "bytes": 4460180
+    },
+    {
+      "path": "examples/comp_ref_file_acercamiento_estacion_del_ferro.jpg",
+      "sha256": "e2ef0298dc96424a76557e9d49f91821f94a5371a6a6a44facecc20247e47c69",
+      "bytes": 590023
+    },
+    {
+      "path": "examples/comp_ref_file_alumbrado_navideno_en_itagui_20.jpg",
+      "sha256": "af6e590e863d578db3839a578450084aead62279b86d5652149392a54a9f1fcd",
+      "bytes": 648755
+    },
+    {
+      "path": "examples/comp_ref_file_banco_falabella_hc_envigado_1_j.jpg",
+      "sha256": "76e8f2726f090782e43a70d832108b8df7c96b0287a923a3e9f0ac8a78b7efb8",
+      "bytes": 381466
+    },
+    {
+      "path": "examples/comp_ref_file_buildings_in_sabaneta_jpg_442c7.jpg",
+      "sha256": "9ee6fe56c45b49543786777ec171270fd51f566dc714a5281bf26576c61a3de9",
+      "bytes": 358408
+    },
+    {
+      "path": "examples/comp_ref_file_colombia_medellin_el_poblado_pa.jpg",
+      "sha256": "d984b650c70f51f3e3c5f2bf094b17da621dc6e6d77239a5924a1f47fece0702",
+      "bytes": 407280
+    },
+    {
+      "path": "examples/contact_sheet.jpg",
+      "sha256": "ac32ed121d20b7586fcb8c9a4092b11eddc3d78204659d3d156448d674aee216",
+      "bytes": 293958
     }
   ],
   "counts": {
     "reference_files": 620,
     "previews": 620,
-    "data_files": 3,
-    "bytes_files": 382225268
+    "data_files": 9,
+    "bytes_files": 383499202
   }
 }

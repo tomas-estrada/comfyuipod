@@ -78,8 +78,12 @@ MAX_REF_BYTES = 8 * 1024 * 1024
 
 _REJECT_TITLE = re.compile(
     r"(mapa|map|plan\b|plano|diagram|diagrama|logo|escudo|bandera|flag|retrato|portrait|"
-    r"selfie|interior|interior\b|maqueta|render 3d|dibujo|drawing|painting|pintura|"
-    r"grabado|engraving|poster|afiche|moneda|billete|sello|stamp)",
+    r"selfie|interior|maqueta|render 3d|dibujo|drawing|painting|pintura|"
+    r"grabado|engraving|poster|afiche|moneda|billete|sello|stamp|"
+    r"abeja|insecto|mariposa|araña|spider|avispa|hormiga|"
+    r"flor|flores|planta|árbol|arbol|hoja|macro|primer plano|"
+    r"perro|gato|mascota|animal|ave|pájaro|pajaro|"
+    r"persona|hombre|mujer|niño|nino|cara|rostro|dedo|mano|mano)",
     re.IGNORECASE,
 )
 _HISTORICAL_YEAR = 2005
@@ -998,6 +1002,21 @@ class AcquisitionPipeline:
                     stats["views_created"] += 1
         self._recompute_coverage()
         return stats
+
+    def mark_non_background_refs(self) -> int:
+        """Marca como no utilizables como fondo las referencias de primer plano
+        (animales, personas, vegetación macro...) ya adquiridas."""
+        store = self.svc.store
+        marked = 0
+        with store.batch():
+            for r in store.all_references(usable_only=True):
+                text = (r.title + " " + (r.description or "")).lower()
+                if _REJECT_TITLE.search(text):
+                    r.usable = False
+                    r.reject_reason = "primer plano / no usable como fondo de plano"
+                    store.upsert_reference(r)
+                    marked += 1
+        return marked
 
     def _dedupe_phash(self) -> int:
         """Marca como no utilizables los duplicados perceptuales (mismo phash y lugar)."""
