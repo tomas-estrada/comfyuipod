@@ -47,6 +47,11 @@
         "C32"
       ],
       "code_revision": "n9.0.2",
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "whisperx",
       "name": "Transcripción y alineación",
       "disposition": "required",
       "source_ids": [
@@ -65,6 +70,11 @@
         "C27"
       ],
       "code_revision": "v3.8.6",
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "qwen3-vl",
       "name": "Comprensión multimodal",
       "disposition": "required",
       "source_ids": [
