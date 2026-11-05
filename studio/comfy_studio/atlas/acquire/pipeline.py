@@ -229,7 +229,11 @@ class AcquisitionPipeline:
                     kind=_env_from_kind(kind),
                     lat=lat, lon=lon,
                     osm_refs=[props.get("osm_id", "")],
-                    provenance={"source": "osm_places_geojson", "osm_id": props.get("osm_id")},
+                    provenance={
+                        "source": "osm_places_geojson",
+                        "osm_id": props.get("osm_id"),
+                        "municipality_method": "bbox_heuristic_no_verificado",
+                    },
                 ))
                 existing_norm.add(normalize_text(name))
                 created += 1
@@ -256,7 +260,11 @@ class AcquisitionPipeline:
                     kind=Environment.BRIDGE,
                     lat=lat, lon=lon,
                     osm_refs=[props.get("osm_id", "")],
-                    provenance={"source": "osm_roads_bridge", "osm_id": props.get("osm_id")},
+                    provenance={
+                        "source": "osm_roads_bridge",
+                        "osm_id": props.get("osm_id"),
+                        "municipality_method": "bbox_heuristic_no_verificado",
+                    },
                 ))
                 existing_norm.add(normalize_text(name))
                 created += 1
@@ -906,29 +914,32 @@ class AcquisitionPipeline:
         places = store.list_places(limit=100000)
         pts = [(p, p.lat, p.lon) for p in places if p.lat is not None and p.lon is not None]
         stats = {"reassigned": 0, "unassigned": 0, "views_created": 0}
-        seed_tokens: dict[str, set[str]] = {}
+        # frases distintivas (nombre/alias completos, len>=4): una palabra genérica
+        # como "puente" NUNCA confirma identidad por sí sola
+        seed_phrases: dict[str, set[str]] = {}
         for p in places:
             if (p.provenance or {}).get("source") == "seed" and p.lat is not None:
-                toks = set(normalize_text(p.name).split())
                 phrases = {normalize_text(p.name)}
-                for a in p.aliases:
-                    toks.update(normalize_text(a).split())
-                    phrases.add(normalize_text(a))
-                toks.update(t for t in phrases if len(t) >= 4)
-                seed_tokens[p.place_id] = {t for t in toks if len(t) >= 3}
+                phrases.update(normalize_text(a) for a in p.aliases)
+                seed_phrases[p.place_id] = {t for t in phrases if len(t) >= 4}
         with store.batch():
             for ref in store.all_references(usable_only=True):
                 if ref.gps_lat is None or ref.gps_lon is None:
                     continue
-                # coincidencia de título con una semilla curada (p.ej. "4 sur")
+                # coincidencia de título con nombre/alias COMPLETO de una semilla
+                # curada; si varias coinciden, gana la más cercana por GPS
                 ref_norm = normalize_text(ref.title)
-                title_hit = None
-                for pid, toks in seed_tokens.items():
-                    if toks and any(t in ref_norm for t in toks if len(t) >= 4):
+                matches = []
+                for pid, phrases in seed_phrases.items():
+                    if phrases and any(ph in ref_norm for ph in phrases):
                         seed_p = next(p for p in places if p.place_id == pid)
-                        if haversine_m(ref.gps_lat, ref.gps_lon, seed_p.lat, seed_p.lon) <= 2500:
-                            title_hit = (seed_p, "title_match")
-                            break
+                        d = haversine_m(ref.gps_lat, ref.gps_lon, seed_p.lat, seed_p.lon)
+                        if d <= 2500:
+                            matches.append((d, seed_p))
+                title_hit = None
+                if matches:
+                    matches.sort(key=lambda t: t[0])
+                    title_hit = (matches[0][1], "title_match")
                 if title_hit is not None:
                     chosen, method = title_hit
                     if ref.place_id != chosen.place_id:
@@ -1110,8 +1121,18 @@ class AcquisitionPipeline:
         return path
 
 
+#: valor cuando el punto queda fuera de todo límite municipal conocido
+MUNICIPALITY_UNKNOWN = "desconocido"
+
+
 def _municipality_for(lat: float, lon: float) -> str:
-    """Municipio por bbox más específico (menor área primero) para evitar solapes."""
+    """Municipio por bbox MÁS ESPECÍFICO (menor área primero).
+
+    El rectángulo es un acelerador de búsqueda, NO la identidad municipal
+    authoritative: quien no cae en ningún bbox queda "desconocido" (nunca se
+    fuerza a Medellín), y quien cae queda marcado en provenance como
+    heurístico hasta verificarse con límites verificables.
+    """
     def area(b: tuple[float, float, float, float]) -> float:
         return (b[1] - b[0]) * (b[3] - b[2])
 
@@ -1119,7 +1140,7 @@ def _municipality_for(lat: float, lon: float) -> str:
         min_lat, max_lat, min_lon, max_lon = bbox
         if min_lat <= lat <= max_lat and min_lon <= lon <= max_lon:
             return name
-    return "Medellín"
+    return MUNICIPALITY_UNKNOWN
 
 
 def _quality_score(info: dict[str, Any], w: int, h: int) -> float:

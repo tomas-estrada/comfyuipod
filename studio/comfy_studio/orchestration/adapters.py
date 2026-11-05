@@ -31,6 +31,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from comfy_studio.engines import EngineRunSpec
@@ -206,11 +207,13 @@ class EngineRunnerAdapter:
         template_registry: Any | None = None,
         default_comfy_template: str = _DEFAULT_COMFY_TEMPLATE,
         atlas_service: Any | None = None,
+        comfyui_input_dir: str | None = None,
     ) -> None:
         self._engines = dict(engines)
         self._registry = template_registry
         self._default_template = default_comfy_template
         self._atlas = atlas_service
+        self._comfyui_input_dir = comfyui_input_dir
 
     def _resolve_atlas_background(self, job: dict[str, Any]) -> dict[str, Any]:
         """Resuelve el fondo del atlas referenced en `job['atlas']` a un archivo local real.
@@ -243,8 +246,19 @@ class EngineRunnerAdapter:
             return {"_atlas_error": "file_path del atlas escapa de files/ (path traversal)"}
         if not path.is_file():
             return {"_atlas_error": f"archivo del atlas ausente en disco: {ref.file_path}"}
+        # integridad al (re)ejecutar: el hash debe corresponder al contenido elegido
+        from comfy_studio.atlas.store import sha256_file
+
+        if sha256_file(path) != ref.sha256:
+            return {
+                "_atlas_error": (
+                    f"hash del fondo del atlas no coincide con el catálogo "
+                    f"({ref.ref_id}); posible corrupción o cambio silencioso"
+                )
+            }
         resolved = dict(job)
         resolved["background_image"] = str(path)
+        resolved["background_sha256"] = ref.sha256
         resolved["atlas_resolved"] = {
             "ref_id": ref.ref_id,
             "place_id": atlas_ctx.get("place_id"),
@@ -266,8 +280,34 @@ class EngineRunnerAdapter:
             return job
         template_id = job.get("template_id") or self._default_template
         # params del template = todo lo de la capa salvo claves de control.
-        control_keys = {"kind", "shot", "template_id", "graph", "job_id", "project_id"}
+        control_keys = {"kind", "shot", "template_id", "graph", "job_id", "project_id",
+                        "atlas", "background_image", "background_sha256", "atlas_resolved"}
         params = {k: v for k, v in job.items() if k not in control_keys}
+        # el fondo del atlas entra al grafo por la entrada de imagen declarada
+        # (p. ej. wan_i2v -> image_input -> LoadImage). Si la plantilla no declara
+        # entrada de imagen, el fondo NO llegaría: se marca para fallar en claro.
+        if job.get("atlas_resolved") or job.get("background_image"):
+            try:
+                specs = self._registry.get_raw_definition(template_id)["parameters"]
+            except Exception:  # noqa: BLE001
+                specs = {}
+            if "image_input" in specs:
+                fname = Path(str(job["background_image"])).name
+                params["image_input"] = fname
+                if self._comfyui_input_dir:
+                    import shutil as _shutil
+
+                    dest_dir = Path(self._comfyui_input_dir)
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    dest = dest_dir / fname
+                    if not dest.is_file():
+                        _shutil.copy2(str(job["background_image"]), dest)
+                job = dict(job)
+                job["atlas_image_input"] = fname
+                job["atlas_template_has_image"] = True
+            else:
+                job = dict(job)
+                job["atlas_template_has_image"] = False
         try:
             graph = self._registry.render_workflow(
                 template_id,
@@ -309,6 +349,15 @@ class EngineRunnerAdapter:
             job = resolved_atlas
         if engine in _GRAPH_ENGINES:
             job = self._resolve_graph(job)
+            if job.get("background_image") and job.get("atlas_template_has_image") is False:
+                return {
+                    "ok": False,
+                    "engine": engine,
+                    "error": (
+                        "atlas: la plantilla seleccionada no declara entrada de imagen; "
+                        "el fondo no llegaría al grafo (usar p. ej. wan_i2v)"
+                    ),
+                }
         spec = EngineRunSpec(job=job, cost_cap=cost_cap)
         try:
             raw = _run_engine_sync(impl, spec)
@@ -440,6 +489,7 @@ def build_server_collaborators(
     available_nodes: set[str] | None = None,
     template_registry: Any | None = None,
     atlas_service: Any | None = None,
+    comfyui_input_dir: str | None = None,
 ) -> Collaborators:
     """Arma el `Collaborators` real del servidor desde las piezas disponibles.
 
@@ -450,7 +500,10 @@ def build_server_collaborators(
     planner = LLMPlannerAdapter(llm_client) if llm_client is not None else None
     runner = (
         EngineRunnerAdapter(
-            engines, template_registry=template_registry, atlas_service=atlas_service
+            engines,
+            template_registry=template_registry,
+            atlas_service=atlas_service,
+            comfyui_input_dir=comfyui_input_dir,
         )
         if engines
         else None

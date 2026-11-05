@@ -77,9 +77,12 @@ class StubPlannerLLM:
                 # capa gen (serializable con el checkpoint) y el ejecutor lo
                 # resuelve contra el atlas local real.
                 params["atlas"] = atlas_ctx
-            layers: list[dict[str, Any]] = [
-                {"kind": "gen", "engine": "comfyui", "params": params}
-            ]
+            gen_layer: dict[str, Any] = {"kind": "gen", "engine": "comfyui", "params": params}
+            if atlas_ctx:
+                # el fondo del atlas sólo llega al grafo si la plantilla declara
+                # entrada de imagen (wan_i2v); t2v no la consumiría
+                gen_layer["template_id"] = "wan_i2v"
+            layers: list[dict[str, Any]] = [gen_layer]
             if wants_depth:
                 layers.append({"kind": "depth", "engine": "comfyui", "params": {}})
             if wants_relight:
@@ -124,7 +127,14 @@ def plan_production(
 
             svc = shared_atlas_service()
             if svc.available():
-                shot = svc.prepare_shot(prompt=state.idea, verify_file=False)
+                # una ubicación EXPLÍCITA en el prompt prevalece sobre la
+                # selección previa del panel (nunca se sustituye en silencio)
+                hint_pid = svc.extract_place_hint(state.idea)
+                if hint_pid:
+                    shot = svc.prepare_shot(place_id=hint_pid, prompt=state.idea,
+                                            verify_file=False)
+                else:
+                    shot = svc.prepare_shot(prompt=state.idea, verify_file=False)
                 if shot.get("status") == "ok":
                     context["atlas"] = {
                         "place_id": shot["place_id"],

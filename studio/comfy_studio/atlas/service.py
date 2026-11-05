@@ -223,6 +223,25 @@ class AtlasService:
             }
         return {"status": "not_found", "query": query}
 
+    def extract_place_hint(self, text: str) -> str | None:
+        """Extrae del texto un lugar del atlas mencionado explícitamente.
+
+        Coincidencia por nombre/alias completo (frase, len>=4) dentro del texto
+        normalizado; gana la coincidencia más larga. Devuelve place_id o None.
+        """
+        norm = normalize_text(text)
+        if not norm:
+            return None
+        best: tuple[str, int] | None = None
+        for p in self.store.list_places(limit=100000):
+            names = [normalize_text(p.name)]
+            names.extend(normalize_text(a) for a in p.aliases)
+            for n in names:
+                if len(n) >= 4 and n in norm:
+                    if best is None or len(n) > best[1]:
+                        best = (p.place_id, len(n))
+        return best[0] if best else None
+
     def place_detail(self, place_id: str) -> dict[str, Any]:
         store = self.store
         place = store.get_place(place_id)
@@ -273,12 +292,18 @@ class AtlasService:
         lon: float | None = None,
         heading_deg: float | None = None,
         fov_deg: float | None = None,
+        heading_tolerance_deg: float = 45.0,
+        max_distance_m: float = 150.0,
     ) -> dict[str, Any]:
-        """Selecciona la vista respaldada para una cámara pedida.
+        """Selecciona la vista compatible con la cámara pedida.
 
-        Si no hay vistas: status="no_views". Si la vista elegida no respalda el
-        heading pedido (desconocido), se devuelve limitation tipada con las vistas
-        disponibles; nunca se inventa orientación.
+        Compatibilidad real cuando hay datos: ángulo (rumbo), posición y FOV.
+        - Rumbo pedido con rumbo conocido en la vista y diferencia > tolerancia:
+          NO se acepta; se devuelve status="unsupported_camera" con la limitación
+          tipada y las vistas disponibles del mismo lugar.
+        - Si la vista más cercana no es compatible, se busca otra compatible.
+        - Desconocido sigue siendo desconocido: se devuelve como limitación
+          (heading_unknown / fov_unknown), nunca como 0 ni como compatible.
         """
         store = self.store
         place = store.get_place(place_id)
@@ -293,45 +318,95 @@ class AtlasService:
                                "detail": "El lugar no tiene vistas fotográficas utilizables"},
                 "available_views": [],
             }
-        limitations: list[dict[str, Any]] = []
+
+        def angular_diff(a: float, b: float) -> float:
+            d = abs((a - b) % 360.0)
+            return min(d, 360.0 - d)
+
+        def evaluate(view: View) -> tuple[list[dict[str, Any]], float | None]:
+            """(limitaciones, distancia_m) para una vista dada la cámara pedida."""
+            lims: list[dict[str, Any]] = []
+            dist: float | None = None
+            if (
+                lat is not None and lon is not None
+                and view.lat is not None and view.lon is not None
+            ):
+                dist = haversine_m(lat, lon, view.lat, view.lon)
+                if dist > max_distance_m:
+                    lims.append({
+                        "code": "camera_far_from_views",
+                        "detail": f"La cámara pedida está a {dist:.0f} m de la vista "
+                                  f"(máx {max_distance_m:.0f} m)",
+                        "distance_m": round(dist, 1),
+                    })
+            if heading_deg is not None:
+                if view.heading_deg is None:
+                    lims.append({
+                        "code": "heading_unknown",
+                        "detail": "La vista no tiene rumbo registrado; no se afirma compatibilidad",
+                    })
+                else:
+                    diff = angular_diff(heading_deg, view.heading_deg)
+                    if diff > heading_tolerance_deg:
+                        lims.append({
+                            "code": "heading_mismatch",
+                            "detail": f"Rumbo pedido {heading_deg:.0f}° vs vista "
+                                      f"{view.heading_deg:.0f}° (dif {diff:.0f}° > "
+                                      f"{heading_tolerance_deg:.0f}°)",
+                            "requested_deg": heading_deg,
+                            "view_deg": view.heading_deg,
+                            "diff_deg": round(diff, 1),
+                        })
+            if fov_deg is not None:
+                if view.fov_deg is None:
+                    lims.append({"code": "fov_unknown", "detail": "FOV no estimado en esta vista"})
+                elif abs(fov_deg - view.fov_deg) > 15.0:
+                    lims.append({
+                        "code": "fov_mismatch",
+                        "detail": f"FOV pedido {fov_deg:.0f}° vs vista {view.fov_deg:.0f}°",
+                    })
+            return lims, dist
+
+        def hard_incompatible(lims: list[dict[str, Any]]) -> bool:
+            return any(lim["code"] in ("heading_mismatch", "fov_mismatch") for lim in lims)
+
+        # elegir: primero la más cercana; si es incompatible, buscar otra compatible
         chosen: View | None = None
+        chosen_lims: list[dict[str, Any]] = []
         if lat is not None and lon is not None:
-            best_d = None
-            for v in views:
-                if v.lat is None or v.lon is None:
-                    continue
-                d = haversine_m(lat, lon, v.lat, v.lon)
-                if best_d is None or d < best_d:
-                    best_d = d
-                    chosen = v
-            if chosen is None:
-                chosen = views[0]
-            if best_d is not None and best_d > 150:
-                limitations.append({
-                    "code": "camera_far_from_views",
-                    "detail": f"La cámara pedida está a {best_d:.0f} m de la vista más cercana",
-                    "distance_m": round(best_d, 1),
-                })
+            with_dist = [(v, haversine_m(lat, lon, v.lat, v.lon))
+                         for v in views if v.lat is not None and v.lon is not None]
+            with_dist.sort(key=lambda t: t[1])
+            candidates = [v for v, _ in with_dist] or views
         else:
-            chosen = max(views, key=lambda v: (store.get_reference(v.ref_id).quality
-                                                if store.get_reference(v.ref_id) else 0.0))
-        if heading_deg is not None and chosen.heading_deg is None:
-            limitations.append({
-                "code": "heading_unknown",
-                "detail": "La vista no tiene orientación de cámara registrada; "
-                          "se usa la posición de captura, no un rumbo inventado",
-            })
-        if fov_deg is not None and chosen.fov_deg is None:
-            limitations.append({
-                "code": "fov_unknown",
-                "detail": "FOV no estimado para esta vista (calibración pendiente)",
-            })
+            candidates = sorted(
+                views,
+                key=lambda v: (store.get_reference(v.ref_id).quality
+                               if store.get_reference(v.ref_id) else 0.0),
+                reverse=True,
+            )
+        for v in candidates:
+            lims, _ = evaluate(v)
+            if not hard_incompatible(lims):
+                chosen, chosen_lims = v, lims
+                break
+        if chosen is None:
+            # ninguna compatible: devolver la más cercana con sus limitaciones duras
+            v = candidates[0]
+            chosen, chosen_lims = v, evaluate(v)[0]
+            return {
+                "status": "unsupported_camera",
+                "place_id": place_id,
+                "view": self._view_dict(chosen, store),
+                "limitations": chosen_lims,
+                "available_views": [self._view_dict(x, store) for x in views],
+            }
         return {
             "status": "ok",
             "place_id": place_id,
             "view": self._view_dict(chosen, store),
-            "limitations": limitations,
-            "available_views": [self._view_dict(v, store) for v in views],
+            "limitations": chosen_lims,
+            "available_views": [self._view_dict(x, store) for x in views],
         }
 
     # -- prepare_shot ---------------------------------------------------------------

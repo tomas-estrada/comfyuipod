@@ -393,6 +393,8 @@ def create_app(
                 editor_engine=EditorEngine(backend="remotion"),
                 template_registry=app.state.template_registry,
                 atlas_service=app.state.atlas,
+                comfyui_input_dir=os.environ.get("STUDIO_COMFYUI_INPUT_DIR")
+                or "/workspace/comfyui-data/input",
             )
             logger.info(
                 "STUDIO: orquestación con motores REALES (STUDIO_ORCH_REAL_ENGINES=1)."
