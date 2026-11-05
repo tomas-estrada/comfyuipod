@@ -11,6 +11,7 @@ import pytest
 from comfy_studio.physics import (
     Joint,
     PhysicsError,
+    SimResult,
     SimSpec,
     assert_returns_to_initial,
     simulate,
@@ -91,4 +92,12 @@ def test_incomparable_specs_rejected() -> None:
     a = simulate(_spec(seed=1))
     b = simulate(_spec(seed=2))
     with pytest.raises(PhysicsError, match="no comparables"):
+        assert_returns_to_initial(a, b)
+
+
+def test_empty_simulation_rejected() -> None:
+    """Un resultado sin frames (simulación vacía) es rechazado por el guard A14."""
+    a = SimResult(spec_hash=_spec().state_hash(), frames=[])
+    b = SimResult(spec_hash=_spec().state_hash(), frames=[])
+    with pytest.raises(PhysicsError, match="vacía"):
         assert_returns_to_initial(a, b)
