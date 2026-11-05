@@ -37,7 +37,14 @@
     "level": "L1"
   },
   "capability_fan_out_remaining": ["W06 inspiracion", "W09 atlas (reusa #63)", "W10 3D", "W11-W23 (camaras,fisica,movimiento,audio,capas,luz,cara,memoria,montaje,UI,director,investigador)"],
-  "sub_items_pending": ["fijar 57 engine locks", "protocolo describe/execute/cancel/unload", "integrar lease+lineage+ingest en executor", "LangGraph real en imagen", "provider profiles A06"],
+  "W03_executor_integration": {
+    "status": "in_review",
+    "pr": "feat/ultra-w03-executor-lease",
+    "delivered": "leased_runner.py: LeasedEngineRunner envuelve el EngineRunner del executor; adquiere el heavy lease(W03) antes de una capa pesada y lo libera SIEMPRE (incluso si el render lanza), con unload comprobado; capas CPU no toman el lock; GPU ocupada -> ok=False tipado. Verificado end-to-end con execute_next_shot.",
+    "tests": "test_leased_runner.py 6 passed",
+    "level": "L1"
+  },
+  "sub_items_pending": ["fijar 57 engine locks", "protocolo describe/execute/cancel/unload uniforme", "enganchar av_recipes->seleccion en el planner/executor real", "integrar lineage en replan del executor", "LangGraph real en imagen", "provider profiles A06"],
   "blockers": [],
   "known_env_issues": ["test_mac_helper 3 tests fallan SOLO en Windows (SYSTEMROOT); pasan en CI Linux."],
   "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad. 7 PRs mergeados. Infraestructura (W00-W04,W07) + W05 ingesta. Fan-out de capacidades = grueso restante del backlog."
