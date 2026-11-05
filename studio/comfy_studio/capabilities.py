@@ -22,12 +22,14 @@ capacidad es añadir una entrada, no razonar de nuevo en cada despliegue.
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from comfy_studio import model_assets
+from comfy_studio import hardware_profile, model_assets
 from comfy_studio.engines.preparedness import (
     build_default_prep_specs,
     probe_preparedness,
@@ -35,6 +37,8 @@ from comfy_studio.engines.preparedness import (
 from comfy_studio.templates import get_default_registry
 
 CAPABILITY_REGISTRY_VERSION = 1
+
+LOG = logging.getLogger(__name__)
 
 #: Capacidades registradas. `templates` es la receta candidata (la primera es
 #: la preferida); `alternatives` son capacidades equivalentes si la preferida
@@ -186,6 +190,10 @@ class Resolution:
     registry_version: int = CAPABILITY_REGISTRY_VERSION
     #: Receta medida de la plantilla seleccionada, si existe (política, punto 5).
     recipe: dict[str, Any] | None = None
+    #: Perfil de hardware con el que se juzgó la **receta medida** (ajuste de
+    #: VRAM/RAM), no el veredicto de disponibilidad. Se propaga siempre: sin
+    #: él, la receta se calcularía contra el objetivo por omisión.
+    profile: hardware_profile.HardwareProfile | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -201,18 +209,195 @@ class Resolution:
             "missing": [a.to_public_dict() for a in self.missing],
             "missing_bytes": self.missing_bytes,
             "recipe": self.recipe,
+            # El perfil se publica aquí y no solo dentro de `recipe` porque es
+            # la máquina contra la que se juzgó la receta medida (su ajuste de
+            # VRAM/RAM), y puede no haber receta que lo lleve. **No** es la base
+            # del veredicto: `state` sale solo de la preparación del motor y de
+            # la presencia de los activos en disco. Publicarlo siempre evita que
+            # el agente tenga que hurgar en la receta —que quizá no existe—
+            # para saber con qué máquina se midió.
+            "profile": self.profile.to_dict() if self.profile is not None else None,
         }
 
-def _load_core_manifest() -> dict[str, dict[str, Any]]:
-    """Activos de Fases 1/2 indexados por nombre de archivo."""
-    path = Path(__file__).resolve().parents[2] / "config" / "models-core.json"
-    if not path.is_file():
+
+#: Rutas candidatas del manifiesto de Fases 1/2, en el mismo orden que
+#: `model_assets.manifest_path()` y `scripts/download-models.sh`: la explícita
+#: del entorno, la del árbol de fuentes y la horneada en la imagen.
+#:
+#: Tres restricciones en tensión, reconciliadas así:
+#:
+#:   1. **`STUDIO_MANIFEST` no es de este catálogo.** En todo el sistema esa
+#:      variable es el override del manifiesto de Fase 3 / studio
+#:      (`model_assets`, `cache_policy`, `download-models.sh`, documentación).
+#:      Los dos catálogos son disjuntos (26 entradas core frente a 87 de
+#:      estudio, cero solape), así que leer el core con ella convierte cada
+#:      activo de Fase 1/2 en `source='unknown'`, `bytes=0` y sin destino: se
+#:      reintroduce por la puerta de atrás el modo de fallo —catálogo core
+#:      ilegible— que esta lista de candidatos vino a corregir. De ahí que el
+#:      override explícito tenga variable **propia** (`STUDIO_CORE_MANIFEST`),
+#:      que ningún operario confundirá con la de Fase 3 —y que es, además, el
+#:      nombre que el script ya usaba para el core (`download-models.sh`,
+#:      `${STUDIO_CORE_MANIFEST:-/etc/comfyui/models-core.json}`).
+#:   2. **El core debe seguir resolviéndose en la imagen.** `pip install
+#:      /opt/studio` deja el módulo en `site-packages`, sin `config/` sobre él:
+#:      se conservan la ruta del árbol de fuentes y la horneada en
+#:      `/etc/comfyui/models-core.json`.
+#:   3. **Un despliegue debe poder señalar otro manifiesto core** sin
+#:      reconstruir la imagen: por eso el candidato de entorno sigue el primero
+#:      y manda sobre las rutas horneadas, con la misma mecánica que en Fase 3.
+#:
+#: Es decir: misma capacidad de override, mismos destinos alternativos, y
+#: fijar `STUDIO_MANIFEST` para lo que está documentado ya no puede dejar ciego
+#: al catálogo core.
+_CORE_MANIFEST_CANDIDATES = (
+    "{STUDIO_CORE_MANIFEST}",
+    "config/models-core.json",
+    "/etc/comfyui/models-core.json",
+)
+
+
+def core_manifest_path(env: dict[str, str] | None = None) -> Path | None:
+    """Ruta del manifiesto de Fases 1/2 allí donde de verdad esté.
+
+    El paquete se instala con `pip install /opt/studio`, así que
+    `Path(__file__).resolve().parents[2]` ya no es la raíz del repositorio sino
+    el directorio de `site-packages` del venv: buscarlo solo ahí deja el
+    catálogo core ilegible en la imagen. El manifiesto viaja horneado en
+    `/etc/comfyui/models-core.json`, así que se resuelve con la misma lista de
+    candidatos que el manifiesto de Fase 3 —pero con su propia variable de
+    entorno, porque la de Fase 3 apunta a un catálogo disjunto (ver
+    `_CORE_MANIFEST_CANDIDATES`).
+
+    La expansión es la de `model_assets.manifest_path()`
+    (`model_assets.expand_placeholders`, público): `{COMFY_APP_DIR}`/
+    `{COMFY_DATA_DIR}` más `~`. Resolverla con `os.path.expanduser` a secas
+    divergía del resolvedor de Fase 3 para un override que usara esos marcadores
+    de posición.
+
+    Las candidatas relativas se resuelven contra las bases **compartidas**
+    (`model_assets.manifest_search_bases()`): la raíz del paquete primero y el
+    directorio actual después. Antes el CWD iba primero aquí, así que lanzado
+    desde un directorio con su propio `config/models-core.json` el resolvedor
+    leía ese manifiesto mientras `cache_policy.manifest_paths()` leía el de la
+    raíz del paquete: los dos componentes disentían sobre qué catálogo estaba en
+    vigor sin que ninguno lo dijera.
+    """
+    environment = os.environ if env is None else env
+    for candidate in _CORE_MANIFEST_CANDIDATES:
+        raw = (
+            environment.get("STUDIO_CORE_MANIFEST")
+            if candidate == "{STUDIO_CORE_MANIFEST}"
+            else candidate
+        )
+        if not raw:
+            continue
+        path = Path(model_assets.expand_placeholders(raw, environment))
+        if path.is_absolute():
+            if path.is_file():
+                return path
+            continue
+        for base in model_assets.manifest_search_bases(__file__):
+            resolved = base / path
+            if resolved.is_file():
+                return resolved
+    return None
+
+
+def _load_core_manifest(
+    env: dict[str, str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Activos de Fases 1/2 indexados por nombre de archivo.
+
+    Un manifiesto core ilegible o mal formado degrada a catálogo vacío —los
+    activos salen honestamente `source='unknown'`, `bytes=0`— y **nunca**
+    levanta: el manifiesto puede venir de `STUDIO_CORE_MANIFEST`, que escribe el
+    operario, y una sola entrada inválida no puede tumbar `resolve()`, y con
+    ella `list_capabilities` y `request_capability`.
+    """
+    path = core_manifest_path(env)
+    if path is None:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {}
+        entries = data.get("models", [])
+        if not isinstance(entries, list):
+            return {}
+        indexed: dict[str, dict[str, Any]] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            filename = entry.get("filename")
+            if not isinstance(filename, str) or not filename:
+                continue
+            indexed[filename] = entry
+        return indexed
     except (OSError, ValueError):
         return {}
-    return {entry["filename"]: entry for entry in data.get("models", [])}
+
+
+def _declared_bytes(value: Any) -> int:
+    """Bytes declarados por una entrada de manifiesto, que es dato no confiable.
+
+    `STUDIO_CORE_MANIFEST`/`STUDIO_MANIFEST` los escribe el operario, así que una
+    entrada con `bytes` no numérica existe y no puede tumbar `resolve()` —y con
+    ella `list_capabilities` y `request_capability`—. La regla es la misma que
+    `model_assets.class_bytes()` y que `asset_acquire._declared_bytes`: degradar
+    a 0 en lugar de propagar.
+
+    D4: la regla es **compartida**, no heredada: `class_bytes()` capturaba solo
+    `TypeError`/`ValueError`, así que degradaba los no numéricos pero propagaba
+    los no finitos, y este docstring afirmaba una coincidencia que no existía.
+    Los tres sitios tratan ahora `OverflowError` igual —`json.load` acepta
+    `Infinity`, e `int(inf)` es un `ArithmeticError` que ninguno de los otros
+    dos excepciones ve—.
+
+    R94: `json.load` acepta el literal no estándar `Infinity`, así que un
+    `"bytes": Infinity` en el manifiesto llega aquí como `float('inf`) y
+    `int(inf)` responde `OverflowError` —un `ArithmeticError`, que no es ni
+    `TypeError` ni `ValueError`—. Salía de `_asset_need` y de
+    `needs_for_group`, y `_handle_download_model` las llama sin protección: el
+    plan entero abortaba antes de que `acquire()` pudiera informar de nada. Es
+    el mismo R85 que `asset_acquire._declared_bytes` ya cubre, un nivel más
+    arriba de donde se consume: un tamaño no finito es ilegible, así que se
+    trata como no declarado.
+    """
+    try:
+        number = value or 0
+        if isinstance(number, float) and not math.isfinite(number):
+            raise ValueError(value)
+        return int(number)
+    except (TypeError, ValueError, OverflowError):
+        LOG.warning(
+            "bytes declarados no numéricos (%r): se tratan como no declarados", value
+        )
+        return 0
+
+
+def _studio_entries(env: dict[str, str] | None) -> list[dict[str, Any]]:
+    """Entradas del manifiesto de Fase 3, tolerando una forma inválida.
+
+    `model_assets.entries()` da por hecho que `load_manifest()` devolvió un
+    objeto y hace `manifest.get("models", [])` sobre él: un manifiesto de Fase 3
+    que sea JSON válido pero no un objeto —alcanzable por `STUDIO_MANIFEST`, que
+    escribe el operario— revienta con `AttributeError` dentro de `resolve()`.
+    `cache_policy._manifest_entries()` ya descarta esa forma diciéndolo; el
+    resolvedor no puede quedarse atrás, así que degrada a «sin entradas».
+    """
+    try:
+        entries = model_assets.entries(env)
+    except (AttributeError, TypeError):
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _studio_entries_for_flag(flag: str, env: dict[str, str] | None) -> list[dict[str, Any]]:
+    """Entradas de un grupo opt-in, con la misma tolerancia a forma inválida."""
+    try:
+        return list(model_assets.entries_for_flag(flag, env))
+    except (AttributeError, TypeError):
+        return []
 
 
 def _asset_need(
@@ -225,7 +410,7 @@ def _asset_need(
     source = "core"
     if entry is None:
         # No está en el manifiesto core: se busca en el de Fase 3.
-        for candidate in model_assets.entries(env):
+        for candidate in _studio_entries(env):
             if candidate.get("filename") == filename:
                 entry = candidate
                 source = "studio"
@@ -248,7 +433,7 @@ def _asset_need(
     return AssetNeed(
         filename=filename,
         dest_path=str(path) if path is not None else "",
-        bytes=int(entry.get("bytes") or 0),
+        bytes=_declared_bytes(entry.get("bytes")),
         asset_class=str(entry.get("class") or "task"),
         present=present,
         source=source,
@@ -266,10 +451,10 @@ def _asset_need(
 
 def needs_for_group(flag: str, *, env: dict[str, str] | None = None) -> list[AssetNeed]:
     """Activos de un grupo opt-in del manifiesto de Fase 3 (`STUDIO_INCLUDE_*`)."""
-    core = _load_core_manifest()
+    core = _load_core_manifest(env)
     return [
         _asset_need(entry["filename"], core, env)
-        for entry in model_assets.entries_for_flag(flag, env)
+        for entry in _studio_entries_for_flag(flag, env)
     ]
 
 
@@ -313,8 +498,20 @@ def resolve(
     env: dict[str, str] | None = None,
     probe_engines: bool = True,
     store: Any | None = None,
+    profile: hardware_profile.HardwareProfile | None = None,
 ) -> Resolution:
-    """Resuelve una capacidad a motor + receta + activos, sin red ni GPU."""
+    """Resuelve una capacidad a motor + receta + activos, sin red ni GPU.
+
+    `profile` es el perfil de hardware con el que se juzga la **receta medida**
+    (su ajuste de VRAM/RAM), no el veredicto de disponibilidad, que sale de la
+    preparación del motor y de los activos en disco. Si no se pasa, se resuelve
+    del entorno (`STUDIO_HARDWARE_PROFILE`), que es lo que hace la
+    configuración: la receta no puede juzgarse contra el objetivo por omisión
+    cuando el pod tiene otro perfil.
+    """
+    active_profile = (
+        profile if profile is not None else hardware_profile.from_env(env)
+    )
     spec = CAPABILITIES.get(capability_id)
     if spec is None:
         return Resolution(
@@ -325,6 +522,7 @@ def resolve(
             templates=[],
             selected_template=None,
             summary=f"Capabilidad no registrada: {capability_id!r}",
+            profile=active_profile,
         )
 
     engine = spec["engine"]
@@ -343,7 +541,7 @@ def resolve(
     if selected is not None:
         definition = registry.get_raw_definition(selected)
         declared = list(definition.get("models", []) or [])
-        core = _load_core_manifest()
+        core = _load_core_manifest(env)
         for filename in declared:
             assets.append(_asset_need(filename, core, env))
 
@@ -352,13 +550,15 @@ def resolve(
 
     # Receta medida: si este pod ya renderó esta plantilla, se reutiliza el
     # resultado en lugar de estimar desde cero. Es opcional: si no hay store o
-    # no hay mediciones, se resuelve igual.
+    # no hay mediciones, se resuelve igual. El perfil se propaga siempre: una
+    # receta de 40 GB no puede juzgarse contra el objetivo por omisión cuando
+    # el perfil real tiene 96 GB (o al revés).
     recipe: dict[str, Any] | None = None
     if selected is not None:
         active_store = store if store is not None else _default_store(env)
         if active_store is not None:
             try:
-                recipe = active_store.recipe_for_template(selected)
+                recipe = active_store.recipe_for_template(selected, profile=active_profile)
             except Exception:  # noqa: BLE001 - la receta medida nunca rompe la resolución
                 recipe = None
 
@@ -381,4 +581,5 @@ def resolve(
         missing_bytes=missing_bytes,
         summary=spec["summary"],
         recipe=recipe,
+        profile=active_profile,
     )

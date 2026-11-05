@@ -147,6 +147,52 @@ Dos manifiestos versionados declarán los activos, con la misma forma:
 | [`config/models-core.json`](../config/models-core.json) | Fases 1 y 2 (26 entradas, 68.02 GB), generado desde `download-models.sh` y verificado por `HEAD` |
 | [`config/models-studio.json`](../config/models-studio.json) | Fase 3 del perfil studio (79 + 8 entradas) |
 
+Dónde buscar cada uno, si un despliegue necesita moverlos sin reconstruir la
+imagen:
+
+| Variable | Catálogo que apunta |
+|---|---|
+| `STUDIO_MANIFEST` | **solo Fase 3** (`config/models-studio.json`) |
+| `STUDIO_CORE_MANIFEST` | **el core** (`config/models-core.json`) |
+
+Ninguna sustituye a la otra: son catálogos disjuntos, así que fijar la de Fase 3
+no puede dejar ciego al core ni al revés. Si no se definen se usan las rutas
+versionadas del árbol y las horneadas en la imagen
+(`/etc/comfyui/models-*.json`). Las leen **cuatro** consumidores por igual —
+`scripts/download-models.sh`, `studio/comfy_studio/capabilities.py`,
+`scripts/storage_requirement.py` y el planificador de retención
+(`studio/comfy_studio/cache_policy.py`)—, de modo que el requisito de disco, la
+adquisición a demanda y la expulsión se derivan del mismo manifiesto que acaba
+descargando el arranque.
+
+Difieren en dos cosas, y las dos están dichas a propósito:
+
+| Consumidor | Override ausente | Candidatas por omisión |
+|---|---|---|
+| `scripts/download-models.sh` | cae en `config/models-core.json` | raíz del repo |
+| `scripts/storage_requirement.py` | cae en las rutas conocidas | CWD y raíz del repo |
+| `capabilities`, `model_assets` | cae en las rutas conocidas | raíz del paquete primero, CWD después |
+| `cache_policy` (planificador de retención) | el catálogo queda fuera **declarándolo** (`missing_overrides`) | raíz del paquete primero, CWD después |
+
+Los tres últimos comparten un único orden de bases
+(`model_assets.manifest_search_bases()`): si cada resolvedor tuviera el suyo, un
+proceso lanzado desde un directorio con su propio `config/` podía leer un
+catálogo y el planificador otro, y los dos disentirían sobre cuál estaba en vigor
+sin que ninguno lo dijera. El planificador resolvía antes **solo** contra la raíz
+del paquete (nunca contra el CWD), para que `prune_model_cache.py --json` desde
+cualquier directorio no devolviera un plan vacío que se lee como «el volumen
+está bien»; ahora el CWD queda como último recurso, detrás de la raíz del paquete
+y de `/etc/comfyui/`.
+
+Sobre el override ausente sí hay una diferencia deliberada: caer en las rutas
+conocidas es lo correcto para quien va a **descargar** —abortar no arreglaría el
+desacuerdo, solo lo convertiría en un fallo—, pero el planificador no puede
+hacerlo en silencio. Si `STUDIO_CORE_MANIFEST` apunta a una ruta que no existe y
+el plan cae sin decirlo, se emite con el otro catálogo presente,
+`manifests_found: 1`, `unreadable_manifests: []` y un `keep_bytes` que se lee como
+un volumen sano corto por el catálogo entero. Por eso lo declara en
+`missing_overrides` y lo avisa por log.
+
 Cada entrada lleva `class` explícita:
 | Clase | Significado |
 |---|---|
@@ -385,8 +431,10 @@ Punto 5: «Before recommending more expensive hardware, investigate supported
 combinations of…». Las recetas medidas publican ahora `vram_fit`, que responde
 con la medición real:
 
-- `fits` / `headroom_mb` / `utilisation_pct` contra `STUDIO_TARGET_VRAM_GB`
-  (por defecto **32 GB**, el objetivo de la política);
+- `fits` / `headroom_mb` / `utilisation_pct` contra el **perfil seleccionado**
+  (`STUDIO_HARDWARE_PROFILE`, por defecto la RTX PRO 6000 Blackwell de 96 GB,
+  94 GB utilizables con la reserva de 2 GB). `STUDIO_TARGET_VRAM_GB` sigue
+  existiendo como override manual, pero su default sale del perfil;
 - si no cabe, la lista ordenada de optimizaciones que hay que **medir** antes de
   recomendar hardware más caro: precisión/cuantización, descarga secuencial,
   offloading, componentes en CPU, VAE tiling y parámetros de carga.
@@ -433,15 +481,45 @@ importa es que la decisión sea ahora versionada y verificada.
 
 - **Egress**: se modela la transferencia de bajada con un precio por GB
   orientativo; falta el precio real del proveedor.
-- **Egress**: se modela la transferencia de bajada con un precio por GB
-  orientativo; falta el precio real del proveedor.
+
 ## 5. Hardware objetivo
 
-El objetivo preferido es **una GPU de consumo con ~32 GB de VRAM** y RAM de host
-suficiente para la carga.
+El perfil principal es **una NVIDIA RTX PRO 6000 Blackwell con 96 GB de VRAM**
+(`rtx-pro-6000-blackwell-96-128`), con la RAM de host en perfiles separados de
+**128 y 256 GB**. `studio/comfy_studio/hardware_profile.py` es la fuente única:
+
+- `BLACKWELL_96_128` (96 GB VRAM / 128 GB RAM) es el perfil por defecto;
+  `BLACKWELL_96_256` es la variante de 256 GB.
+- `CONSUMER_32` (32 GB / 64 GB) se conserva por compatibilidad: **no limita el
+  perfil principal**.
+- `TARGET_VRAM_GB`, `target_vram_gb` y `STUDIO_TARGET_VRAM_GB` dejaron de estar
+  clavados en 32: se derivan del perfil (96), y `STUDIO_TARGET_VRAM_GB` /
+  `STUDIO_TARGET_RAM_GB` siguen siendo override manual para un operario.
+- Reserva operativa explícita: **2 GB de VRAM** y **8 GB de RAM**, así que el
+  perfil de 96 publica **94 GB utilizables** y el de 128 publica **120 GB**.
+- El perfil se transmite a la API (`/studio/api/status`), al resolvedor de
+  capacidades, a las recetas y al ayudante de macOS.
+
+**VRAM y RAM se evalúan por separado.** `assess_ram_fit` juzga la RAM del host
+contra el perfil elegido y `assess_vram_fit` la VRAM; la nota de `assess_ram_fit`
+dice explícitamente que la RAM del host no es intercambiable por VRAM. Una receta
+de 40 GB **cabe** en el perfil de 96 GB (utilización < 50 %, sin optimizaciones
+propuestas) y **no cabe** en el de 32 GB, que entonces propone las seis
+optimizaciones ordenadas. Antes `recipe_for_template` no propagaba el perfil a
+`assess_vram_fit`, así que la API publicaba un número y la receta se juzgaba
+contra el default.
+
+**Exclusión mutua del trabajo GPU pesado.** `execute_prompt_job` —el único cuello
+de botella— envuelve el envío, el sondeo y la medición en `_acquire_gpu_gate()`.
+Un `asyncio.Semaphore` compartido **cuelga** cuando dos bucles de eventos lo
+contienden (verificado empíricamente: el worker nunca vuelve), así que la
+compuerta es `_GpuGate`, independiente del bucle (`threading.Lock` + sondeo no
+bloqueante). La ventana de medición va **dentro** de la compuerta. Hay cuatro
+pruebas de control: pico de concurrencia == 1, liberación tras fallo, tras
+cancelación, y con semáforo inyectado.
 
 - `comfy rent` filtra `num_gpus=1` (una oferta multi-GPU podía pasar el filtro
-  de `gpu_ram` y alquilarse como una sola tarjeta), `cpu_ram>=32` por perfil y
+  de `gpu_ram` y alquilarse como una sola tarjeta), `cpu_ram>=128` por perfil y
   `cuda_vers>=12.8`.
 - La validación en cliente **rechaza** ofertas sin `cpu_ram` o sin `cuda_vers`
   declarados, en lugar de dejarlas pasar por defecto.
@@ -453,15 +531,43 @@ offloading, ejecución en CPU de componentes compatibles, VAE tiling, planificac
 secuencial y parámetros de carga. **La RAM no es intercambiable por VRAM** y los
 métodos son por modelo.
 
+### Arranque bajo demanda
+
+El arranque principal descarga **solo** bootstrap, y bootstrap es **vacío por
+diseño**: las 10 entradas que tenía `config/models-core.json` se reclasificaron a
+`task`. Pertenecer a Fase 1 no convierte un VAE ni un restaurador facial en
+requisito para abrir la API y descubrir capacidades. `run_bootstrap()` resuelve
+las entradas `class == "bootstrap"` del manifiesto; si el manifiesto no se puede
+leer, **no descarga nada** (falla cerrado en lugar de llenar el disco con el
+catálogo por una ruta mala). Los modos `--phase1/2/3/all` se conservan para
+operarios.
+
+La puerta de arranque (S5) se deriva de las descargas bootstrap reales, no de un
+número fijo: hoy **11 GB** (0 de descarga + 0 de pico de arranque + 10 GiB de
+margen), bajo el umbral declarado de 180 GB. Es la cifra honesta de «cuánto hace
+falta tener libre para abrir la API con los pesos vacíos»; el requisito del
+volumen es otro número y sigue siendo derivado (`min_volume_gb`: 231 GB para
+`studio`, 238 GB para `unreal`, 34 GB para `minimal`).
+
+La puerta **excluye** el pico de staging de la Fase 3: esa descarga corre en
+segundo plano *después* de que ComfyUI está listo, así que cobrarla inflaba el
+arranque con espacio que todavía no necesita. El volumen total sí reserva el
+mayor de los tres picos —arranque, tarea en segundo plano y demanda—, porque no
+coinciden en el tiempo.
+
 ### Pendiente
 
-- **Recetas de ejecución medidas**: `performance_defaults` de las plantillas
-  declaran ajustes y presupuesto de VRAM, pero **ningún resultado medido se
-  persiste ni se reutiliza**. Falta una tabla de mediciones
-  (VRAM/RAM/tiempo por render) que alimente las decisiones siguientes.
-- El parámetro `offload` que anuncia la API **no tiene efecto**: se valida y se
-  descarta antes de llegar a ComfyUI. Está documentado como no operativo.
-- `strict_min_vram_mb`/`strict_min_ram_mb` no derivan del perfil.
+- **Mediciones GPU reales**: `assess_vram_fit` devuelve `fits: null` con
+  «sin medición de VRAM todavía; ejecuta una vez para medir». **No se declara
+  ejecución GPU validada por un import ni por un stub.**
+- **Diagnóstico Blackwell específico** en `comfyctl strict-check`: hoy valida
+  driver ≥ 570 / CUDA 12.8, pero no reconoce `NVIDIA RTX PRO 6000 Blackwell` con
+  96 GB ni confronta VRAM/RAM contra el perfil elegido.
+- **Precio real de egress** del proveedor: se sigue usando una cifra por GB
+  orientativa.
+- Las recetas comparables se agrupan por parámetros, modelo/revisión, precisión,
+  offload y hardware; `template_id` por sí solo no basta, y sin evidencia el
+  veredicto es desconocido o pendiente.
 
 ---
 
@@ -489,5 +595,19 @@ Pendiente: modelo de coste de transferencia/egress y de arranque en frío.
 > → la tarea se ejecuta;
 > → los recursos se liberan y los activos reutilizables se retienen según política.
 
-Los siete pasos están implementados y verificados en CI. Queda pendiente solo el
-precio real de egress del proveedor (hoy se usa un precio por GB orientativo).
+Los siete pasos están implementados y verificados en CI.
+
+### Aceptación previa a GPU (2026-11-05)
+
+| Criterio | Estado | Evidencia |
+|---|---|---|
+| A. Perfil 96 efectivo, RAM 128/256, admisión con límites y reserva | **Hecho** | `hardware_profile.py`: default 96 GB / 128 GB, 94 GB y 120 GB utilizables; `RAM_OPTIONS_GB=(128,256)`; 4 pruebas de control de exclusión GPU (pico 1, liberación tras fallo y tras cancelación) |
+| B. Arranque con pesos vacíos, sin descarga task/optional | **Hecho** | `--bootstrap` con el manifiesto real: 0 archivos, 0 descargas; con una entrada bootstrap: 1 descarga y promoción atómica |
+| C. Capacidad elegida: dependencias, reutilización, corrupción, cancelación, disco lleno | **Hecho** | Descarga real de un activo público de 32 B (`ByteDance/LatentSync-1.6 config.json`, pin sha1) → `downloaded`; segundo intento `skipped` con 0 descargas; destino corrupto → se re-descarga y restaura; volumen de 40 MB con margen de 10 GiB → `failed` con «espacio insuficiente» y ningún parcial promocionado |
+| D. Grafo final con procesamiento real en CPU | **Pendiente** | Requiere el grafo consumiendo los activos declarados con el stack existente |
+| E. GPU pesada serializada, liberación tras fallo, mediciones simuladas separadas | **Hecho** | 4 pruebas de control; `assess_vram_fit` con `fits: null` y nota explícita cuando no hay medición |
+| F. Paquete instalado e imagen candidata en CI | **En curso** | PR #106: Validate y Rust en verde, Build en ejecución |
+
+Queda pendiente solo el precio real de egress del proveedor (hoy se usa un precio
+por GB orientativo), más las mediciones GPU reales y el diagnóstico Blackwell
+específico en `comfyctl strict-check`.

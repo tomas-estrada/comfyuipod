@@ -56,6 +56,14 @@
 #   - STUDIO_INCLUDE_3D      : Si se define a "1", añade Hunyuan3D 2.1 (+7.37 GB). El
 #                              perfil 'unreal' lo activa implícitamente; definirlo a "0"
 #                              en 'unreal' renuncia explícitamente al grupo 3D (M3-D).
+#
+# Modos de ejecución:
+#   --bootstrap : lo que corre el pod al arrancar (timeout 600 en start.sh).
+#   --phase1/--phase2/--phase3 : descarga explícita de cada fase.
+#   --all       : por defecto (Fase 1 + Fase 2 + Fase 3 si aplica el perfil).
+#   --selftest  : comprobaciones internas sin red ni descargas reales. Valida la
+#                 resolución de `dest_path` del arranque (F22) contra un manifiesto
+#                 sembrado y un HF_CLI simulado. Sale 0 solo si todo cuadra.
 # ==============================================================================
 
 set -uo pipefail
@@ -70,6 +78,9 @@ if [ -z "${COMFY_APP_DIR:-}" ]; then
         COMFY_APP_DIR="${COMFY_DATA_DIR}"
     fi
 fi
+# Exportados a propósito: la resolución de `dest_path` del arranque (F22) y la de
+# run_phase3 tienen que ver LOS MISMOS directorios, y la primera vive en Python.
+export COMFY_DATA_DIR COMFY_APP_DIR
 STUDIO_MANIFEST="${STUDIO_MANIFEST:-}"
 if [ -z "${STUDIO_MANIFEST}" ]; then
     if [ -f "${SCRIPT_DIR}/../config/models-studio.json" ]; then
@@ -151,8 +162,11 @@ esac
 
 # Detectar comando CLI de HuggingFace (hf en huggingface_hub >= 1.0, o huggingface-cli legacy).
 # Si HF_CLI viene definido en el entorno (p. ej. el fake-hf del dry-run de CI, S-01), se respeta.
+# --selftest no descarga nada, así que puede ejecutarse en un host sin el CLI.
 HF_CLI="${HF_CLI:-}"
-if [ -z "${HF_CLI}" ]; then
+if [ "${1:-}" = "--selftest" ]; then
+    :
+elif [ -z "${HF_CLI}" ]; then
     if command -v hf >/dev/null 2>&1; then
         HF_CLI="hf"
     elif command -v huggingface-cli >/dev/null 2>&1; then
@@ -243,6 +257,113 @@ print_summary() {
             log "  - FALLÓ: ${item}"
         done
     fi
+}
+
+# ------------------------------------------------------------------------------
+# F22: UNA sola regla de resolución de `dest_path` para el arranque.
+#
+# El manifiesto declara `dest_path` COMPLETO (target_dir + "/" + filename) y el
+# prefijo indica la raíz: `models/*` vive bajo ${COMFY_DATA_DIR}/models,
+# `custom_nodes/*` bajo ${COMFY_APP_DIR}, lo absoluto se respeta y
+# ${COMFY_DATA_DIR}/${COMFY_APP_DIR} se expanden ANTES de partir la ruta. Es la
+# misma regla que el `case` de run_phase3 y que
+# studio/comfy_studio/model_assets.py::resolve_dest.
+#
+# Antes se partía `dest_path` por "/" y solo se quitaba el nombre de archivo
+# cuando el primer componente era "models": una entrada custom_nodes/* acababa
+# en <COMFY_DATA_DIR>/custom_nodes/Foo/checkpoints/p2.bin (directorio con el
+# nombre del archivo dentro) y ${COMFY_DATA_DIR}/... se quedaba literal. Ambas
+# se reportaban como OK: escritura silenciosa en una ruta no verificada.
+#
+# El programa emite por entrada bootstrap válida una línea TAB de 6 campos (los
+# argumentos de hf_fetch) y, además, una línea `AVISO<TAB>motivo` cuando la
+# entrada cae fuera de models/ o cuando no se puede resolver: ninguna ruta se
+# resuelve en silencio. `--selftest` ejecuta este mismo programa contra un
+# manifiesto sembrado, así que la regla se comprueba donde vive.
+# ------------------------------------------------------------------------------
+BOOTSTRAP_PLANNER_PY="$(cat <<'PYBOOTSTRAP'
+import json
+import os
+import sys
+
+DEFAULT_ENV = {"COMFY_DATA_DIR": "/workspace/comfyui-data", "COMFY_APP_DIR": "/opt/ComfyUI"}
+
+
+def env_dir(name):
+    value = (os.environ.get(name) or "").strip()
+    return value or DEFAULT_ENV[name]
+
+
+def resolve_dest(dest_path):
+    """Resuelve un dest_path a (directorio, filename).
+
+    (None, motivo) cuando el destino no es verificable y no se debe escribir.
+    """
+    raw = str(dest_path).strip()
+    if not raw:
+        return None, "dest_path vacio"
+    for key in ("COMFY_DATA_DIR", "COMFY_APP_DIR"):
+        raw = raw.replace("${" + key + "}", env_dir(key)).replace("$" + key, env_dir(key))
+    raw = os.path.expanduser(raw)
+    if ".." in raw.split("/"):
+        return None, "dest_path con .. : " + repr(dest_path)
+    if raw.startswith("/"):
+        base = ""
+    elif raw == "models" or raw.startswith("models/"):
+        base = os.path.join(env_dir("COMFY_DATA_DIR"), "models")
+        raw = raw[len("models/"):] if raw.startswith("models/") else ""
+    elif raw.startswith("custom_nodes/"):
+        base = env_dir("COMFY_APP_DIR")
+    else:
+        base = env_dir("COMFY_DATA_DIR")
+    directory, filename = os.path.split(raw)
+    if not filename:
+        return None, "dest_path sin nombre de archivo: " + repr(dest_path)
+    target = os.path.join(base, directory) if directory else base
+    return os.path.normpath(target), filename
+
+
+manifest = os.environ.get("BOOTSTRAP_MANIFEST") or ""
+try:
+    with open(manifest, encoding="utf-8") as handle:
+        data = json.load(handle)
+except Exception:
+    sys.exit(0)
+
+for entry in data.get("models", []) or []:
+    if not isinstance(entry, dict) or entry.get("class") != "bootstrap":
+        continue
+    repo_id = str(entry.get("repo_id") or "?")
+    dest = str(entry.get("dest_path") or "").strip()
+    if not dest:
+        print("AVISO\tentrada bootstrap sin dest_path, se omite (" + repo_id + ")")
+        continue
+    target, detail = resolve_dest(dest)
+    if target is None:
+        print("AVISO\tentrada bootstrap sin destino verificable, se omite (" + repo_id + "): " + detail)
+        continue
+    if not dest.startswith("models/"):
+        print("AVISO\tbootstrap fuera de models/: " + dest + " -> " + target + "/" + detail)
+    print("\t".join([
+        repo_id,
+        str(entry.get("remote_path") or ""),
+        target,
+        detail,
+        str(entry.get("repo_type") or "model"),
+        str(entry.get("bytes") or 0),
+    ]))
+PYBOOTSTRAP
+)"
+
+# Plan de arranque: manifiesto -> líneas TAB de hf_fetch + líneas AVISO (F22).
+bootstrap_plan() {
+    local manifest="$1"
+    BOOTSTRAP_MANIFEST="${manifest}" python3 -c "${BOOTSTRAP_PLANNER_PY}" 2>/dev/null || true
+}
+
+# Descargas reales del plan: las líneas AVISO no son archivos (F22).
+bootstrap_plan_count() {
+    printf '%s\n' "$1" | awk -F'\t' '$1 != "AVISO" && $1 != ""' | grep -c . || true
 }
 
 # ------------------------------------------------------------------------------
@@ -572,44 +693,16 @@ run_bootstrap() {
     # El manifiesto emite exactamente los argumentos de hf_fetch. Si no se puede
     # leer, no se descarga nada: fallar cerrado es mejor que llenar el disco con
     # el catálogo completo por una ruta mal resuelta.
+    #
+    # F22: la resolución de `dest_path` vive en BOOTSTRAP_PLANNER_PY (una sola
+    # regla, compartida con --selftest) y emite además líneas AVISO para las
+    # entradas que caen fuera de models/ o que no se pueden resolver.
     local plan
-    plan="$(python3 - "${manifest}" <<'PYBOOTSTRAP' 2>/dev/null || true
-import json
-import os
-import sys
-
-try:
-    with open(sys.argv[1], encoding="utf-8") as handle:
-        data = json.load(handle)
-except Exception:
-    sys.exit(0)
-
-comfy = os.environ.get("COMFY_DATA_DIR") or "/workspace/comfyui-data"
-for entry in data.get("models", []):
-    if entry.get("class") != "bootstrap":
-        continue
-    dest = str(entry.get("dest_path") or "")
-    if not dest:
-        continue
-    parts = dest.split("/")
-    if parts[0] == "models":
-        target = os.path.join(comfy, *parts[:-1])
-    else:
-        target = os.path.join(comfy, dest)
-    print("\t".join([
-        str(entry.get("repo_id") or ""),
-        str(entry.get("remote_path") or ""),
-        target,
-        parts[-1],
-        str(entry.get("repo_type") or "model"),
-        str(entry.get("bytes") or 0),
-    ]))
-PYBOOTSTRAP
-)"
+    plan="$(bootstrap_plan "${manifest}")"
 
     local planned=0 bytes_total=0
     if [ -n "${plan}" ]; then
-        planned="$(printf '%s\n' "${plan}" | grep -c . || true)"
+        planned="$(bootstrap_plan_count "${plan}")"
     fi
     log "PLAN ARRANQUE: ${planned} archivos bootstrap."
 
@@ -627,6 +720,12 @@ PYBOOTSTRAP
     local -a fetch_args
     while IFS=$'\t' read -r repo remote target fname repo_type expected extra; do
         [ -n "${repo}" ] || continue
+        if [ "${repo}" = "AVISO" ]; then
+            # F22: el aviso viaja en el propio plan para que salga en el log
+            # aunque `dest_path` caiga fuera de models/ o no sea resoluble.
+            log "AVISO: ${remote}"
+            continue
+        fi
         if [ -n "${extra}" ]; then
             # Una línea con campos de más es un manifiesto corrupto: mejor no
             # descargar nada de ella que adivinar qué campo es cada cosa.
@@ -648,7 +747,178 @@ PYBOOTSTRAP
     print_summary "ARRANQUE"
 }
 
+# ------------------------------------------------------------------------------
+# --selftest : comprobaciones internas. Sin red y sin descargas reales (HF_CLI
+# simulado); valida la regla de resolución de `dest_path` del arranque (F22).
+#
+# Siembra un manifiesto bootstrap con los cuatro prefijos que puede declarar el
+# manifiesto (models/*, custom_nodes/*, ${COMFY_DATA_DIR}/${COMFY_APP_DIR} y
+# absoluto) más las entradas que deben omitirse, y comprueba:
+#   1. que BOOTSTRAP_PLANNER_PY resuelve los cuatro con LA MISMA regla y que el
+#      nombre del archivo nunca queda colgado como directorio;
+#   2. que las líneas AVISO no cuentan como descargas en el plan;
+#   3. que un `--bootstrap` real contra ese manifiesto deja cada archivo en su
+#      sitio (y NO en <ruta>/<archivo>/<archivo>) sin avisos silenciosos.
+# ------------------------------------------------------------------------------
+selftest_bootstrap_dest() {
+    local tmp data app manifest rc=0
+    tmp="$(mktemp -d)" || {
+        log "ERROR (selftest): no se pudo crear el directorio temporal."
+        return 1
+    }
+    data="${tmp}/data"
+    app="${tmp}/app"
+    manifest="${tmp}/models-core.json"
+    mkdir -p "${data}" "${app}"
+
+    # ${COMFY_DATA_DIR}/${COMFY_APP_DIR} se escriben escapados para que el
+    # manifiesto los contenga literales (es lo que declaran los manifiestos reales).
+    cat > "${manifest}" <<JSON
+{
+ "version": 1,
+ "models": [
+  {"class": "bootstrap", "repo_id": "org/models-vae", "remote_path": "p1.bin", "dest_path": "models/vae/p1.bin", "repo_type": "model", "bytes": 10},
+  {"class": "bootstrap", "repo_id": "org/models-root", "remote_path": "p5.bin", "dest_path": "models/p5.bin", "repo_type": "model", "bytes": 11},
+  {"class": "bootstrap", "repo_id": "org/custom", "remote_path": "p2.bin", "dest_path": "custom_nodes/Foo/checkpoints/p2.bin", "repo_type": "model", "bytes": 12},
+  {"class": "bootstrap", "repo_id": "org/data-var", "remote_path": "p3.bin", "dest_path": "\${COMFY_DATA_DIR}/indextts/checkpoints/p3.bin", "repo_type": "model", "bytes": 13},
+  {"class": "bootstrap", "repo_id": "org/app-var", "remote_path": "p6.bin", "dest_path": "\${COMFY_APP_DIR}/custom_nodes/Bar/x/p6.bin", "repo_type": "model", "bytes": 14},
+  {"class": "bootstrap", "repo_id": "org/abs", "remote_path": "p4.bin", "dest_path": "${tmp}/extra/p4.bin", "repo_type": "model", "bytes": 15},
+  {"class": "bootstrap", "repo_id": "org/broken", "remote_path": "p7.bin", "dest_path": "models", "repo_type": "model", "bytes": 16},
+  {"class": "bootstrap", "repo_id": "org/escape", "remote_path": "p8.bin", "dest_path": "models/../../etc/p8.bin", "repo_type": "model", "bytes": 17},
+  {"class": "bootstrap", "repo_id": "org/nodest", "remote_path": "p9.bin", "repo_type": "model", "bytes": 18},
+  {"class": "task", "repo_id": "org/not-bootstrap", "remote_path": "x.bin", "dest_path": "models/task/x.bin", "repo_type": "model", "bytes": 99}
+ ]
+}
+JSON
+
+    local got want planned
+    # Mismo programa que usa el arranque (bootstrap_plan), con los directorios de
+    # la siembra y sin tocar las variables del script.
+    got="$(env COMFY_DATA_DIR="${data}" COMFY_APP_DIR="${app}" BOOTSTRAP_MANIFEST="${manifest}" \
+        python3 -c "${BOOTSTRAP_PLANNER_PY}" 2>/dev/null || true)"
+    want="$(cat <<EOF
+org/models-vae	p1.bin	${data}/models/vae	p1.bin	model	10
+org/models-root	p5.bin	${data}/models	p5.bin	model	11
+AVISO	bootstrap fuera de models/: custom_nodes/Foo/checkpoints/p2.bin -> ${app}/custom_nodes/Foo/checkpoints/p2.bin
+org/custom	p2.bin	${app}/custom_nodes/Foo/checkpoints	p2.bin	model	12
+AVISO	bootstrap fuera de models/: \${COMFY_DATA_DIR}/indextts/checkpoints/p3.bin -> ${data}/indextts/checkpoints/p3.bin
+org/data-var	p3.bin	${data}/indextts/checkpoints	p3.bin	model	13
+AVISO	bootstrap fuera de models/: \${COMFY_APP_DIR}/custom_nodes/Bar/x/p6.bin -> ${app}/custom_nodes/Bar/x/p6.bin
+org/app-var	p6.bin	${app}/custom_nodes/Bar/x	p6.bin	model	14
+AVISO	bootstrap fuera de models/: ${tmp}/extra/p4.bin -> ${tmp}/extra/p4.bin
+org/abs	p4.bin	${tmp}/extra	p4.bin	model	15
+AVISO	entrada bootstrap sin destino verificable, se omite (org/broken): dest_path sin nombre de archivo: 'models'
+AVISO	entrada bootstrap sin destino verificable, se omite (org/escape): dest_path con .. : 'models/../../etc/p8.bin'
+AVISO	entrada bootstrap sin dest_path, se omite (org/nodest)
+EOF
+)"
+    if [ "${got}" != "${want}" ]; then
+        log "ERROR (selftest/F22): BOOTSTRAP_PLANNER_PY no resuelve dest_path con la regla compartida."
+        diff <(printf '%s\n' "${want}") <(printf '%s\n' "${got}") || true
+        rc=1
+    fi
+
+    planned="$(bootstrap_plan_count "${got}")"
+    if [ "${planned}" != "6" ]; then
+        log "ERROR (selftest/F22): el plan debe tener 6 descargas (las líneas AVISO no cuentan); hay ${planned}."
+        rc=1
+    fi
+
+    local bin bootstrap_log f
+    bin="${tmp}/bin"
+    mkdir -p "${bin}"
+    cat > "${bin}/fake-hf" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+repo_path="${3:?}"
+stage_dir=""
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--local-dir" ]; then
+        stage_dir="$2"
+        shift 2
+        continue
+    fi
+    shift
+done
+[ -n "${stage_dir}" ] || { echo "fake-hf: falta --local-dir" >&2; exit 1; }
+mkdir -p "$(dirname "${stage_dir}/${repo_path}")"
+printf 'fake-model-bytes' > "${stage_dir}/${repo_path}"
+FAKE
+    chmod +x "${bin}/fake-hf"
+
+    # hf_fetch usa `timeout N <cmd>` (GNU coreutils), que no existe en macOS. El
+    # fake-hf es instantáneo, así que el envoltorio solo descarta los segundos.
+    cat > "${bin}/timeout" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -gt 0 ] && shift
+exec "$@"
+SHIM
+    chmod +x "${bin}/timeout"
+
+    bootstrap_log="${tmp}/bootstrap.log"
+    if ! COMFY_DATA_DIR="${data}" COMFY_APP_DIR="${app}" STUDIO_CORE_MANIFEST="${manifest}" \
+        HF_CLI="${bin}/fake-hf" HF_DISK_GUARD=0 MODEL_PROFILE=minimal \
+        PATH="${bin}:${PATH}" \
+        bash "${BASH_SOURCE[0]}" --bootstrap > "${bootstrap_log}" 2>&1; then
+        log "ERROR (selftest/F22): --bootstrap falló contra el manifiesto sembrado."
+        rc=1
+    fi
+
+    for f in \
+        "${data}/models/vae/p1.bin" \
+        "${data}/models/p5.bin" \
+        "${app}/custom_nodes/Foo/checkpoints/p2.bin" \
+        "${data}/indextts/checkpoints/p3.bin" \
+        "${app}/custom_nodes/Bar/x/p6.bin" \
+        "${tmp}/extra/p4.bin"; do
+        if [ ! -s "${f}" ]; then
+            log "ERROR (selftest/F22): --bootstrap no dejó el archivo en ${f}."
+            rc=1
+        fi
+    done
+
+    for f in \
+        "${data}/models/vae/p1.bin/p1.bin" \
+        "${app}/custom_nodes/Foo/checkpoints/p2.bin/p2.bin" \
+        "${data}/indextts/checkpoints/p3.bin/p3.bin"; do
+        if [ -e "${f}" ]; then
+            log "ERROR (selftest/F22): regresión F22: se creó el directorio anidado ${f}."
+            rc=1
+        fi
+    done
+
+    if grep -F "INICIO: " "${bootstrap_log}" | grep -qF "\${COMFY_DATA_DIR}"; then
+        log "ERROR (selftest/F22): \${COMFY_DATA_DIR} quedó sin expandir en la ruta descargada."
+        rc=1
+    fi
+    if ! grep -qF "AVISO: bootstrap fuera de models/: custom_nodes/Foo/checkpoints/p2.bin" "${bootstrap_log}"; then
+        log "ERROR (selftest/F22): falta el AVISO explícito para la entrada fuera de models/."
+        rc=1
+    fi
+    if ! grep -qF "PLAN ARRANQUE: 6 archivos bootstrap." "${bootstrap_log}"; then
+        log "ERROR (selftest/F22): el plan de arranque sembrado no contó 6 archivos."
+        rc=1
+    fi
+    if ! grep -qF "RESUMEN ARRANQUE: Todos los modelos se descargaron correctamente (0 fallos)." "${bootstrap_log}"; then
+        log "ERROR (selftest/F22): el arranque sembrado no terminó limpio."
+        tail -n 25 "${bootstrap_log}" || true
+        rc=1
+    fi
+
+    rm -rf "${tmp}"
+    if [ "${rc}" = "0" ]; then
+        log "SELFTEST OK: resolución de dest_path del arranque (F22) verificada."
+    fi
+    return "${rc}"
+}
+
 case "${1:---all}" in
+    --selftest)
+        # Comprobaciones internas sin red: válvula de escape para la regla de
+        # resolución de dest_path del arranque (F22).
+        selftest_bootstrap_dest
+        ;;
     --bootstrap)
         # Arranque normal del pod: solo bootstrap. Nada de task/optional sin
         # petición, y nada de Fase 2/3 en segundo plano.

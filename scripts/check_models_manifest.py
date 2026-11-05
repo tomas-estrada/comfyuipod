@@ -167,6 +167,22 @@ def _validate_integrity(entry: dict[str, Any], prefix: str, errors: list[str]) -
         errors.append(f"{prefix}: hash redundante ({sorted(digests)}), deja uno")
 
 
+def _declared_bytes(model: dict[str, Any]) -> int:
+    """Bytes que declara una entrada; 0 si no declara ninguno utilizable.
+
+    D4/R94: `json.load` acepta los literales no estándar `Infinity`,
+    `-Infinity` y `1e400`, y `int()` sobre ellos responde `OverflowError` —un
+    `ArithmeticError`, fuera de `TypeError`/`ValueError`—, así que el validador
+    moría con una traza en lugar de publicar el error de manifiesto que había
+    encontrado. Misma regla que `capabilities._declared_bytes` y
+    `asset_acquire._declared_bytes`: un tamaño ilegible es «no declarado».
+    """
+    try:
+        return int(model.get("bytes") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def validate_manifest_data(
     data: dict[str, Any],
     *,
@@ -344,7 +360,7 @@ def validate_manifest_data(
         declared = model.get("class")
         if declared in class_counts:
             class_counts[declared] += 1
-            class_bytes[declared] += int(model.get("bytes") or 0)
+            class_bytes[declared] += _declared_bytes(model)
 
     meta_classes = meta.get("classes")
     if not isinstance(meta_classes, dict):

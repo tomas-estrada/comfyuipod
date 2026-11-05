@@ -1,6 +1,7 @@
 //! `report` — Generador determinista de `/report.md` en Rust (`## 0. Triage automático` .. `## 10. Arranque estricto`).
 
 use crate::collect::drift::DriftSummary;
+use crate::collect::phases::STATE_NOT_REQUIRED;
 use crate::collect::StatusApiPayload;
 use crate::logtail::{resolve_log_path, tail_lines};
 use crate::redact::SecretRedactor;
@@ -243,6 +244,12 @@ pub fn build_report_markdown(
             p1.failed.join("`, `")
         );
     }
+    if p1.state == STATE_NOT_REQUIRED {
+        let _ = writeln!(
+            out,
+            "  - Sin trabajo de Fase 1: el arranque (`--bootstrap`) no declara modelos que descargar."
+        );
+    }
     let _ = writeln!(
         out,
         "- **Fase 2**: `{}` (`{}/{}` completados, `{}` fallidos) · Archivo actual: `{cur_file}` · Proceso `hf`: PID `{hf_pid_disp}` (`{}` MB RSS)",
@@ -257,6 +264,12 @@ pub fn build_report_markdown(
             out,
             "  - Ficheros Fase 2 con error: `{}`",
             p2.failed.join("`, `")
+        );
+    }
+    if p2.state == STATE_NOT_REQUIRED {
+        let _ = writeln!(
+            out,
+            "  - Sin trabajo de Fase 2: el arranque (`--bootstrap`) no lanza la Fase 2 del perfil (se ejecuta a mano con `download-models.sh --phase2`)."
         );
     }
     let dl_lines = resolve_log_path("download", log_dir)
@@ -454,4 +467,145 @@ pub fn build_report_markdown(
         report_str.push_str("\n\n...[Informe truncado al límite de 400 KB]...\n");
     }
     report_str
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collect::gpu::GpuStatus;
+    use crate::collect::phases::{Phase1Info, Phase2Info, PhasesStatus};
+    use crate::collect::procfs::{
+        ComfyUiStatus, DiskStatus, ImageMeta, InstanceInfo, MemoryStatus, NginxServiceStatus,
+        ServicesStatus, StatusServerServiceStatus, TerminalServiceStatus,
+    };
+
+    fn payload_with(phases: PhasesStatus) -> StatusApiPayload {
+        StatusApiPayload {
+            generated_at: "2026-11-05T09:00:00Z".to_string(),
+            image: ImageMeta {
+                tag: "sha-512e485".to_string(),
+                built_at: "2026-11-05T08:00:00Z".to_string(),
+                comfyui_sha: "4c62a84068a0".to_string(),
+                pytorch: "2.9.1+cu128".to_string(),
+                cuda: "12.8".to_string(),
+                ubuntu: "24.04".to_string(),
+            },
+            instance: InstanceInfo {
+                hostname: "vast-5090-node".to_string(),
+                uptime_s: 120,
+                vast_instance_id: "C.998877".to_string(),
+                external_port_8188: "41888".to_string(),
+            },
+            gpu: GpuStatus {
+                available: false,
+                name: String::new(),
+                driver: String::new(),
+                vram_total_mb: 0,
+                vram_used_mb: 0,
+                util_pct: 0,
+                temp_c: 0,
+                processes: Vec::new(),
+                reason: Some("Modo CPU".to_string()),
+            },
+            memory: MemoryStatus {
+                total_mb: 1024,
+                used_mb: 512,
+                available_mb: 512,
+                swap_used_mb: 0,
+            },
+            disk: DiskStatus {
+                path: "/workspace/comfyui-data".to_string(),
+                total_gb: 150.0,
+                used_gb: 30.0,
+                free_gb: 120.0,
+            },
+            comfyui: ComfyUiStatus {
+                state: "running".to_string(),
+                supervisor_state: "running".to_string(),
+                pid: Some(1234),
+                rss_mb: 2048,
+                uptime_s: 110,
+                port_open: true,
+                restarts: 0,
+                healthy_resets: 0,
+                max_restarts: 5,
+                last_exit: None,
+            },
+            phases,
+            phase_banner:
+                "ComfyUI listo · Descargas no requeridas (el arranque no arrastra modelos)"
+                    .to_string(),
+            services: ServicesStatus {
+                nginx: NginxServiceStatus {
+                    running: true,
+                    workers_user: "www-data".to_string(),
+                },
+                status_server: StatusServerServiceStatus { running: true },
+                terminal: TerminalServiceStatus {
+                    enabled: false,
+                    running: false,
+                },
+                studio_server: None,
+            },
+            errors_recent: Vec::new(),
+            triage: Vec::new(),
+            env_masked: BTreeMap::new(),
+            strict: None,
+        }
+    }
+
+    fn not_required_phases() -> PhasesStatus {
+        PhasesStatus {
+            phase1: Phase1Info {
+                state: STATE_NOT_REQUIRED.to_string(),
+                done: 0,
+                total: 0,
+                failed: Vec::new(),
+                elapsed_s: 0,
+            },
+            phase2: Phase2Info {
+                state: STATE_NOT_REQUIRED.to_string(),
+                done: 0,
+                total: 0,
+                failed: Vec::new(),
+                current_file: None,
+                hf_pid: None,
+                hf_rss_mb: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn report_publishes_not_required_without_claiming_pending_work() {
+        // Regresión F20: /report.md no debe decir `pending` tras un arranque --bootstrap
+        // que no descarga nada (el log de al lado dice "Nada que descargar").
+        let heavy = HeavyCacheData::default();
+        let redactor = SecretRedactor::new(None, None);
+        let log_dir = std::env::temp_dir().join("comfyctl_report_arranque_test_no_logs");
+        let md = build_report_markdown(
+            &payload_with(not_required_phases()),
+            &heavy,
+            &redactor,
+            &log_dir,
+        );
+
+        assert!(md.contains("- **Fase 1**: `not_required` (`0/0` completados, `0` fallidos)"));
+        assert!(md.contains("- **Fase 2**: `not_required` (`0/0` completados, `0` fallidos)"));
+        assert!(md.contains(
+            "  - Sin trabajo de Fase 1: el arranque (`--bootstrap`) no declara modelos que descargar."
+        ));
+        assert!(md.contains(
+            "  - Sin trabajo de Fase 2: el arranque (`--bootstrap`) no lanza la Fase 2 del perfil"
+        ));
+        // La sección 5 sigue siendo la del contrato y ningún estado inventa pendientes.
+        assert!(md.contains("## 5. Descargas (Fase 1 y Fase 2)"));
+        let section5 = md
+            .split("## 5. Descargas (Fase 1 y Fase 2)")
+            .nth(1)
+            .unwrap_or_default()
+            .split("## 6. Log de ComfyUI")
+            .next()
+            .unwrap_or_default();
+        assert!(!section5.contains("`pending`"), "section 5: {section5}");
+    }
 }

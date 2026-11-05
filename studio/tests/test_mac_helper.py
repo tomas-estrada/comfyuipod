@@ -7,8 +7,12 @@ Verifica:
    - `STUDIO_LLM_KEY` llega en `--env` de `vastai create instance` junto con
      `MODEL_PROFILE="studio"` y `--disk <derivado>` (el mínimo de disco se calcula
      con `scripts/storage_requirement.py` y sube con los opt-in pedidos).
-   - Filtros (`gpu_name=RTX_5090`, `disk_space>=<derivado>`, `inet_down>=5000`,
-     `reliability>=0.98`) probados contra fixtures con ofertas mixtas.
+   - Filtros derivados del perfil de hardware vigente (`gpu_name=RTX PRO 6000`,
+     `num_gpus=1`, `gpu_ram>=96`, `cpu_ram>=128` o `>=256`,
+     `disk_space>=<derivado>`, `inet_down>=5000`, `reliability>=0.98`) probados
+     contra fixtures con ofertas mixtas, multi-GPU y sin `cpu_ram`/`cuda_vers`.
+   - `STUDIO_HARDWARE_PROFILE` / `STUDIO_TARGET_VRAM_GB` / `STUDIO_TARGET_RAM_GB`
+     reenviados en `--env` para que el contenedor juzgue con la misma máquina.
 3. `comfy studio [<id>]`:
    - Resuelve la URL del portal, verifica `/studio/api/health` con Basic Auth
      por stdin (`curl -K -`) y abre el navegador en `/studio/`.
@@ -168,6 +172,7 @@ def _run_comfy(
     state_dir: Path,
     extra_env: dict[str, str] | None = None,
     stdin_text: str | None = None,
+    script: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     bash_bin = _find_bash()
     env = os.environ.copy()
@@ -190,6 +195,9 @@ def _run_comfy(
         "STUDIO_WEBHOOK_URL",
         "STUDIO_WEBHOOK_SECRET",
         "COMFY_DISK_GB",
+        "STUDIO_HARDWARE_PROFILE",
+        "STUDIO_TARGET_VRAM_GB",
+        "STUDIO_TARGET_RAM_GB",
     ):
         env.pop(k, None)
 
@@ -206,7 +214,7 @@ def _run_comfy(
         env.update(extra_env)
 
     return subprocess.run(
-        [bash_bin, _to_bash_path(COMFY_SCRIPT), *args],
+        [bash_bin, _to_bash_path(script or COMFY_SCRIPT), *args],
         input=stdin_text,
         text=True,
         encoding="utf-8",
@@ -232,93 +240,117 @@ def derived_disk_gb(*, animate: bool = False) -> int:
     return _derived_disk_gb(animate=animate)
 
 
+def _vastai_calls(state_dir: Path) -> list[dict[str, Any]]:
+    calls_file = state_dir / "vastai_calls.jsonl"
+    if not calls_file.is_file():
+        return []
+    return [
+        json.loads(line)
+        for line in calls_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _search_queries(state_dir: Path) -> list[str]:
+    """Consultas `vastai search offers` registradas por el mock."""
+    return [
+        c["args"][2] for c in _vastai_calls(state_dir) if c["args"][:2] == ["search", "offers"]
+    ]
+
+
+def _created_args(state_dir: Path) -> list[str]:
+    return json.loads((state_dir / "created_instance.json").read_text(encoding="utf-8"))["args"]
+
+
+def _env_flags(created_args: list[str]) -> str:
+    return created_args[created_args.index("--env") + 1]
+
+
+def _blackwell_offer(
+    offer_id: int,
+    *,
+    gpu_name: str = "RTX PRO 6000",
+    gpu_ram_mb: int = 98304,
+    cpu_ram_mb: int | None = 131072,
+    cuda_vers: float | None = 12.8,
+    disk_space: int = 300,
+    inet_down: int = 6000,
+    reliability: float = 0.99,
+    num_gpus: int = 1,
+    dph_total: float = 0.50,
+) -> dict[str, Any]:
+    """Oferta de Vast.ai del perfil vigente (RTX PRO 6000 Blackwell 96 GB).
+
+    `cpu_ram_mb`/`cuda_vers` en None omiten la clave por completo, para probar
+    que una oferta sin RAM de host o sin CUDA declarada se rechaza.
+    """
+    offer: dict[str, Any] = {
+        "id": offer_id,
+        "gpu_name": gpu_name,
+        "gpu_ram": gpu_ram_mb,
+        "cuda_vers": cuda_vers,
+        "disk_space": disk_space,
+        "inet_down": inet_down,
+        "reliability": reliability,
+        "verified": True,
+        "rentable": True,
+        "num_gpus": num_gpus,
+        "dph_total": dph_total,
+        "storage_cost": 0.15,
+    }
+    if cpu_ram_mb is not None:
+        offer["cpu_ram"] = cpu_ram_mb
+    return offer
+
+
 def _sample_offers_fixture() -> list[dict[str, Any]]:
     return [
-        {
-            "id": 101,
-            "gpu_name": "RTX_5090",
-            "gpu_ram": 32768,
-            "cpu_ram": 65536,
-            "cuda_vers": 12.8,
-            "disk_space": 150,  # Insuficiente (< 200 GB)
-            "inet_down": 6000,
-            "reliability": 0.99,
-            "verified": True,
-            "rentable": True,
-            "dph_total": 0.35,
-            "storage_cost": 0.15,
-        },
-        {
-            "id": 102,
-            "gpu_name": "RTX_5090",
-            "gpu_ram": 32768,
-            "cpu_ram": 65536,
-            "cuda_vers": 12.8,
-            "disk_space": 250,
-            "inet_down": 2400,  # Insuficiente (< 5000 Mbps)
-            "reliability": 0.99,
-            "verified": True,
-            "rentable": True,
-            "dph_total": 0.38,
-            "storage_cost": 0.15,
-        },
-        {
-            "id": 103,
-            "gpu_name": "RTX_5090",
-            "gpu_ram": 32768,
-            "cpu_ram": 65536,
-            "cuda_vers": 12.8,
-            "disk_space": 250,
-            "inet_down": 6500,
-            "reliability": 0.94,  # Insuficiente (< 0.98)
-            "verified": True,
-            "rentable": True,
-            "dph_total": 0.40,
-            "storage_cost": 0.15,
-        },
-        {
-            "id": 104,
-            "gpu_name": "RTX_4090",  # No es RTX_5090 (24 GB VRAM insuficiente para studio)
-            "gpu_ram": 24576,
-            "cpu_ram": 65536,
-            "cuda_vers": 12.8,
-            "disk_space": 300,
-            "inet_down": 7000,
-            "reliability": 0.995,
-            "verified": True,
-            "rentable": True,
-            "dph_total": 0.42,
-            "storage_cost": 0.15,
-        },
-        {
-            "id": 105,
-            "gpu_name": "RTX_5090",
-            "gpu_ram": 32768,
-            "cpu_ram": 65536,
-            "cuda_vers": 12.8,
+        _blackwell_offer(
+            101,
+            disk_space=150,  # Insuficiente (< 200 GB)
+            inet_down=6000,
+            reliability=0.99,
+            dph_total=0.35,
+        ),
+        _blackwell_offer(
+            102,
+            disk_space=250,
+            inet_down=2400,  # Insuficiente (< 5000 Mbps)
+            reliability=0.99,
+            dph_total=0.38,
+        ),
+        _blackwell_offer(
+            103,
+            disk_space=250,
+            inet_down=6500,
+            reliability=0.94,  # Insuficiente (< 0.98)
+            dph_total=0.40,
+        ),
+        _blackwell_offer(
+            104,
+            gpu_name="RTX_4090",  # No es el GPU objetivo del perfil vigente
+            gpu_ram_mb=24576,
+            disk_space=300,
+            inet_down=7000,
+            reliability=0.995,
+            dph_total=0.42,
+        ),
+        _blackwell_offer(
+            105,
             # Válida para studio estándar (>= 200 GB), insuficiente para Animate (>= 250 GB)
-            "disk_space": 220,
-            "inet_down": 5400,
-            "reliability": 0.991,
-            "verified": True,
-            "rentable": True,
-            "dph_total": 0.62,
-            "storage_cost": 0.15,
-        },
-        {
-            "id": 106,
-            "gpu_name": "RTX_5090",
-            "gpu_ram": 32768,
-            "cpu_ram": 65536,
-            "cuda_vers": 12.9,
-            "disk_space": 300,  # Válida también para STUDIO_INCLUDE_ANIMATE=1 (>= 250 GB)
-            "inet_down": 8200,
-            "reliability": 0.996,
-            "verified": True,
-            "rentable": True,
-            "dph_total": 0.74,
-            "storage_cost": 0.15,
-        },
+            disk_space=220,
+            inet_down=5400,
+            reliability=0.991,
+            dph_total=0.62,
+        ),
+        _blackwell_offer(
+            106,
+            cuda_vers=12.9,
+            disk_space=300,  # Válida también para STUDIO_INCLUDE_ANIMATE=1 (>= 250 GB)
+            inet_down=8200,
+            reliability=0.996,
+            dph_total=0.74,
+        ),
     ]
 
 
@@ -431,10 +463,17 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     search_calls = [c for c in calls if c["args"][:2] == ["search", "offers"]]
     assert search_calls, "No se invocó vastai search offers"
     search_query = search_calls[-1]["args"][2]
-    assert "gpu_name=RTX_5090" in search_query
+    assert "gpu_name=RTX PRO 6000" in search_query
+    # F21: los mínimos salen del perfil de hardware vigente (96 GB VRAM / 128 GB RAM),
+    # no de un GPU de consumo de 32 GB, y el objetivo es una sola GPU.
+    assert "num_gpus=1" in search_query
+    assert "gpu_ram>=96" in search_query
+    assert "cpu_ram>=128" in search_query
     assert f"disk_space>={derived_disk_gb()}" in search_query
     assert "inet_down>=5000" in search_query
     assert "reliability>=0.98" in search_query
+    # Sin respaldo a GPUs de consumo de 32 GB.
+    assert "gpu_name=RTX_5090" not in search_query
 
     created = json.loads((state_dir / "created_instance.json").read_text(encoding="utf-8"))
     c_args = created["args"]
@@ -574,6 +613,193 @@ def test_rent_studio_rejects_insufficient_disk_override_and_accepts_valid_overri
     c_args = created["args"]
     assert c_args[:3] == ["create", "instance", "106"]
     assert c_args[c_args.index("--disk") + 1] == "300"
+
+
+def test_rent_studio_targets_blackwell_profile_and_rejects_32gb_consumer_gpu(
+    tmp_path: Path,
+) -> None:
+    """F21: la admisión de hardware alquila el perfil vigente, no un GPU de 32 GB."""
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    (state_dir / "offers_fixture.json").write_text(
+        json.dumps(
+            [
+                # GPU de consumo de 32 GB con 64 GB de RAM: NO cumple el perfil 96/128.
+                _blackwell_offer(
+                    201,
+                    gpu_name="RTX_5090",
+                    gpu_ram_mb=32768,
+                    cpu_ram_mb=65536,
+                    inet_down=9000,
+                    dph_total=0.30,
+                ),
+                # Perfil vigente: RTX PRO 6000 Blackwell 96 GB con 128 GB de RAM.
+                _blackwell_offer(202, inet_down=9000, dph_total=1.20),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    synthetic_llm_key = "sk" + "-blackwell-profile-secret-12345678"
+
+    res = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={"COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest"},
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert res.returncode == 0, f"stderr={res.stderr}\nstdout={res.stdout}"
+
+    queries = _search_queries(state_dir)
+    assert queries, "No se invocó vastai search offers"
+    assert all("gpu_name=RTX PRO 6000" in q for q in queries)
+    assert all("num_gpus=1" in q for q in queries)
+    assert all("gpu_ram>=96" in q for q in queries)
+    assert all("cpu_ram>=128" in q for q in queries)
+    assert all("cuda_vers>=12.8" in q for q in queries)
+    assert not any("gpu_name=RTX_5090" in q for q in queries), (
+        "No debe haber respaldo a GPUs de consumo de 32 GB"
+    )
+    assert "hardware=rtx-pro-6000-blackwell-96-128" in res.stdout
+    assert "vram>=96 GB ram>=128 GB" in res.stdout
+
+    # La oferta de 32 GB (201) se descarta aunque sea la más barata.
+    c_args = _created_args(state_dir)
+    assert c_args[:3] == ["create", "instance", "202"]
+
+
+def test_rent_studio_rejects_offers_without_cpu_ram_or_cuda_vers(tmp_path: Path) -> None:
+    """F21: sin `cpu_ram` o sin `cuda_vers` declarados la oferta se rechaza."""
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    synthetic_llm_key = "sk" + "-missing-fields-secret-12345678"
+
+    incomplete = [
+        _blackwell_offer(301, cpu_ram_mb=None),  # sin clave cpu_ram
+        _blackwell_offer(302, cpu_ram_mb=0),  # cpu_ram declarado en 0
+        _blackwell_offer(303, cpu_ram_mb=65536),  # RAM insuficiente (< 128 GB)
+        _blackwell_offer(304, cuda_vers=None),  # sin clave cuda_vers
+        _blackwell_offer(305, cuda_vers=0.0),  # cuda_vers declarado en 0
+        _blackwell_offer(306, cuda_vers=12.4),  # CUDA demasiado antigua
+    ]
+    (state_dir / "offers_fixture.json").write_text(json.dumps(incomplete), encoding="utf-8")
+
+    rejected = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={"COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest"},
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert rejected.returncode != 0, (
+        f"Se esperaba rechazo; stdout={rejected.stdout}\nstderr={rejected.stderr}"
+    )
+    assert "No se encontraron ofertas disponibles" in rejected.stderr
+    assert not (state_dir / "created_instance.json").exists()
+
+    # Control: la misma fixture más una oferta completa sí se selecciona, así que
+    # el rechazo anterior se debe a los campos que faltan, no a la fixture.
+    (state_dir / "offers_fixture.json").write_text(
+        json.dumps([*incomplete, _blackwell_offer(307, dph_total=0.99)]),
+        encoding="utf-8",
+    )
+    accepted = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={"COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest"},
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert accepted.returncode == 0, f"stderr={accepted.stderr}\nstdout={accepted.stdout}"
+    assert _created_args(state_dir)[:3] == ["create", "instance", "307"]
+
+
+def test_rent_studio_rejects_multi_gpu_offers(tmp_path: Path) -> None:
+    """F21: una oferta multi-GPU no puede alquilarse como una sola tarjeta de 96 GB."""
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    (state_dir / "offers_fixture.json").write_text(
+        json.dumps(
+            [
+                # Dos GPUs: el gpu_ram agregado (2 x 96 GB) pasaría el umbral de VRAM.
+                _blackwell_offer(
+                    401,
+                    gpu_ram_mb=196608,
+                    cpu_ram_mb=262144,
+                    num_gpus=2,
+                    inet_down=9000,
+                    dph_total=0.80,
+                ),
+                _blackwell_offer(402, inet_down=9000, dph_total=1.10),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    synthetic_llm_key = "sk" + "-multi-gpu-secret-12345678"
+
+    res = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={"COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest"},
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert res.returncode == 0, f"stderr={res.stderr}\nstdout={res.stdout}"
+
+    queries = _search_queries(state_dir)
+    assert queries and all("num_gpus=1" in q for q in queries)
+    c_args = _created_args(state_dir)
+    assert c_args[:3] == ["create", "instance", "402"]
+    assert "401" not in _env_flags(c_args)
+
+
+def test_rent_studio_hardware_profile_ram_variants_are_forwarded(tmp_path: Path) -> None:
+    """F21: la variante de 256 GB cambia el mínimo de RAM y viaja en --env."""
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    synthetic_llm_key = "sk" + "-ram-256-secret-12345678"
+    fixture = [
+        _blackwell_offer(501, cpu_ram_mb=131072, inet_down=9000, dph_total=0.90),
+        _blackwell_offer(502, cpu_ram_mb=262144, inet_down=9000, dph_total=1.40),
+    ]
+    (state_dir / "offers_fixture.json").write_text(json.dumps(fixture), encoding="utf-8")
+
+    by_profile = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "STUDIO_HARDWARE_PROFILE": "rtx-pro-6000-blackwell-96-256",
+        },
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert by_profile.returncode == 0, (
+        f"stderr={by_profile.stderr}\nstdout={by_profile.stdout}"
+    )
+    queries = _search_queries(state_dir)
+    assert queries and all("cpu_ram>=256" in q for q in queries)
+    assert queries and all("gpu_ram>=96" in q for q in queries)
+    assert "hardware=rtx-pro-6000-blackwell-96-256" in by_profile.stdout
+    c_args = _created_args(state_dir)
+    assert c_args[:3] == ["create", "instance", "502"]
+    assert '-e STUDIO_HARDWARE_PROFILE="rtx-pro-6000-blackwell-96-256"' in _env_flags(c_args)
+
+    # El override explícito sigue siendo la última palabra y también se reenvía.
+    by_override = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "STUDIO_TARGET_RAM_GB": "256",
+        },
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert by_override.returncode == 0, (
+        f"stderr={by_override.stderr}\nstdout={by_override.stdout}"
+    )
+    queries_override = _search_queries(state_dir)
+    assert queries_override[-1].count("cpu_ram>=256") == 1
+    c_args_override = _created_args(state_dir)
+    assert c_args_override[:3] == ["create", "instance", "502"]
+    assert '-e STUDIO_TARGET_RAM_GB="256"' in _env_flags(c_args_override)
 
 
 class _MockPodServer:
@@ -1065,6 +1291,80 @@ def test_comfy_studio_report_preserves_multiword_unset_markers(tmp_path: Path) -
         assert "- `COMFY_PASS` = `<definida por el usuario>`" in out_plain
 
 
+def test_rent_studio_consumer_profile_keeps_explicit_opt_in(tmp_path: Path) -> None:
+    """F21: el perfil de consumo sigue siendo seleccionable de forma EXPLÍCITA."""
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    (state_dir / "offers_fixture.json").write_text(
+        json.dumps(
+            [
+                _blackwell_offer(601, inet_down=9000, dph_total=1.90),
+                _blackwell_offer(
+                    602,
+                    gpu_name="RTX_5090",
+                    gpu_ram_mb=32768,
+                    cpu_ram_mb=65536,
+                    inet_down=9000,
+                    dph_total=0.45,
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    synthetic_llm_key = "sk" + "-consumer-profile-secret-12345678"
+
+    res = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "STUDIO_HARDWARE_PROFILE": "consumer",
+        },
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert res.returncode == 0, f"stderr={res.stderr}\nstdout={res.stdout}"
+    queries = _search_queries(state_dir)
+    assert queries and all("gpu_ram>=32" in q for q in queries)
+    assert queries and all("cpu_ram>=64" in q for q in queries)
+    assert any("gpu_name=RTX_5090" in q for q in queries)
+    assert "hardware=consumer-gpu-32" in res.stdout
+    assert _created_args(state_dir)[:3] == ["create", "instance", "602"]
+
+
+def test_rent_studio_hardware_profile_fallback_outside_repo(tmp_path: Path) -> None:
+    """F21: instalado en ~/.local/bin (sin el repo) el perfil vigente sigue siendo 96/128."""
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    (state_dir / "offers_fixture.json").write_text(
+        json.dumps([_blackwell_offer(701, inet_down=9000, dph_total=1.30)]),
+        encoding="utf-8",
+    )
+    helper_dir = tmp_path / "installed_helper"
+    helper_dir.mkdir()
+    installed = helper_dir / "comfy"
+    shutil.copyfile(COMFY_SCRIPT, installed)
+    synthetic_llm_key = "sk" + "-installed-helper-secret-12345678"
+
+    res = _run_comfy(
+        ["rent", "studio", "--dry-run"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        script=installed,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "COMFY_REPO_ROOT": str(tmp_path / "repo-absent"),
+        },
+        stdin_text=f"{synthetic_llm_key}\n",
+    )
+    assert res.returncode == 0, f"stderr={res.stderr}\nstdout={res.stdout}"
+    # Sin scripts/storage_requirement.py se avisa y se usa el mínimo documentado.
+    assert "[AVISO]" in res.stderr and "248" in res.stderr
+    queries = _search_queries(state_dir)
+    assert queries and all("gpu_name=RTX PRO 6000" in q for q in queries)
+    assert queries and all("gpu_ram>=96" in q for q in queries)
+    assert queries and all("cpu_ram>=128" in q for q in queries)
+    assert "Se alquilaría la oferta ID 701" in res.stdout
+
+
 def test_rent_non_studio_profile_preserves_legacy_filters(tmp_path: Path) -> None:
     bin_dir, state_dir = _setup_mock_bin(tmp_path)
     (state_dir / "offers_fixture.json").write_text(
@@ -1081,6 +1381,11 @@ def test_rent_non_studio_profile_preserves_legacy_filters(tmp_path: Path) -> Non
     # Para perfil 'all' (disco>=120, inet_down>=500), la oferta 101 es válida y la más barata
     assert "Se alquilaría la oferta ID 101" in res.stdout
     assert "disco=120 GB" in res.stdout
+    # F21: los perfiles legacy usan el mismo perfil de hardware (96 GB / 128 GB),
+    # no un mínimo de consumo de 32 GB.
+    queries = _search_queries(state_dir)
+    assert queries and all("gpu_ram>=96" in q for q in queries)
+    assert queries and all("cpu_ram>=128" in q for q in queries)
 
 
 def _write_running_instance_fixture(state_dir: Path, inst_id: int = 4242) -> None:

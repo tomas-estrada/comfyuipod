@@ -835,7 +835,8 @@ filter_offers_json() {
     local min_vram_gb="$3"
     local min_disk_gb="$4"
     local min_inet_down="$5"
-    local min_cpu_ram_gb="${6:-32}"
+    # F21: por defecto el perfil vigente (RTX PRO 6000 Blackwell 96 GB / 128 GB RAM).
+    local min_cpu_ram_gb="${6:-128}"
 
     OFFERS_JSON="${raw_offers}" "${PYTHON_BIN}" - "${target_gpu}" "${min_vram_gb}" "${min_disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}" << 'PYEOF'
 import json, os, sys
@@ -844,7 +845,7 @@ target_gpu = sys.argv[1].strip().replace(" ", "_").upper()
 min_vram_gb = float(sys.argv[2])
 min_disk_gb = float(sys.argv[3])
 min_inet_down = float(sys.argv[4])
-min_cpu_ram_gb = float(sys.argv[5]) if len(sys.argv) > 5 else 32.0
+min_cpu_ram_gb = float(sys.argv[5]) if len(sys.argv) > 5 else 128.0
 
 data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
 rows = data.get("offers", data) if isinstance(data, dict) else data
@@ -858,9 +859,19 @@ for r in rows:
     gpu_norm = str(r.get("gpu_name") or "").strip().replace(" ", "_").upper()
     if target_gpu and gpu_norm and gpu_norm != target_gpu:
         continue
+    # Política de hardware: el objetivo es UNA GPU. Sin num_gpus=1 explícito una
+    # oferta multi-GPU puede pasar el filtro de gpu_ram (agregado o por GPU) y
+    # alquilarse como si fuera una única tarjeta.
+    try:
+        num_gpus = float(r.get("num_gpus") or 1)
+    except (TypeError, ValueError):
+        num_gpus = 1.0
+    if num_gpus > 1:
+        continue
     vram_raw = float(r.get("gpu_ram") or 0)
     vram_gb = vram_raw / 1024.0 if vram_raw > 256 else vram_raw
-    if vram_gb and vram_gb + 0.5 < min_vram_gb:
+    # Como la RAM del host: la VRAM se VERIFICA, no se infiere del nombre de la GPU.
+    if not vram_gb or vram_gb + 0.5 < min_vram_gb:
         continue
     # Política de hardware: la RAM del host se VERIFICA, no se infiere de la GPU.
     # Una oferta sin `cpu_ram` declarado se rechaza en lugar de pasar por defecto.
@@ -888,6 +899,92 @@ for r in rows:
 filtered.sort(key=lambda item: float(item.get("dph_total") or item.get("dph_base") or 999999.0))
 print(json.dumps(filtered))
 PYEOF
+}
+
+# F21: el perfil de hardware es la fuente de verdad de la admisión de hardware.
+# Se resuelve igual que dentro del contenedor (`studio/comfy_studio/hardware_profile.py`):
+# perfil por defecto RTX PRO 6000 Blackwell de 96 GB con 128 GB de RAM de host, y
+# variante de 256 GB seleccionable por nombre/alias o por `STUDIO_TARGET_RAM_GB`.
+# De ahí salen el VRAM y la RAM mínimos que se le piden a la oferta, para que lo
+# que se alquila sea la máquina contra la que se juzgan las recetas.
+# Expone HW_PROFILE_NAME, HW_VRAM_GB y HW_RAM_GB.
+resolve_hardware_profile() {
+    local self_dir studio_dir="" candidate resolved=""
+    self_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+    for candidate in \
+        "${self_dir}/../../studio" \
+        "${COMFY_REPO_ROOT:-}/studio"; do
+        if [ -n "${candidate}" ] && [ -f "${candidate}/comfy_studio/hardware_profile.py" ]; then
+            studio_dir="${candidate}"
+            break
+        fi
+    done
+
+    if [ -n "${studio_dir}" ]; then
+        resolved="$(HW_PROFILE_STUDIO_DIR="${studio_dir}" "${PYTHON_BIN}" -c '
+import os, sys
+
+sys.path.insert(0, os.environ["HW_PROFILE_STUDIO_DIR"])
+from comfy_studio.hardware_profile import from_env
+
+profile = from_env(dict(os.environ))
+print(f"{profile.name}|{profile.vram_gb}|{profile.ram_gb}")
+' 2>/dev/null || true)"
+    fi
+
+    HW_PROFILE_NAME=""
+    HW_VRAM_GB=""
+    HW_RAM_GB=""
+    if [ -n "${resolved}" ]; then
+        IFS='|' read -r HW_PROFILE_NAME HW_VRAM_GB HW_RAM_GB <<<"${resolved}"
+    fi
+
+    if [ -z "${HW_PROFILE_NAME}" ] || [ -z "${HW_VRAM_GB}" ] || [ -z "${HW_RAM_GB}" ]; then
+        # Respaldo equivalente (mismos valores que hardware_profile.py) para cuando
+        # el helper se ejecuta fuera del repo y el módulo no es localizable.
+        local hw_key
+        hw_key="$(printf '%s' "${STUDIO_HARDWARE_PROFILE:-}" | tr '[:upper:]' '[:lower:]')"
+        case "${hw_key}" in
+            96-256|blackwell-96-256|rtx-pro-6000-blackwell-96-256)
+                HW_PROFILE_NAME="rtx-pro-6000-blackwell-96-256"
+                HW_VRAM_GB="96"
+                HW_RAM_GB="256"
+                ;;
+            32|consumer|consumer-gpu-32)
+                HW_PROFILE_NAME="consumer-gpu-32"
+                HW_VRAM_GB="32"
+                HW_RAM_GB="64"
+                ;;
+            *)
+                HW_PROFILE_NAME="rtx-pro-6000-blackwell-96-128"
+                HW_VRAM_GB="96"
+                HW_RAM_GB="128"
+                ;;
+        esac
+        if [[ "${STUDIO_TARGET_VRAM_GB:-}" =~ ^[0-9]+$ ]] && [ "${STUDIO_TARGET_VRAM_GB}" -gt 0 ]; then
+            HW_VRAM_GB="${STUDIO_TARGET_VRAM_GB}"
+        fi
+        if [[ "${STUDIO_TARGET_RAM_GB:-}" =~ ^[0-9]+$ ]] && [ "${STUDIO_TARGET_RAM_GB}" -gt 0 ]; then
+            HW_RAM_GB="${STUDIO_TARGET_RAM_GB}"
+        fi
+    fi
+
+    if ! [[ "${HW_VRAM_GB}" =~ ^[0-9]+$ ]] || [ "${HW_VRAM_GB}" -le 0 ] \
+        || ! [[ "${HW_RAM_GB}" =~ ^[0-9]+$ ]] || [ "${HW_RAM_GB}" -le 0 ]; then
+        die "No se pudo resolver el perfil de hardware (VRAM='${HW_VRAM_GB}', RAM='${HW_RAM_GB}'). Revisa STUDIO_HARDWARE_PROFILE / STUDIO_TARGET_VRAM_GB / STUDIO_TARGET_RAM_GB."
+    fi
+}
+
+# F21: nombres de oferta en Vast.ai para el GPU del perfil seleccionado. El perfil
+# vigente (96 GB) apunta al RTX PRO 6000 Blackwell y a sus variantes de nombre en
+# Vast.ai (Workstation, Server y Max-Q, todas de 96 GB); el perfil de consumo
+# heredado (32 GB) es la única vía que conserva RTX_5090/RTX_4090.
+hardware_gpu_candidates() {
+    if [ "${HW_VRAM_GB}" -ge 64 ]; then
+        printf '%s\n' "RTX PRO 6000" "RTX PRO 6000 WS" "RTX PRO 6000 S" "RTX PRO 6000 Max-Q"
+    else
+        printf '%s\n' "RTX_5090" "RTX_4090"
+    fi
 }
 
 cmd_rent() {
@@ -933,11 +1030,13 @@ cmd_rent() {
     check_secret_safe "${studio_llm_fallback_key}" "STUDIO_LLM_FALLBACK_KEY"
 
     local disk_gb="120"
-    local min_vram_gb="24"
     local min_inet_down="500"
-    local min_cpu_ram_gb="32"
+    # F21: VRAM y RAM de host se DERIVAN del perfil de hardware vigente (96 GB de
+    # VRAM, 128/256 GB de RAM). El mínimo ya no es un GPU de consumo de 32 GB.
+    resolve_hardware_profile
+    local min_vram_gb="${HW_VRAM_GB}"
+    local min_cpu_ram_gb="${HW_RAM_GB}"
     if [ "${profile}" = "studio" ]; then
-        min_vram_gb="32"
         min_inet_down="5000"
         # El mínimo de disco se DERIVA de scripts/storage_requirement.py (política de
         # arquitectura: 180/200/250 GB eran estimaciones, no requisitos). El cálculo
@@ -993,41 +1092,47 @@ cmd_rent() {
         fi
     fi
 
-    # O-01b: Filtros alineados con la guía de despliegue (cpu_ram>=32, cuda_vers>=12.8).
+    # O-01b: Filtros alineados con la guía de despliegue (cuda_vers>=12.8).
     # V27: cuda_vers es el campo documentado en vastai search offers ("machine max
     # supported cuda version"); cuda_max_good no existe en el esquema documentado.
     # Sin --direct no se exige direct_port_count: los puertos van proxy-mapeados.
-    # Política de hardware: el objetivo es UNA GPU de consumo. Sin num_gpus=1 una
-    # oferta multi-GPU puede pasar el filtro de gpu_ram (agregado o por GPU) y
-    # alquilarse como si fuera una única tarjeta de 32 GB.
+    # Política de hardware: el objetivo es UNA GPU del perfil vigente. Sin
+    # num_gpus=1 una oferta multi-GPU puede pasar el filtro de gpu_ram (agregado o
+    # por GPU) y alquilarse como si fuera una única tarjeta.
     local base_filters="num_gpus=1 gpu_ram>=${min_vram_gb} cpu_ram>=${min_cpu_ram_gb} cuda_vers>=12.8 inet_down>=${min_inet_down} disk_space>=${disk_gb} reliability>=0.98 verified=true rentable=true"
-    local query="gpu_name=RTX_5090 ${base_filters}"
 
-    echo "Buscando ofertas RTX 5090 en Vast.ai (perfil=${profile}, disco>=${disk_gb} GB, red>=${min_inet_down} Mbps)..."
-    local raw_offers offers_json
-    raw_offers="$(search_offers "${query}")"
-    offers_json="$(filter_offers_json "${raw_offers}" "RTX_5090" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}")"
+    # F21: el GPU objetivo sale del perfil de hardware (RTX PRO 6000 Blackwell);
+    # se recorren sus variantes de nombre en Vast.ai antes de rendirse.
+    local -a gpu_candidates=()
+    local gpu_name
+    while IFS= read -r gpu_name; do
+        if [ -n "${gpu_name}" ]; then
+            gpu_candidates+=("${gpu_name}")
+        fi
+    done < <(hardware_gpu_candidates)
+    if [ "${#gpu_candidates[@]}" -eq 0 ]; then
+        die "El perfil de hardware '${HW_PROFILE_NAME}' no define ningún GPU objetivo."
+    fi
 
-    local offer_id
-    offer_id="$(OFFERS_JSON="${offers_json}" "${PYTHON_BIN}" -c '
-import json, os
-rows = json.loads(os.environ.get("OFFERS_JSON", "[]"))
-print(rows[0]["id"] if rows else "")
-' 2>/dev/null || true)"
-    offer_id="${offer_id%$'\r'}"
+    echo "Buscando ofertas ${gpu_candidates[0]} en Vast.ai (perfil=${profile}, hardware=${HW_PROFILE_NAME} vram>=${min_vram_gb} GB ram>=${min_cpu_ram_gb} GB, disco>=${disk_gb} GB, red>=${min_inet_down} Mbps)..."
 
-    if [ -z "${offer_id}" ] && [ "${profile}" != "studio" ]; then
-        echo "No se encontraron RTX 5090 disponibles; buscando fallback RTX 4090..."
-        query="gpu_name=RTX_4090 ${base_filters}"
+    local raw_offers offers_json query=""
+    local offer_id=""
+    for gpu_name in ${gpu_candidates[@]+"${gpu_candidates[@]}"}; do
+        query="gpu_name=${gpu_name} ${base_filters}"
         raw_offers="$(search_offers "${query}")"
-        offers_json="$(filter_offers_json "${raw_offers}" "RTX_4090" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}")"
+        offers_json="$(filter_offers_json "${raw_offers}" "${gpu_name}" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}")"
         offer_id="$(OFFERS_JSON="${offers_json}" "${PYTHON_BIN}" -c '
 import json, os
 rows = json.loads(os.environ.get("OFFERS_JSON", "[]"))
 print(rows[0]["id"] if rows else "")
 ' 2>/dev/null || true)"
         offer_id="${offer_id%$'\r'}"
-    fi
+        if [ -n "${offer_id}" ]; then
+            break
+        fi
+        echo "No se encontraron ofertas ${gpu_name} que cumplan el perfil '${HW_PROFILE_NAME}'."
+    done
 
     [ -n "${offer_id}" ] || die "No se encontraron ofertas disponibles que cumplan los filtros (${query})."
 
@@ -1088,6 +1193,15 @@ PYEOF
         check_secret_safe "${ENABLE_WEB_TERMINAL}" "ENABLE_WEB_TERMINAL"
         env_flags="${env_flags} -e ENABLE_WEB_TERMINAL=\"${ENABLE_WEB_TERMINAL}\""
     fi
+    # F21: el perfil de hardware viaja con la instancia para que el contenedor
+    # juzgue recetas, capacidades y coste contra la misma máquina que se alquiló.
+    for hw_var in STUDIO_HARDWARE_PROFILE STUDIO_TARGET_VRAM_GB STUDIO_TARGET_RAM_GB; do
+        hw_value="${!hw_var:-}"
+        if [ -n "${hw_value}" ]; then
+            check_secret_safe "${hw_value}" "${hw_var}"
+            env_flags="${env_flags} -e ${hw_var}=\"${hw_value}\""
+        fi
+    done
 
     if [ "${profile}" = "studio" ]; then
         if [ -n "${studio_llm_key}" ]; then
@@ -1142,7 +1256,7 @@ PYEOF
         [ -z "${STUDIO_WEBHOOK_URL:-}" ] || webhook_url_state="<definida>"
         local webhook_secret_state="<no definida>"
         [ -z "${STUDIO_WEBHOOK_SECRET:-}" ] || webhook_secret_state="<definida>"
-        echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, disco=${disk_gb} GB, --args)."
+        echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, hardware=${HW_PROFILE_NAME} vram>=${min_vram_gb} GB ram>=${min_cpu_ram_gb} GB, disco=${disk_gb} GB, --args)."
         echo "[DRY-RUN] Filtros aplicados: ${query}"
         echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_FALLBACK_KEY=${llm_fallback_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', STUDIO_RESUME_JOBS='${STUDIO_RESUME_JOBS:-1}', STUDIO_RESUME_DELAY_S='${STUDIO_RESUME_DELAY_S:-30}', STUDIO_WEBHOOK_URL=${webhook_url_state}, STUDIO_WEBHOOK_SECRET=${webhook_secret_state}, COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
         return 0

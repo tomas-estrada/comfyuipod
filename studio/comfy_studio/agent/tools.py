@@ -22,7 +22,7 @@ from ..creative.review import save_review
 from ..engines.preparedness import note_engine_run
 from ..ml import is_real_backend
 from ..progress import ProgressBroker
-from ..projects import ProjectStore
+from ..projects import MEASUREMENT_STATUS_OK, ProjectStore
 from ..review_pins import match_pin_to_cut, open_pin_summary
 from ..templates import (
     TemplateNotFoundError,
@@ -86,6 +86,29 @@ class ToolContext:
     broker: ProgressBroker
     config: StudioConfig
     delegate_runner: Callable[..., Awaitable[dict[str, Any]]] | None = None
+    # Cancelación del ámbito de la petición: la inyecta quien la abre (API, agente)
+    # para abortar un trabajo largo —una adquisición de pesos de 60 GB— cuando la
+    # descarga no cuelga de ningún job que se pueda marcar como cancelado.
+    #
+    # Opt-in del embebedor, no código muerto: `agent/loop.py` y `mcp_server.py`
+    # construyen el ToolContext SIN este campo (no tienen un «request» al que
+    # colgar una cancelación), así que el camino vivo en producción es el del
+    # estado persistido del job (`_acquisition_cancel_hook` con `job_id`), que es
+    # además el único que sobrevive a la petición y al proceso. Quien embebe y
+    # quiere cancelar una adquisición sin job asociado inyecta aquí su callable;
+    # `_request_cancel_hook` lo propaga sin más.
+    #
+    # R27 — qué aborta cada señal, dicho sin exagerar. La adquisición corre FUERA
+    # del event loop (`_run_acquisition` -> `run_in_threadpool`), que es la
+    # condición para que la promesa de arriba sea real: mientras `hf download`
+    # descarga, el loop sigue libre y un `job_cancel` concurrente (otra petición
+    # contra el mismo proceso) puede poner el job a 'cancelled', que el sondeo de
+    # `should_cancel` observa en ~1 s. Lo que NO se promete: dentro de un MISMO
+    # turno del agente, `job_cancel` es `parallel_safe=False` y no comparte el
+    # `gather` con `download_model`, así que no hay cancelación a mitad desde el
+    # propio turno — hace falta una petición concurrente. Antes de R27 la
+    # adquisición bloqueaba el loop y esa promesa era inalcanzable.
+    cancel_requested: Callable[[], bool] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1150,6 +1173,16 @@ class DownloadModelArgs(BaseModel):
         ),
     )
 
+    job_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Job del proyecto activo cuya cancelación (job_cancel) aborta la descarga "
+            "en curso: cancélalo desde otra petición mientras descarga (dentro del "
+            "mismo turno no hay cancelación a mitad). Sin él no es cancelable."
+        ),
+    )
+
 
 class RenderRecipesArgs(BaseModel):
     """Argumentos para la herramienta `render_recipes`."""
@@ -1191,6 +1224,16 @@ class RequestCapabilityArgs(BaseModel):
         description=(
             "Con True (por defecto) descarga los activos que falten con el cliente "
             "de HuggingFace antes de devolver el plan."
+        ),
+    )
+
+    job_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Job del proyecto activo cuya cancelación (job_cancel) aborta la descarga "
+            "en curso: cancélalo desde otra petición mientras descarga (dentro del "
+            "mismo turno no hay cancelación a mitad). Sin él no es cancelable."
         ),
     )
 
@@ -2870,6 +2913,215 @@ async def _handle_install_engine(
     }
 
 
+def _require_active_project_job(
+    store: ProjectStore,
+    project_id: str,
+    job_id: str | None,
+) -> None:
+    """Un `job_id` de adquisición debe ser un job DEL PROYECTO ACTIVO.
+
+    Sin esta comprobación un job_id de otro proyecto se sondearía igual: su
+    `job_cancel` podría abortar —o su estado cancelado, bloquear— la descarga de
+    un proyecto que no es el suyo (fuga de integridad entre proyectos). Es la
+    misma regla que ya aplican `job_status` y `job_cancel`. Con `job_id` None no
+    hay nada que validar: la adquisición queda sin señal de cancelación.
+    """
+    if job_id is None:
+        return
+    job = store.get_job(job_id)
+    if job is None or job.get("project_id") != project_id:
+        raise ToolExecutionError(f"Job no encontrado en el proyecto activo: {job_id!r}")
+
+
+def _request_cancel_hook(context: ToolContext) -> Callable[[], bool] | None:
+    """Callable de cancelación explícita del ámbito de la petición, si existe.
+
+    Ópt-in para quien embebe: `agent/loop.py` y `mcp_server.py` construyen el
+    `ToolContext` sin `cancel_requested`, así que en producción la única señal
+    viva es la del job persistido (`_acquisition_cancel_hook`). No es un campo
+    muerto: el embebedor que quiera cancelar sin colgar la descarga de un job
+    (una adquisición suelta, sin job asociado) lo inyecta aquí y el mismo hook
+    lo respeta. Ver `ToolContext.cancel_requested`.
+    """
+    return getattr(context, "cancel_requested", None)
+
+
+def _acquisition_cancel_hook(
+    store: ProjectStore,
+    *,
+    project_id: str | None = None,
+    job_id: str | None = None,
+    cancel: Callable[[], bool] | None = None,
+) -> Callable[[], bool] | None:
+    """`should_cancel` para `asset_acquire.acquire`.
+
+    Con `job_id` la cancelación se deriva del estado persistido del job
+    (`job_cancel` lo pone a 'cancelled'): es la única señal que sobrevive a la
+    petición y al proceso. Sin job se usa el callable explícito del ámbito de la
+    petición. Sin ninguna de las dos devuelve None y `acquire` no paga por
+    sondear una cancelación que nadie puede pedir.
+
+    Con `project_id` el job se ata al proyecto activo: si el job guardado
+    pertenece a otro proyecto (o ya no existe) se trata como «sin señal» y la
+    descarga de ESTE proyecto sigue. Los handlers rechazan ese job_id antes de
+    llegar aquí, así que esto es la red de seguridad para quien embeba el hook
+    directamente. No invierte la señal: un job ajeno cancelado NUNCA aborta la
+    adquisición en curso (integridad entre proyectos), y un job del proyecto
+    activo cancelado sigue abortándola igual que antes.
+
+    R27/R28: el hook devuelto es un `_CancelTracker`, que además de sondear
+    registra QUÉ señal pidió la cancelación (`cancel_source`), porque
+    `acquire` solo publica `report.cancelled=True` sin decir de dónde vino. Con
+    una sola señal el callable original seguiría valiendo, pero se envuelve
+    siempre para que el handler no tenga que adivinar el origen.
+    """
+    checks: list[tuple[str, Callable[[], bool]]] = []
+    if job_id:
+
+        def _job_cancelled() -> bool:
+            job = store.get_job(job_id)
+            if job is None:
+                return False
+            if project_id is not None and job.get("project_id") != project_id:
+                return False
+            return job.get("status") == "cancelled"
+
+        checks.append(("job", _job_cancelled))
+    if cancel is not None:
+        checks.append(("request", cancel))
+    if not checks:
+        return None
+    # Siempre el tracker, también con una sola señal: `cancel_source` tiene que
+    # estar disponible para que el motivo del handler no dependa de cuántas
+    # señales había (R28).
+    return _CancelTracker(checks)
+
+
+class _CancelTracker:
+    """`should_cancel` que recuerda QUÉ señal pidió la cancelación.
+
+    `asset_acquire.acquire` solo expone `report.cancelled=True`: no distingue si
+    abortó porque el job persistido pasó a 'cancelled' (`job_cancel`) o porque el
+    embebedor inyectó `cancel_requested` sin job asociado. Atribuirle al job una
+    cancelación que pidió la petición —o al revés— mentiría al agente y a quien
+    lea el informe, así que la señal se registra aquí y el handler la usa para
+    redactar el motivo (R28).
+
+    Es un callable indistinguible de una función a ojos de `acquire`: se le pasa
+    como `should_cancel` y se sondea desde el hilo de descarga, así que
+    `cancel_source` se lee después de que la adquisición haya terminado. Con
+    varias señales gana la primera que responde «sí» en el orden de registro
+    (job antes que petición): si el job está cancelado, el motivo correcto es el
+    job aunque la petición también lo estuviera.
+    """
+
+    __slots__ = ("_checks", "cancel_source")
+
+    def __init__(self, checks: list[tuple[str, Callable[[], bool]]]) -> None:
+        self._checks = checks
+        self.cancel_source: str | None = None
+
+    def __call__(self) -> bool:
+        for source, check in self._checks:
+            if check():
+                self.cancel_source = source
+                return True
+        return False
+
+
+def _acquisition_progress_hook(
+    context: ToolContext,
+    *,
+    job_id: str | None,
+    source: str,
+) -> Callable[[str, str], None]:
+    """Publica el avance de cada activo en el canal SSE de progreso.
+
+    R27: `_run_acquisition` ejecuta `acquire` en un hilo del threadpool, así que
+    este hook se invoca desde ese hilo y NO desde el event loop. Publicar con
+    `broker.publish` manipularía las colas de los suscriptores SSE desde otro
+    hilo (asyncio.Queue no es thread-safe): por eso se usa `publish_threadsafe`,
+    que reencola al loop cuando lo hay.
+    """
+
+    def _publish(filename: str, stage: str) -> None:
+        context.broker.publish_threadsafe(
+            "asset_download",
+            {
+                "project_id": context.project_id,
+                "job_id": job_id,
+                "source": source,
+                "filename": filename,
+                "stage": stage,
+            },
+        )
+
+    return _publish
+
+
+async def _run_acquisition(
+    context: ToolContext,
+    needs: list[Any],
+    *,
+    job_id: str | None,
+    source: str,
+) -> tuple[Any, _CancelTracker | None]:
+    """Ejecuta `asset_acquire.acquire` FUERA del event loop (R27).
+
+    `acquire` -> `_run_hf_download` bloquea con `proc.wait(timeout=1.0)` mientras
+    descarga. Si eso se awaiteara en el loop (como hacía antes), ningún otro
+    callback del mismo loop podría avanzar: un `job_cancel` concurrente —la única
+    forma de poner el job a 'cancelled' a mitad, porque `jobs.py` no tiene ruta
+    de cancelación para un job de render— no se ejecutaría hasta que la descarga
+    hubiera terminado, y `should_cancel` nunca vería el estado nuevo. La promesa
+    de `job_cancel`/`ToolContext.cancel_requested` («abortar una adquisición de
+    60 GB») quedaría muerta justo en el caso que importa.
+
+    Corriendo en el threadpool el loop queda libre: el `job_cancel` de otra
+    petición persiste 'cancelled' y el sondeo de `should_cancel` (una vez por
+    segundo) lo observa y aborta la descarga de verdad. El hook de progreso pasa
+    a `publish_threadsafe` porque ahora se le llama desde el hilo.
+
+    Devuelve el informe y el tracker de cancelación, para que el handler sepa
+    qué señal abortó (R28).
+    """
+    from comfy_studio import asset_acquire
+
+    should_cancel = _acquisition_cancel_hook(
+        context.store,
+        project_id=context.project_id,
+        job_id=job_id,
+        cancel=_request_cancel_hook(context),
+    )
+    report = await run_in_threadpool(
+        asset_acquire.acquire,
+        needs,
+        progress=_acquisition_progress_hook(context, job_id=job_id, source=source),
+        should_cancel=should_cancel,
+    )
+    return report, should_cancel
+
+
+def _cancellation_reason(should_cancel: _CancelTracker | None) -> str:
+    """Motivo exacto de una adquisición cancelada, según quién la pidió (R28).
+
+    `report.cancelled` no dice el origen. Atribuir la cancelación al job cuando
+    la pidió el callable de la petición —o no había job— sería engañoso para el
+    agente y para quien embede. Si no se puede determinar el origen (informe
+    cancelado por un `acquire` ajeno al tool-belt) se dice lo único cierto: se
+    canceló y hay que relanzarla.
+    """
+    source = should_cancel.cancel_source if should_cancel is not None else None
+    if source == "job":
+        return "Descarga cancelada: el job asociado fue cancelado."
+    if source == "request":
+        return "Descarga cancelada: lo pidió quien abrió la petición."
+    return (
+        "Descarga cancelada antes de terminar: relanza la adquisición para "
+        "retomar los archivos que faltan."
+    )
+
+
 async def _handle_download_model(
     args: DownloadModelArgs,
     context: ToolContext,
@@ -2887,6 +3139,10 @@ async def _handle_download_model(
             f"Grupo de pesos desconocido: {group!r}. "
             "Grupos válidos: animate, minimax, three_d."
         )
+    # Se valida antes de mirar disponibilidad: un job_id de otro proyecto es un
+    # error siempre, no solo cuando toca descargar.
+    job_id = (args.job_id or "").strip() or None
+    _require_active_project_job(context.store, context.project_id, job_id)
     expected = {
         "animate": cfg.animate_weights_expected,
         "minimax": cfg.minimax_weights_expected,
@@ -2933,12 +3189,17 @@ async def _handle_download_model(
         )
         return payload
 
-    from comfy_studio import asset_acquire
     from comfy_studio.capabilities import needs_for_group
 
     needs = needs_for_group(flag)
-    report = asset_acquire.acquire(needs)
+    report, should_cancel = await _run_acquisition(
+        context,
+        needs,
+        job_id=job_id,
+        source="download_model",
+    )
     payload["acquisition"] = report.to_public_dict()
+    payload["job_id"] = job_id
     payload["downloaded"] = [e.filename for e in report.entries if e.status == "downloaded"]
     payload["failed"] = [e.filename for e in report.failed]
     now_available = {
@@ -2949,7 +3210,11 @@ async def _handle_download_model(
     }[group]()
     payload["available"] = now_available
     payload["status"] = "available" if now_available else "unavailable"
-    if not now_available:
+    if report.cancelled:
+        # R28: el motivo nombra la señal que abortó de verdad (job persistido o
+        # callable de la petición), no siempre «el job asociado».
+        payload["reason"] = _cancellation_reason(should_cancel)
+    elif not now_available:
         payload["reason"] = (
             "La descarga no completó todos los archivos del grupo: "
             + ", ".join(payload["failed"] or ["desconocido"])
@@ -3003,6 +3268,20 @@ async def _handle_render_recipes(
                 "ram_peak_mb": m.get("ram_peak_mb"),
                 "gpu_name": m.get("gpu_name"),
                 "status": m.get("status"),
+                # `status="error"` en una medición NO es «el render falló»: el
+                # render salió bien y lo que se perdió fue la medición
+                # (muestreador de `/system_stats` agotado o roto). La herramienta
+                # publicaba el estado y no el motivo, así que un agente o un
+                # operador leían «error» sin explicación y concluían lo primero.
+                # `measurement_status` lo dice sin ambigüedad y `error` lleva el
+                # porqué; el CHECK del esquema sigue siendo el que limita
+                # `status` a ('ok','error').
+                "measurement_status": (
+                    "measured"
+                    if m.get("status") == MEASUREMENT_STATUS_OK
+                    else "lost"
+                ),
+                "error": m.get("error"),
                 "created_at": m.get("created_at"),
             }
             for m in measurements
@@ -3050,7 +3329,6 @@ async def _handle_request_capability(
     seleccionada. No ejecuta el render: devuelve el plan para que el agente
     encuele con `enqueue_render` usando `selected_template`.
     """
-    from comfy_studio import asset_acquire
     from comfy_studio.capabilities import CAPABILITY_REGISTRY_VERSION, resolve
 
     resolution = resolve(args.capability)
@@ -3061,13 +3339,31 @@ async def _handle_request_capability(
     if resolution.state == "unknown_capability":
         raise ToolExecutionError(resolution.summary)
 
+    # Igual que en `download_model`: el job_id se ata al proyecto activo antes de
+    # mirar si hay algo que adquirir, para que un job ajeno nunca llegue a
+    # condicionar esta descarga.
+    job_id = (args.job_id or "").strip() or None
+    _require_active_project_job(context.store, context.project_id, job_id)
+
     if resolution.state == "assets_missing" and args.acquire:
-        report = asset_acquire.acquire(resolution.missing)
+        report, should_cancel = await _run_acquisition(
+            context,
+            resolution.missing,
+            job_id=job_id,
+            source="request_capability",
+        )
         payload["acquisition"] = report.to_public_dict()
+        payload["job_id"] = job_id
         payload["downloaded"] = [
             e.filename for e in report.entries if e.status == "downloaded"
         ]
         payload["failed"] = [e.filename for e in report.failed]
+        # R29: una adquisición cancelada se dice cancelada, no «no se pudo
+        # adquirir». Sin esta rama el payload solo la delataba por
+        # `acquisition.cancelled` y el `next_step` la enmarcaba como fallo.
+        if report.cancelled:
+            payload["cancelled"] = True
+            payload["reason"] = _cancellation_reason(should_cancel)
         # Se re-resuelve para reflejar el estado real tras la adquisición.
         resolution = resolve(args.capability)
         payload.update(resolution.to_public_dict())
@@ -3079,6 +3375,11 @@ async def _handle_request_capability(
             f"El motor '{resolution.engine}' no está preparado en este pod "
             f"({resolution.engine_prep.get('state')}). "
             "No se instala nada en runtime: corrección en el repositorio y nueva imagen."
+        )
+    elif payload.get("cancelled"):
+        payload["next_step"] = (
+            "Adquisición cancelada: no se descargó nada más. Relanza "
+            "`request_capability` (o `download_model`) cuando quieras retomarla."
         )
     elif resolution.state == "assets_missing":
         payload["next_step"] = (
