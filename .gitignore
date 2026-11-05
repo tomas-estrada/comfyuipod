@@ -28,3 +28,5 @@ atlas/selection*.json
 # nunca en el repo: una raíz `models/` solo puede ser un artefacto de pruebas.
 /models/
 >>>>>>> origin/main
+atlas/catalog.db-wal
+atlas/catalog.db-shm
