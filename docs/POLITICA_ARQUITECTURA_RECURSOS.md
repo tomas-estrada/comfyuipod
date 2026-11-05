@@ -334,6 +334,23 @@ el rendimiento sin ganar nada. Controlable con `STUDIO_UNLOAD_WHEN_IDLE`
 (por defecto `1`) y silencioso si ComfyUI no responde: liberar VRAM es una
 optimización, nunca debe tumbar un render ya terminado.
 
+### Cancelación durante la descarga
+
+Punto 4: «Support progress, **cancellation**, recovery and reuse.» La cancelación
+solo se comprobaba *entre* activos, y el cliente se lanzaba con
+`subprocess.run`, que bloquea hasta que el fichero está completo: cancelar un
+activo de 20 GB no tenía efecto hasta el final.
+
+Ahora `_run_hf_download` lanza `hf download` en su propia sesión y lo sondea cada
+segundo, así que `should_cancel` surte efecto en ~1 s. Al cancelar se mata el
+árbol completo (el cliente delega en hijos) y se borra el parcial de staging,
+para que la recuperación no se encuentre un fichero a medias. Cancelar no es un
+fallo: no se reintenta.
+
+Detalle de robustez: el `killpg` solo se aplica cuando el cliente liderea su
+grupo. Sobre un grupo ajeno mataría procesos que no son nuestros — incluido el
+nuestro, si el llamador no usó `start_new_session`.
+
 ### La selección por perfil es dato, no un `case` en bash
 
 Qué descarga cada `MODEL_PROFILE` vivía en guardas `=~ ^(all|general)$` dentro
