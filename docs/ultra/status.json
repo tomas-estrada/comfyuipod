@@ -3,10 +3,10 @@
   "goal_revision": "upgrades-ultra-version @ PR#64 (merged)",
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
   "main_sha": "f5c29dc",
-  "stage": "pre_gpu",
-  "overall": "BLOCKED_PRE_GPU",
-  "overall_note": "Backlog Ultra W00-W25 completo a nivel contrato L1 (cero mocks): infraestructura (integridad, hardware/sizing/recetas, lease GPU global, DAG+lineage, release gate de engines) + las 34 capacidades C01-C34 + atlas offline en imagen + director/investigador/UI client + banco de demos reproducible + reporte final (W25). Restan: integracion L1->L2 (engine locks, protocolo describe/execute/cancel/unload, LangGraph real en imagen, provider profiles) y la campana GPU W26 (L3-L4). Ver docs/ultra/CLOSING.md y docs/ultra/W25_FINAL_REPORT.md.",
-  "updated_utc": "2026-11-05T10:10:00Z",
+  "stage": "gpu_partial_L3",
+  "overall": "GPU_L3_PARTIAL",
+  "overall_note": "Backlog Ultra W00-W25 completo a nivel contrato L1 (cero mocks). W26: campana GPU acotada EJECUTADA (0.59 USD) con la imagen candidata por digest en RTX PRO 6000 Blackwell 96GB / RAM 503GB. Evidencia L3 REAL: generacion SDXL 1024x1024 en 24.6s, pico VRAM medido 7684MB (vs 18000 estimado), imagen verificada, pod destruido (0 instancias). Falta para L4/Ultra validada: D01-D05 completas (video/voz/3D), baselines/holdouts, y arreglar 2 hallazgos de ops (entrypoint no auto-arranca; require_disk_space falso negativo en overlay). Ver docs/ultra/W26_GPU_RESULTS.md.",
+  "updated_utc": "2026-11-05T16:40:00Z",
   "merged": {
     "W00": "done",
     "W01": "#65",
@@ -66,7 +66,22 @@
     "LangGraph real ejecutando la ruta efectiva en la imagen",
     "provider profiles (A06)"
   ],
-  "gpu_campaign_W26": "No ejecutada por diseno (no GPU rentada, no APIs facturadas). Protocolo preparado en docs/ultra/CLOSING.md; demos.py deja los pasos neurales como pending_gpu.",
+  "gpu_campaign_W26": {
+    "status": "demo_acotada_ejecutada_L3",
+    "cost_usd": 0.59,
+    "gpu": "RTX PRO 6000 Blackwell Max-Q, 97887 MiB VRAM, RAM 503GB, CUDA 12.8, Torch 2.9.1",
+    "image_digest": "sha256:0eddf85db32ed141da0e77ae636c226a73f5b1e232f646e55c92385affb2b53f",
+    "demo": "SDXL 1024x1024 (plantilla sdxl_image, Juggernaut-XI) completada en 24.6s",
+    "vram_measured_mb": 7684,
+    "vram_estimated_mb": 18000,
+    "teardown": "pod 59289409 destruido; 0 instancias verificadas",
+    "report": "docs/ultra/W26_GPU_RESULTS.md",
+    "pending_for_L4": ["D01-D05 completas (video/voz/3D)", "baselines/holdouts", "perfiles 128 y 256 por separado"]
+  },
+  "ops_findings_W26": [
+    "entrypoint de la imagen no auto-arranca el servicio en vast: hubo que lanzar /start.sh a mano (onstart.log 0 bytes).",
+    "require_disk_space en download-models.sh da falso 'sin espacio' con el overlay de vast (259GB libres reales); bloquea la adquisicion de pesos por el camino normal. Release-blocker de ops."
+  ],
   "blockers": [],
   "known_env_issues": [
     "pytest studio/tests en main: 1046 passed, 1 skipped, 7 failed SOLO en Windows; en CI Linux (autoridad) el job 'Validar paquete comfy_studio ... pytest' pasa (run 42005385668 success).",
