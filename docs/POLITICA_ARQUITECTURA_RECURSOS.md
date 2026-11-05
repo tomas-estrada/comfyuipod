@@ -560,9 +560,15 @@ coinciden en el tiempo.
 - **Mediciones GPU reales**: `assess_vram_fit` devuelve `fits: null` con
   «sin medición de VRAM todavía; ejecuta una vez para medir». **No se declara
   ejecución GPU validada por un import ni por un stub.**
-- **Diagnóstico Blackwell específico** en `comfyctl strict-check`: hoy valida
-  driver ≥ 570 / CUDA 12.8, pero no reconoce `NVIDIA RTX PRO 6000 Blackwell` con
-  96 GB ni confronta VRAM/RAM contra el perfil elegido.
+- **Diagnóstico Blackwell** en `comfyctl strict-check`: **implementado** como
+  check S17 (`blackwell_profile`). Reconoce `NVIDIA RTX PRO 6000 Blackwell` y
+  confronta VRAM y RAM contra el perfil **seleccionado**, leído de las mismas
+  variables que resuelve `hardware_profile.py` (`STUDIO_HARDWARE_PROFILE`,
+  `STUDIO_TARGET_VRAM_GB`, `STUDIO_TARGET_RAM_GB`), con `STRICT_HW_*` como
+  override explícito del diagnóstico. Nunca es fatal —un perfil menor que
+  satisface el seleccionado sigue siendo válido— y su detalle dice explícitamente
+  que **la ejecución sigue sin validar hasta un render medido**: reconocer la
+  tarjeta y que la capacidad cuadre con el perfil no es haber renderizado.
 - **Precio real de egress** del proveedor: se sigue usando una cifra por GB
   orientativa.
 - Las recetas comparables se agrupan por parámetros, modelo/revisión, precisión,
@@ -609,8 +615,8 @@ Los siete pasos están implementados y verificados en CI.
 | F. Paquete instalado e imagen candidata en CI | **Hecho** | PR #106 fusionado en `main` como `957d6e6`; los tres jobs en verde sobre el SHA final (`63096e0`), sobre el merge (`957d6e6`) y sobre la cabeza de `main` tras el cierre del registro (`7dc6b83`). La build del SHA de la arquitectura (`957d6e6`) publicó `ghcr.io/tomas-estrada/comfyuipod:sha-957d6e6` con digest `sha256:4f99cd5ceb320052262440bb592007be01cf8ed98bc7b97ba59304fe174323a6`. `:latest` es una etiqueta móvil que sigue a la cabeza de `main`, así que su digest cambia con cada commit aunque el contenido ejecutable no cambie: el digest de una build concreta se lee del log del job, no de la API de paquetes. El atlas se verifica **dentro** de la imagen candidata (`verify-bundle` + `serve-check` sobre `/opt/studio-atlas`), así que solo se anuncia incluido si pertenece a ese commit y a esa imagen |
 
 Queda pendiente solo el precio real de egress del proveedor (hoy se usa un precio
-por GB orientativo), más las mediciones GPU reales y el diagnóstico Blackwell
-específico en `comfyctl strict-check`. Los seis criterios de aceptación previa a
-GPU (A–F) quedan demostrados. **No hay ejecución GPU validada**: `assess_vram_fit`
-sigue devolviendo `fits: null` hasta que exista un render medido, y ninguna prueba
-de este lote usó GPU.
+por GB orientativo) y las mediciones GPU reales. Los seis criterios de aceptación
+previa a GPU (A–F) quedan demostrados y el diagnóstico Blackwell (S17) está
+implementado. **No hay ejecución GPU validada**: `assess_vram_fit` sigue
+devolviendo `fits: null` hasta que exista un render medido, y ninguna prueba de
+este lote usó GPU.

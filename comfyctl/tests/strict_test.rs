@@ -18,7 +18,7 @@ fn base_healthy_snapshot() -> SystemSnapshot {
         gpu_query_ok: true,
         gpu_name: "NVIDIA GeForce RTX 5090".to_string(),
         driver_version: "570.124.06".to_string(),
-        vram_total_mb: 32607,
+        vram_total_mb: 32768, // 32 GB reales de una RTX 5090
         ram_probe_ok: true,
         ram_total_mb: 65536,
         disk_free_gb: 120.0,
@@ -52,9 +52,23 @@ fn base_healthy_snapshot() -> SystemSnapshot {
     }
 }
 
+/// Perfil con el que S17 confronta la máquina. Los tests que usan la fixture
+/// de una RTX 5090 declaran el perfil de consumo a propósito: un perfil menor
+/// que satisface el seleccionado es válido y S17 no debe avisar por ello.
+fn consumer_profile_vars() -> BTreeMap<String, String> {
+    let mut vars = BTreeMap::new();
+    vars.insert(
+        "STRICT_HW_PROFILE".to_string(),
+        "consumer-gpu-32".to_string(),
+    );
+    vars.insert("STRICT_HW_VRAM_GB".to_string(), "32".to_string());
+    vars.insert("STRICT_HW_RAM_GB".to_string(), "64".to_string());
+    vars
+}
+
 #[test]
 fn strict_all_ok_on_rtx_5090() {
-    let vars = BTreeMap::new();
+    let vars = consumer_profile_vars();
     let mut cfg = RuntimeConfig::from_map(&vars, None);
     let tmp_dir = std::env::temp_dir().join("comfyctl_test_strict_ok");
     let _ = fs::create_dir_all(&tmp_dir);
@@ -63,7 +77,7 @@ fn strict_all_ok_on_rtx_5090() {
     let snap = base_healthy_snapshot();
     let rep = evaluate_strict_checks(&cfg, &snap);
     assert_eq!(rep.result, "ok");
-    assert_eq!(rep.checks.len(), 10);
+    assert_eq!(rep.checks.len(), 11);
     assert!(rep.checks.iter().all(|c| c.status == "ok"));
 
     assert!(write_and_print_strict_report(&cfg, &rep).is_ok());
@@ -93,7 +107,7 @@ fn strict_driver_below_570_is_fatal_when_strict_and_warn_when_disabled() {
 
 #[test]
 fn strict_vram_ram_disk_and_profile_thresholds() {
-    let mut vars = BTreeMap::new();
+    let mut vars = consumer_profile_vars();
     let cfg_all = RuntimeConfig::from_map(&vars, None);
     assert_eq!(cfg_all.strict_min_vram_mb, 20000);
     assert_eq!(cfg_all.strict_min_disk_gb, 75);
@@ -383,7 +397,7 @@ fn strict_studio_s5_disk_180gb_and_other_profiles_unchanged() {
     }
 
     // 2. En perfil studio: 179.5 GB libres -> S5 fatal; 180.0 GB libres -> S5 ok
-    let mut studio_vars = BTreeMap::new();
+    let mut studio_vars = consumer_profile_vars();
     studio_vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
     let cfg_studio = RuntimeConfig::from_map(&studio_vars, None);
 
@@ -413,19 +427,19 @@ fn strict_studio_s5_disk_180gb_and_other_profiles_unchanged() {
 
 #[test]
 fn strict_studio_health_s11_and_live_http_probe() {
-    let mut vars = BTreeMap::new();
+    let mut vars = consumer_profile_vars();
     vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
     let cfg_studio = RuntimeConfig::from_map(&vars, None);
 
     // 1. Con MODEL_PROFILE=studio, S1-S10 siguen intactos y se añaden S11 (studio_health),
     //    S12 (mcp_health), S13/S13b/S13c (percepción, warn nunca fatal), S14
     //    (engine_roster), S15 (orchestration_ready) y S16 (agent_brain_ready),
-    //    todos warn nunca fatal
+    //    todos warn nunca fatal, y S17 (blackwell_profile)
     let mut snap = base_healthy_snapshot();
     snap.disk_free_gb = 200.0;
     let rep_ok = evaluate_strict_checks(&cfg_studio, &snap);
     assert_eq!(rep_ok.result, "ok");
-    assert_eq!(rep_ok.checks.len(), 18);
+    assert_eq!(rep_ok.checks.len(), 19);
     for expected_id in [
         "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S13b",
         "S13c", "S14", "S15", "S16",
@@ -545,7 +559,7 @@ fn strict_studio_health_s11_and_live_http_probe() {
 // fatal. Este test la bloquea en el compilador estricto para que no se rompa.
 #[test]
 fn strict_s13b_perception_backend_real_ok_sim_warn_never_fatal() {
-    let mut vars = BTreeMap::new();
+    let mut vars = consumer_profile_vars();
     vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
     let cfg = RuntimeConfig::from_map(&vars, None);
 
@@ -699,4 +713,112 @@ fn s5_uses_the_derived_requirement_when_the_image_publishes_it() {
     );
     assert!(STORAGE_REQUIREMENT_PATH.ends_with("storage-requirement.json"));
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn strict_s17_blackwell_profile_recognises_the_target_card_without_claiming_execution() {
+    // S17: el diagnóstico Blackwell. Con el perfil principal (96 GB VRAM /
+    // 128 GB RAM) y una RTX PRO 6000 Blackwell que los cubre, S17 es `ok`,
+    // reconoce la tarjeta y dice explícitamente que la ejecución sigue sin
+    // validar. No declara GPU validada por reconocer el modelo.
+    let mut vars = BTreeMap::new();
+    vars.insert(
+        "STRICT_HW_PROFILE".to_string(),
+        "rtx-pro-6000-blackwell-96-128".to_string(),
+    );
+    vars.insert("STRICT_HW_VRAM_GB".to_string(), "96".to_string());
+    vars.insert("STRICT_HW_RAM_GB".to_string(), "128".to_string());
+    let cfg = RuntimeConfig::from_map(&vars, None);
+    assert_eq!(cfg.strict_hw_profile, "rtx-pro-6000-blackwell-96-128");
+    assert_eq!(cfg.strict_hw_vram_gb, 96);
+    assert_eq!(cfg.strict_hw_ram_gb, 128);
+
+    let mut snap = base_healthy_snapshot();
+    snap.gpu_name = "NVIDIA RTX PRO 6000 Blackwell".to_string();
+    snap.vram_total_mb = 98304; // 96 GB
+    snap.ram_total_mb = 131_072; // 128 GB
+    snap.disk_free_gb = 200.0;
+    let rep = evaluate_strict_checks(&cfg, &snap);
+    let s17 = rep.checks.iter().find(|c| c.id == "S17");
+    assert!(
+        matches!(s17, Some(c) if c.status == "ok"),
+        "S17 con la tarjeta objetivo debe ser ok: {s17:?}"
+    );
+    let detail = s17.map(|c| c.detail.clone()).unwrap_or_default();
+    assert!(
+        detail.contains("RTX PRO 6000"),
+        "debe reconocer la tarjeta: {detail}"
+    );
+    assert!(
+        detail.contains("sin validar"),
+        "no puede declarar ejecución validada: {detail}"
+    );
+
+    // La misma tarjeta por debajo del perfil avisa, no aborta.
+    let mut snap_short = snap.clone();
+    snap_short.vram_total_mb = 48 * 1024;
+    let rep_short = evaluate_strict_checks(&cfg, &snap_short);
+    let s17_short = rep_short.checks.iter().find(|c| c.id == "S17");
+    assert!(
+        matches!(s17_short, Some(c) if c.status == "warn"),
+        "por debajo del perfil debe avisar: {s17_short:?}"
+    );
+    assert_ne!(rep_short.result, "fatal", "S17 nunca es fatal");
+
+    // Una GPU menor que SATISFACE el perfil seleccionado también es ok: los
+    // perfiles menores siguen funcionando sin limitar el principal.
+    let mut consumer = BTreeMap::new();
+    consumer.insert(
+        "STRICT_HW_PROFILE".to_string(),
+        "consumer-gpu-32".to_string(),
+    );
+    consumer.insert("STRICT_HW_VRAM_GB".to_string(), "32".to_string());
+    consumer.insert("STRICT_HW_RAM_GB".to_string(), "64".to_string());
+    let cfg_consumer = RuntimeConfig::from_map(&consumer, None);
+    let mut snap_consumer = base_healthy_snapshot();
+    snap_consumer.disk_free_gb = 200.0;
+    let rep_consumer = evaluate_strict_checks(&cfg_consumer, &snap_consumer);
+    let s17_consumer = rep_consumer.checks.iter().find(|c| c.id == "S17");
+    assert!(
+        matches!(s17_consumer, Some(c) if c.status == "ok"),
+        "un perfil menor que cubre el seleccionado es válido: {s17_consumer:?}"
+    );
+}
+
+#[test]
+fn strict_hw_profile_comes_from_the_same_env_the_studio_api_resolves() {
+    // Centralización: `STRICT_HW_*` manda si está puesto, pero sin él el
+    // diagnóstico lee las MISMAS variables que resuelve
+    // `studio/comfy_studio/hardware_profile.py`. Un solo entorno drive a la API,
+    // al resolvedor, a las recetas y a este diagnóstico.
+    let mut vars = BTreeMap::new();
+    vars.insert(
+        "STUDIO_HARDWARE_PROFILE".to_string(),
+        "rtx-pro-6000-blackwell-96-256".to_string(),
+    );
+    vars.insert("STUDIO_TARGET_VRAM_GB".to_string(), "96".to_string());
+    vars.insert("STUDIO_TARGET_RAM_GB".to_string(), "256".to_string());
+    let cfg = RuntimeConfig::from_map(&vars, None);
+    assert_eq!(cfg.strict_hw_profile, "rtx-pro-6000-blackwell-96-256");
+    assert_eq!(cfg.strict_hw_vram_gb, 96);
+    assert_eq!(cfg.strict_hw_ram_gb, 256);
+
+    // Y el override explícito del diagnóstico sigue pudiendo mandar.
+    let mut over = vars.clone();
+    over.insert(
+        "STRICT_HW_PROFILE".to_string(),
+        "consumer-gpu-32".to_string(),
+    );
+    over.insert("STRICT_HW_VRAM_GB".to_string(), "32".to_string());
+    over.insert("STRICT_HW_RAM_GB".to_string(), "64".to_string());
+    let cfg_over = RuntimeConfig::from_map(&over, None);
+    assert_eq!(cfg_over.strict_hw_profile, "consumer-gpu-32");
+    assert_eq!(cfg_over.strict_hw_vram_gb, 32);
+    assert_eq!(cfg_over.strict_hw_ram_gb, 64);
+
+    // Sin nada puesto, el default es el perfil principal.
+    let cfg_def = RuntimeConfig::from_map(&BTreeMap::new(), None);
+    assert_eq!(cfg_def.strict_hw_profile, "rtx-pro-6000-blackwell-96-128");
+    assert_eq!(cfg_def.strict_hw_vram_gb, 96);
+    assert_eq!(cfg_def.strict_hw_ram_gb, 128);
 }

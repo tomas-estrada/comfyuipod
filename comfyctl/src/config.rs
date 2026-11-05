@@ -120,6 +120,14 @@ pub struct RuntimeConfig {
     pub strict_warn_ram_mb: u64,
     pub strict_min_disk_gb: u64,
     pub strict_fatal_grace_s: u64,
+    /// `STRICT_HW_PROFILE`: nombre del perfil de hardware contra el que se
+    /// confronta la máquina (S17). Debe coincidir con el que resuelve
+    /// `studio/comfy_studio/hardware_profile.py`, que es la fuente única.
+    pub strict_hw_profile: String,
+    /// `STRICT_HW_VRAM_GB`: VRAM declarada por el perfil (96 en el principal).
+    pub strict_hw_vram_gb: u64,
+    /// `STRICT_HW_RAM_GB`: RAM de host declarada por el perfil (128 o 256).
+    pub strict_hw_ram_gb: u64,
     pub status_server_port: u16,
     pub supervisor_json_path: PathBuf,
     pub strict_json_path: PathBuf,
@@ -196,6 +204,32 @@ impl RuntimeConfig {
         let raw_profile = get("MODEL_PROFILE").unwrap_or("all").to_string();
         let (model_profile, model_profile_valid) = ModelProfile::from_str_lossy(&raw_profile);
         let skip_model_download = get("SKIP_MODEL_DOWNLOAD").unwrap_or("0") == "1";
+
+        // S17: el perfil de hardware sale de las MISMAS variables que resuelve
+        // `studio/comfy_studio/hardware_profile.py`, que es la fuente única.
+        // `STRICT_HW_*` manda si está puesto (para un test o un override
+        // explícito del diagnóstico); si no, se leen las variables de Studio,
+        // de modo que un solo entorno drive a la API, al resolvedor, a las
+        // recetas y a este diagnóstico. Los defaults son los del perfil
+        // principal (BLACKWELL_96_128: 96 GB VRAM / 128 GB RAM).
+        let hw_profile_name = get("STRICT_HW_PROFILE")
+            .or_else(|| get("STUDIO_HARDWARE_PROFILE"))
+            .unwrap_or("rtx-pro-6000-blackwell-96-128")
+            .trim()
+            .to_string();
+        let hw_profile_name = if hw_profile_name.is_empty() {
+            "rtx-pro-6000-blackwell-96-128".to_string()
+        } else {
+            hw_profile_name
+        };
+        let hw_vram_gb = get("STRICT_HW_VRAM_GB")
+            .or_else(|| get("STUDIO_TARGET_VRAM_GB"))
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(96);
+        let hw_host_ram_gb = get("STRICT_HW_RAM_GB")
+            .or_else(|| get("STUDIO_TARGET_RAM_GB"))
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(128);
 
         let comfy_extra_args = get("COMFYUI_EXTRA_ARGS").unwrap_or("").to_string();
         let cpu_flag_present = comfy_extra_args
@@ -344,6 +378,14 @@ impl RuntimeConfig {
             strict_warn_ram_mb: get_u64("STRICT_WARN_RAM_MB", 32768),
             strict_min_disk_gb,
             strict_fatal_grace_s: get_u64("STRICT_FATAL_GRACE", 600),
+            // S17: el perfil de hardware. Los defaults son los del perfil
+            // principal (`BLACKWELL_96_128` en hardware_profile.py); el
+            // contenedor exporta los valores resueltos para que strict-check
+            // confronte la máquina contra el mismo perfil con el que se juzgan
+            // las recetas, no contra un umbral suelto.
+            strict_hw_profile: hw_profile_name,
+            strict_hw_vram_gb: hw_vram_gb,
+            strict_hw_ram_gb: hw_host_ram_gb,
             status_server_port,
             supervisor_json_path: PathBuf::from(
                 get("COMFY_SUPERVISOR_JSON").unwrap_or("/run/comfyui-supervisor.json"),

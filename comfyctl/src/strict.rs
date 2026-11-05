@@ -1398,6 +1398,91 @@ pub fn evaluate_strict_checks(cfg: &RuntimeConfig, snap: &SystemSnapshot) -> Str
         });
     }
 
+    // S17: diagnóstico Blackwell. Reconoce la tarjeta objetivo del perfil
+    // principal y confronta VRAM y RAM contra lo que el perfil seleccionado
+    // declara, usando el MISMO perfil con el que `assess_vram_fit` /
+    // `assess_ram_fit` juzgan las recetas. Nunca es fatal: un perfil menor que
+    // satisface el seleccionado sigue siendo válido, así que avisa en lugar de
+    // abortar. Y nunca declara ejecución validada —reconocer la tarjeta y que
+    // la capacidad cuadre con el perfil no es lo mismo que haber renderizado.
+    if cfg.strict_require_gpu {
+        let expected_vram_mb = cfg.strict_hw_vram_gb * 1024;
+        let expected_host_ram_mb = cfg.strict_hw_ram_gb * 1024;
+        let is_blackwell = snap.gpu_name.to_uppercase().contains("RTX PRO 6000");
+        let vram_ok = snap.gpu_query_ok && snap.vram_total_mb >= expected_vram_mb;
+        let ram_ok = snap.ram_probe_ok && snap.ram_total_mb >= expected_host_ram_mb;
+        let (status, detail) = if !snap.gpu_query_ok {
+            (
+                "warn".to_string(),
+                format!(
+                    "no se pudo consultar la GPU; el perfil {} espera >= {} MB de VRAM y >= {} MB de RAM",
+                    cfg.strict_hw_profile, expected_vram_mb, expected_host_ram_mb
+                ),
+            )
+        } else if vram_ok && ram_ok {
+            if is_blackwell {
+                (
+                    "ok".to_string(),
+                    format!(
+                        "{} reconocida: {} MB VRAM y {} MB RAM cubren el perfil {} ({} GB VRAM / {} GB RAM). La tarjeta y la capacidad cuadran con el perfil; la ejecución sigue sin validar hasta un render medido.",
+                        snap.gpu_name,
+                        snap.vram_total_mb,
+                        snap.ram_total_mb,
+                        cfg.strict_hw_profile,
+                        cfg.strict_hw_vram_gb,
+                        cfg.strict_hw_ram_gb
+                    ),
+                )
+            } else {
+                (
+                    "ok".to_string(),
+                    format!(
+                        "{} cubre el perfil {} ({} GB VRAM / {} GB RAM) con {} MB VRAM y {} MB RAM. No es la RTX PRO 6000 Blackwell del perfil principal, pero un perfil menor que satisface el seleccionado es válido; la ejecución sigue sin validar hasta un render medido.",
+                        snap.gpu_name,
+                        cfg.strict_hw_profile,
+                        cfg.strict_hw_vram_gb,
+                        cfg.strict_hw_ram_gb,
+                        snap.vram_total_mb,
+                        snap.ram_total_mb
+                    ),
+                )
+            }
+        } else {
+            (
+                "warn".to_string(),
+                format!(
+                    "{} NO cubre el perfil {} ({} GB VRAM / {} GB RAM): {} MB VRAM (se esperaban >= {} MB) y {} MB RAM (se esperaban >= {} MB). Las recetas se juzgan contra el perfil seleccionado, no contra esta tarjeta.",
+                    snap.gpu_name,
+                    cfg.strict_hw_profile,
+                    cfg.strict_hw_vram_gb,
+                    cfg.strict_hw_ram_gb,
+                    snap.vram_total_mb,
+                    expected_vram_mb,
+                    snap.ram_total_mb,
+                    expected_host_ram_mb
+                ),
+            )
+        };
+        checks.push(StrictCheckItem {
+            id: "S17".to_string(),
+            name: "blackwell_profile".to_string(),
+            status,
+            detail,
+            remediation: Some(
+                "Si el perfil activo es el principal, alquila una instancia con RTX PRO 6000 Blackwell y >= 128 GB de RAM de host (comfy rent studio). Si usas un perfil menor a propósito, exporta STRICT_HW_PROFILE/STRICT_HW_VRAM_GB/STRICT_HW_RAM_GB con el perfil elegido para que el diagnóstico confronte contra el correcto."
+                    .to_string(),
+            ),
+        });
+    } else {
+        checks.push(StrictCheckItem {
+            id: "S17".to_string(),
+            name: "blackwell_profile".to_string(),
+            status: "ok".to_string(),
+            detail: "Omitido en modo CPU".to_string(),
+            remediation: None,
+        });
+    }
+
     let has_fatal = checks.iter().any(|c| c.status == "fatal");
     let has_warn = checks.iter().any(|c| c.status == "warn");
     let result = if has_fatal {
