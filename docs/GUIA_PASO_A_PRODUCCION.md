@@ -173,7 +173,7 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 
 | Síntoma | Qué significa | Qué hacer |
 |---|---|---|
-| Banner rojo **FATAL** en `/home` / `/status` | El arranque estricto (`strict-check` S1–S10, o S1–S11 en `studio`) detectó un host incompatible (GPU, VRAM, RAM, disco...) | Ejecuta `comfy destroy <id>` y alquila otra oferta; el banner indica la causa y la remediación. La instancia sale sola con código 20 tras 10 min |
+| Banner rojo **FATAL** en `/home` / `/status` | El arranque estricto (`strict-check` S1–S10, o S1–S16 en `studio`/`unreal`) detectó un host incompatible (GPU, VRAM, RAM, disco...) | Ejecuta `comfy destroy <id>` y alquila otra oferta; el banner indica la causa y la remediación. La instancia sale sola con código 20 tras 10 min |
 | Pantalla de espera eterna | La Fase 1 está descargando o algo la bloqueó | Abre `/status` y mira el progreso de descargas y la pestaña de logs; el motor de triaje (17 patrones) suele nombrar la causa exacta |
 | Error 401 al abrir el portal | Contraseña incorrecta o no definida | `comfy pass <id>` recupera la contraseña autogenerada desde los logs de arranque |
 | ComfyUI no responde pero el portal sí | El supervisor está reiniciando `main.py` (OOM, crash CUDA, etc.) | Mira `/status` (clasifica la salida: 137 OOM, 134/139 crash nativo...) y `/report.md` para el informe completo |

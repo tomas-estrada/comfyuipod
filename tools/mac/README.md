@@ -39,7 +39,7 @@ export COMFY_IMAGE="ghcr.io/<tu-usuario>/comfyuipod:latest"
 |---|---|
 | `comfy` / `comfy open [id] [vista]` | Espera hasta 10 min (`O-14`, configurable con `COMFY_OPEN_TIMEOUT`) a que la instancia responda en `/healthz` y abre el navegador en la vista indicada: `home` (por defecto, Portal `/home`), `comfy` (ComfyUI `/`), `status` (`/status`), `report` (`/report.md`), `terminal` (`/terminal/`) o `studio` (`/studio/`). Si detecta un fallo de arranque estricto (`strict.result == "fatal"`), avisa inmediatamente con el detalle de los checks fallidos, abre `/home` y sale con código `20` (`R-10`). |
 | `comfy studio [id]` | Resuelve la URL del portal de la instancia (`/home`), verifica que `GET /studio/api/health` responda HTTP 200 con `status="ok"` y `server="ok"` (usando Basic Auth por `stdin`, `curl -K -`), imprime el resumen de salud (`server`, `comfyui`, `model_profile`, `llm_key`) y abre el navegador en `/studio/`. |
-| `comfy studio report [id] [--stdout]` | Descarga `/report.md`, `/studio/api/health`, `/studio/api/status` y `/status/api`, añade la sección `## 11. Estado de Comfy Studio (/studio/api)` (salud de `studio-server` y ComfyUI, base SQLite, disco, modelos de Fase 3, custom nodes en `nodes.lock`, checks `S1..S11` y `env_masked`) y aplica redacción defensiva en cliente garantizando que `STUDIO_LLM_KEY`, `COMFY_PASS`, `HF_TOKEN` y tokens `sk-*` / `hf_*` / `Bearer *` aparezcan **siempre enmascarados**. Guarda en `/tmp/comfy-studio-report-<id>.md` (`0600`, y copia a `pbcopy` en macOS) o imprime con `--stdout`. |
+| `comfy studio report [id] [--stdout]` | Descarga `/report.md`, `/studio/api/health`, `/studio/api/status` y `/status/api`, añade la sección `## 11. Estado de Comfy Studio (/studio/api)` (salud de `studio-server` y ComfyUI, base SQLite, disco, modelos de Fase 3, custom nodes en `nodes.lock`, checks `S1..S16` y `env_masked`) y aplica redacción defensiva en cliente garantizando que `STUDIO_LLM_KEY`, `COMFY_PASS`, `HF_TOKEN` y tokens `sk-*` / `hf_*` / `Bearer *` aparezcan **siempre enmascarados**. Guarda en `/tmp/comfy-studio-report-<id>.md` (`0600`, y copia a `pbcopy` en macOS) o imprime con `--stdout`. |
 | `comfy home` / `comfy status` / `comfy terminal` | Atajos directos para abrir `/home`, `/status` o `/terminal/` de la instancia activa. |
 | `comfy url [id]` | Imprime la URL base `http://<ip>:<port>` de la instancia activa. |
 | `comfy all` | Lista todas las instancias de tu cuenta de Vast.ai con estado, GPU, `$/h` y enlaces directos a `/home` y `/status`. |
@@ -60,10 +60,10 @@ Cuando se invoca `comfy rent studio`, el helper aplica filtros específicos para
 
 - **GPU**: `gpu_name=RTX_5090` con `gpu_ram>=32` GB (sin fallback a RTX 4090, ya que los 24 GB de la 4090 no bastan para VACE 14B fp8 / Wan 2.2 14B sin degradación severa).
 - **Host y CUDA**: `cpu_ram>=32` GB, `cuda_vers>=12.8`.
-- **Red y fiabilidad**: `inet_down>=5000` Mbps (5 Gbps para descargar los ~146 GB de Fase 3 con rapidez), `reliability>=0.98`, `verified=true`, `rentable=true`.
+- **Red y fiabilidad**: `inet_down>=5000` Mbps (5 Gbps para descargar los ~163.71 GB de Fase 3 con rapidez), `reliability>=0.98`, `verified=true`, `rentable=true`.
 - **Disco (`disk_space`)**:
-  - Por defecto solicita **200 GB** (`disk_space>=200`, `--disk 200`), suficiente para los modelos de Fase 1 + Fase 2 + los 77 modelos de Fase 3 (`~163.24 GB` / `~152.03 GiB` en total) y espacio de trabajo.
-  - **Opt-in `STUDIO_INCLUDE_ANIMATE=1`**: si exportas `STUDIO_INCLUDE_ANIMATE=1` para incluir el modelo adicional `wan2.2_animate_14B_int8_convrot.safetensors` (`+18.41 GB` / `+17.15 GiB`), el helper exige y solicita automáticamente **250 GB** de disco (`disk_space>=250`, `--disk 250`). Puedes aumentar el tamaño manualmente con `COMFY_DISK_GB` (por ejemplo `COMFY_DISK_GB=300`), pero cualquier override inferior al mínimo del perfil (`< 200 GB` en `studio`, o `< 250 GB` con `STUDIO_INCLUDE_ANIMATE=1`) se rechaza con un error explícito antes de buscar ofertas o crear la instancia (`M2-SCR-015`).
+  - Por defecto solicita **200 GB** (`disk_space>=200`, `--disk 200`), suficiente para los modelos de Fase 1 + Fase 2 + los 79 modelos de Fase 3 (`~180.90 GB` / `~168.47 GiB` en total) y espacio de trabajo.
+  - **Opt-in `STUDIO_INCLUDE_ANIMATE=1`**: si exportas `STUDIO_INCLUDE_ANIMATE=1` para incluir el modelo adicional `wan2.2_animate_14B_int8_convrot.safetensors` (`+18.41 GB` / `+17.15 GiB`), el helper exige y solicita automáticamente **250 GB** de disco (`disk_space>=250`, `--disk 250`). Puedes aumentar el tamaño manualmente con `COMFY_DISK_GB` (por ejemplo `COMFY_DISK_GB=300`), pero cualquier override inferior al mínimo del perfil (`< 200 GB` en `studio`, o `< 250 GB` con `STUDIO_INCLUDE_ANIMATE=1`) se rechaza con un error explícito antes de buscar ofertas o crear la instancia (`M2-SCR-015`). Los otros opt-in de Fase 3 no elevan automáticamente ese mínimo: con `STUDIO_INCLUDE_3D=1` (+7.37 GB) usa al menos `COMFY_DISK_GB=220` y con `STUDIO_INCLUDE_MINIMAX=1` (+63.00 GB en 6 archivos) `COMFY_DISK_GB=320` o más.
 
 ### 4.2 Lectura oculta de `STUDIO_LLM_KEY` y credencial aislada `STUDIO_LLM_FALLBACK_KEY` (`VAL-SERVER-005` / `VAL-CROSS-004` / `M2-SCR-004`)
 Para proteger tus API keys de los proveedores LLM (primario DashScope / Qwen y fallback secundario DeepSeek):
@@ -86,7 +86,7 @@ comfy rent studio
 # 3. Verificar /studio/api/health y abrir el panel web de Comfy Studio en el navegador:
 comfy studio
 
-# 4. Generar informe diagnóstico redactado (modelos Fase 3, custom nodes, disco, S1..S11 y envs enmascaradas):
+# 4. Generar informe diagnóstico redactado (modelos Fase 3, custom nodes, disco, S1..S16 y envs enmascaradas):
 comfy studio report
 # O imprimirlo directamente en stdout:
 comfy studio report --stdout

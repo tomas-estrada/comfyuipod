@@ -110,7 +110,8 @@ async def test_download_model_reports_animate_group(engine_tool_context: ToolCon
     belt = create_default_tool_belt()
     result = await belt.execute("download_model", {"model_group": "animate"}, engine_tool_context)
     assert result["model_group"] == "animate"
-    assert result["templates"] == ["wan_animate"]
+    # El grupo Animate alimenta dos plantillas: la base y su continuación.
+    assert result["templates"] == ["wan_animate", "wan_animate_cont"]
     # El config del test no activa STUDIO_INCLUDE_ANIMATE -> unavailable con instrucciones
     assert result["status"] in ("available", "unavailable")
     if result["status"] == "unavailable":

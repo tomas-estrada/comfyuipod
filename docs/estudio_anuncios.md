@@ -19,8 +19,10 @@ usan sus backends habituales.
    CTA; duración objetivo repartida y cuantizada). El agente puede refinarlo por chat.
 2. **`storyboard`** — guion → storyboard JSON (`comfy_studio.ad_storyboard.v1`): cada
    plano lleva duración, prompt visual, texto en pantalla, línea de voz y el asset de
-   producto asignado (round-robin). El anuncio entra en la puerta de aprobación
-   (`gate.state = awaiting_approval`, `engines/storyboard_gate.py`).
+   producto asignado (round-robin). El anuncio queda marcado en la puerta de aprobación
+   (`gate.state = awaiting_approval`); este motor solo registra el estado —la máquina de
+   estados `engines/storyboard_gate.py` la aplica la capa de orquestación— y la operación
+   `variants` no bloquea por aprobación.
 3. **`variants`** — storyboard + assets del proyecto → un MP4 por aspect ratio con
    `ffmpeg` (scale-cover + crop centrado + concat; `amix` de voz TTS y/o cama musical
    opcional), verificado con `ffprobe`, evaluado con el motor `qa` y registrado como
@@ -40,8 +42,11 @@ POST .../variants?wait=1                              200 con el resumen (síncr
 
 `AdVariantsRequest`: `aspect_ratios` (máx. 4 de `16:9|9:16|1:1|4:5`, por defecto
 `["9:16","1:1","16:9"]`), `voiceover`, `voice_id`, `music`, `music_prompt`,
-`music_duration_s`, `source_asset_id`, `chunk_asset_ids` (un asset de vídeo por plano),
-`fps` (12–60), `max_retries` (0–2), `acceptance` (`max_black_s`, `max_freeze_s`).
+`music_duration_s` (0–60), `source_asset_id`, `chunk_asset_ids` (un asset de vídeo o
+imagen por plano), `fps` (12–60), `max_retries` (0–2), `acceptance`
+(`max_black_s` por defecto `0.5`, `max_freeze_s` por defecto `1.0`; nivel 1 =
+`blackdetect` + `freezedetect` en una sola pasada de `ffmpeg`, y en modo stub `level1`
+es `null`).
 
 Ejemplo:
 
@@ -89,15 +94,20 @@ Galería (assets `outputs` con metadatos `engine=ad_studio`).
 
 ## Pruebas
 
-`studio/tests/test_m7_ad_studio.py` (24 tests): composición determinista, validación,
+`studio/tests/test_m7_ad_studio.py` (18 tests): composición determinista, validación,
 persistencia, puerta, variantes stub con assets reales registrados, cancelación
 sticky, fallos tipados (sin storyboard / aspect inválido / asset ausente / sin
 ffmpeg), contrato del motor, registro en el roster, rutas HTTP (201/200/202/400/404/422)
 y flujo completo del tool-belt. Uno requiere `ffmpeg` real (render 1280x720 verificado
 con ffprobe + QA) y se salta si no está en el PATH.
 
+Límites del brief: `target_duration_s` entre 5 y 60 s; cada escena se cuantiza a
+múltiplos de 0.5 s con mínimo 2.0 s (`MIN_SCENE_DURATION_S`) y el guion siempre tiene
+4 escenas (límite duro `MAX_AD_SHOTS=12`).
+
 Comandos ejecutados (2026-11-04): `ruff check studio panel scripts config/probes` →
-limpio; `pytest studio/tests -q` → 602 passed (23 fallos preexistentes del sandbox por
-`sqlite-vec`/`ffmpeg` ausentes, reproducibles en `HEAD` limpio), 10 skipped;
+limpio; `pytest studio/tests -q` → 699 passed, 6 failed (los 6 son tests de
+`test_panel_web.py` que invocan `node -e` y requieren Node.js, presente en los runners
+de CI; en un host sin Node.js fallan con `FileNotFoundError`, no son fallos del motor);
 `python -m comfy_studio.templates` → 17 plantillas OK;
 `check_models_manifest.py --fixture --offline` → 4/4 OK.

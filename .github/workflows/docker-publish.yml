@@ -336,10 +336,26 @@ jobs:
           sys.exit(1 if failures else 0)
           EOF
 
-      - name: Validar config/models-studio.json y tamaños exactos vía HEAD en HuggingFace (VAL-PROFILE-002)
+      - name: Validar manifiestos de modelos (studio + core) y tamaños exactos vía HEAD (VAL-PROFILE-002)
         run: |
           python3 scripts/check_models_manifest.py --fixture
-          python3 scripts/check_models_manifest.py
+          # Paridad perfiles <-> manifiesto (política punto 7): la selección de
+          # qué descarga cada MODEL_PROFILE es dato versionado, no un case en bash.
+          python3 scripts/check_profile_parity.py
+          python3 scripts/check_models_manifest.py --all
+          # El requisito de almacenamiento se DERIVA (política de arquitectura).
+          # `comfy rent studio` toma su mínimo de este cálculo: si alguien vuelve a
+          # codificar un literal menor, el check falla.
+          python3 scripts/storage_requirement.py --profile studio --check || {
+            echo "::error::El mínimo de disco de 'comfy rent studio' queda por debajo del requisito derivado (ver scripts/storage_requirement.py)"
+            exit 1
+          }
+          # Informativo: umbrales S5 y mínimos de alquiler que la derivación ya
+          # supera. No bloquean (el cortacircuitos por archivo cubre el caso), pero
+          # quedan registrados en docs/POLITICA_ARQUITECTURA_RECURSOS.md.
+          for profile in minimal all general realistic anime unreal; do
+            python3 scripts/storage_requirement.py --profile "$profile" || true
+          done
 
       - name: Instalar ffmpeg/ffprobe para los tests de percepción M3 (VAL-PERC-001/002/003/006)
         # La imagen ubuntu-24.04 de GitHub Actions NO trae ffmpeg preinstalado (no aparece en
@@ -436,7 +452,7 @@ jobs:
             cat << 'JSON'
           [
             {"id": 901, "gpu_name": "RTX_5090", "gpu_ram": 32768, "cpu_ram": 65536, "cuda_vers": 12.8, "disk_space": 150, "inet_down": 6000, "reliability": 0.99, "verified": true, "rentable": true, "dph_total": 0.40, "storage_cost": 0.15},
-            {"id": 902, "gpu_name": "RTX_5090", "gpu_ram": 32768, "cpu_ram": 65536, "cuda_vers": 12.8, "disk_space": 240, "inet_down": 6000, "reliability": 0.992, "verified": true, "rentable": true, "dph_total": 0.65, "storage_cost": 0.15}
+            {"id": 902, "gpu_name": "RTX_5090", "gpu_ram": 32768, "cpu_ram": 65536, "cuda_vers": 12.8, "disk_space": 300, "inet_down": 6000, "reliability": 0.992, "verified": true, "rentable": true, "dph_total": 0.65, "storage_cost": 0.15}
           ]
           JSON
             exit 0
@@ -451,27 +467,30 @@ jobs:
           chmod +x "$tmp_helper/vastai"
           dummy_llm_key="sk""-ci-dryrun-key-123456"
           dummy_pod_pass="ci-pass-placeholder-789"
-          dry_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" tools/mac/comfy rent studio --dry-run 2>&1)"
+          dry_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" COMFY_REPO_ROOT="$GITHUB_WORKSPACE" tools/mac/comfy rent studio --dry-run 2>&1)"
           printf '%s\n' "$dry_out"
           echo "$dry_out" | grep -q "Se alquilaría la oferta ID 902"
-          echo "$dry_out" | grep -q "disco=200 GB"
+          # El mínimo de disco se DERIVA de scripts/storage_requirement.py: se comprueba
+          # que el valor usado coincide con el derivado, no con un literal (política de recursos).
+          derived_disk="$(python3 scripts/storage_requirement.py --profile studio --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["min_volume_gb"])')"
+          echo "$dry_out" | grep -q "disco=${derived_disk} GB"
           echo "$dry_out" | grep -q "STUDIO_LLM_KEY=<definida>"
           if echo "$dry_out" | grep -qE "${dummy_llm_key}|${dummy_pod_pass}"; then
             echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en comfy rent studio --dry-run"
             exit 1
           fi
           MOCK_CREATE_ARGS="$tmp_helper/create.txt"
-          sim_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" tools/mac/comfy rent studio --yes 2>&1)"
+          sim_out="$(printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_PASS="$dummy_pod_pass" COMFY_REPO_ROOT="$GITHUB_WORKSPACE" tools/mac/comfy rent studio --yes 2>&1)"
           if echo "$sim_out" | grep -qE "${dummy_llm_key}|${dummy_pod_pass}"; then
             echo "::error::Fuga de STUDIO_LLM_KEY o COMFY_PASS en comfy rent studio --yes"
             exit 1
           fi
-          grep -q -- '--disk 200 --label comfy-studio' "$MOCK_CREATE_ARGS"
+          grep -q -- "--disk ${derived_disk} --label comfy-studio" "$MOCK_CREATE_ARGS"
           grep -q -- '-e MODEL_PROFILE="studio"' "$MOCK_CREATE_ARGS"
           grep -q -- "-e STUDIO_LLM_KEY=\"${dummy_llm_key}\"" "$MOCK_CREATE_ARGS"
           rm -f "$MOCK_CREATE_ARGS"
-          if printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_DISK_GB="120" tools/mac/comfy rent studio --yes >/dev/null 2>&1; then
-            echo "::error::comfy rent studio aceptó COMFY_DISK_GB=120 (< 200 GB mínimo)"
+          if printf '%s\n' "$dummy_llm_key" | PATH="$tmp_helper:$PATH" MOCK_CREATE_ARGS="$MOCK_CREATE_ARGS" COMFY_IMAGE="ghcr.io/test/comfyuipod:latest" COMFY_REPO_ROOT="$GITHUB_WORKSPACE" COMFY_DISK_GB="120" tools/mac/comfy rent studio --yes >/dev/null 2>&1; then
+            echo "::error::comfy rent studio aceptó COMFY_DISK_GB=120 (< ${derived_disk} GB derivado)"
             exit 1
           fi
           [ ! -e "$MOCK_CREATE_ARGS" ] || { echo "::error::create instance se invocó con COMFY_DISK_GB=120"; exit 1; }
@@ -1016,9 +1035,9 @@ jobs:
             SKIP_MODEL_DOWNLOAD=1 STRICT_MIN_RAM_MB=4096 STRICT_MIN_DISK_GB=1 STRICT_START=1 COMFYUI_EXTRA_ARGS="--cpu" /usr/local/bin/comfyctl strict-check
             python3 -c "import json; d = json.load(open(\"/run/comfyui-strict.json\")); assert d[\"result\"] in (\"ok\", \"warn\"), d; s7 = [c for c in d[\"checks\"] if c[\"id\"] == \"S7\"][0]; assert s7[\"status\"] == \"ok\", s7"
             MODEL_PROFILE=studio STRICT_START=0 COMFYUI_EXTRA_ARGS="--cpu" /usr/local/bin/comfyctl strict-check --json > /tmp/studio-strict.json
-            python3 -c "import json; d = json.load(open(\"/tmp/studio-strict.json\")); s5 = [c for c in d[\"checks\"] if c[\"id\"] == \"S5\"][0]; s11 = [c for c in d[\"checks\"] if c[\"id\"] == \"S11\"][0]; assert \"180 GB\" in s5[\"detail\"], s5; assert s11[\"name\"] == \"studio_health\", s11"
+            python3 -c "import json; req = json.load(open(\"/etc/comfyui/storage-requirement.json\")); expected = req[\"profiles\"][\"studio\"][\"start_gate_gb\"]; d = json.load(open(\"/tmp/studio-strict.json\")); s5 = [c for c in d[\"checks\"] if c[\"id\"] == \"S5\"][0]; s11 = [c for c in d[\"checks\"] if c[\"id\"] == \"S11\"][0]; assert f\"{expected} GB\" in s5[\"detail\"], (s5, expected); assert s11[\"name\"] == \"studio_health\", s11"
           '
-          echo "[OK] Paso 11: comfyctl strict-check en modo --cpu -> 0 (S7 warn sin .htpasswd, ok con .htpasswd, y perfil studio S5=180 GB + S11 studio_health)"
+          echo "[OK] Paso 11: comfyctl strict-check en modo --cpu -> 0 (S7 warn sin .htpasswd, ok con .htpasswd, y perfil studio S5=<derivado> + S11 studio_health)"
 
           # 12. comfyctl strict-check con nvidia-smi simulado (driver 550.54.14) devuelve 20 con STRICT_START=1 y 0 con STRICT_START=0 y cumple el esquema strict (§8.2 / R-02 / R-04 / R-13)
           strict_json_fatal="$(timeout 600 docker run --rm --entrypoint sh "${CANDIDATE_TAG}" -c '
