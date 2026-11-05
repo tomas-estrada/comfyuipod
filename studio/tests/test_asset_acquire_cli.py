@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from comfy_studio import asset_acquire_cli
-from comfy_studio.asset_acquire import AcquisitionReport, AcquiredEntry
+from comfy_studio.asset_acquire import AcquiredEntry, AcquisitionReport
 
 
 def _write_manifest(path: Path, *, revision: str = "a" * 40, digest: str | None = None) -> None:
@@ -26,7 +26,9 @@ def _write_manifest(path: Path, *, revision: str = "a" * 40, digest: str | None 
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_find_need_uses_manifest_revision_digest_and_exact_destination(tmp_path: Path, monkeypatch) -> None:
+def test_find_need_uses_manifest_revision_digest_and_exact_destination(
+    tmp_path: Path, monkeypatch
+) -> None:
     data = tmp_path / "data"
     manifest = tmp_path / "manifest.json"
     _write_manifest(manifest)
@@ -86,7 +88,16 @@ def test_cli_calls_shared_acquirer_with_manifest_need(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(asset_acquire_cli, "acquire", fake_acquire)
     result = asset_acquire_cli.main(
-        ["--repo", "org/model", "--remote", "weights.bin", "--dest", str(dest), "--stage", str(tmp_path / "stage")]
+        [
+            "--repo",
+            "org/model",
+            "--remote",
+            "weights.bin",
+            "--dest",
+            str(dest),
+            "--stage",
+            str(tmp_path / "stage"),
+        ]
     )
     assert result == 0
     assert seen["need"].revision == "a" * 40

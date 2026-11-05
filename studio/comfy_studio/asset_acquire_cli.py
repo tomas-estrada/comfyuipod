@@ -74,7 +74,9 @@ def _find_need(repo: str, remote: str, dest: Path, repo_type: str) -> SimpleName
                 )
             )
     if not matches:
-        raise ValueError(f"asset is not declared at destination in configured manifests: {repo}/{remote}")
+        raise ValueError(
+            f"asset is not declared at destination in configured manifests: {repo}/{remote}"
+        )
     signatures = {
         (m.bytes, m.revision, m.sha256, m.sha1, m.manifest_dest)
         for m in matches
