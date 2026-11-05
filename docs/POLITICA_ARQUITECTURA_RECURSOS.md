@@ -334,6 +334,19 @@ el rendimiento sin ganar nada. Controlable con `STUDIO_UNLOAD_WHEN_IDLE`
 (por defecto `1`) y silencioso si ComfyUI no responde: liberar VRAM es una
 optimización, nunca debe tumbar un render ya terminado.
 
+### Filesystems distintos
+
+Punto 1: «Check usable space on **the actual filesystems** involved». La guarda
+de disco medía solo el directorio de staging, pero el destino puede estar en otro
+volumen —`custom_nodes/*` vive bajo `COMFY_APP_DIR`, no bajo `COMFY_DATA_DIR`—.
+Mirar un solo filesystem permite quedarse sin espacio en el otro justo cuando el
+activo ya está descargado. Ahora `_free_bytes_for` toma el más restrictivo de
+staging y destino.
+
+Relacionado, y encontrado al arreglarlo: `os.replace` falla con `EXDEV` entre
+volúmenes. El movimiento ahora cae a copiar + `fsync` + borrar el original, y
+cualquier otro error se propaga en lugar de degradarse en silencio.
+
 ### ¿Cabe en el GPU objetivo?
 
 Punto 5: «Before recommending more expensive hardware, investigate supported

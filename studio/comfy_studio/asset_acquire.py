@@ -16,6 +16,7 @@ No selecciona modelos ni decide políticas: ejecuta un plan que le dan.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import shutil
@@ -111,6 +112,27 @@ class AcquisitionReport:
         }
 
 
+def _move(src: Path, dest: Path) -> None:
+    """Mueve `src` a `dest`, aunque estén en filesystems distintos.
+
+    `os.replace` falla con `EXDEV` si staging y destino están en volúmenes
+    diferentes, que es perfectamente posible (`custom_nodes/*` vive bajo
+    `COMFY_APP_DIR`). En ese caso se copia y se borra el original.
+    """
+    try:
+        os.replace(src, dest)
+        return
+    except OSError as exc:
+        if getattr(exc, "errno", None) != errno.EXDEV:
+            raise
+    with open(src, "rb") as reader, open(dest, "wb") as writer:
+        for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+            writer.write(chunk)
+        writer.flush()
+        os.fsync(writer.fileno())
+    src.unlink(missing_ok=True)
+
+
 def _free_bytes(path: Path) -> int | None:
     """Espacio libre real del filesystem que contiene `path` (None si ilegible)."""
     try:
@@ -120,6 +142,23 @@ def _free_bytes(path: Path) -> int | None:
         return shutil.disk_usage(target).free
     except OSError:
         return None
+
+
+def _free_bytes_for(paths: list[Path]) -> int | None:
+    """Espacio libre del filesystem más restrictivo de entre `paths`.
+
+    La política (punto 1) pide comprobar «usable space on the actual
+    filesystems involved» —en plural—. Staging y destino pueden estar en
+    volúmenes distintos, y mirar solo uno permite quedarse sin espacio en el
+    otro justo cuando ya se ha descargado el activo.
+    """
+    free: int | None = None
+    for path in paths:
+        value = _free_bytes(path)
+        if value is None:
+            return None
+        free = value if free is None else min(free, value)
+    return free
 
 
 def acquire(
@@ -315,7 +354,8 @@ def _acquire_one(    need: Any,
 
     for attempt in range(1, max_attempts + 1):
         if guard_enabled:
-            free = _free_bytes(stage)
+            # Staging y destino: pueden estar en filesystems distintos.
+            free = _free_bytes_for([stage, dest.parent])
             if free is None:
                 return AcquiredEntry(
                     filename=need.filename,
@@ -376,7 +416,7 @@ def _acquire_one(    need: Any,
                     error=f"integridad no verificada: {verified}",
                 )
             dest.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(staged, dest)
+            _move(staged, dest)
             if progress:
                 progress(need.filename, "downloaded")
             return AcquiredEntry(
