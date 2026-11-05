@@ -6,13 +6,22 @@
   "overall": "IN_PROGRESS",
   "updated_utc": "2026-11-05T08:20:00Z",
   "merged": {
-    "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71)", "W04": "#69", "W07": "#70"
+    "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71)", "W04": "#69", "W05": "#72", "W07": "#70"
+  },
+  "candidate_image": {
+    "main_sha": "d4fe7dddc97d43ba83352f77deb8deb5ea692c83",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-d4fe7dd",
+    "latest_manifest_digest": "sha256:1b7c5209c074db402041c9f9b5c1e89af0f338625e61bc4a00378506be665a54",
+    "promoted_to_latest": true,
+    "build_run": "41982126318",
+    "smoke": "unit + full-stack E2E (nginx+status+portal+supervisor+SIGTERM) + MODEL_PROFILE=studio E2E, verde",
+    "note": "Imagen candidata reproducible con digest real, construida/publicada por el workflow GHCR con W00-W05+W07 integrados. Base para la validacion GPU (W26), NO es Ultra validada."
   },
   "work_items": {
     "W05": {
       "title": "Archivo semantico e ingesta de medios",
-      "status": "in_review",
-      "pr": "feat/ultra-w05-media-archive",
+      "status": "merged",
+      "pr": "#72",
       "delivered": ["ingest.py: orquestador de ingesta tolerante a fallos - dedup por sha256, clasificacion por tipo, corruptos/no-soportados aislados sin romper el lote, segmentos con evidencia (asr/keyframe/clip/ocr), transforms declarados (rotacion/VFR), backpressure. Sin pesos -> pending_weights honesto (no embedding inventado)"],
       "tests": "test_ingest_archive.py 8 passed (fixture mixto 97 assets con dups+corrupto, A08)",
       "pending_integration": "enganchar a perception/asr backends reales (extraccion semantica con pesos); exponer en API/agente",
