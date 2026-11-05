@@ -74,15 +74,26 @@ def test_small_budget_picks_the_cheaper_recipe_in_binding() -> None:
 
 
 def test_binds_over_a_real_planned_state() -> None:
-    """Flujo completo: plan_production (stub) + bind_recipes asigna recetas."""
+    """Flujo completo: plan_production (stub) + bind_recipes.
+
+    Invariante real (robusto al cambio del planner): tras el binding, TODA capa
+    de generación tiene una plantilla ejecutable — ya sea porque el planner se la
+    dio (p. ej. el atlas fija wan_i2v cuando hay contexto geográfico) o porque
+    bind_recipes le asignó una receta. No se depende de que el stub deje las
+    capas sin plantilla (eso varía según el planner).
+    """
     state = ProductionState(idea="un dron sobrevuela una ciudad costera", cost_cap_usd=1.0)
-    plan_production(state)  # stub planner: crea shots con capas gen sin plantilla
-    # Antes del binding, las capas gen pueden no tener plantilla ejecutable.
-    summary = bind_recipes(state, vram_budget_mb=VRAM_96)
-    # Al menos una capa de generación quedó enlazada a una receta real.
-    assert summary["bound"] >= 1
+    plan_production(state)
     gen_layers = [
         ly for sh in state.all_shots() for ly in sh.layers if ly.kind == "gen"
     ]
-    bound = [ly for ly in gen_layers if ly.params.get("recipe_id")]
-    assert bound, "al menos una capa gen quedó con receta ejecutable"
+    assert gen_layers, "el plan debe tener capas de generación"
+    # Si alguna capa gen no trae plantilla, el binding debe dársela.
+    unbound_before = [ly for ly in gen_layers if not ly.template_id]
+    summary = bind_recipes(state, vram_budget_mb=VRAM_96)
+    # bound = exactamente las que estaban sin plantilla y sí caben.
+    assert summary["bound"] == len(unbound_before) - summary["unresolved"]
+    # Invariante: toda capa gen queda ejecutable (plantilla por planner o binding),
+    # salvo las que ninguna receta pudo resolver (marcadas, no inventadas).
+    for ly in gen_layers:
+        assert ly.template_id or "recipe_unresolved" in ly.params
