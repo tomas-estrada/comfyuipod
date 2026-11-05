@@ -507,8 +507,13 @@ def run_fixture_self_test() -> int:
 MANIFESTS = ("config/models-studio.json", "config/models-core.json")
 
 
-def _validate_one(path: Path, *, offline: bool, workers: int) -> int:
+def _validate_one(path: Path, *, offline: bool, workers: int, optional: bool = False) -> int:
     if not path.is_file():
+        if optional:
+            # `--all` valida lo que hay en el arbol: un manifiesto que aún no
+            # existe en esta rama se salta de forma visible, no en silencio.
+            print(f"[SKIP] {path} no está en este árbol")
+            return 0
         print(f"ERROR: No existe el manifiesto en {path}", file=sys.stderr)
         return 1
 
@@ -543,7 +548,9 @@ def _validate_one(path: Path, *, offline: bool, workers: int) -> int:
 def _validate_all(args: argparse.Namespace) -> int:
     status = 0
     for name in MANIFESTS:
-        status |= _validate_one(Path(name), offline=args.offline, workers=args.workers)
+        status |= _validate_one(
+            Path(name), offline=args.offline, workers=args.workers, optional=True
+        )
     return 1 if status else 0
 
 
