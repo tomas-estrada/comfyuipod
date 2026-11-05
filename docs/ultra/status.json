@@ -6,18 +6,18 @@
   "overall": "IN_PROGRESS",
   "updated_utc": "2026-11-05T08:20:00Z",
   "merged": {
-    "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71)", "W04": "#69", "W05": "#72", "W07": "#70"
+    "W00": "done", "W01": "#65", "W02": "#66,#67", "W03": "#68 (+fix #71)", "W04": "#69", "W05": "#72", "W07": "#70", "W08": "#74,#76", "W09_atlas": "#63 (+fix #78)"
   },
   "candidate_image": {
-    "main_sha": "3653e0f",
-    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-3653e0f",
-    "latest_manifest_digest": "sha256:c542aaefdb3471558a05dd0d78c3edd59833764c5b030bfea59c9553080e95fe",
+    "main_sha": "1cbfb48",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-1cbfb48",
+    "latest_manifest_digest": "sha256:6d0d84e06af370b9ebfc7a103ca6e243a62f743fba842428d71ecda2c7cd1ebf",
     "promoted_to_latest": true,
-    "build_run": "41985962923",
-    "smoke": "unit + full-stack E2E (nginx+status+portal+supervisor+SIGTERM) + MODEL_PROFILE=studio E2E, verde (16m23s)",
-    "contains": "W00-W05 + W07 + W08 + enganche lease<->executor + planner->receta",
-    "previous": "sha-d4fe7dd / sha256:1b7c5209... (build 41982126318)",
-    "note": "Imagen candidata reproducible con digest real, construida/publicada por el workflow GHCR. Base para la validacion GPU (W26), NO es Ultra validada."
+    "build_run": "41991452471",
+    "smoke": "unit + full-stack E2E + MODEL_PROFILE=studio E2E, verde (16m31s)",
+    "contains": "W00-W05 + W07 + W08 + W09 ATLAS OFFLINE (1230 imgs georreferenciadas + atribuciones/hashes dentro de la imagen) + enganche lease<->executor + planner->receta",
+    "previous": "sha-3653e0f / sha256:c542aaef... (sin atlas)",
+    "note": "Imagen candidata reproducible con digest real y ATLAS OFFLINE fisicamente incluido (requisito del plan). Base para validacion GPU (W26), NO es Ultra validada."
   },
   "work_items": {
     "W05": {
