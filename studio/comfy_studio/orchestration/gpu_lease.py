@@ -190,7 +190,9 @@ class GpuLease:
             except (OSError, ValueError):
                 current = 0
         nxt = current + 1
-        tmp = self._token_file.with_suffix(".seq.tmp")
+        # tmp único por proceso: aunque hoy solo el dueño del lock llama aquí,
+        # un nombre por-PID evita que dos escrituras colisionen en el replace.
+        tmp = self._token_file.with_suffix(f".seq.{self._pid}.tmp")
         tmp.write_text(str(nxt), encoding="utf-8")
         os.replace(tmp, self._token_file)
         return nxt
@@ -237,32 +239,39 @@ class GpuLease:
             # Owner muerto: se recupera el lock para reasignarlo.
             self._lock_file.unlink(missing_ok=True)
 
-        token = self._next_token()
-        grant = LeaseGrant(
-            owner=owner,
-            token=token,
-            pid=self._pid,
-            engine=engine,
-            vram_mb=vram_mb,
-            ram_mb=ram_mb,
-            acquired_at=self._now(),
-        )
-        payload = json.dumps(grant.to_public_dict(), ensure_ascii=False)
-        # Creación atómica: si otro proceso ganó la carrera, O_EXCL falla.
-        tmp = self._lock_dir / f".heavy.{self._pid}.{token}.tmp"
-        tmp.write_text(payload, encoding="utf-8")
+        # EL LOCK SE GANA PRIMERO. `O_EXCL` es el único punto de serialización
+        # entre procesos: exactamente uno crea el fichero. Generar el token o
+        # escribir el payload ANTES del lock abría una carrera (dos procesos
+        # avanzaban en paralelo y `_next_token` chocaba con FileNotFoundError al
+        # renombrar su tmp). Por eso: primero `O_EXCL`; solo el ganador sigue.
         try:
-            # O_EXCL garantiza que solo un proceso crea el lock definitivo.
             fd = os.open(str(self._lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            tmp.unlink(missing_ok=True)
             raise LeaseUnavailable("GPU tomada en carrera por otro proceso") from None
+
+        # A partir de aquí este proceso es el ÚNICO dueño del lock: puede generar
+        # el token y escribir el payload sin competir con nadie.
         try:
+            token = self._next_token()
+            grant = LeaseGrant(
+                owner=owner,
+                token=token,
+                pid=self._pid,
+                engine=engine,
+                vram_mb=vram_mb,
+                ram_mb=ram_mb,
+                acquired_at=self._now(),
+            )
+            payload = json.dumps(grant.to_public_dict(), ensure_ascii=False)
             os.write(fd, payload.encode("utf-8"))
             os.fsync(fd)
-        finally:
+        except BaseException:
+            # Si algo falla tras ganar el lock, no dejarlo tomado a medias.
             os.close(fd)
-        tmp.unlink(missing_ok=True)
+            self._lock_file.unlink(missing_ok=True)
+            raise
+        else:
+            os.close(fd)
         return grant
 
     def release(
