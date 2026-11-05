@@ -2505,7 +2505,10 @@
             }
         } catch (err) { /* atlas no disponible: se muestra en la lista */ }
         try {
-            const sel = await apiFetch("/studio/api/atlas/selection");
+            const pid = state.activeProjectId
+                ? "?project_id=" + encodeURIComponent(state.activeProjectId)
+                : "";
+            const sel = await apiFetch("/studio/api/atlas/selection" + pid);
             const badge = document.getElementById("atlas-selection-badge");
             if (badge && sel && sel.place_id) {
                 badge.hidden = false;
@@ -2611,7 +2614,11 @@
             const res = await apiFetch("/studio/api/atlas/select-view", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ place_id: placeId, view_id: viewId }),
+                body: JSON.stringify({
+                    place_id: placeId,
+                    view_id: viewId,
+                    project_id: state.activeProjectId || undefined,
+                }),
             });
             if (badge) {
                 badge.hidden = false;

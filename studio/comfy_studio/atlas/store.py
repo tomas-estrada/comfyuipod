@@ -263,8 +263,8 @@ class AtlasStore:
                        native_width, native_height, bytes, mime, resolution_class,
                        derived_from_url, gps_lat, gps_lon,
                        heading_deg, intrinsics, environment, description, quality, usable,
-                       reject_reason, phash)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       reject_reason, content_class, phash)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(ref_id) DO UPDATE SET
                        place_id=excluded.place_id, title=excluded.title,
                        file_path=excluded.file_path, sha256=excluded.sha256,
@@ -282,7 +282,7 @@ class AtlasStore:
                        intrinsics=excluded.intrinsics, environment=excluded.environment,
                        description=excluded.description, quality=excluded.quality,
                        usable=excluded.usable, reject_reason=excluded.reject_reason,
-                       phash=excluded.phash""",
+                       content_class=excluded.content_class, phash=excluded.phash""",
                 (
                     ref.ref_id,
                     ref.place_id,
@@ -318,6 +318,7 @@ class AtlasStore:
                     ref.quality,
                     1 if ref.usable else 0,
                     ref.reject_reason,
+                    ref.content_class,
                     ref.phash,
                 ),
             )
@@ -524,6 +525,13 @@ class AtlasStore:
             )
             self._commit()
             return sc
+
+    def all_scenarios(self, limit: int = 10000) -> list[Scenario]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM scenarios ORDER BY created_ts LIMIT ?", (limit,)
+            ).fetchall()
+            return [_row_to_scenario(r) for r in rows]
 
     def scenarios_for_place(self, place_id: str) -> list[Scenario]:
         with self._lock:
@@ -882,6 +890,7 @@ def _row_to_reference(row: sqlite3.Row) -> Reference:
         quality=row["quality"],
         usable=bool(row["usable"]),
         reject_reason=row["reject_reason"],
+        content_class=row["content_class"] if "content_class" in row.keys() else "pendiente",
         phash=row["phash"],
     )
 

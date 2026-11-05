@@ -1,0 +1,11 @@
+Referencia: Parque Don Matías - panoramio.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Parque_Don_Matías_-_panoramio.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/e/e4/Parque_Don_Mat%C3%ADas_-_panoramio.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Luis Agudelo
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: Taken on 10 April 2011 (captured)
+Subida: 2016-12-12T15:11:03Z
+sha256 enviado: 149f32c2b180d83a32f7df2103ac9590ae5ae0d15c87700910b58edd3dcafa9f
+sha1 original: fac0f9dbb3411cf777c4a8984e0c481153f7c776
+Original: 2592x1944; enviado: 2048x1536 (derived_downscale)
+Atribución: Luis Agudelo — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:Parque_Don_Matías_-_panoramio.jpg

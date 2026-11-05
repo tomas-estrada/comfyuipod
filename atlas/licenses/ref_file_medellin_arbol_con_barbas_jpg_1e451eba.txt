@@ -1,0 +1,11 @@
+Referencia: Medellín árbol con barbas.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Medellín_árbol_con_barbas.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e6/Medell%C3%ADn_%C3%A1rbol_con_barbas.jpg/1920px-Medell%C3%ADn_%C3%A1rbol_con_barbas.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Xemenendura
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 28 July 2025 (according to Exif data) (captured)
+Subida: 2025-07-29T02:07:57Z
+sha256 enviado: 04fc154bef7e0abf51e098ddd8673987b72147a448cc32159a819628851d2c36
+sha1 original: 1e451eba4c892a0f81b9f667b0ee6c3fa177716d
+Original: 1920x2560; enviado: 1536x2048 (derived_downscale)
+Atribución: Xemenendura — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Medellín_árbol_con_barbas.jpg

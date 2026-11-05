@@ -73,6 +73,7 @@ def _ref(ref_id: str, place_id: str, lat: float, lon: float, title: str = "Foto"
         gps_lon=lon,
         quality=0.8,
         usable=True,
+        content_class="fondo_urbano",
     )
 
 

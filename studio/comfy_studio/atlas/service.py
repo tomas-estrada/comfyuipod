@@ -36,7 +36,12 @@ from comfy_studio.atlas.models import (
 from comfy_studio.atlas.store import AtlasStore
 
 ATLAS_VERSION = "1.0.0"
-SELECTION_FILE = "selection.json"
+SELECTION_FILE = "selection.json"  # compatibilidad (proyecto default)
+
+
+def _selection_file(project_id: str | None) -> str:
+    pid = (project_id or "default").strip() or "default"
+    return f"selection_{pid}.json"
 
 
 class AtlasUnavailableError(RuntimeError):
@@ -81,22 +86,33 @@ class AtlasService:
 
     # -- selección activa (estado del agente, recuperable) ---------------------
 
-    def get_selection(self) -> dict[str, Any]:
-        path = self.root / SELECTION_FILE
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
+    def get_selection(self, project_id: str | None = None) -> dict[str, Any]:
+        # primero la selección del proyecto; si no hay, la global por compatibilidad
+        for fname in (_selection_file(project_id), SELECTION_FILE):
+            path = self.root / fname
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if data:
+                    data["selection_file"] = fname
+                    return data
+            except (OSError, json.JSONDecodeError):
+                continue
+        return {}
 
-    def set_selection(self, place_id: str, view_id: str, *, note: str = "") -> dict[str, Any]:
+    def set_selection(
+        self, place_id: str, view_id: str, *, note: str = "", project_id: str | None = None
+    ) -> dict[str, Any]:
+        """Guarda la vista activa POR PROYECTO (no contamina otras producciones)."""
         payload = {
             "place_id": place_id,
             "view_id": view_id,
             "note": note,
+            "project_id": (project_id or "default").strip() or "default",
             "atlas_version": self.atlas_version(),
             "updated_ts": time.time(),
         }
-        path = self.root / SELECTION_FILE
+        fname = _selection_file(project_id)
+        path = self.root / fname
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
@@ -264,7 +280,12 @@ class AtlasService:
         out = []
         for v in self.store.views_for_place(place_id):
             ref = self.store.get_reference(v.ref_id)
-            if ref is not None and ref.usable and v.usable and ref.place_id == v.place_id:
+            if (
+                ref is not None and v.usable and ref.place_id == v.place_id
+                and ref.usable
+                and ref.content_class == "fondo_urbano"
+                and str(ref.date_reliability) != "historical"
+            ):
                 out.append(v)
         return out
 
@@ -422,6 +443,7 @@ class AtlasService:
         heading_deg: float | None = None,
         prompt: str = "",
         verify_file: bool = True,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         """Prepara un plano: lugar + vista + archivo local verificado + contexto.
 
@@ -447,14 +469,20 @@ class AtlasService:
             else:
                 return {"status": "place_not_found", "query": place}
         else:
-            sel = self.get_selection()
+            sel = self.get_selection(project_id)
             if sel.get("place_id") and store.get_place(sel["place_id"]):
                 resolved_place = self.place_detail(sel["place_id"])
                 limitations.append({"code": "using_active_selection",
                                     "detail": "Sin ubicación en el prompt; se usa la vista "
                                               "seleccionada en el panel"})
             else:
-                best = self.search_places(min_views=1, limit=1)
+                # sin ubicación ni fondo: elegir escena COMPATIBLE con la tarea
+                wanted_kinds = _task_kinds(prompt)
+                best = self.search_places(min_views=1, limit=200)
+                if wanted_kinds:
+                    compat = [p for p in best if p["kind"] in wanted_kinds]
+                    if compat:
+                        best = compat
                 if not best:
                     return {"status": "no_places_available"}
                 best.sort(key=lambda p: p["views_usable"], reverse=True)
@@ -542,10 +570,77 @@ class AtlasService:
             "prompt": prompt,
             "limitations": limitations,
         }
-        self.set_selection(pid, chosen.view_id, note=prompt[:200])
+        self.set_selection(pid, chosen.view_id, note=prompt[:200], project_id=project_id)
         return shot
 
     # -- verificación / stats / manifest / mapa --------------------------------------
+
+    def compose_over_background(
+        self,
+        *,
+        background_abs: str,
+        out_path: str,
+        foreground_abs: str | None = None,
+        scale: float = 0.35,
+        position: str = "bottom-center",
+    ) -> dict[str, Any]:
+        """Composición CPU real sobre la fotografía del atlas.
+
+        Pega un asset con canal alfa sobre el fondo observado y guarda el
+        resultado; los píxeles FUERA de la región del asset quedan idénticos al
+        fondo (se comprueba). Sin GPU ni red. Devuelve rutas y hashes.
+        """
+        from comfy_studio.atlas.store import sha256_file
+
+        try:
+            from PIL import Image  # type: ignore
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("Pillow no disponible para composición CPU") from exc
+        bg_path = Path(background_abs)
+        if not bg_path.is_file():
+            raise FileNotFoundError(f"fondo ausente: {background_abs}")
+        bg = Image.open(bg_path).convert("RGB")
+        W, H = bg.size
+        fg_region = None
+        if foreground_abs:
+            fg_path = Path(foreground_abs)
+            if not fg_path.is_file():
+                raise FileNotFoundError(f"asset de primer plano ausente: {foreground_abs}")
+            fg = Image.open(fg_path).convert("RGBA")
+            target_w = max(8, int(W * scale))
+            ratio = target_w / fg.width
+            fg = fg.resize((target_w, max(8, int(fg.height * ratio))), Image.LANCZOS)
+            if position == "bottom-center":
+                x = (W - fg.width) // 2
+                y = H - fg.height - max(8, int(H * 0.04))
+            elif position == "center":
+                x, y = (W - fg.width) // 2, (H - fg.height) // 2
+            else:
+                x, y = 8, H - fg.height - 8
+            bg.paste(fg, (x, y), fg)
+            fg_region = (x, y, x + fg.width, y + fg.height)
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fmt = "PNG" if (foreground_abs and str(out).lower().endswith(".png")) else "JPEG"
+        bg.save(out, fmt, quality=92) if fmt == "JPEG" else bg.save(out, fmt)
+        # comprobación de preservación: fuera de la región del asset, píxeles iguales
+        preserved = True
+        if fg_region:
+            check = Image.open(out).convert("RGB")
+            x0, y0, x1, y1 = fg_region
+            top = check.crop((0, 0, W, max(1, y0)))
+            orig_top = Image.open(bg_path).convert("RGB").crop((0, 0, W, max(1, y0)))
+            preserved = list(top.getdata()) == list(orig_top.getdata())
+        return {
+            "out_path": str(out),
+            "out_sha256": sha256_file(out),
+            "background_path": str(bg_path),
+            "background_sha256": sha256_file(bg_path),
+            "foreground_path": foreground_abs,
+            "foreground_region": list(fg_region) if fg_region else None,
+            "background_pixels_preserved_outside_foreground": preserved,
+            "size": [W, H],
+        }
 
     def verify(self, *, require_files: bool = True, check_hashes: bool = True) -> dict[str, Any]:
         store = self.store
@@ -680,6 +775,33 @@ class AtlasService:
         )
         parts.append("</svg>")
         return "".join(parts)
+
+
+#: mapeo tarea -> entornos compatibles (la elección automática considera la tarea)
+_TASK_KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("carro", ("road_corridor", "bridge", "intersection", "street")),
+    ("vía", ("road_corridor", "bridge", "intersection", "street")),
+    ("avenida", ("road_corridor", "street")),
+    ("puente", ("bridge",)),
+    ("mirador", ("mirador",)),
+    ("vista", ("mirador", "park")),
+    ("parque", ("park",)),
+    ("río", ("river",)),
+    ("rio", ("river",)),
+    ("plaza", ("plaza",)),
+)
+
+
+def _task_kinds(prompt: str) -> tuple[str, ...]:
+    """Entornos compatibles con la tarea descrita en el prompt."""
+    norm = normalize_text(prompt)
+    out: list[str] = []
+    for word, kinds in _TASK_KINDS:
+        if word in norm.split() or word in norm:
+            for k in kinds:
+                if k not in out:
+                    out.append(k)
+    return tuple(out)
 
 
 def load_service(root: Path | str | None = None) -> AtlasService:

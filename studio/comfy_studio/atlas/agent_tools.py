@@ -12,6 +12,7 @@ dice un lugar, se respeta; si hay ambigüedad se devuelve la lista de candidatos
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -82,8 +83,119 @@ class AtlasPrepareShotArgs(BaseModel):
     prompt: str = Field(default="", description="prompt del usuario para este plano")
 
 
+class AtlasComposeShotArgs(BaseModel):
+    place: str | None = Field(
+        default=None, description="lugar explícito (prevalece sobre la selección)"
+    )
+    place_id: str | None = None
+    view_id: str | None = None
+    prompt: str = Field(default="", description="prompt del plano (queda en la producción)")
+    foreground_asset_id: str | None = Field(
+        default=None, description="asset de proyecto con alfa para componer sobre el fondo"
+    )
+    scale: float = Field(default=0.35, gt=0.0, le=1.0)
+
+
 class AtlasVerifyArgs(BaseModel):
     quick: bool = Field(default=False, description="true = sin recomputar hashes sha256")
+
+
+async def handle_atlas_compose_shot(args: AtlasComposeShotArgs, context: Any) -> dict[str, Any]:
+    """Composición CPU real sobre una fotografía del atlas (preserva el fondo).
+
+    prompt -> lugar -> vista -> fondo local verificado (sha256) -> composición
+    PIL con alfa -> archivo de salida en outputs del proyecto + producción
+    registrada en el atlas con procedencia (ref, hash, licencia).
+    """
+    try:
+        svc = _svc()
+        if not svc.available():
+            return {"ok": False, "error": "atlas no disponible"}
+        shot = svc.prepare_shot(
+            place=args.place,
+            place_id=args.place_id,
+            view_id=args.view_id,
+            prompt=args.prompt,
+            verify_file=True,
+        )
+        if shot.get("status") != "ok":
+            return {"ok": False, **shot}
+        project_id = getattr(context, "project_id", "default") or "default"
+        store = getattr(context, "store", None)
+        cfg = getattr(context, "config", None)
+        fg_path = None
+        if args.foreground_asset_id and store is not None:
+            asset = store.get_asset(project_id, args.foreground_asset_id)
+            fg_path = store.get_asset_path(project_id, args.foreground_asset_id)
+            if asset is None or fg_path is None:
+                return {"ok": False, "status": "foreground_missing",
+                        "error": f"asset {args.foreground_asset_id!r} no existe en el proyecto"}
+        data_dir = Path(cfg.studio_data_dir) if cfg is not None else svc.root
+        out_path = (
+            data_dir / "projects" / project_id / "outputs"
+            / f"comp_{shot['ref_id'][:24]}.png"
+        )
+        comp = svc.compose_over_background(
+            background_abs=shot["background_abs"],
+            out_path=str(out_path),
+            foreground_abs=fg_path,
+            scale=args.scale,
+        )
+        asset = None
+        if store is not None:
+            out_bytes = Path(comp["out_path"]).read_bytes()
+            asset = store.save_upload(
+                project_id,
+                filename=Path(comp["out_path"]).name,
+                content_type="image/png",
+                data=out_bytes,
+                max_upload_bytes=512 * 1024 * 1024,
+                category="outputs",
+                metadata={
+                    "atlas": {
+                        "place_id": shot["place_id"],
+                        "view_id": shot["view_id"],
+                        "ref_id": shot["ref_id"],
+                        "background_sha256": shot["reference"]["sha256"],
+                        "license": shot["reference"]["license"],
+                        "attribution": shot["reference"]["attribution"],
+                        "atlas_version": shot["atlas_version"],
+                    },
+                    "composition": comp,
+                },
+            )
+        # registrar la producción en el atlas (recuperable)
+        from comfy_studio.atlas.models import ProductionRecord
+
+        svc.store.record_production(ProductionRecord(
+            prod_id=f"prod_comp_{shot['ref_id'][:16]}",
+            atlas_version=shot["atlas_version"],
+            place_id=shot["place_id"],
+            view_id=shot["view_id"],
+            camera=shot["camera"],
+            params={
+                "prompt": args.prompt[:500],
+                "foreground_asset_id": args.foreground_asset_id,
+                "mode": "compose_over_photo_cpu",
+            },
+            result={"output_asset_id": (asset or {}).get("id"), "composition": comp},
+        ))
+        return {
+            "ok": True,
+            "status": "ok",
+            "place_id": shot["place_id"],
+            "view_id": shot["view_id"],
+            "ref_id": shot["ref_id"],
+            "background_sha256": shot["reference"]["sha256"],
+            "license": shot["reference"]["license"],
+            "attribution": shot["reference"]["attribution"],
+            "output_asset_id": (asset or {}).get("id"),
+            "composition": comp,
+        }
+    except AtlasUnavailableError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return _err(exc)
 
 
 def _err(exc: Exception) -> dict[str, Any]:
@@ -251,6 +363,16 @@ ATLAS_TOOL_SPECS: tuple[tuple[str, str, type[BaseModel], Any, bool], ...] = (
         "background_path + contexto de cámara + atribución. Registra la selección activa.",
         AtlasPrepareShotArgs,
         handle_atlas_prepare_shot,
+        False,
+    ),
+    (
+        "atlas_compose_shot",
+        "Composición CPU REAL sobre una fotografía del atlas: resuelve lugar/vista, "
+        "verifica el fondo (sha256), pega un asset con alfa (opcional) preservando los "
+        "píxeles del fondo fuera de la región del asset, guarda la salida en outputs "
+        "del proyecto y registra la producción con procedencia en el atlas.",
+        AtlasComposeShotArgs,
+        handle_atlas_compose_shot,
         False,
     ),
     (

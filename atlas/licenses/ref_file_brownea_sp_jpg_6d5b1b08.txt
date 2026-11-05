@@ -1,0 +1,11 @@
+Referencia: Brownea sp.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Brownea_sp.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/3/31/Brownea_sp.jpg/1920px-Brownea_sp.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Nesper94
+Licencia: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0)
+Captura: 2024-06-01 11:14:46 (captured)
+Subida: 2024-06-15T04:14:02Z
+sha256 enviado: 380bb6bd691b39cbae9fb8e40d34e90e6c7a860665d6afb7c9233f41e52a3891
+sha1 original: 6d5b1b082e769c97cb64c827601f34fb3f83b146
+Original: 1920x2560; enviado: 1536x2048 (derived_downscale)
+Atribución: Nesper94 — CC BY 4.0 — https://commons.wikimedia.org/wiki/File:Brownea_sp.jpg

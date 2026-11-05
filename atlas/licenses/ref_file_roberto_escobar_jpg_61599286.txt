@@ -1,0 +1,11 @@
+Referencia: Roberto Escobar.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Roberto_Escobar.jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/4/49/Roberto_Escobar.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Reubenzadeh
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 2018-11-11 12:44:02 (captured)
+Subida: 2018-11-17T23:54:27Z
+sha256 enviado: f0228cd34987b59152965d8585cea93152e682e30430bfb47cf33ea23c2c18cd
+sha1 original: 615992860aabe79aa19b7d9fe937f3f95529a6d7
+Original: 2560x1440; enviado: 2048x1152 (derived_downscale)
+Atribución: Reubenzadeh — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Roberto_Escobar.jpg

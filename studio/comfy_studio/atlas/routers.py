@@ -154,6 +154,7 @@ def register_routes(app: FastAPI) -> None:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         svc = _atlas(request)
+        project_id = str(payload.get("project_id") or "") or None
         place_id = str(payload.get("place_id") or "")
         if not place_id or svc.store.get_place(place_id) is None:
             raise HTTPException(status_code=404, detail="place_id desconocido")
@@ -168,13 +169,16 @@ def register_routes(app: FastAPI) -> None:
         )
         if sel.get("status") != "ok":
             return sel
-        svc.set_selection(place_id, sel["view"]["view_id"], note=str(payload.get("note") or ""))
+        svc.set_selection(place_id, sel["view"]["view_id"], note=str(payload.get("note") or ""),
+                          project_id=project_id)
         return sel
 
     @app.get("/studio/api/atlas/selection")
-    async def atlas_selection(request: Request) -> dict[str, Any]:
+    async def atlas_selection(
+        request: Request, project_id: str | None = Query(default=None)
+    ) -> dict[str, Any]:
         svc = _atlas(request)
-        return svc.get_selection()
+        return svc.get_selection(project_id)
 
     @app.get("/studio/api/atlas/references/{ref_id}")
     async def atlas_reference(request: Request, ref_id: str) -> dict[str, Any]:

@@ -196,6 +196,9 @@ class Reference:
     quality: float = 0.0
     usable: bool = True
     reject_reason: str | None = None
+    #: clase de contenido: fondo_urbano | historico | interior | detalle_macro |
+    #: comida_objeto | retrato_persona | irrelevante | territorialmente_incompatible | pendiente
+    content_class: str = "pendiente"
     phash: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -234,6 +237,7 @@ class Reference:
             "quality": self.quality,
             "usable": self.usable,
             "reject_reason": self.reject_reason,
+            "content_class": self.content_class,
             "phash": self.phash,
         }
 
@@ -274,6 +278,7 @@ class Reference:
             quality=float(d.get("quality", 0.0)),
             usable=bool(d.get("usable", True)),
             reject_reason=d.get("reject_reason"),
+            content_class=str(d.get("content_class", "pendiente")),
             phash=d.get("phash"),
         )
 

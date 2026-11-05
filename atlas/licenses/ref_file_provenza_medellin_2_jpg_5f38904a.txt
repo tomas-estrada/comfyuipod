@@ -1,0 +1,11 @@
+Referencia: Provenza, Medellín 2.jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Provenza,_Medellín_2.jpg
+Archivo original: https://thumb.wikimedia.org/wikipedia/commons/thumb/1/18/Provenza%2C_Medell%C3%ADn_2.jpg/1920px-Provenza%2C_Medell%C3%ADn_2.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail
+Autor: Xemenendura
+Licencia: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0)
+Captura: 5 August 2025 (according to Exif data) (captured)
+Subida: 2025-08-06T15:26:33Z
+sha256 enviado: a5ef756dc59e7b5760095d50c4144eea3e557bad299423faf7492c6bfad8c039
+sha1 original: 5f38904a5ef9396a57ada67f1d6814a4a0616421
+Original: 1920x2560; enviado: 1536x2048 (derived_downscale)
+Atribución: Xemenendura — CC BY-SA 4.0 — https://commons.wikimedia.org/wiki/File:Provenza,_Medellín_2.jpg

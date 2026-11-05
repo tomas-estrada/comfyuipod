@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS atlas_refs (
     quality REAL NOT NULL DEFAULT 0.0,
     usable INTEGER NOT NULL DEFAULT 1,
     reject_reason TEXT,
+    content_class TEXT NOT NULL DEFAULT 'pendiente',
     phash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_refs_place ON atlas_refs(place_id);
@@ -221,6 +222,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE atlas_refs ADD COLUMN native_width INTEGER")
         if "native_height" not in cols:
             conn.execute("ALTER TABLE atlas_refs ADD COLUMN native_height INTEGER")
+        if "content_class" not in cols:
+            conn.execute(
+                "ALTER TABLE atlas_refs ADD COLUMN content_class TEXT NOT NULL DEFAULT 'pendiente'"
+            )
         conn.execute(
             "UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
         )

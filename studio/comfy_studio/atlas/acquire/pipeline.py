@@ -89,6 +89,12 @@ _REJECT_TITLE = re.compile(
 _HISTORICAL_YEAR = 2005
 
 
+def _dummy_ref():
+    from comfy_studio.atlas.models import Reference
+
+    return Reference(ref_id="", title="", file_path="", sha256="", source="")
+
+
 def _env_from_kind(kind: str) -> Environment:
     try:
         return Environment(kind)
@@ -1014,6 +1020,120 @@ class AcquisitionPipeline:
         self._recompute_coverage()
         return stats
 
+    def build_scenarios(self) -> dict[str, int]:
+        """Registra escenarios con identidad estable, versión, refs, capacidades.
+
+        - photo_bg (verificado): la fotografía existe en disco con hash; sirve
+          para composición que preserva sus píxeles. Capacidades reales:
+          preserve_background_pixels=True, translación libre=False,
+          rotación en el punto=False, profundidad desde foto única=False.
+        - multiview (borrador/candidato): ≥5 vistas utilizables en ≤200 m con GPS
+          (solapamiento comprobable por proximidad). NUNCA se declara
+          reconstrucción validada: eso requiere COLMAP/nerfstudio en GPU (fase
+          posterior).
+        """
+        from comfy_studio.atlas.models import Scenario, ScenarioKind, ScenarioStatus
+
+        store = self.svc.store
+        counts = {"photo_bg": 0, "multiview": 0}
+        with store.batch():
+            for p in store.list_places(limit=100000):
+                views = [
+                    v for v in store.views_for_place(p.place_id)
+                    if v.usable and v.lat is not None and v.lon is not None
+                    and (store.get_reference(v.ref_id) or _dummy_ref()).usable
+                ]
+                if not views:
+                    continue
+                refs = []
+                for v in views:
+                    r = store.get_reference(v.ref_id)
+                    if r and r.usable and r.content_class == "fondo_urbano":
+                        refs.append(r.ref_id)
+                if not refs:
+                    continue
+                scn_id = f"scn_{p.place_id}_v1"
+                store.upsert_scenario(Scenario(
+                    scenario_id=scn_id,
+                    place_id=p.place_id,
+                    kind=ScenarioKind.PHOTO_BG,
+                    version=1,
+                    refs=refs,
+                    transforms={
+                        "crs": "WGS84",
+                        "local_meters": "equirectangular en el origen del lugar",
+                    },
+                    capabilities={
+                        "preserve_background_pixels": True,
+                        "free_camera_translation": False,
+                        "rotate_at_capture_point": False,
+                        "depth_from_single_photo": False,
+                        "source": "fotografía real georreferenciada",
+                    },
+                    status=ScenarioStatus.VERIFIED,
+                ))
+                counts["photo_bg"] += 1
+                # multivista candidata: cluster GPS denso (solapamiento probable)
+                if len(refs) >= 5:
+                    lats = [v.lat for v in views]
+                    lons = [v.lon for v in views]
+                    spread = max(
+                        haversine_m(min(lats), min(lons), max(lats), max(lons)), 1.0
+                    )
+                    if spread <= 200:
+                        store.upsert_scenario(Scenario(
+                            scenario_id=f"scn_{p.place_id}_mv_v1",
+                            place_id=p.place_id,
+                            kind=ScenarioKind.MULTIVIEW,
+                            version=1,
+                            refs=refs,
+                            transforms={"crs": "WGS84", "local_meters": "equirectangular"},
+                            capabilities={
+                                "colmap_ready": True,
+                                "overlap_evidence": (
+                                    f"{len(refs)} vistas GPS en ≤{spread:.0f} m"
+                                ),
+                                "reconstruction_validated": False,
+                                "note": (
+                                    "dataset candidato; reconstrucción GPU pendiente "
+                                    "(COLMAP/nerfstudio)"
+                                ),
+                            },
+                            status=ScenarioStatus.DRAFT,
+                        ))
+                        counts["multiview"] += 1
+        return counts
+
+
+    def purge_library(self) -> dict[str, int]:
+        """Audita TODAS las referencias adquiridas y clasifica su contenido.
+
+       Sólo `fondo_urbano` es usable como fondo de plano. Las demás quedan
+        registradas con su clase (historico, interior, detalle_macro,
+        comida_objeto, retrato_persona, irrelevante, territorialmente_incompatible)
+        y usable=0. Devuelve el recuento por clase.
+        """
+        store = self.svc.store
+        counts: dict[str, int] = {}
+        with store.batch():
+            for ref in store.all_references(usable_only=False):
+                gps_mun = None
+                if ref.place_id:
+                    pl = store.get_place(ref.place_id)
+                    gps_mun = pl.municipality if pl else None
+                cls = classify_reference(ref.title, ref.description, ref.capture_date, gps_mun)
+                ref.content_class = cls
+                if cls == CLASS_FONDO:
+                    ref.usable = True
+                    ref.reject_reason = None
+                else:
+                    ref.usable = False
+                    ref.reject_reason = f"clase de contenido: {cls}"
+                store.upsert_reference(ref)
+                counts[cls] = counts.get(cls, 0) + 1
+        self._recompute_coverage()
+        return counts
+
     def mark_non_background_refs(self) -> int:
         """Marca como no utilizables como fondo las referencias de primer plano
         (animales, personas, vegetación macro...) ya adquiridas."""
@@ -1123,6 +1243,66 @@ class AcquisitionPipeline:
 
 #: valor cuando el punto queda fuera de todo límite municipal conocido
 MUNICIPALITY_UNKNOWN = "desconocido"
+
+
+#: clases de contenido de una referencia (auditoría de la biblioteca)
+CLASS_FONDO = "fondo_urbano"
+CLASS_HISTORICO = "historico"
+CLASS_INTERIOR = "interior"
+CLASS_MACRO = "detalle_macro"
+CLASS_COMIDA = "comida_objeto"
+CLASS_RETRATO = "retrato_persona"
+CLASS_IRRELEVANTE = "irrelevante"
+CLASS_INCOMPATIBLE = "territorialmente_incompatible"
+CLASS_PENDIENTE = "pendiente"
+
+_CLASS_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
+    (CLASS_MACRO, re.compile(
+        r"abeja|insect|mariposa|butterfly|araña|arania|spider|avispa|hormiga|"
+        r"flor|flores|flower|planta|hoja|leaf|macro|primer plano|detalle de|"
+        r"plumaje|pelaje|ojo de", re.IGNORECASE)),
+    (CLASS_COMIDA, re.compile(
+        r"ajiaco|sancocho|bandeja|plato de|comida|food|meal|arepa|empanada|"
+        r"tamal|mazamorra|postre|dessert|cerveza|coctel|bebida|menaje|cubiertos", re.IGNORECASE)),
+    (CLASS_RETRATO, re.compile(
+        r"persona|hombre|mujer|niño|nino|selfie|retrato|portrait|cara|rostro|"
+        r"familia|grupo de|modelo|figurante", re.IGNORECASE)),
+    (CLASS_INTERIOR, re.compile(
+        r"\binterior\b|\bindoor\b|sala de|oficina|dentro de|habitación|"
+        r"cocina|comedor|baño|bano", re.IGNORECASE)),
+    (CLASS_IRRELEVANTE, re.compile(
+        r"mapa|map\b|plan\b|plano|diagram|diagrama|logo|escudo|bandera|flag|"
+        r"sello|stamp|poster|afiche|moneda|billete|dibujo|drawing|painting|"
+        r"pintura|grabado|engraving|maqueta|render 3d", re.IGNORECASE)),
+)
+
+#: municipios de fuera del Valle de Aburrá que aparecen en títulos (territorialmente
+#: incompatibles aunque tengan GPS dentro del bbox del valle)
+_OTHER_MUNICIPALITIES = (
+    "marinilla", "rionegro", "el carmen de viboral", "el carmen", "guarne",
+    "la ceja", "el retiro", "santuario", "sonson", "abejorral", "caicedo",
+    "ciudad bolivar", "venecia", "fredonia", "amaga", "santa bárbara",
+    "santa barbara", "la unión", "la union", "santafé de antioquia", "san pedro",
+    "copacabana norte", "girardot", "sabaneta antioquia? no",
+)
+
+
+def classify_reference(
+    title: str, description: str | None, capture_date: str | None, gps_municipality: str | None
+) -> str:
+    """Clasifica el contenido real de una referencia (no sólo metadatos GPS/licencia)."""
+    text = f"{title} {description or ''}".lower()
+    for cls, pat in _CLASS_PATTERNS:
+        if pat.search(text):
+            return cls
+    for other in _OTHER_MUNICIPALITIES:
+        other_clean = other.rstrip("? no")
+        if other_clean in text and other_clean != (gps_municipality or "").lower():
+            return CLASS_INCOMPATIBLE
+    m = re.search(r"(\d{4})", capture_date or "")
+    if m and int(m.group(1)) < _HISTORICAL_YEAR:
+        return CLASS_HISTORICO
+    return CLASS_FONDO
 
 
 def _municipality_for(lat: float, lon: float) -> str:

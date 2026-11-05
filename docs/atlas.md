@@ -23,10 +23,12 @@ Mapillary, GeoMedellín ni terceros.
 
 Verificar en vivo: `python -m comfy_studio.atlas stats --root atlas`.
 
-- 620 referencias fotográficas enviadas (de 1201 adquiridas; el resto queda
-  registrado como no enviado por cap de tamaño del repo).
-- ~180 lugares con vistas fotográficas utilizables (GPS verificado); el catálogo
-  registra 10 209 entidades geográficas (OSM) además de los lugares curados.
+- 612 referencias `fondo_urbano` enviadas (de 1203 adquiridas y clasificadas por
+  `content_class`; el resto queda registrado con su clase y usable=0).
+- 152 lugares con vistas fotográficas utilizables; el catálogo registra 10 209
+  entidades geográficas (OSM) además de los lugares curados.
+- 168 escenarios: 152 `photo_bg` verificados + 16 candidatos `multiview` (draft,
+  reconstrucción GPU pendiente).
 - Municipios con cobertura fotográfica: Medellín, Envigado, Sabaneta, Itagüí,
   Bello, Copacabana, Caldas, Girardota, La Estrella.
 - Licencias: CC BY / CC BY-SA (1.0–4.0), CC0, dominio público. Atribuciones en

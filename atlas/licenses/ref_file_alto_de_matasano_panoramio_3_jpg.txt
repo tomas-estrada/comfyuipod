@@ -1,0 +1,11 @@
+Referencia: Alto de Matasano - panoramio (3).jpg
+Fuente: https://commons.wikimedia.org/wiki/File:Alto_de_Matasano_-_panoramio_(3).jpg
+Archivo original: https://upload.wikimedia.org/wikipedia/commons/b/bd/Alto_de_Matasano_-_panoramio_%283%29.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original
+Autor: Luis Agudelo
+Licencia: CC BY 3.0 (https://creativecommons.org/licenses/by/3.0)
+Captura: Taken on 10 April 2011 (captured)
+Subida: 2016-12-12T15:19:04Z
+sha256 enviado: e7160d6d9dfe43b0ddb11890f20fe02aadcafaa5b9034f2b3bfc631ea9be16ca
+sha1 original: 2009c713cb0d601fbbc2280e03798d542cf94a9d
+Original: 2592x1944; enviado: 2048x1536 (derived_downscale)
+Atribución: Luis Agudelo — CC BY 3.0 — https://commons.wikimedia.org/wiki/File:Alto_de_Matasano_-_panoramio_(3).jpg
