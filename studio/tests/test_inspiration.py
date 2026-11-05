@@ -92,3 +92,26 @@ def test_offline_mode_works_on_own_library() -> None:
     assert len([s for s in recipe.steps if s.kind == "shot"]) == 1
     # No requirió ningún conector externo.
     assert a.source == "own_library"
+
+
+def test_beat_interval_s_devuelve_none_con_menos_de_dos_beats() -> None:
+    """Guarda: con 1 beat o 0 beats no hay tempo, devuelve None."""
+    a = ReferenceAnalysis(reference_id="ref", beats=[0.0])
+    assert a.beat_interval_s() is None
+    a.beats = []
+    assert a.beat_interval_s() is None
+
+
+def test_derive_recipe_sin_tempo_no_incluye_beat_sync() -> None:
+    """Sin >=2 beats no hay intervalo, por tanto no hay paso beat_sync."""
+    a = ReferenceAnalysis(
+        reference_id="ref",
+        cuts=[Cut(0.0, 2.0), Cut(2.0, 3.5)],
+        beats=[0.0],  # <2 beats -> beat_interval_s() -> None
+        titles=[],
+        camera_moves=["pan", "static"],
+    )
+    recipe = derive_recipe(a)
+    kinds = [s.kind for s in recipe.steps]
+    assert "beat_sync" not in kinds
+    assert kinds.count("shot") == 2
