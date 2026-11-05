@@ -15,9 +15,16 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("comfy_studio.projects")
-#: Objetivo de hardware de la política (punto 5): «a single consumer GPU with
-#: approximately 32 GB VRAM». Orientativo: la comprobación real es la medición.
-TARGET_VRAM_GB = 32
+#: Compatibilidad: el objetivo por defecto sigue siendo un entero de GB, pero
+#: la arquitectura vigente es una RTX PRO 6000 Blackwell de 96 GB con perfiles de
+#: RAM de 128/256 GB (ver `hardware_profile`). Se mantiene el nombre histórico
+#: porque `assess_vram_fit` lo usa como valor por omisión.
+from comfy_studio.hardware_profile import (  # noqa: E402
+    DEFAULT_PROFILE,
+    HardwareProfile,
+)
+
+TARGET_VRAM_GB = DEFAULT_PROFILE.vram_gb
 
 #: Orden en el que la política dice investigar antes de subir de hardware.
 #: Cada una es específica del modelo: la política prohíbe aplicar flags
@@ -343,28 +350,39 @@ def assess_vram_fit(
     *,
     vram_peak_mb: int | None,
     ram_peak_mb: int | None = None,
-    host_ram_gb: float | None = None,
-    target_vram_gb: float = TARGET_VRAM_GB,
+    profile: HardwareProfile | None = None,
+    target_vram_gb: float | None = None,
 ) -> dict[str, Any]:
-    """¿Cabe la receta medida en el GPU objetivo, y qué probar si no?
+    """¿Cabe la receta medida en el perfil seleccionado, y qué probar si no?
 
     Punto 5: «Before recommending more expensive hardware, investigate supported
-    combinations of…». Devuelve el hueco libre contra el objetivo y, si no cabe,
-    la lista ordenada de optimizaciones que la política mide **antes** de subir
-    de hardware.
+    combinations of…». Compara contra la VRAM **utilizable** del perfil (tras la
+    reserva operativa), no contra los GB del datasheet.
+
+    El perfil se pasa explícitamente: si no se propaga, una receta de 40 GB se
+    marca como «no cabe» en un perfil de 96 GB. `target_vram_gb` queda como
+    override manual para no rompler llamadas antiguas.
 
     No afirma que una optimización funcione: son específicas del modelo y hay que
-    medirlas. Tampoco trata la RAM de host como VRAM.
+    medirlas. La RAM se evalúa aparte (`assess_ram_fit`): no es intercambiable
+    con VRAM.
     """
-    target_mb = int(target_vram_gb * 1024)
+    active = profile or DEFAULT_PROFILE
+    target_gb = (
+        float(target_vram_gb)
+        if target_vram_gb is not None
+        else active.vram_usable_gb
+    )
+    target_mb = int(target_gb * 1024)
     result: dict[str, Any] = {
-        "target_vram_gb": target_vram_gb,
+        "profile": active.name,
+        "target_vram_gb": active.vram_gb,
+        "target_vram_usable_gb": active.vram_usable_gb,
         "target_vram_mb": target_mb,
         "measured": vram_peak_mb is not None,
         "vram_peak_mb": vram_peak_mb,
-        # La RAM de host medida viaja con la receta: la política exige
-        # verificarla en cada oferta y no confundirla con VRAM. El almacén no
-        # sabe cuánta RAM tiene la máquina, así que solo publica el pico medido.
+        # La RAM medida viaja con la receta: hay que verificarla en cada oferta,
+        # pero su veredicto vive en `assess_ram_fit`, no aquí.
         "ram_peak_mb": ram_peak_mb,
         "fits": None,
         "headroom_mb": None,
@@ -386,18 +404,53 @@ def assess_vram_fit(
     # marca como válida sin medirla.
     result["optimisations"] = [dict(o) for o in MEMORY_OPTIMISATIONS]
     result["note"] = (
-        "no cabe en el objetivo; medir estas opciones antes de recomendar "
+        f"no cabe en {active.vram_usable_gb:.0f} GB utilizables de "
+        f"{active.name}; medir estas opciones antes de recomendar "
         "hardware más caro"
     )
-    if ram_peak_mb is not None and host_ram_gb:
-        result["host_ram"] = {
-            "peak_mb": ram_peak_mb,
-            "available_gb": host_ram_gb,
-            "note": (
-                "la RAM de host NO es intercambiable con VRAM; solo sirve para "
-                "offloading, a costa de tiempo"
-            ),
-        }
+    return result
+
+
+def assess_ram_fit(
+    *,
+    ram_peak_mb: int | None,
+    profile: HardwareProfile | None = None,
+    target_ram_gb: float | None = None,
+) -> dict[str, Any]:
+    """Veredicto de RAM de host, separado del de VRAM.
+
+    La política pide «sufficient host RAM for the selected workload» y verificar
+    la RAM real de cada oferta sin inferirla del modelo de GPU. La RAM de host
+    **no** amplía lo que cabe en el GPU: solo permite offloading, a costa de
+    tiempo.
+    """
+    active = profile or DEFAULT_PROFILE
+    target_gb = (
+        float(target_ram_gb) if target_ram_gb is not None else active.ram_usable_gb
+    )
+    target_mb = int(target_gb * 1024)
+    result: dict[str, Any] = {
+        "profile": active.name,
+        "target_ram_gb": active.ram_gb,
+        "target_ram_usable_gb": active.ram_usable_gb,
+        "target_ram_mb": target_mb,
+        "measured": ram_peak_mb is not None,
+        "ram_peak_mb": ram_peak_mb,
+        "fits": None,
+        "headroom_mb": None,
+        "utilisation_pct": None,
+    }
+    if ram_peak_mb is None:
+        result["note"] = "sin medición de RAM todavía; ejecuta una vez para medir"
+        return result
+    result["fits"] = ram_peak_mb <= target_mb
+    result["headroom_mb"] = target_mb - ram_peak_mb
+    result["utilisation_pct"] = round(100.0 * ram_peak_mb / target_mb, 1)
+    if not result["fits"]:
+        result["note"] = (
+            "la RAM de host no basta para esta carga; subir el perfil de RAM "
+            "(128 → 256 GB) o reducir la carga, no la VRAM"
+        )
     return result
 
 
@@ -2208,7 +2261,12 @@ class ProjectStore:
             ).fetchall()
         return [self._row_to_measurement(r) for r in rows]
 
-    def recipe_for_template(self, template_id: str) -> dict[str, Any] | None:
+    def recipe_for_template(
+        self,
+        template_id: str,
+        *,
+        profile: HardwareProfile | None = None,
+    ) -> dict[str, Any] | None:
         """Receta medida de una plantilla: ajustes declarados + resultados medidos.
 
         Es la unidad que la política pide reutilizar en lugar de razonar desde
@@ -2236,8 +2294,14 @@ class ProjectStore:
             "gpu_name": latest.get("gpu_name"),
             "driver": latest.get("driver"),
             "cuda": latest.get("cuda"),
+            # El perfil se propaga: sin él, una receta de 40 GB se marcaría
+            # «no cabe» contra el objetivo por omisión aunque el perfil real
+            # tenga 96 GB. RAM y VRAM se juzgan por separado.
             "vram_fit": assess_vram_fit(
                 vram_peak_mb=max(vram) if vram else None,
+                profile=profile,
+            ),
+            "ram_fit": assess_ram_fit(
                 ram_peak_mb=(
                     max(
                         r["ram_peak_mb"]
@@ -2247,6 +2311,7 @@ class ProjectStore:
                     if any(r.get("ram_peak_mb") is not None for r in ok)
                     else None
                 ),
+                profile=profile,
             ),
         }
 

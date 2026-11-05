@@ -2966,12 +2966,16 @@ async def _handle_render_recipes(
     Es la unidad que la política pide reutilizar en lugar de razonar desde cero
     en cada despliegue. No ejecuta nada: lee lo ya medido.
     """
+    # El perfil de hardware se propaga a la receta: sin él, el veredicto se
+    # calcula contra el objetivo por omisión y una receta de 40 GB se marcaría
+    # «no cabe» en un perfil de 96 GB.
+    profile = context.config.hardware_profile
     measurements = context.store.list_render_measurements(
         template_id=args.template_id, limit=args.limit
     )
     recipes: list[dict[str, Any]] = []
     if args.template_id:
-        recipe = context.store.recipe_for_template(args.template_id)
+        recipe = context.store.recipe_for_template(args.template_id, profile=profile)
         if recipe is not None:
             recipes.append(recipe)
     else:
@@ -2981,24 +2985,16 @@ async def _handle_render_recipes(
             if not template_id or template_id in seen:
                 continue
             seen.add(template_id)
-            recipe = context.store.recipe_for_template(template_id)
+            recipe = context.store.recipe_for_template(template_id, profile=profile)
             if recipe is not None:
                 recipes.append(recipe)
-
-    # Punto 5: ¿cabe en el GPU objetivo (~32 GB) y qué medir antes de subir de
-    # hardware? Se calcula aquí porque el objetivo es de configuración.
-    target_gb = float(getattr(context.config, "target_vram_gb", 32) or 32)
-    for recipe in recipes:
-        fit = recipe.get("vram_fit")
-        if isinstance(fit, dict):
-            recipe["vram_fit"] = dict(fit, target_vram_gb=target_gb)
 
     return {
         "status": "ok",
         "project_id": context.project_id,
         "template_id": args.template_id,
         "recipes": recipes,
-        "target_vram_gb": target_gb,
+        "hardware_profile": profile.to_dict(),
         "measurements": [
             {
                 "template_id": m.get("template_id"),
