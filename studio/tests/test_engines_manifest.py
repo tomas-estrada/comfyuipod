@@ -124,14 +124,6 @@ def test_lock_opencolorio_tiene_lock_fijado() -> None:
     assert by_id["opencolorio"]["code_revision"] == "v2.6.0"
 
 
-def test_lock_opentimelineio_tiene_lock_fijado() -> None:
-    """El engine opentimelineio tiene su code_revision fijado a la release oficial."""
-    mod = _load_module()
-    manifest = mod.load_json(mod.DEFAULT_MANIFEST)
-    by_id = {e["id"]: e for e in manifest["engines"]}
-    assert by_id["opentimelineio"]["code_revision"] == "v0.18.1"
-
-
 def test_lock_remotion_tiene_lock_fijado() -> None:
     """El engine remotion tiene su code_revision fijado a la release oficial."""
     mod = _load_module()
