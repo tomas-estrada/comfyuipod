@@ -1,0 +1,14 @@
+{
+  "research_timestamp_utc": "2026-11-05T04:55:45Z",
+  "repo": "https://github.com/tomas-estrada/comfyuipod",
+  "main_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
+  "kiro_crew_sha": "4a546774f478c27058d61e7005ca931fd01b1c97",
+  "atlas_pr": 63,
+  "atlas_head_sha": "c12618815c5e7181bbb69e4ce9d249a0075fd3c4",
+  "ci_run": 41964177024,
+  "ltx2_sha": "c1b4675863c07c59c92e502446cccdaedbe5889c",
+  "opencode_sha": "09dcb47861fe9253814dc85b12f31a5b2691eda6",
+  "hyperframes_sha": "7862e271d16baa9052c78d3b85535ebc725cd136",
+  "executed_gpu_tests": false,
+  "research_does_not_implement_app_changes": true
+}
