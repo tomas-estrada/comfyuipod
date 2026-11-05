@@ -126,7 +126,9 @@ disk_free_bytes() {
         [ "${parent}" = "${path}" ] && break
         path="${parent}"
     done
-    df -Pk "${path}" 2>/dev/null | awk 'NR==2 {print $4}'
+    # POSIX df -Pk reports 1024-byte blocks. Convert explicitly: callers
+    # compare this value with manifest byte counts and the byte safety margin.
+    df -Pk "${path}" 2>/dev/null | awk 'NR==2 {printf "%.0f\n", $4 * 1024}'
 }
 
 # require_disk_space <path> [expected_bytes] -> 0 si hay sitio, 1 si no.
@@ -200,11 +202,6 @@ hf_fetch() {
 
     mkdir -p "${target_dir}" "${STAGE_DIR}"
 
-    if [ -s "${dest_file}" ]; then
-        log "SKIP (ya existe): ${local_filename}"
-        return 0
-    fi
-
     log "INICIO: ${local_filename} (${repo_id}/${remote_path})"
 
     local attempt=1
@@ -220,19 +217,34 @@ hf_fetch() {
         log "Descargando ${local_filename} desde ${repo_id} (intento ${attempt}/${max_attempts})..."
 
         local dl_rc=0
-        timeout "${HF_FETCH_TIMEOUT}" "${HF_CLI}" download "${repo_id}" "${remote_path}" \
-            --repo-type "${repo_type}" \
-            --local-dir "${STAGE_DIR}" || dl_rc=$?
+        local python_bin="${STUDIO_PYTHON:-/opt/venvs/studio/bin/python}"
+        if [ ! -x "${python_bin}" ]; then
+            python_bin="${PYTHON_BIN:-python3}"
+        fi
+        local acquire_output=""
+        acquire_output="$(env \
+            "HF_CLI=${HF_CLI}" "HF_FETCH_TIMEOUT=${HF_FETCH_TIMEOUT}" \
+            "HF_DISK_MARGIN_BYTES=${DISK_SAFETY_MARGIN_BYTES}" \
+            "HF_DISK_GUARD=${HF_DISK_GUARD}" \
+            "STUDIO_CORE_MANIFEST=${STUDIO_CORE_MANIFEST:-${SCRIPT_DIR}/../config/models-core.json}" \
+            "STUDIO_MANIFEST=${STUDIO_MANIFEST}" \
+            "${python_bin}" -m comfy_studio.asset_acquire_cli \
+                --repo "${repo_id}" --remote "${remote_path}" \
+                --dest "${dest_file}" --repo-type "${repo_type}" \
+                --stage "${STAGE_DIR}" --timeout "${HF_FETCH_TIMEOUT}" 2>&1)" || dl_rc=$?
 
-        if [ "${dl_rc}" -eq 0 ] && [ -s "${STAGE_DIR}/${remote_path}" ]; then
-            mv -f "${STAGE_DIR}/${remote_path}" "${dest_file}"
-            log "OK: ${dest_file} ($(du -h "${dest_file}" | cut -f1))"
+        if [ "${dl_rc}" -eq 0 ]; then
+            if [[ "${acquire_output}" == skipped:* ]]; then
+                log "SKIP (ya existe): ${local_filename}"
+            else
+                log "OK: ${dest_file} ($(du -h "${dest_file}" | cut -f1))"
+            fi
             return 0
         elif [ "${dl_rc}" -eq 124 ]; then
             log "TIMEOUT: La descarga de ${local_filename} (${repo_id}/${remote_path}) superó ${HF_FETCH_TIMEOUT}s (intento ${attempt}/${max_attempts})."
+        elif [ -n "${acquire_output}" ]; then
+            log "ERROR adquisición ${local_filename}: ${acquire_output}"
         fi
-
-        rm -f "${STAGE_DIR}/${remote_path}" 2>/dev/null || true
 
         if [ "${attempt}" -lt "${max_attempts}" ]; then
             log "Reintentando ${local_filename} en ${backoff}s..."
@@ -380,18 +392,19 @@ run_phase1() {
     local buffalo_dir="${MODELS_DIR}/insightface/models/buffalo_l"
     mkdir -p "${buffalo_dir}" /root/.insightface/models
     if [ ! -s "${buffalo_dir}/det_10g.onnx" ]; then
-        if hf_fetch "Gourieff/ReActor" "models/buffalo_l.zip" "${STAGE_DIR}" "buffalo_l.zip" "dataset"; then
+        if hf_fetch "Gourieff/ReActor" "models/buffalo_l.zip" "${buffalo_dir}" "buffalo_l.zip" "dataset"; then
             log "Descomprimiendo buffalo_l.zip en ${buffalo_dir}..."
             mkdir -p "${STAGE_DIR}/buffalo_extract"
             local buffalo_ok=0
-            if unzip -q -o "${STAGE_DIR}/buffalo_l.zip" -d "${STAGE_DIR}/buffalo_extract"; then
+            if unzip -q -o "${buffalo_dir}/buffalo_l.zip" -d "${STAGE_DIR}/buffalo_extract"; then
                 if [ -d "${STAGE_DIR}/buffalo_extract/buffalo_l" ]; then
                     cp -rf "${STAGE_DIR}/buffalo_extract/buffalo_l/"* "${buffalo_dir}/" && buffalo_ok=1
                 else
                     cp -rf "${STAGE_DIR}/buffalo_extract/"* "${buffalo_dir}/" && buffalo_ok=1
                 fi
             fi
-            rm -rf "${STAGE_DIR}/buffalo_l.zip" "${STAGE_DIR}/buffalo_extract"
+            rm -f "${buffalo_dir}/buffalo_l.zip"
+            rm -rf "${STAGE_DIR}/buffalo_extract"
             if [ "${buffalo_ok}" -eq 1 ]; then
                 log "OK: InsightFace buffalo_l listo en ${buffalo_dir}"
             else
@@ -530,7 +543,7 @@ run_phase2() {
 
     # 4. Next-Gen SOTA: FLUX.1-dev FP8 All-in-One Checkpoint (16.06 GiB — perfil: all)
     if [ "${MODEL_PROFILE}" = "all" ]; then
-        hf_fetch "Comfy-Org/flux1-dev" "flux1-dev-fp8.safetensors" \
+        hf_fetch "Comfy-Org/Flux-1-Dev" "flux1-dev-fp8.safetensors" \
             "${MODELS_DIR}/checkpoints" "flux1-dev-fp8.safetensors" "model" || true
     fi
 
@@ -777,12 +790,12 @@ selftest_bootstrap_dest() {
 {
  "version": 1,
  "models": [
-  {"class": "bootstrap", "repo_id": "org/models-vae", "remote_path": "p1.bin", "dest_path": "models/vae/p1.bin", "repo_type": "model", "bytes": 10},
-  {"class": "bootstrap", "repo_id": "org/models-root", "remote_path": "p5.bin", "dest_path": "models/p5.bin", "repo_type": "model", "bytes": 11},
-  {"class": "bootstrap", "repo_id": "org/custom", "remote_path": "p2.bin", "dest_path": "custom_nodes/Foo/checkpoints/p2.bin", "repo_type": "model", "bytes": 12},
-  {"class": "bootstrap", "repo_id": "org/data-var", "remote_path": "p3.bin", "dest_path": "\${COMFY_DATA_DIR}/indextts/checkpoints/p3.bin", "repo_type": "model", "bytes": 13},
-  {"class": "bootstrap", "repo_id": "org/app-var", "remote_path": "p6.bin", "dest_path": "\${COMFY_APP_DIR}/custom_nodes/Bar/x/p6.bin", "repo_type": "model", "bytes": 14},
-  {"class": "bootstrap", "repo_id": "org/abs", "remote_path": "p4.bin", "dest_path": "${tmp}/extra/p4.bin", "repo_type": "model", "bytes": 15},
+  {"class": "bootstrap", "repo_id": "org/models-vae", "remote_path": "p1.bin", "dest_path": "models/vae/p1.bin", "repo_type": "model", "bytes": 16, "revision": "0123456789abcdef0123456789abcdef01234567", "sha256": "1f47fea1a5a0d11f806ba37a292b6f1e7694c75b391843f2852f65a5b43ef64a"},
+  {"class": "bootstrap", "repo_id": "org/models-root", "remote_path": "p5.bin", "dest_path": "models/p5.bin", "repo_type": "model", "bytes": 16, "revision": "0123456789abcdef0123456789abcdef01234567", "sha256": "1f47fea1a5a0d11f806ba37a292b6f1e7694c75b391843f2852f65a5b43ef64a"},
+  {"class": "bootstrap", "repo_id": "org/custom", "remote_path": "p2.bin", "dest_path": "custom_nodes/Foo/checkpoints/p2.bin", "repo_type": "model", "bytes": 16, "revision": "0123456789abcdef0123456789abcdef01234567", "sha256": "1f47fea1a5a0d11f806ba37a292b6f1e7694c75b391843f2852f65a5b43ef64a"},
+  {"class": "bootstrap", "repo_id": "org/data-var", "remote_path": "p3.bin", "dest_path": "\${COMFY_DATA_DIR}/indextts/checkpoints/p3.bin", "repo_type": "model", "bytes": 16, "revision": "0123456789abcdef0123456789abcdef01234567", "sha256": "1f47fea1a5a0d11f806ba37a292b6f1e7694c75b391843f2852f65a5b43ef64a"},
+  {"class": "bootstrap", "repo_id": "org/app-var", "remote_path": "p6.bin", "dest_path": "\${COMFY_APP_DIR}/custom_nodes/Bar/x/p6.bin", "repo_type": "model", "bytes": 16, "revision": "0123456789abcdef0123456789abcdef01234567", "sha256": "1f47fea1a5a0d11f806ba37a292b6f1e7694c75b391843f2852f65a5b43ef64a"},
+  {"class": "bootstrap", "repo_id": "org/abs", "remote_path": "p4.bin", "dest_path": "${tmp}/extra/p4.bin", "repo_type": "model", "bytes": 16, "revision": "0123456789abcdef0123456789abcdef01234567", "sha256": "1f47fea1a5a0d11f806ba37a292b6f1e7694c75b391843f2852f65a5b43ef64a"},
   {"class": "bootstrap", "repo_id": "org/broken", "remote_path": "p7.bin", "dest_path": "models", "repo_type": "model", "bytes": 16},
   {"class": "bootstrap", "repo_id": "org/escape", "remote_path": "p8.bin", "dest_path": "models/../../etc/p8.bin", "repo_type": "model", "bytes": 17},
   {"class": "bootstrap", "repo_id": "org/nodest", "remote_path": "p9.bin", "repo_type": "model", "bytes": 18},
@@ -797,16 +810,16 @@ JSON
     got="$(env COMFY_DATA_DIR="${data}" COMFY_APP_DIR="${app}" BOOTSTRAP_MANIFEST="${manifest}" \
         python3 -c "${BOOTSTRAP_PLANNER_PY}" 2>/dev/null || true)"
     want="$(cat <<EOF
-org/models-vae	p1.bin	${data}/models/vae	p1.bin	model	10
-org/models-root	p5.bin	${data}/models	p5.bin	model	11
+org/models-vae	p1.bin	${data}/models/vae	p1.bin	model	16
+org/models-root	p5.bin	${data}/models	p5.bin	model	16
 AVISO	bootstrap fuera de models/: custom_nodes/Foo/checkpoints/p2.bin -> ${app}/custom_nodes/Foo/checkpoints/p2.bin
-org/custom	p2.bin	${app}/custom_nodes/Foo/checkpoints	p2.bin	model	12
+org/custom	p2.bin	${app}/custom_nodes/Foo/checkpoints	p2.bin	model	16
 AVISO	bootstrap fuera de models/: \${COMFY_DATA_DIR}/indextts/checkpoints/p3.bin -> ${data}/indextts/checkpoints/p3.bin
-org/data-var	p3.bin	${data}/indextts/checkpoints	p3.bin	model	13
+org/data-var	p3.bin	${data}/indextts/checkpoints	p3.bin	model	16
 AVISO	bootstrap fuera de models/: \${COMFY_APP_DIR}/custom_nodes/Bar/x/p6.bin -> ${app}/custom_nodes/Bar/x/p6.bin
-org/app-var	p6.bin	${app}/custom_nodes/Bar/x	p6.bin	model	14
+org/app-var	p6.bin	${app}/custom_nodes/Bar/x	p6.bin	model	16
 AVISO	bootstrap fuera de models/: ${tmp}/extra/p4.bin -> ${tmp}/extra/p4.bin
-org/abs	p4.bin	${tmp}/extra	p4.bin	model	15
+org/abs	p4.bin	${tmp}/extra	p4.bin	model	16
 AVISO	entrada bootstrap sin destino verificable, se omite (org/broken): dest_path sin nombre de archivo: 'models'
 AVISO	entrada bootstrap sin destino verificable, se omite (org/escape): dest_path con .. : 'models/../../etc/p8.bin'
 AVISO	entrada bootstrap sin dest_path, se omite (org/nodest)
@@ -830,6 +843,7 @@ EOF
     cat > "${bin}/fake-hf" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >> "${HF_FIXTURE_ARGS}"
 repo_path="${3:?}"
 stage_dir=""
 while [ "$#" -gt 0 ]; do
@@ -858,6 +872,7 @@ SHIM
 
     bootstrap_log="${tmp}/bootstrap.log"
     if ! COMFY_DATA_DIR="${data}" COMFY_APP_DIR="${app}" STUDIO_CORE_MANIFEST="${manifest}" \
+        HF_FIXTURE_ARGS="${tmp}/hf-args.log" \
         HF_CLI="${bin}/fake-hf" HF_DISK_GUARD=0 MODEL_PROFILE=minimal \
         PATH="${bin}:${PATH}" \
         bash "${BASH_SOURCE[0]}" --bootstrap > "${bootstrap_log}" 2>&1; then
@@ -877,6 +892,11 @@ SHIM
             rc=1
         fi
     done
+
+    if ! grep -q -- '--revision 0123456789abcdef0123456789abcdef01234567' "${tmp}/hf-args.log"; then
+        log "ERROR (selftest/A01): el camino legacy no pasó la revisión fijada del manifiesto al CLI."
+        rc=1
+    fi
 
     for f in \
         "${data}/models/vae/p1.bin/p1.bin" \
@@ -913,11 +933,40 @@ SHIM
     return "${rc}"
 }
 
+selftest_disk_free_bytes() {
+    local tmp fake_df got expected seen
+    tmp="$(mktemp -d)" || return 1
+    fake_df="${tmp}/df"
+    seen="${tmp}/df-path"
+    cat > "${fake_df}" <<'DF'
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "${@: -1}" > "${DF_PATH_RECORD}"
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf '/dev/mock 300000 41000 259000 14%% %s\n' "${@: -1}"
+DF
+    chmod +x "${fake_df}"
+    expected=$((259000 * 1024))
+    got="$(PATH="${tmp}:${PATH}" DF_PATH_RECORD="${seen}" disk_free_bytes "${tmp}/not-yet/created")"
+    if [ "${got}" != "${expected}" ]; then
+        log "ERROR (selftest/disk): df -Pk KiB no se convirtió a bytes (got=${got}, expected=${expected})."
+        rm -rf "${tmp}"
+        return 1
+    fi
+    if [ "$(cat "${seen}")" != "${tmp}" ]; then
+        log "ERROR (selftest/disk): el path inexistente no usó su padre existente."
+        rm -rf "${tmp}"
+        return 1
+    fi
+    rm -rf "${tmp}"
+    log "SELFTEST OK: conversión df -Pk a bytes y resolución de padre existente."
+}
+
 case "${1:---all}" in
     --selftest)
         # Comprobaciones internas sin red: válvula de escape para la regla de
         # resolución de dest_path del arranque (F22).
-        selftest_bootstrap_dest
+        selftest_disk_free_bytes && selftest_bootstrap_dest
         ;;
     --bootstrap)
         # Arranque normal del pod: solo bootstrap. Nada de task/optional sin

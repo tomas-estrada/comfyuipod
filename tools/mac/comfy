@@ -1283,7 +1283,7 @@ PYEOF
         --disk "${disk_gb}" \
         --label "comfy-${profile}" \
         --env "${env_flags}" \
-        --args
+        --args ''
 }
 
 # M3-E (tarea 31b): rescate de outputs antes de `comfy destroy`.

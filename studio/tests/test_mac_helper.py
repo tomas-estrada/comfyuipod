@@ -165,6 +165,15 @@ sys.exit(1)
     return bin_dir, state_dir
 
 
+def test_container_entrypoint_reaches_supervisor() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+    start_script = (root / "scripts/start.sh").read_text(encoding="utf-8")
+    assert 'COPY scripts/start.sh /start.sh' in dockerfile
+    assert 'ENTRYPOINT ["/usr/bin/tini", "--", "/start.sh"]' in dockerfile
+    assert "exec /usr/local/bin/comfyctl supervise" in start_script
+
+
 def _run_comfy(
     args: list[str],
     *,
@@ -482,7 +491,7 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     assert c_args[c_args.index("--disk") + 1] == str(derived_disk_gb())
     assert "--label" in c_args
     assert c_args[c_args.index("--label") + 1] == "comfy-studio"
-    assert "--args" in c_args
+    assert c_args[-2:] == ["--args", ""]
     env_arg = c_args[c_args.index("--env") + 1]
     assert '-e MODEL_PROFILE="studio"' in env_arg
     assert f'-e STUDIO_LLM_KEY="{synthetic_llm_key}"' in env_arg
