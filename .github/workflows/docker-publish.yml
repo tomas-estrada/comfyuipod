@@ -339,6 +339,9 @@ jobs:
       - name: Validar manifiestos de modelos (studio + core) y tamaños exactos vía HEAD (VAL-PROFILE-002)
         run: |
           python3 scripts/check_models_manifest.py --fixture
+          # Paridad perfiles <-> manifiesto (política punto 7): la selección de
+          # qué descarga cada MODEL_PROFILE es dato versionado, no un case en bash.
+          python3 scripts/check_profile_parity.py
           python3 scripts/check_models_manifest.py --all
           # El requisito de almacenamiento se DERIVA (política de arquitectura).
           # `comfy rent studio` toma su mínimo de este cálculo: si alguien vuelve a

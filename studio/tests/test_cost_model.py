@@ -208,3 +208,51 @@ def test_unload_flag_is_configurable() -> None:
     off = StudioConfig.from_env({"STUDIO_UNLOAD_WHEN_IDLE": "0"})
     assert off.unload_models_when_idle is False
     assert "STUDIO_UNLOAD_WHEN_IDLE" in off.to_public_dict()
+
+
+# --------------------------------------------------------------------------
+# Paridad perfiles <-> manifiesto (política, punto 7)
+# --------------------------------------------------------------------------
+
+
+def test_profile_parity_holds() -> None:
+    """La selección por perfil es dato versionado, no un `case` en bash."""
+    import subprocess
+
+    r = subprocess.run(
+        [sys.executable, "scripts/check_profile_parity.py"],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        timeout=120,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "perfiles coincidentes" in r.stdout
+
+
+def test_profile_parity_detects_a_divergence(tmp_path: Path) -> None:
+    """Si el bash y el manifiesto se separan, el checker falla con el detalle."""
+
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from check_profile_parity import manifest_plan, parse_plan
+
+    bash = parse_plan()
+    declared = manifest_plan()
+    assert bash, "el parser debe extraer el plan del bash"
+    assert set(bash) == set(declared), "manifiesto y bash deben cubrir los mismos activos"
+    for name, profiles in bash.items():
+        assert declared[name] == profiles, name
+
+
+def test_parser_extracts_profile_guards() -> None:
+    """El parser lee las guardas `=~ ^(all|general)$` del bash."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from check_profile_parity import parse_plan
+
+    plan = parse_plan()
+    # Fase 1 corre siempre; Fase 2 está guardada por perfil.
+    assert "sdxl.vae.safetensors" in plan
+    assert "minimal" in plan["sdxl.vae.safetensors"]
+    assert "flux1-dev-fp8.safetensors" in plan
+    assert "minimal" not in plan["flux1-dev-fp8.safetensors"]
+    assert "all" in plan["flux1-dev-fp8.safetensors"]
