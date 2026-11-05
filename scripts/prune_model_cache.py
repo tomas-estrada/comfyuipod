@@ -12,6 +12,11 @@ y `optional`, y solo expulsa activos `task` cuando el volumen supera el
 presupuesto, por último uso real. Nunca considera rutas fuera de los
 manifiestos, así que media del usuario, proyectos y salidas quedan fuera por
 construcción.
+
+El plan resultante declara qué manifiestos leyó: `--json` publica `manifests`,
+`manifests_found` y `unreadable_manifests`, para que un plan vacío por «no hay
+nada declarado» no se confunda con uno vacío porque el manifiesto no se pudo
+leer (R30) ni con un volumen sano.
 """
 
 from __future__ import annotations
@@ -45,6 +50,17 @@ def render(plan, policy: RetentionPolicy) -> str:
         f"  a liberar               {len(plan.evictions)} ({_gb(plan.freed_bytes)})",
         f"  staging a limpiar       {len(plan.staging_cleanups)}",
     ]
+    # R31: un plan vacío solo es «todo está bien» si hay manifiestos que lo
+    # avalen. El aviso por log no llega al consumidor de `--json`, así que la
+    # cuenta de manifiestos viaja también en la salida humana.
+    if plan.manifests:
+        manifests = ", ".join(plan.manifests)
+        lines.append(f"  manifiestos leídos      {len(plan.manifests)} ({manifests})")
+    else:
+        lines.append("  manifiestos leídos      0 (ninguno: no se evalúa ningún activo)")
+    if plan.unreadable_manifests:
+        unreadable = ", ".join(plan.unreadable_manifests)
+        lines.append(f"  manifiestos ilegibles   {len(plan.unreadable_manifests)} ({unreadable})")
     if plan.protected_seen:
         lines.append(f"  rutas protegidas vistas {len(plan.protected_seen)} (no se tocan)")
     if plan.evictions:

@@ -147,6 +147,52 @@ Dos manifiestos versionados declarán los activos, con la misma forma:
 | [`config/models-core.json`](../config/models-core.json) | Fases 1 y 2 (26 entradas, 68.02 GB), generado desde `download-models.sh` y verificado por `HEAD` |
 | [`config/models-studio.json`](../config/models-studio.json) | Fase 3 del perfil studio (79 + 8 entradas) |
 
+Dónde buscar cada uno, si un despliegue necesita moverlos sin reconstruir la
+imagen:
+
+| Variable | Catálogo que apunta |
+|---|---|
+| `STUDIO_MANIFEST` | **solo Fase 3** (`config/models-studio.json`) |
+| `STUDIO_CORE_MANIFEST` | **el core** (`config/models-core.json`) |
+
+Ninguna sustituye a la otra: son catálogos disjuntos, así que fijar la de Fase 3
+no puede dejar ciego al core ni al revés. Si no se definen se usan las rutas
+versionadas del árbol y las horneadas en la imagen
+(`/etc/comfyui/models-*.json`). Las leen **cuatro** consumidores por igual —
+`scripts/download-models.sh`, `studio/comfy_studio/capabilities.py`,
+`scripts/storage_requirement.py` y el planificador de retención
+(`studio/comfy_studio/cache_policy.py`)—, de modo que el requisito de disco, la
+adquisición a demanda y la expulsión se derivan del mismo manifiesto que acaba
+descargando el arranque.
+
+Difieren en dos cosas, y las dos están dichas a propósito:
+
+| Consumidor | Override ausente | Candidatas por omisión |
+|---|---|---|
+| `scripts/download-models.sh` | cae en `config/models-core.json` | raíz del repo |
+| `scripts/storage_requirement.py` | cae en las rutas conocidas | CWD y raíz del repo |
+| `capabilities`, `model_assets` | cae en las rutas conocidas | raíz del paquete primero, CWD después |
+| `cache_policy` (planificador de retención) | el catálogo queda fuera **declarándolo** (`missing_overrides`) | raíz del paquete primero, CWD después |
+
+Los tres últimos comparten un único orden de bases
+(`model_assets.manifest_search_bases()`): si cada resolvedor tuviera el suyo, un
+proceso lanzado desde un directorio con su propio `config/` podía leer un
+catálogo y el planificador otro, y los dos disentirían sobre cuál estaba en vigor
+sin que ninguno lo dijera. El planificador resolvía antes **solo** contra la raíz
+del paquete (nunca contra el CWD), para que `prune_model_cache.py --json` desde
+cualquier directorio no devolviera un plan vacío que se lee como «el volumen
+está bien»; ahora el CWD queda como último recurso, detrás de la raíz del paquete
+y de `/etc/comfyui/`.
+
+Sobre el override ausente sí hay una diferencia deliberada: caer en las rutas
+conocidas es lo correcto para quien va a **descargar** —abortar no arreglaría el
+desacuerdo, solo lo convertiría en un fallo—, pero el planificador no puede
+hacerlo en silencio. Si `STUDIO_CORE_MANIFEST` apunta a una ruta que no existe y
+el plan cae sin decirlo, se emite con el otro catálogo presente,
+`manifests_found: 1`, `unreadable_manifests: []` y un `keep_bytes` que se lee como
+un volumen sano corto por el catálogo entero. Por eso lo declara en
+`missing_overrides` y lo avisa por log.
+
 Cada entrada lleva `class` explícita:
 | Clase | Significado |
 |---|---|

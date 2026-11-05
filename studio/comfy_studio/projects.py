@@ -109,6 +109,39 @@ ALLOWED_MEDIA_MIMES: dict[str, tuple[str, set[str]]] = {
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
+#: Estados de una medición de render. `recipe_for_template` solo acepta «ok»:
+#: una medición perdida (muestreador de `/system_stats` agotado o roto) tiene
+#: que salir de ese filtrado, o se contaría como una medición buena y las recetas
+#: juzgarían `assess_vram_fit` sin dato.
+#:
+#: El esquema limita `status` a `('ok','error')` con un CHECK, así que la
+#: medición perdida se marca con el único estado no-ok que existe; el motivo
+#: concreto va en la columna `error`. Un valor propio («unmeasured») exigiría
+#: migrar el CHECK de `render_measurements`, que no es el objeto de este cambio.
+MEASUREMENT_STATUS_OK = "ok"
+MEASUREMENT_STATUS_LOST = "error"
+
+#: Estados TERMINALES de un job: quien los ha escrito ya no va a volver a
+#: tocarlos. Es el contrato COMPLETO de terminalidad y vive aquí, en un solo
+#: sitio, porque lo consumen tres lectores que no deben poder divergir:
+#: `ProjectStore.has_pending_work` (¿descargo los modelos?), `recovery.py`
+#: (`STALE_STATUSES`, el vocabulario en vuelo) y `routers/core.py` (`jobs_active`).
+#:
+#: `failed` es terminal de verdad: lo escriben cuatro sitios de producción
+#: (`routers/ads.py` en las tres rutas de `AdPipelineError` y `agent/tools.py`
+#: en el motor de ads) justo después de fallar, y ninguno de ellos actualiza el
+#: job después. Mientras no estuviera en esta lista, un job de ads fallado
+#: contaba como «en vuelo» para siempre: `has_pending_work()` nunca más daba
+#: False y `POST /free` dejaba de llamarse durante el resto de la vida del pod,
+#: sin un solo aviso en el log.
+TERMINAL_STATUSES: tuple[str, ...] = (
+    "done",
+    "error",
+    "cancelled",
+    "interrupted",
+    "failed",
+)
+
 
 class MediaValidationError(Exception):
     """Error tipado de validación de subida de medios con código HTTP asociado."""
@@ -346,6 +379,15 @@ CREATE INDEX IF NOT EXISTS idx_render_measurements_template
 
 
 
+def _usable_after_reserve(gb: float, reserve_gb: float) -> float:
+    """GB utilizables de una cifra **anunciada** tras la reserva operativa.
+
+    La reserva no es un detalle del perfil por defecto: se aplica igual a un
+    override manual, porque también él son GB del datasheet.
+    """
+    return max(float(gb) - float(reserve_gb), 0.0)
+
+
 def assess_vram_fit(
     *,
     vram_peak_mb: int | None,
@@ -361,23 +403,35 @@ def assess_vram_fit(
 
     El perfil se pasa explícitamente: si no se propaga, una receta de 40 GB se
     marca como «no cabe» en un perfil de 96 GB. `target_vram_gb` queda como
-    override manual para no rompler llamadas antiguas.
+    override manual para no rompler llamadas antiguas; es una cifra **anunciada**
+    (como `vram_gb`), así que se le aplica la misma reserva operativa y el
+    payload publica el número contra el que se juzgó de verdad
+    (`judged_against_gb`).
 
     No afirma que una optimización funcione: son específicas del modelo y hay que
     medirlas. La RAM se evalúa aparte (`assess_ram_fit`): no es intercambiable
     con VRAM.
     """
     active = profile or DEFAULT_PROFILE
-    target_gb = (
-        float(target_vram_gb)
-        if target_vram_gb is not None
-        else active.vram_usable_gb
-    )
-    target_mb = int(target_gb * 1024)
+    # El override manual se trata como los GB del datasheet: se le resta la
+    # misma reserva operativa del perfil antes de comparar. Sin override, la
+    # base anunciada y la utilizable son las del perfil.
+    if target_vram_gb is not None:
+        advertised_gb: float = float(target_vram_gb)
+        judged_gb = _usable_after_reserve(advertised_gb, active.vram_reserve_gb)
+    else:
+        advertised_gb = float(active.vram_gb)
+        judged_gb = active.vram_usable_gb
+    target_mb = int(judged_gb * 1024)
     result: dict[str, Any] = {
         "profile": active.name,
-        "target_vram_gb": active.vram_gb,
-        "target_vram_usable_gb": active.vram_usable_gb,
+        "target_vram_gb": (
+            int(advertised_gb) if target_vram_gb is None else advertised_gb
+        ),
+        "target_vram_usable_gb": judged_gb,
+        # Número contra el que se compara la medición, dicho sin ambigüedad:
+        # con override ya no es el `*_usable_gb` del perfil.
+        "judged_against_gb": judged_gb,
         "target_vram_mb": target_mb,
         "measured": vram_peak_mb is not None,
         "vram_peak_mb": vram_peak_mb,
@@ -396,16 +450,22 @@ def assess_vram_fit(
 
     result["fits"] = vram_peak_mb <= target_mb
     result["headroom_mb"] = target_mb - vram_peak_mb
-    result["utilisation_pct"] = round(100.0 * vram_peak_mb / target_mb, 1)
+    if target_mb > 0:
+        result["utilisation_pct"] = round(100.0 * vram_peak_mb / target_mb, 1)
+    # Con 0 GB utilizables (override por debajo de la reserva) no hay porcentaje
+    # que calcular: se dice que no cabe y ya.
     if result["fits"]:
         return result
 
     # No cabe: se listan las opciones en el orden de la política. Ninguna se
     # marca como válida sin medirla.
     result["optimisations"] = [dict(o) for o in MEMORY_OPTIMISATIONS]
+    # La nota cita el número que se usó de verdad, no el que anuncia el perfil.
+    basis = f"{judged_gb:.0f} GB utilizables de {active.name}"
+    if target_vram_gb is not None:
+        basis += f" (override de {advertised_gb:.0f} GB menos la reserva operativa)"
     result["note"] = (
-        f"no cabe en {active.vram_usable_gb:.0f} GB utilizables de "
-        f"{active.name}; medir estas opciones antes de recomendar "
+        f"no cabe en {basis}; medir estas opciones antes de recomendar "
         "hardware más caro"
     )
     return result
@@ -422,17 +482,23 @@ def assess_ram_fit(
     La política pide «sufficient host RAM for the selected workload» y verificar
     la RAM real de cada oferta sin inferirla del modelo de GPU. La RAM de host
     **no** amplía lo que cabe en el GPU: solo permite offloading, a costa de
-    tiempo.
+    tiempo. `target_ram_gb` es un override manual y, como `ram_gb`, una cifra
+    anunciada: se le aplica la misma reserva operativa y `judged_against_gb`
+    dice contra qué número se juzgó.
     """
     active = profile or DEFAULT_PROFILE
-    target_gb = (
-        float(target_ram_gb) if target_ram_gb is not None else active.ram_usable_gb
-    )
-    target_mb = int(target_gb * 1024)
+    if target_ram_gb is not None:
+        advertised_gb: float = float(target_ram_gb)
+        judged_gb = _usable_after_reserve(advertised_gb, active.ram_reserve_gb)
+    else:
+        advertised_gb = float(active.ram_gb)
+        judged_gb = active.ram_usable_gb
+    target_mb = int(judged_gb * 1024)
     result: dict[str, Any] = {
         "profile": active.name,
-        "target_ram_gb": active.ram_gb,
-        "target_ram_usable_gb": active.ram_usable_gb,
+        "target_ram_gb": int(advertised_gb) if target_ram_gb is None else advertised_gb,
+        "target_ram_usable_gb": judged_gb,
+        "judged_against_gb": judged_gb,
         "target_ram_mb": target_mb,
         "measured": ram_peak_mb is not None,
         "ram_peak_mb": ram_peak_mb,
@@ -445,10 +511,18 @@ def assess_ram_fit(
         return result
     result["fits"] = ram_peak_mb <= target_mb
     result["headroom_mb"] = target_mb - ram_peak_mb
-    result["utilisation_pct"] = round(100.0 * ram_peak_mb / target_mb, 1)
+    if target_mb > 0:
+        result["utilisation_pct"] = round(100.0 * ram_peak_mb / target_mb, 1)
     if not result["fits"]:
+        # La nota cita el número que se usó de verdad, no el del perfil.
+        basis = f"{judged_gb:.0f} GB utilizables"
+        if target_ram_gb is not None:
+            basis += (
+                f" (override de {advertised_gb:.0f} GB menos la reserva operativa)"
+            )
         result["note"] = (
-            "la RAM de host no basta para esta carga; subir el perfil de RAM "
+            f"la RAM de host no basta para esta carga: se midieron "
+            f"{ram_peak_mb} MB contra {basis}; subir el perfil de RAM "
             "(128 → 256 GB) o reducir la carga, no la VRAM"
         )
     return result
@@ -993,6 +1067,47 @@ class ProjectStore:
                 params,
             ).fetchall()
         return [self._row_to_job(r) for r in rows]
+
+    def has_pending_work(self, exclude_job_id: str | None = None) -> bool:
+        """True si queda algún job en estado NO terminal (salvo `exclude_job_id`).
+
+        Es una consulta de EXISTENCIA: un único `SELECT ... LIMIT 1` que no
+        materializa ninguna fila. El guard que la usa decide si descargar los
+        modelos tras un render, y se ejecuta bajo el cerrojo GPU; la alternativa
+        (`list_jobs()` completo) recorría la tabla entera y `_row_to_job` hace
+        `json.loads` de `params_json` y `result_json` por fila, así que la cola
+        de renders esperaba detrás de un barrido de SQLite que crece con cada
+        render.
+
+        La consulta es de EXISTENCIA sobre estados TERMINALES, no una lista de
+        estados en vuelo. La lista negra era fail-OPEN: bastaba un estado que no
+        estuviera enumerado para que la consulta respondiera «no queda nada» y se
+        descargaran los modelos con un job en vuelo. Pasó con `fetching`, que
+        `recovery.py` y `routers/core.py` tratan como job activo. Con la lista
+        blanca ocurre lo contrario y en el sentido seguro: un estado desconocido
+        —uno nuevo, o uno antiguo de una versión previa— queda como «en vuelo» y
+        no se descarga nada.
+
+        La lista blanca es `TERMINAL_STATUSES`, UNA constante de módulo: el
+        vocabulario en vuelo de `recovery.py`/`routers/core.py` y este conjunto
+        tienen que ser complementarios, y un estado terminal que se olvidara
+        aquí (`failed`, por ejemplo) desactivaría `POST /free` para siempre.
+
+        Sigue siendo UN `SELECT ... LIMIT 1` que no materializa ninguna fila. La
+        consulta no usa índice sobre `status` (la tabla no lo tiene), así que lo
+        acotado es el trabajo que devuelve, no el barrido: con la cola larga, el
+        `LIMIT 1` corta en cuanto aparece la primera fila en vuelo.
+        """
+        terminal_statuses = TERMINAL_STATUSES
+        placeholders = ", ".join("?" for _ in terminal_statuses)
+        sql = f"SELECT 1 FROM jobs WHERE status NOT IN ({placeholders})"
+        query: list[Any] = list(terminal_statuses)
+        if exclude_job_id:
+            sql += " AND id <> ?"
+            query.append(exclude_job_id)
+        with self._connection() as conn:
+            row = conn.execute(f"{sql} LIMIT 1", query).fetchone()
+        return row is not None
 
     def update_job(
         self,
@@ -2275,9 +2390,30 @@ class ProjectStore:
         rows = self.list_render_measurements(template_id=template_id, limit=50)
         if not rows:
             return None
-        ok = [r for r in rows if r["status"] == "ok" and r["duration_s"] is not None]
+        ok = [
+            r
+            for r in rows
+            if r["status"] == MEASUREMENT_STATUS_OK and r["duration_s"] is not None
+        ]
         if not ok:
-            return {"template_id": template_id, "samples": len(rows), "measured": False}
+            # La receta no puede publicar un pico: solo hay mediciones perdidas
+            # (o «ok» sin `duration_s`, que tampoco sirven). Sin un «por qué»,
+            # `recipes[]` —en `render_recipes` y en GET /studio/api/status— no
+            # podía explicarse a sí misma: quien la leía se quedaba con un
+            # `measured: False` sin motivo y tenía que ir a buscarlo a la lista
+            # paralela `measurements[]`. Se publica el error de la fila no-ok
+            # MÁS RECIENTE (`rows` viene ordenado de más nueva a más vieja), que
+            # es el mismo `_DRAIN_LOST_REASON` que guarda la fila.
+            lost = next(
+                (r for r in rows if r["status"] != MEASUREMENT_STATUS_OK),
+                None,
+            )
+            return {
+                "template_id": template_id,
+                "samples": len(rows),
+                "measured": False,
+                "reason": lost.get("error") if lost is not None else None,
+            }
         vram = [r["vram_peak_mb"] for r in ok if r["vram_peak_mb"] is not None]
         durations = [r["duration_s"] for r in ok if r["duration_s"] is not None]
         latest = ok[0]

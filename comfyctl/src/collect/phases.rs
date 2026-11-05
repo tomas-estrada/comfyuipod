@@ -1,5 +1,9 @@
 //! `collect::phases` — Parseo de `/var/log/download-models.log` para progreso de Fase 1 y Fase 2 (O-06)
 //! y generación de `phase_banner`.
+//!
+//! El arranque real del pod ejecuta `download-models.sh --bootstrap`, cuyo banner es
+//! `ARRANQUE` y no `FASE 1`/`FASE 2`: sin reconocerlo, `/status/api` y `/report.md`
+//! publicarían `pending` para siempre tras un arranque que no descarga nada (F20).
 
 use crate::collect::models::phase2_expected_count;
 use crate::collect::procfs::ComfyUiStatus;
@@ -37,6 +41,11 @@ pub struct PhasesStatus {
     pub phase1: Phase1Info,
     pub phase2: Phase2Info,
 }
+
+/// Estado honesto cuando el arranque (`download-models.sh --bootstrap`) no declara
+/// trabajo de descarga: ni Fase 1 ni Fase 2 son pendientes, así que `pending` mentiría.
+/// Se distingue de `skipped` (que reserva `SKIP_MODEL_DOWNLOAD=1` y el perfil `minimal`).
+pub const STATE_NOT_REQUIRED: &str = "not_required";
 
 pub fn collect_phases_status(
     download_log_path: &Path,
@@ -123,7 +132,13 @@ pub fn parse_phases_from_lines(
     //   INICIANDO FASE n (...) · FASE n COMPLETADA. · omitiendo Fase 2
     //   INICIO: <nombre> (<repo>/<path>) · OK: <ruta_abs> (<tam>) · SKIP (ya existe): <nombre>
     //   ERROR: Falló la descarga de <nombre> (<repo>/<path>) tras 3 intentos.
+    // Banner de `run_bootstrap` (--bootstrap, el camino que usa el arranque del pod):
+    //   INICIANDO ARRANQUE (solo bootstrap imprescindible)
+    //   PLAN ARRANQUE: N archivos bootstrap.
+    //   Nada que descargar para abrir la API: el arranque no arrastra modelos.
+    //   FASE ARRANQUE COMPLETADA. / FASE ARRANQUE COMPLETADA (N archivos bootstrap).
     let rx_plan = Regex::new(r"(?i)PLAN\s+FASE\s+([12]):\s*(\d+)\s+archivos").ok();
+    let rx_plan_arranque = Regex::new(r"(?i)PLAN\s+ARRANQUE:\s*(\d+)\s+archivos").ok();
     let rx_inicio = Regex::new(r"\]\s*INICIO:\s*(\S+)").ok();
     let rx_ok = Regex::new(r"\]\s*OK:\s*(\S+)").ok();
     let rx_skip = Regex::new(r"\]\s*SKIP(?:\s*\(ya existe\))?:\s*(.+)$").ok();
@@ -135,6 +150,30 @@ pub fn parse_phases_from_lines(
             last_ts = Some(ts);
         }
         let upper = line.to_uppercase();
+
+        if let Some(cap) = rx_plan_arranque.as_ref().and_then(|rx| rx.captures(line)) {
+            // El plan de bootstrap manda sobre cualquier FASE anterior del mismo log:
+            // la última ejecución es el estado actual.
+            if let Some(v) = cap.get(1).and_then(|m| m.as_str().parse::<u32>().ok()) {
+                p1_total = v;
+                p1_done = 0;
+                p1_failed = Vec::new();
+                p2_total = 0;
+                p2_failed = Vec::new();
+                current_file = None;
+                // --bootstrap nunca baja la Fase 2 del perfil.
+                p2_state = STATE_NOT_REQUIRED.to_string();
+                if v == 0 {
+                    p1_state = STATE_NOT_REQUIRED.to_string();
+                    current_section = "";
+                } else {
+                    p1_state = "running".to_string();
+                    current_section = "phase1";
+                    p1_start_ts = last_ts;
+                }
+            }
+            continue;
+        }
 
         if let Some(cap) = rx_plan.as_ref().and_then(|rx| rx.captures(line)) {
             let phase_num = cap.get(1).map_or("", |m| m.as_str());
@@ -167,6 +206,46 @@ pub fn parse_phases_from_lines(
             p2_state = "skipped".to_string();
             p2_total = 0;
             current_file = None;
+        } else if upper.contains("INICIANDO ARRANQUE") {
+            // Arranque real (--bootstrap): solo bootstrap del manifiesto. Ni Fase 1
+            // (paquete histórico de 12 archivos) ni Fase 2 del perfil se ejecutan.
+            current_section = "phase1";
+            p1_state = "running".to_string();
+            p1_done = 0;
+            p1_failed = Vec::new();
+            p1_total = 0;
+            p1_start_ts = last_ts;
+            p2_state = STATE_NOT_REQUIRED.to_string();
+            p2_total = 0;
+            p2_failed = Vec::new();
+            current_file = None;
+        } else if upper.contains("NADA QUE DESCARGAR") {
+            // El arranque lo dice sin ambigüedad: no arrastra modelos. Cubre el log
+            // truncado o rotado donde el `PLAN ARRANQUE: 0` ya no está, que si no
+            // quedaría en `running` con 0/0 (o en `pending` si falta el INICIANDO).
+            p1_state = STATE_NOT_REQUIRED.to_string();
+            p1_total = 0;
+            p1_done = 0;
+            p1_failed = Vec::new();
+            p2_state = STATE_NOT_REQUIRED.to_string();
+            p2_total = 0;
+            p2_failed = Vec::new();
+            current_file = None;
+            current_section = "";
+        } else if upper.contains("FASE ARRANQUE COMPLETADA") {
+            // "FASE ARRANQUE COMPLETADA." (plan vacío) o "… (N archivos bootstrap)."
+            if p1_total == 0 {
+                p1_state = STATE_NOT_REQUIRED.to_string();
+            } else {
+                p1_state = "done".to_string();
+            }
+            if current_section == "phase1" {
+                current_file = None;
+            }
+            if let (Some(st), Some(et)) = (p1_start_ts, last_ts) {
+                let dur = u64::try_from(et.saturating_sub(st)).unwrap_or(0);
+                p1_elapsed_s = p1_elapsed_s.max(dur);
+            }
         } else if upper.contains("FASE 1 COMPLETADA") {
             p1_state = "done".to_string();
             if current_section == "phase1" {
@@ -324,6 +403,11 @@ pub fn format_phase_banner(
         return "Arrancando ComfyUI...".to_string();
     }
 
+    if p1.state == STATE_NOT_REQUIRED && p2.state == STATE_NOT_REQUIRED {
+        return "ComfyUI listo · Descargas no requeridas (el arranque no arrastra modelos)"
+            .to_string();
+    }
+
     if p2.state == "skipped" {
         return "ComfyUI listo · Descargas omitidas (SKIP_MODEL_DOWNLOAD=1)".to_string();
     }
@@ -341,4 +425,174 @@ pub fn format_phase_banner(
         return "ComfyUI listo · Fase 2 completada".to_string();
     }
     "ComfyUI listo".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// Salida literal de `download-models.sh --bootstrap` con el manifiesto real
+    /// (`config/models-core.json`, cuyo conjunto bootstrap está vacío a propósito).
+    fn bootstrap_log_nothing_to_download() -> Vec<String> {
+        lines(&[
+            "[2026-11-05 09:00:00] [MODELS] ======================================================================",
+            "[2026-11-05 09:00:00] [MODELS] INICIANDO ARRANQUE (solo bootstrap imprescindible)",
+            "[2026-11-05 09:00:00] [MODELS] Manifiesto: /etc/comfyui/models-core.json",
+            "[2026-11-05 09:00:00] [MODELS] ======================================================================",
+            "[2026-11-05 09:00:00] [MODELS] PLAN ARRANQUE: 0 archivos bootstrap.",
+            "[2026-11-05 09:00:00] [MODELS] Nada que descargar para abrir la API: el arranque no arrastra modelos.",
+            "[2026-11-05 09:00:00] [MODELS] Las capacidades se precargan a petición (dependencias y bytes visibles).",
+            "[2026-11-05 09:00:00] [MODELS] ======================================================================",
+            "[2026-11-05 09:00:00] [MODELS] FASE ARRANQUE COMPLETADA.",
+            "[2026-11-05 09:00:00] [MODELS] ======================================================================",
+            "[2026-11-05 09:00:00] [MODELS] RESUMEN ARRANQUE: Todos los modelos se descargaron correctamente (0 fallos).",
+        ])
+    }
+
+    fn comfy_running() -> ComfyUiStatus {
+        ComfyUiStatus {
+            state: "running".to_string(),
+            supervisor_state: "running".to_string(),
+            pid: Some(4242),
+            rss_mb: 2048,
+            uptime_s: 60,
+            port_open: true,
+            restarts: 0,
+            healthy_resets: 0,
+            max_restarts: 5,
+            last_exit: None,
+        }
+    }
+
+    #[test]
+    fn arranque_banner_marks_both_phases_not_required() {
+        let parsed = parse_phases_from_lines(
+            &bootstrap_log_nothing_to_download(),
+            false,
+            "all",
+            Some((999, 64)),
+        );
+        assert_eq!(parsed.phase1.state, STATE_NOT_REQUIRED);
+        assert_eq!(parsed.phase1.done, 0);
+        assert_eq!(parsed.phase1.total, 0);
+        assert!(parsed.phase1.failed.is_empty());
+        assert_eq!(parsed.phase2.state, STATE_NOT_REQUIRED);
+        assert_eq!(parsed.phase2.done, 0);
+        assert_eq!(parsed.phase2.total, 0);
+        assert!(parsed.phase2.failed.is_empty());
+        assert_eq!(parsed.phase2.current_file, None);
+        // El proceso hf vivo sigue reportándose aunque no haya fases pendientes.
+        assert_eq!(parsed.phase2.hf_pid, Some(999));
+        assert_eq!(parsed.phase2.hf_rss_mb, 64);
+    }
+
+    #[test]
+    fn arranque_banner_is_not_mistaken_for_a_pending_phase1() {
+        // Regresión F20: el banner ARRANQUE no debe dejar `pending`/12 ficheros.
+        let parsed =
+            parse_phases_from_lines(&bootstrap_log_nothing_to_download(), false, "all", None);
+        assert_ne!(parsed.phase1.state, "pending");
+        assert_ne!(parsed.phase1.total, 12);
+        assert_ne!(parsed.phase2.state, "pending");
+        assert_ne!(parsed.phase2.total, 14);
+    }
+
+    #[test]
+    fn arranque_banner_with_planned_bootstrap_files_counts_them() {
+        let log = lines(&[
+            "[2026-11-05 09:00:00] [MODELS] INICIANDO ARRANQUE (solo bootstrap imprescindible)",
+            "[2026-11-05 09:00:00] [MODELS] PLAN ARRANQUE: 2 archivos bootstrap.",
+            "[2026-11-05 09:00:01] [MODELS] INICIO: buffalo_l.zip (Gourieff/ReActor/models/buffalo_l.zip)",
+            "[2026-11-05 09:00:02] [MODELS] OK: /workspace/comfyui-data/models/insightface/buffalo_l.zip (1.0K)",
+            "[2026-11-05 09:00:03] [MODELS] INICIO: inswapper_128.onnx (Gourieff/ReActor/models/inswapper_128.onnx)",
+            "[2026-11-05 09:00:04] [MODELS] ERROR: Falló la descarga de inswapper_128.onnx (Gourieff/ReActor/models/inswapper_128.onnx) tras 3 intentos.",
+            "[2026-11-05 09:00:05] [MODELS] FASE ARRANQUE COMPLETADA (2 archivos bootstrap).",
+        ]);
+        let parsed = parse_phases_from_lines(&log, false, "all", None);
+        assert_eq!(parsed.phase1.state, "done");
+        assert_eq!(parsed.phase1.done, 1);
+        assert_eq!(parsed.phase1.total, 2);
+        assert_eq!(parsed.phase1.failed, vec!["inswapper_128.onnx".to_string()]);
+        assert_eq!(parsed.phase1.elapsed_s, 5);
+        // El bootstrap nunca baja la Fase 2 del perfil.
+        assert_eq!(parsed.phase2.state, STATE_NOT_REQUIRED);
+        assert_eq!(parsed.phase2.total, 0);
+        assert_eq!(parsed.phase2.current_file, None);
+    }
+
+    #[test]
+    fn arranque_nothing_to_download_survives_a_truncated_plan_line() {
+        // Log truncado o rotado: sigue el "Nada que descargar" del arranque pero se
+        // perdió el `PLAN ARRANQUE: 0`. Sin reconocer esa línea el estado se quedaría
+        // en `running` con 0/0 (o en `pending` si también falta el INICIANDO).
+        let log = lines(&[
+            "[2026-11-05 09:00:00] [MODELS] INICIANDO ARRANQUE (solo bootstrap imprescindible)",
+            "[2026-11-05 09:00:00] [MODELS] Nada que descargar para abrir la API: el arranque no arrastra modelos.",
+            "[2026-11-05 09:00:00] [MODELS] Las capacidades se precargan a petición (dependencias y bytes visibles).",
+        ]);
+        let parsed = parse_phases_from_lines(&log, false, "all", None);
+        assert_eq!(parsed.phase1.state, STATE_NOT_REQUIRED);
+        assert_eq!(parsed.phase1.total, 0);
+        assert_eq!(parsed.phase1.done, 0);
+        assert_eq!(parsed.phase2.state, STATE_NOT_REQUIRED);
+        assert_eq!(parsed.phase2.total, 0);
+        assert_eq!(parsed.phase2.current_file, None);
+        let banner = format_phase_banner(&comfy_running(), &parsed, None);
+        assert!(!banner.contains("pending"), "banner: {banner}");
+        assert!(!banner.contains("descargando (0/0)"), "banner: {banner}");
+    }
+
+    #[test]
+    fn last_execution_wins_between_arranque_and_legacy_phases() {
+        // Un --phase2 manual posterior al arranque debe reflejarse, no el bootstrap.
+        let mut log = bootstrap_log_nothing_to_download();
+        log.extend(lines(&[
+            "[2026-11-05 10:00:00] [MODELS] INICIANDO FASE 1 (2.79 GiB): ReActor, InsightFace, CodeFormer, VAE, Upscalers",
+            "[2026-11-05 10:00:00] [MODELS] PLAN FASE 1: 12 archivos",
+            "[2026-11-05 10:00:01] [MODELS] FASE 1 COMPLETADA.",
+            "[2026-11-05 10:00:02] [MODELS] INICIANDO FASE 2 (Segundo Plano — Perfil: all)",
+            "[2026-11-05 10:00:02] [MODELS] PLAN FASE 2: 14 archivos (all)",
+            "[2026-11-05 10:00:03] [MODELS] INICIO: flux1-dev-fp8.safetensors (Comfy-Org/flux1-dev/flux1-dev-fp8.safetensors)",
+            "[2026-11-05 10:00:04] [MODELS] OK: /workspace/comfyui-data/models/checkpoints/flux1-dev-fp8.safetensors (8.9G)",
+            "[2026-11-05 10:00:05] [MODELS] FASE 2 COMPLETADA (Perfil: all).",
+        ]));
+        let parsed = parse_phases_from_lines(&log, false, "all", None);
+        assert_eq!(parsed.phase1.state, "done");
+        assert_eq!(parsed.phase2.state, "done");
+        assert_eq!(parsed.phase2.done, 1);
+        assert_eq!(parsed.phase2.total, 14);
+    }
+
+    #[test]
+    fn banner_reports_not_required_instead_of_a_forever_pending_phase() {
+        let log = bootstrap_log_nothing_to_download();
+        let parsed = parse_phases_from_lines(&log, false, "all", None);
+        let banner = format_phase_banner(&comfy_running(), &parsed, None);
+        assert_eq!(
+            banner,
+            "ComfyUI listo · Descargas no requeridas (el arranque no arrastra modelos)"
+        );
+        assert!(!banner.contains("pending"));
+    }
+
+    #[test]
+    fn banner_still_prefers_phase2_progress_over_not_required() {
+        let mut log = bootstrap_log_nothing_to_download();
+        log.extend(lines(&[
+            "[2026-11-05 10:00:00] [MODELS] INICIANDO FASE 2 (Segundo Plano — Perfil: all)",
+            "[2026-11-05 10:00:00] [MODELS] PLAN FASE 2: 14 archivos (all)",
+            "[2026-11-05 10:00:01] [MODELS] INICIO: flux1-dev-fp8.safetensors (Comfy-Org/flux1-dev/flux1-dev-fp8.safetensors)",
+        ]));
+        let parsed = parse_phases_from_lines(&log, false, "all", None);
+        assert_eq!(parsed.phase2.state, "running");
+        let banner = format_phase_banner(&comfy_running(), &parsed, None);
+        assert_eq!(
+            banner,
+            "ComfyUI listo · Fase 2: 0/14 modelos (flux1-dev-fp8.safetensors)"
+        );
+    }
 }

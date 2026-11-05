@@ -14,6 +14,10 @@ Uso:  python3 scripts/pin_manifest_integrity.py [manifest ...]
 
 Sin argumentos procesa los dos manifiestos conocidos. Es idempotente: reejecutar
 con las mismas respuestas no cambia el fichero.
+
+Las pruebas viven en `studio/tests/test_manifest_pinner.py`, no aquí: la puerta
+documentada (AGENTS.md) es `ruff check studio panel scripts config/probes` más
+`pytest studio/tests -q`, y un `pytest scripts/...` a mano no lo ejecuta nadie.
 """
 
 from __future__ import annotations
@@ -92,11 +96,29 @@ def _repo_from_url(url: str) -> str | None:
     return None
 
 
-def _is_sha256(value: object) -> bool:    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and set(value) <= HEX_DIGITS
-    )
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and set(value) <= HEX_DIGITS
+
+
+def _is_sha1(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 40 and set(value) <= HEX_DIGITS
+
+
+def _algorithm_for(digest: object) -> str | None:
+    """Algoritmo del dígest publicado, o `None` si no es un hash hexadecimal.
+
+    La longitud por sí sola no determina el algoritmo: un ETag de 64 caracteres
+    que no sea hexadecimal se escribiría como `sha256` y el manifiesto quedaría
+    inválido (solo lo detectaría después `check_models_manifest.py`). Aquí se
+    rechaza antes de tocar el fichero. Los criterios son los mismos que usa ese
+    validador, para que acepte exactamente lo que él acepta.
+    """
+    if _is_sha256(digest):
+        return "sha256"
+    if _is_sha1(digest):
+        return "sha1"
+    return None
+
 
 def pin(path: Path) -> int:
     if not path.is_file():
@@ -130,10 +152,18 @@ def pin(path: Path) -> int:
 
         # HF publica el SHA-256 del objeto LFS; para ficheros pequeños guardados
         # en git publica el SHA-1 del blob. Se registra el que haya («where
-        # available»), con el algoritmo explícito.
-        algorithm = "sha256" if digest and len(digest) == 64 else "sha1" if digest else None
+        # available»), con el algoritmo explícito. Un dígest presente pero no
+        # hexadecimal aborta: escribirlo daría un manifiesto inválido.
+        algorithm = _algorithm_for(digest)
         if algorithm:
             pinned[algorithm] += 1
+        elif digest:
+            print(
+                f"ERROR: dígest no reconocido para {entry.get('filename')!r} "
+                f"({digest!r}); se esperaba SHA-256 o SHA-1 hexadecimal",
+                file=sys.stderr,
+            )
+            return 1
         else:
             pinned["none"] += 1
 
