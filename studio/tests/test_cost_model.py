@@ -14,6 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "storage_requirement.py"
 
@@ -96,3 +98,113 @@ def test_cost_is_optional_in_the_cli() -> None:
     )
     payload = json.loads(out.stdout)
     assert "cost" not in payload
+
+
+# --------------------------------------------------------------------------
+# Liberación de VRAM cuando no queda trabajo (política, puntos 3 y 5)
+# --------------------------------------------------------------------------
+
+
+class _StoreStub:
+    def __init__(self, jobs: list[dict]) -> None:
+        self._jobs = jobs
+
+    def list_jobs(self, **_kwargs):  # noqa: ANN001
+        return self._jobs
+
+
+class _ClientStub:
+    def __init__(self, jobs: list[dict]) -> None:
+        self._store = _StoreStub(jobs)
+        self.calls: list[dict] = []
+
+    async def free_memory(self, **kwargs):  # noqa: ANN001
+        self.calls.append(kwargs)
+        return {"freed": True}
+
+
+@pytest.mark.anyio
+async def test_gpu_is_released_when_no_work_remains() -> None:
+    """«Do not keep every engine or model resident in VRAM merely to describe the
+    studio as ready.» `POST /free` existía pero nunca se llamaba."""
+
+    from comfy_studio.comfyui_client import ComfyUIClient
+
+    client = ComfyUIClient.__new__(ComfyUIClient)
+    client._store = _StoreStub([{"status": "done"}])
+    client._unload_when_idle = True
+
+    calls: list[dict] = []
+
+    async def _free(**kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        return {"freed": True}
+
+    client.free_memory = _free
+    await ComfyUIClient._release_gpu_when_idle(client)
+    assert calls == [{"unload_models": True, "free_memory": True}]
+
+
+@pytest.mark.anyio
+async def test_gpu_is_not_released_while_work_is_pending() -> None:
+    """Liberar con la cola llena penalizaría el rendimiento sin ganar nada."""
+    from comfy_studio.comfyui_client import ComfyUIClient
+
+    client = ComfyUIClient.__new__(ComfyUIClient)
+    client._store = _StoreStub([{"status": "done"}, {"status": "running"}])
+    client._unload_when_idle = True
+
+    calls: list[dict] = []
+
+    async def _free(**kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        return {}
+
+    client.free_memory = _free
+    await ComfyUIClient._release_gpu_when_idle(client)
+    assert calls == []
+
+
+@pytest.mark.anyio
+async def test_release_can_be_disabled() -> None:
+    from comfy_studio.comfyui_client import ComfyUIClient
+
+    client = ComfyUIClient.__new__(ComfyUIClient)
+    client._store = _StoreStub([])
+    client._unload_when_idle = False
+
+    calls: list[dict] = []
+
+    async def _free(**kwargs):  # noqa: ANN001
+        calls.append(kwargs)
+        return {}
+
+    client.free_memory = _free
+    await ComfyUIClient._release_gpu_when_idle(client)
+    assert calls == []
+
+
+@pytest.mark.anyio
+async def test_release_failure_never_breaks_a_finished_render() -> None:
+    """Liberar VRAM es una optimización: no puede tumbar un render ya persistido."""
+    from comfy_studio.comfyui_client import ComfyUIClient
+
+    client = ComfyUIClient.__new__(ComfyUIClient)
+    client._store = _StoreStub([{"status": "done"}])
+    client._unload_when_idle = True
+
+    async def _boom(**kwargs):  # noqa: ANN001
+        raise RuntimeError("ComfyUI no responde")
+
+    client.free_memory = _boom
+    await ComfyUIClient._release_gpu_when_idle(client)  # no lanza
+
+
+def test_unload_flag_is_configurable() -> None:
+    from comfy_studio.config import StudioConfig
+
+    default = StudioConfig.from_env({})
+    assert default.unload_models_when_idle is True
+    off = StudioConfig.from_env({"STUDIO_UNLOAD_WHEN_IDLE": "0"})
+    assert off.unload_models_when_idle is False
+    assert "STUDIO_UNLOAD_WHEN_IDLE" in off.to_public_dict()

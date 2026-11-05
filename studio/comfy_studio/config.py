@@ -394,6 +394,8 @@ class StudioConfig:
     studio_ffmpeg_timeout_s: float = DEFAULT_STUDIO_FFMPEG_TIMEOUT_S
     studio_ffprobe_timeout_s: float = DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
     max_concurrent_renders: int = DEFAULT_MAX_CONCURRENT_RENDERS
+    # Política (puntos 3 y 5): descargar modelos de VRAM cuando no queda trabajo.
+    unload_models_when_idle: bool = True
     studio_api_token: str | None = field(default=None, repr=False)
     studio_enable_mcp: bool = True
     # M3.1: protocolo de workers de ML en subprocesso (ComfyUI interpreter).
@@ -564,6 +566,9 @@ class StudioConfig:
             max_concurrent_renders=_positive_int(
                 "STUDIO_MAX_CONCURRENT_RENDERS", DEFAULT_MAX_CONCURRENT_RENDERS
             ),
+            unload_models_when_idle=_parse_bool(
+                source.get("STUDIO_UNLOAD_WHEN_IDLE"), default=True
+            ),
             studio_api_token=source.get("STUDIO_API_TOKEN", "").strip() or None,
             studio_enable_mcp=_parse_bool(source.get("STUDIO_ENABLE_MCP"), default=True),
             # M3.1: binario Python del worker (ComfyUI interpreter por defecto).
@@ -695,6 +700,7 @@ class StudioConfig:
             "STUDIO_FFMPEG_TIMEOUT_S": str(self.studio_ffmpeg_timeout_s),
             "STUDIO_FFPROBE_TIMEOUT_S": str(self.studio_ffprobe_timeout_s),
             "STUDIO_MAX_CONCURRENT_RENDERS": str(self.max_concurrent_renders),
+            "STUDIO_UNLOAD_WHEN_IDLE": "1" if self.unload_models_when_idle else "0",
             "STUDIO_UPLOAD_MAX_TOTAL_MB": str(self.upload_max_total_bytes // (1024 * 1024)),
             "STUDIO_API_TOKEN": "<definido>" if self.studio_api_token else "<no definido>",
             "STUDIO_ENABLE_MCP": "1" if self.studio_enable_mcp else "0",

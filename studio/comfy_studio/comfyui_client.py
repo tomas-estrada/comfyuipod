@@ -367,6 +367,7 @@ async def sample_system_stats_peak(
             continue
     return peak
 
+
 class ComfyUIClient:
     """Cliente HTTP/WS hacia ComfyUI con reintentos, backoff y elevación de errores al job."""
 
@@ -389,6 +390,7 @@ class ComfyUIClient:
         broker: ProgressBroker | None = None,
         redactor: SecretRedactor | None = None,
         sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        unload_when_idle: bool = True,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.client_id = client_id
@@ -406,6 +408,8 @@ class ComfyUIClient:
         self._broker = broker
         self._redactor = redactor or SecretRedactor()
         self._sleep = sleep_func
+        # Política (puntos 3 y 5): liberar VRAM cuando no queda trabajo.
+        self._unload_when_idle = bool(unload_when_idle)
 
     def _redact(self, text: str) -> str:
         return self._redactor.redact(text)
@@ -1250,6 +1254,38 @@ class ComfyUIClient:
         data = resp.json()
         return data if isinstance(data, dict) else {"freed": True}
 
+    async def _release_gpu_when_idle(self) -> None:
+        """Descarga los modelos cuando no queda trabajo (política, puntos 3 y 5).
+
+        «Do not keep every engine or model resident in RAM or VRAM merely to
+        describe the studio as ready» y «sequential scheduling and unloading
+        inactive models». `POST /free` existía pero nunca se llamaba en
+        producción: los modelos se quedaban residentes tras cada render.
+
+        Solo se libera cuando **no queda ningún job en vuelo**, para no penalizar
+        el rendimiento de una cola con trabajo. Fallar aquí nunca debe tumbar un
+        render que ya ha terminado y persistido.
+        """
+        if not self._unload_when_idle:
+            return
+        try:
+            if self._store is not None and self._has_pending_work():
+                return
+            await self.free_memory(unload_models=True, free_memory=True)
+        except Exception:  # noqa: BLE001 - liberar VRAM nunca rompe un render
+            logger.debug("No se pudo liberar VRAM tras el render", exc_info=True)
+
+    def _has_pending_work(self) -> bool:
+        """True si queda algún job sin estado terminal."""
+        if self._store is None:
+            return False
+        try:
+            jobs = self._store.list_jobs(limit=200)
+        except Exception:  # noqa: BLE001 - sin store no se puede saber
+            return False
+        terminal = {"done", "error", "cancelled", "interrupted"}
+        return any(str(j.get("status")) not in terminal for j in jobs)
+
     async def _record_render_measurement(
         self,
         *,
@@ -1414,4 +1450,5 @@ class ComfyUIClient:
             project_id=project_id,
         )
         note_engine_run("comfyui", True)
+        await self._release_gpu_when_idle()
         return result
