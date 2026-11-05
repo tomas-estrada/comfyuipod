@@ -28,7 +28,15 @@
       "level": "L1"
     }
   },
-  "capability_fan_out_remaining": ["W06 inspiracion", "W08 base AV (LTX/Wan adapters)", "W09 atlas (reusa #63)", "W10 3D", "W11-W23 (camaras,fisica,movimiento,audio,capas,luz,cara,memoria,montaje,UI,director,investigador)"],
+  "W08_in_review": {
+    "title": "Base AV, keyframes y upscale local",
+    "pr": "feat/ultra-w08-av-adapters",
+    "delivered": "av_recipes.py: catalogo de recetas AV (LTX25/Wan22/QwenImage/SeedVR2/FlashVSR+) con limites de modelo (res/frames/VRAM estimada/componentes) + selector por capacidad y presupuesto de VRAM real. VRAM estimada marcada NO-medida (A10). Selecciona mayor fidelidad viable; rechaza lo que no cabe sin inventar.",
+    "tests": "test_av_recipes.py 9 passed",
+    "pending": "enganchar seleccion->ComfyUIEngine real con lease(W03); medicion real sustituye estimacion (A29 GPU)",
+    "level": "L1"
+  },
+  "capability_fan_out_remaining": ["W06 inspiracion", "W09 atlas (reusa #63)", "W10 3D", "W11-W23 (camaras,fisica,movimiento,audio,capas,luz,cara,memoria,montaje,UI,director,investigador)"],
   "sub_items_pending": ["fijar 57 engine locks", "protocolo describe/execute/cancel/unload", "integrar lease+lineage+ingest en executor", "LangGraph real en imagen", "provider profiles A06"],
   "blockers": [],
   "known_env_issues": ["test_mac_helper 3 tests fallan SOLO en Windows (SYSTEMROOT); pasan en CI Linux."],
