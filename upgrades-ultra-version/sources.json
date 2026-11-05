@@ -1,0 +1,1322 @@
+{
+  "schema_version": "1.0",
+  "scope": "Primary evidence index and prior-research references; not proof of GPU validation",
+  "current_checked_at_utc": "2026-11-05",
+  "sources": [
+    {
+      "id": "R01",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/tomas-estrada/comfyuipod/tree/0a0df8ee0ebec7b319e9c340345f27cfec25f664"
+      ],
+      "label": "R01. Repositorio y punto de partida:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S01",
+      "kind": "primary_source",
+      "urls": [
+        "https://nvidia.github.io/cosmos-framework/skills/cookbooks/cosmos3/nim/support-matrix/",
+        "https://nvidia.github.io/cosmos-framework/inference/"
+      ],
+      "label": "S01. Cosmos-Framework, matriz:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S02",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Westlake-AGI-Lab/WorldForge/blob/main/h3_for_worldforge/README.md"
+      ],
+      "label": "S02. WorldForge V2:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S03",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/AlayaLab/AlayaWorld"
+      ],
+      "label": "S03. AlayaWorld:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S04",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/TencentARC/WorldCrafter"
+      ],
+      "label": "S04. WorldCrafter:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S04b",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/TencentARC/WorldCrafter/blob/main/demo/README.md"
+      ],
+      "label": "S04b. Demo y hardware de WorldCrafter:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S05",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/ByteDance-Seed/Depth-Anything-3"
+      ],
+      "label": "S05. Depth Anything 3:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S06",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/nv-tlabs/vipe"
+      ],
+      "label": "S06. ViPE:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S07",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/facebookresearch/sam-3d-objects"
+      ],
+      "label": "S07. SAM 3D Objects:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S07b",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/facebookresearch/sam-3d-objects/blob/main/doc/setup.md"
+      ],
+      "label": "S07b. Instalación SAM 3D Objects:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S08",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/microsoft/TRELLIS.2"
+      ],
+      "label": "S08. TRELLIS.2:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S09",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1"
+      ],
+      "label": "S09. Hunyuan3D-2.1:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S10",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/wgsxm/PartCrafter"
+      ],
+      "label": "S10. PartCrafter:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S11",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/VAST-AI-Research/SkinTokens"
+      ],
+      "label": "S11. SkinTokens:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S12",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/facebookresearch/sam-3d-body"
+      ],
+      "label": "S12. SAM 3D Body:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S13",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/zju3dv/GVHMR"
+      ],
+      "label": "S13. GVHMR:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S14",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Tencent-Hunyuan/HY-Motion-1.0"
+      ],
+      "label": "S14. HY-Motion 1.0:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S15",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Wan-Video/Wan2.2"
+      ],
+      "label": "S15. Wan2.2:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S16",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/ali-vilab/Wan-Move"
+      ],
+      "label": "S16. Wan-Move:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S17",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/MeiGen-AI/InfiniteTalk"
+      ],
+      "label": "S17. InfiniteTalk:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S18",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/yisuanwang/OVOW"
+      ],
+      "label": "S18. OVOW:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S19",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/newton-physics/newton"
+      ],
+      "label": "S19. Newton:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S20",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/QwenLM/Qwen3-VL"
+      ],
+      "label": "S20. Qwen3-VL:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S21",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/nv-tlabs/diffusion-renderer"
+      ],
+      "label": "S21. DiffusionRenderer:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S22",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/TQTQliu/Light-X"
+      ],
+      "label": "S22. Light-X:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S23",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Eyeline-Labs/ID-V2V"
+      ],
+      "label": "S23. ID-V2V:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S24",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Lightricks/LTX-2"
+      ],
+      "label": "S24. LTX-2 / LTX-2.5:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S24b",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Lightricks/LTX-2/blob/main/packages/ltx-pipelines/docs/pipelines.md"
+      ],
+      "label": "S24b. Pipelines LTX:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S25",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/MiniMax-AI/MiniMax-H3"
+      ],
+      "label": "S25. MiniMax-H3:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S25b",
+      "kind": "primary_source",
+      "urls": [
+        "https://design.minimax.io/h3"
+      ],
+      "label": "S25b. Guía oficial MiniMax-H3 y alcance de licencia:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S26",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/heygen-com/hyperframes"
+      ],
+      "label": "S26. HyperFrames:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S27",
+      "kind": "primary_source",
+      "urls": [
+        "https://openusd.org/release/intro.html"
+      ],
+      "label": "S27. OpenUSD:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S28",
+      "kind": "primary_source",
+      "urls": [
+        "https://opentimelineio.readthedocs.io/en/latest/"
+      ],
+      "label": "S28. OpenTimelineIO:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S29",
+      "kind": "primary_source",
+      "urls": [
+        "https://opencolorio.readthedocs.io/en/latest/"
+      ],
+      "label": "S29. OpenColorIO:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S30",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Genesis-Embodied-AI/genesis-world"
+      ],
+      "label": "S30. Genesis World:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S31",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/ali-vilab/VACE/blob/main/UserGuide.md"
+      ],
+      "label": "S31. VACE:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S32",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/facebookresearch/sam-audio"
+      ],
+      "label": "S32. SAM-Audio:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S33",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/hkchengrex/MMAudio"
+      ],
+      "label": "S33. MMAudio:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S34",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/ValveSoftware/steam-audio"
+      ],
+      "label": "S34. Steam Audio:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S35",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/ace-step/ACE-Step-1.5"
+      ],
+      "label": "S35. ACE-Step 1.5:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S36",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/QwenLM/Qwen3-TTS"
+      ],
+      "label": "S36. Qwen3-TTS:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S37",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/OpenImagingLab/FlashVSR_Plus"
+      ],
+      "label": "S37. FlashVSR+:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S38",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/ByteDance-Seed/SeedVR"
+      ],
+      "label": "S38. SeedVR / SeedVR2:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S39",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Eyeline-Labs/DiffHDR"
+      ],
+      "label": "S39. DiffHDR:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S40",
+      "kind": "primary_source",
+      "urls": [
+        "https://www.remotion.dev/docs/terms"
+      ],
+      "label": "S40. Remotion, términos:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S41",
+      "kind": "primary_source",
+      "urls": [
+        "https://optuna.readthedocs.io/en/latest/reference/visualization/plot_pareto_front.html"
+      ],
+      "label": "S41. Optuna, Pareto:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S42",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/KlingAIResearch/VideoAlign"
+      ],
+      "label": "S42. VideoAlign / VideoReward:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S43",
+      "kind": "primary_source",
+      "urls": [
+        "https://reference.langchain.com/python/langgraph.checkpoint"
+      ],
+      "label": "S43. LangGraph, persistencia:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S44",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/QwenLM/Qwen-Image-2.1"
+      ],
+      "label": "S44. Qwen-Image-2.1:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S44b",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/QwenLM/Qwen-Image-2.1/blob/main/LICENSE"
+      ],
+      "label": "S44b. Licencia Qwen-Image-2.1:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S45",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/cvlab-kaist/VideoMaMa"
+      ],
+      "label": "S45. VideoMaMa original:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S45b",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/cvlab-kaist/VideoMaMa-PlusPlus"
+      ],
+      "label": "S45b. VideoMaMa++ y estado de entrega:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S46",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/nikopueringer/CorridorKey/blob/main/LICENSE"
+      ],
+      "label": "S46. Licencia de CorridorKey:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "S47",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/black-forest-labs/flux2"
+      ],
+      "label": "S47. FLUX.2:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N01",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Kevin-thu/StoryMem",
+        "https://github.com/Kevin-thu/StoryMem/blob/main/pipeline.py",
+        "https://github.com/Kevin-thu/StoryMem/blob/main/LICENSE.md"
+      ],
+      "label": "N01. StoryMem:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N02",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/yihao-meng/HoloCine",
+        "https://huggingface.co/hlwang06/HoloCine"
+      ],
+      "label": "N02. HoloCine:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N03",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/KlingAIResearch/ShotStream",
+        "https://huggingface.co/KlingTeam/ShotStream"
+      ],
+      "label": "N03. ShotStream:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N04",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/yixuanli98/CameraAnything",
+        "https://huggingface.co/liyixxxuan/cameraanything",
+        "https://github.com/yixuanli98/CameraAnything/blob/main/scripts/inference_scripts/inference_real_mixed_8gpu_common.sh"
+      ],
+      "label": "N04. CameraAnything:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N05",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Aleafy/V-RGBX",
+        "https://github.com/Aleafy/V-RGBX/blob/main/vrgbx_edit_inference.py"
+      ],
+      "label": "N05. V-RGBX:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N06",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/nv-tlabs/UniRelight",
+        "https://huggingface.co/nvidia/UniRelight"
+      ],
+      "label": "N06. UniRelight:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N07",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/gen-omnimatte/gen-omnimatte-public",
+        "https://gen-omnimatte.github.io/"
+      ],
+      "label": "N07. Generative Omnimatte:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N08",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Netflix/void-model",
+        "https://huggingface.co/netflix/void-model",
+        "https://arxiv.org/abs/2604.02296"
+      ],
+      "label": "N08. VOID:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N09",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/knightyxp/VideoCoF",
+        "https://github.com/knightyxp/VideoCoF/blob/main/scripts/obj_add.sh"
+      ],
+      "label": "N09. VideoCoF:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N10",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/QwenLM/Qwen-Image-Layered"
+      ],
+      "label": "N10. Qwen-Image-Layered:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N11",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/facebookresearch/map-anything"
+      ],
+      "label": "N11. MapAnything:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N12",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/zbw001/TAPIP3D"
+      ],
+      "label": "N12. TAPIP3D:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N13",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/zju3dv/street_crafter"
+      ],
+      "label": "N13. StreetCrafter:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N14",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/gerwang/DiffReg-PBIR"
+      ],
+      "label": "N14. DiffReg-PBIR:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N15",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/3DTopia/MaterialAnything"
+      ],
+      "label": "N15. MaterialAnything:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N16",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/lez-s/Materialist"
+      ],
+      "label": "N16. Materialist:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N17",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/mitsuba-renderer/mitsuba3"
+      ],
+      "label": "N17. Mitsuba 3:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N18",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/NVlabs/motionbricks"
+      ],
+      "label": "N18. MotionBricks:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N19",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/4DVLab/ReMoGen"
+      ],
+      "label": "N19. ReMoGen:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N20",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Sirui-Xu/InterMimic"
+      ],
+      "label": "N20. InterMimic:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N21",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/ziangcao0312/PhysX-Anything",
+        "https://github.com/ziangcao0312/PhysX-Anything/blob/main/download.py"
+      ],
+      "label": "N21. PhysX-Anything:",
+      "verification": "original primary README/license reread while preparing current packet; source-specific limitations in engines.json and research.md",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N22",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/NVIDIA/Audio2Face-3D-SDK"
+      ],
+      "label": "N22. Audio2Face-3D SDK:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N23",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Luh1124/MARCUS-Avatar"
+      ],
+      "label": "N23. MARCUS-Avatar:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N24",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/KelianB/GTAvatar"
+      ],
+      "label": "N24. GTAvatar:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N25",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/xiaomi-research/controlfoley"
+      ],
+      "label": "N25. ControlFoley:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N26",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Tencent-Hunyuan/HunyuanVideo-Foley"
+      ],
+      "label": "N26. HunyuanVideo-Foley:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N27",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/SAIL-PRLab/Foley-Omni"
+      ],
+      "label": "N27. Foley-Omni:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N28",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/Vchitect/VBench/blob/master/VBench-2.0/README.md"
+      ],
+      "label": "N28. VBench-2.0:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N29",
+      "kind": "primary_source",
+      "urls": [
+        "https://projectchrono.org/",
+        "https://api.projectchrono.org/group__vehicle.html",
+        "https://api.projectchrono.org/development/introduction_chrono_blender.html"
+      ],
+      "label": "N29. Project Chrono:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N30",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/princeton-vl/SEA-RAFT"
+      ],
+      "label": "N30. SEA-RAFT:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "N31",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/AcademySoftwareFoundation/OpenPBR"
+      ],
+      "label": "N31. OpenPBR:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "Entrega parcial MeV",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/KlingAIResearch/Mise-en-Video"
+      ],
+      "label": "Entrega parcial MeV:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "Entrega parcial STAGE",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/escapistmost/Storyboard-Anchored-Generation"
+      ],
+      "label": "Entrega parcial STAGE:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "Estado de OmniFabric",
+      "kind": "primary_source",
+      "urls": [
+        "https://github.com/humansensinglab/OmniFabric"
+      ],
+      "label": "Estado de OmniFabric:",
+      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "gpu_measured_here": false,
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+    },
+    {
+      "id": "R00",
+      "label": "ComfyUIPod: main y árbol de partida",
+      "urls": [
+        "https://github.com/tomas-estrada/comfyuipod/tree/b54195f0976d6c57b0ee04962e3059219db55d57"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_repository_files_and_tree",
+      "limitation": "No GPU execution; baseline source snapshot.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "R02",
+      "label": "Atlas PR#63",
+      "urls": [
+        "https://github.com/tomas-estrada/comfyuipod/pull/63",
+        "https://github.com/tomas-estrada/comfyuipod/tree/c12618815c5e7181bbb69e4ce9d249a0075fd3c4"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_metadata_manifest_service_acquire_and_adapters",
+      "limitation": "Counts are manifest declarations, not independent visual audit.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "R03",
+      "label": "CI de main revisada",
+      "urls": [
+        "https://github.com/tomas-estrada/comfyuipod/actions/runs/41964177024"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_workflow_run",
+      "limitation": "Success applies to baseline SHA, not a future Ultra release.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K01",
+      "label": "Kiro Crew: agentes",
+      "urls": [
+        "https://github.com/kirodotdev/KiroCrew/blob/4a546774f478c27058d61e7005ca931fd01b1c97/src/kiro_crew/docs/agents.md"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_full_upstream_documentation",
+      "limitation": "Installed edition/version determines actual tools and UI.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K02",
+      "label": "Kiro Crew: work ledger",
+      "urls": [
+        "https://github.com/kirodotdev/KiroCrew/blob/4a546774f478c27058d61e7005ca931fd01b1c97/src/kiro_crew/docs/work-ledger.md"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_full_upstream_documentation",
+      "limitation": "Native acceptance kind and create-bind-seed semantics; not CrewAI framework APIs.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K03",
+      "label": "Kiro Crew: Task Runner",
+      "urls": [
+        "https://kiro.dev/docs/crew/features/task-runner/",
+        "https://github.com/kirodotdev/KiroCrew/blob/4a546774f478c27058d61e7005ca931fd01b1c97/src/kiro_crew/docs/task-runner.md"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_page_and_source",
+      "limitation": "Markdown spec and verification; CLI permissions/version-specific.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K04",
+      "label": "OpenCode frontend y licencia",
+      "urls": [
+        "https://github.com/anomalyco/opencode/tree/09dcb47861fe9253814dc85b12f31a5b2691eda6",
+        "https://github.com/anomalyco/opencode/blob/09dcb47861fe9253814dc85b12f31a5b2691eda6/LICENSE",
+        "https://github.com/anomalyco/opencode/blob/09dcb47861fe9253814dc85b12f31a5b2691eda6/packages/app/package.json",
+        "https://opencode.ai/docs/sdk/",
+        "https://opencode.ai/docs/server/"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_readme_license_package_and_official_api_docs",
+      "limitation": "MIT reuse does not make Studio API OpenCode SDK-compatible.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K05",
+      "label": "HyperFrames CLI local/cloud",
+      "urls": [
+        "https://github.com/heygen-com/hyperframes/blob/7862e271d16baa9052c78d3b85535ebc725cd136/docs/packages/cli.mdx",
+        "https://github.com/heygen-com/hyperframes/blob/7862e271d16baa9052c78d3b85535ebc725cd136/LICENSE"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_full_official_cli_and_license",
+      "limitation": "Local rendering separate from hosted/account/billed features.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K06",
+      "label": "LTX-2.5: selección de pipelines",
+      "urls": [
+        "https://github.com/Lightricks/LTX-2/tree/c1b4675863c07c59c92e502446cccdaedbe5889c",
+        "https://github.com/Lightricks/LTX-2/blob/c1b4675863c07c59c92e502446cccdaedbe5889c/packages/ltx-pipelines/docs/pipeline-selection.md"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_readme_and_selection_doc",
+      "limitation": "DFR/distilled and exact encoder/components; no own memory benchmark.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K07",
+      "label": "MiniMax-H3: alcance y licencia",
+      "urls": [
+        "https://design.minimax.io/h3",
+        "https://github.com/MiniMax-AI/MiniMax-H3",
+        "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_guide_and_readme",
+      "limitation": "768p local vs hosted Context-IR/2K; territory and training-use restrictions; license URL must be pinned before integration.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K08",
+      "label": "PyTorch: introducción de soporte Blackwell",
+      "urls": [
+        "https://pytorch.org/blog/pytorch-2-7/",
+        "https://pytorch.org/get-started/previous-versions/"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_release_and_version_matrix",
+      "limitation": "Historical compatibility milestone, not an instruction to pin Ultra globally to Torch2.7.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K09",
+      "label": "GitHub: recursos de runners",
+      "urls": [
+        "https://docs.github.com/en/actions/reference/runners/github-hosted-runners"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_runner_documentation",
+      "limitation": "Actual runner/build resources must be measured, not assumed enough for a giant image.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K10",
+      "label": "Geofabrik Colombia",
+      "urls": [
+        "https://download.geofabrik.de/south-america/colombia.html",
+        "https://www.openstreetmap.org/copyright"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_download_and_license_reference",
+      "limitation": "Geographic data/topology are not facade photographs.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K11",
+      "label": "Wikimedia: licencias por medio y metadata",
+      "urls": [
+        "https://attribution.wikimedia.org/attribution-signals/license.html",
+        "https://commons.wikimedia.org/wiki/Help:Machine-readable_data",
+        "https://www.mediawiki.org/wiki/API:Imageinfo"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_docs",
+      "limitation": "Each file has its own license/author; site text license is not a media blanket grant.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K12",
+      "label": "KartaView: imágenes y API",
+      "urls": [
+        "https://kartaview.org/terms",
+        "https://kartaview.org/doc",
+        "https://kartaview.org/landing/open-imagery"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_terms_and_docs",
+      "limitation": "Coverage and API accessibility in the actual target area remain to be queried; no city coverage guarantee.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K13",
+      "label": "YouTube: acceso/quotas",
+      "urls": [
+        "https://developers.google.com/youtube/v3/getting-started"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_api_overview",
+      "limitation": "Optional metadata connector; registration/quota/authorization are real requirements, not free universal video downloads.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K14",
+      "label": "YouTube: captions download",
+      "urls": [
+        "https://developers.google.com/youtube/v3/docs/captions/download"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_method",
+      "limitation": "Public metadata availability does not imply caption download permission.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K15",
+      "label": "Remotion: licencia propia",
+      "urls": [
+        "https://github.com/remotion-dev/remotion/blob/main/LICENSE.md",
+        "https://www.remotion.dev/docs/license/faq",
+        "https://www.remotion.dev/docs/license/"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_license_and_faq",
+      "limitation": "Personal free eligibility does not relicense the software or all redistributions.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K16",
+      "label": "GVM original",
+      "urls": [
+        "https://github.com/aim-uofa/GVM"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_full_official_readme",
+      "limitation": "One-step release differs from paper results; resolve exact code/base/weight licenses before adoption.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K17",
+      "label": "LangGraph: persistencia",
+      "urls": [
+        "https://docs.langchain.com/oss/python/langgraph/persistence"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_docs",
+      "limitation": "Checkpointer and long-term store have different responsibilities.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K18",
+      "label": "Cosmos: matriz actual de recetas",
+      "urls": [
+        "https://nvidia.github.io/cosmos-framework/skills/cookbooks/cosmos3/nim/support-matrix/"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_matrix",
+      "limitation": "NIM requirements are recipe-specific. Nano default recommendation on RTX PRO6000; Super is explicit experiment.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K19",
+      "label": "CrewAI: agentes",
+      "urls": [
+        "https://docs.crewai.com/v1.15.35/en/concepts/agents"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_docs",
+      "limitation": "CrewAI is distinct from Kiro Crew; goal field and actual tool grants/version determine operation.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K20",
+      "label": "CrewAI: flows/persistencia",
+      "urls": [
+        "https://docs.crewai.com/v1.15.35/en/concepts/flows"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_docs",
+      "limitation": "Use installed APIs; do not import Kiro work-ledger tool names into CrewAI.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K21",
+      "label": "FFmpeg: código y licencia",
+      "urls": [
+        "https://github.com/FFmpeg/FFmpeg",
+        "https://github.com/FFmpeg/FFmpeg/blob/master/LICENSE.md"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "official_repository_documentation",
+      "limitation": "Codec/build options affect license; pin the selected build.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K22",
+      "label": "WhisperX: ASR/alineación/diarización",
+      "urls": [
+        "https://github.com/m-bain/whisperX"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "read_official_readme",
+      "limitation": "Diarization can require separate gated model terms; no hidden runtime code install.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "K23",
+      "label": "Blender: motor headless",
+      "urls": [
+        "https://github.com/blender/blender"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "official_repository_documentation",
+      "limitation": "Binary/addons/assets have separate redistribution obligations; test actual headless build.",
+      "gpu_measured_here": false
+    }
+  ]
+}

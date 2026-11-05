@@ -1,0 +1,1306 @@
+{
+  "schema_version": "1.0",
+  "kind": "implementation_backlog_not_execution_report",
+  "mission": "ComfyUIPod Ultra pre-GPU",
+  "max_concurrent_workers": 4,
+  "max_active_items": 8,
+  "concurrency_note": "Use lower installed cap. Parallelize only independent items in isolated worktrees and without shared contract/config collisions; future DAG prerequisites are not yet-dispatchable work items.",
+  "work_items": [
+    {
+      "id": "W00",
+      "title": "Reconocimiento, reconciliación de PRs y baseline",
+      "depends_on": [],
+      "owner_area": "control/integration",
+      "requirements": [
+        "R01",
+        "R22"
+      ],
+      "programs": [],
+      "capabilities": [],
+      "deliverables": [
+        "Inventario con SHA local/remoto, CI, árbol sucio y PRs actuales",
+        "Decisión sobre #58/#59/#63 basada en diff y checks; no duplicar entregas",
+        "Registro de alcance/pre-GPU y budget de trabajo configurado"
+      ],
+      "acceptance_ids": [
+        "A00"
+      ],
+      "invariant": "Ninguna edición destructiva ni sobrescritura del trabajo de otros.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W01",
+      "title": "Integridad transaccional de modelos",
+      "depends_on": [
+        "W00"
+      ],
+      "owner_area": "assets/integrity",
+      "requirements": [
+        "R15"
+      ],
+      "programs": [],
+      "capabilities": [],
+      "deliverables": [
+        "Corregir skip de caché corrupta y omisión de --revision",
+        "Implementar promoción atómica EXDEV con preservación del destino",
+        "Estado de adquisición compartido con capabilities/health"
+      ],
+      "acceptance_ids": [
+        "A01"
+      ],
+      "invariant": "Toda ruta de descarga usa la misma verificación; parciales nunca son present.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W02",
+      "title": "Hardware, sizing y recetas con evidencia real",
+      "depends_on": [
+        "W01"
+      ],
+      "owner_area": "resources",
+      "requirements": [
+        "R16",
+        "R17",
+        "R21"
+      ],
+      "programs": [
+        "P14"
+      ],
+      "capabilities": [],
+      "deliverables": [
+        "Detector NVML/cgroup/host y perfiles RAM128/256",
+        "Sizing único para builder/strict/client/acquire sin sumar catálogo completo",
+        "Claves de recipe por entorno/input y exclusión de simulaciones"
+      ],
+      "acceptance_ids": [
+        "A02",
+        "A03"
+      ],
+      "invariant": "No cambiar expectativas de tests para conservar un mínimo de disco obsoleto.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W03",
+      "title": "Scheduler, admisión y lease global de GPU",
+      "depends_on": [
+        "W02"
+      ],
+      "owner_area": "scheduler",
+      "requirements": [
+        "R16",
+        "R21"
+      ],
+      "programs": [],
+      "capabilities": [],
+      "deliverables": [
+        "API de lease con owner/fencing y recuperación segura",
+        "Enchufar ComfyUI, Blender, ML/audio/VLM/jueces al mismo árbitro",
+        "Cancelación de subprocess groups y unload con estado comprobado"
+      ],
+      "acceptance_ids": [
+        "A04"
+      ],
+      "invariant": "Ensayo multiproceso, no mutex de thread ni cola solo de ComfyUI.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W04",
+      "title": "Contratos, persistencia y DAG de producción",
+      "depends_on": [
+        "W02"
+      ],
+      "owner_area": "contracts/orchestration",
+      "requirements": [
+        "R02",
+        "R03",
+        "R04",
+        "R06",
+        "R10",
+        "R11",
+        "R21"
+      ],
+      "programs": [
+        "P01",
+        "P07"
+      ],
+      "capabilities": [
+        "C04"
+      ],
+      "deliverables": [
+        "Extender ProductionState y schemas con migraciones",
+        "LangGraph real en imagen y checkpoints/side effects idempotentes",
+        "Artifact lineage/DAG invalidation, provider profiles y cancelación común"
+      ],
+      "acceptance_ids": [
+        "A05",
+        "A06"
+      ],
+      "invariant": "Una autoridad de estado; contratos publicados antes de consumidores.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W07",
+      "title": "Fábrica de engines y build reproducible",
+      "depends_on": [
+        "W03",
+        "W04"
+      ],
+      "owner_area": "build/engines",
+      "requirements": [
+        "R14",
+        "R15",
+        "R20",
+        "R22"
+      ],
+      "programs": [],
+      "capabilities": [],
+      "deliverables": [
+        "Locks por familias y revisión de licencias/componentes de engines.json",
+        "Entornos/entrypoints construidos, sin instalación runtime",
+        "Build representativo y sizing completo temprano; CI/caché/smoke CPU",
+        "Protocolo uniforme describe/execute/cancel/unload y health honesto"
+      ],
+      "acceptance_ids": [
+        "A07"
+      ],
+      "invariant": "57 componentes seleccionados no implican 57 CUDA stacks; medir antes de expandir.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W05",
+      "title": "Archivo semántico e ingesta de medios",
+      "depends_on": [
+        "W04",
+        "W07"
+      ],
+      "owner_area": "media/perception",
+      "requirements": [
+        "R01",
+        "R02",
+        "R19"
+      ],
+      "programs": [
+        "P01"
+      ],
+      "capabilities": [
+        "C01"
+      ],
+      "deliverables": [
+        "Proxies, VFR/rotación, OCR/ASR/segmentos y deduplicación",
+        "Índice consultable con evidencia por segundos y ámbito de proyecto",
+        "Errores parciales/backpressure para carpetas grandes"
+      ],
+      "acceptance_ids": [
+        "A08"
+      ],
+      "invariant": "100 assets es benchmark, no límite arbitrario de producto.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W06",
+      "title": "Inspiración activa y referencia a receta",
+      "depends_on": [
+        "W05",
+        "W07"
+      ],
+      "owner_area": "reference/research",
+      "requirements": [
+        "R03",
+        "R05",
+        "R20"
+      ],
+      "programs": [
+        "P01",
+        "P07"
+      ],
+      "capabilities": [
+        "C02"
+      ],
+      "deliverables": [
+        "Ruta local de cortes/beat/cámara/texto/sonido→receta editable",
+        "Conectores gratuitos permitidos, caché/quotas/fechas y gates reales",
+        "Política de selección de ideas por relevancia y restricciones"
+      ],
+      "acceptance_ids": [
+        "A09"
+      ],
+      "invariant": "No depender de reverse cloud, compras, descarga no autorizada o nuevas cuentas.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W08",
+      "title": "Base AV, keyframes y upscale local",
+      "depends_on": [
+        "W03",
+        "W04",
+        "W07"
+      ],
+      "owner_area": "generation",
+      "requirements": [
+        "R08",
+        "R09",
+        "R15",
+        "R16"
+      ],
+      "programs": [
+        "P01",
+        "P07"
+      ],
+      "capabilities": [
+        "C23",
+        "C28",
+        "C30"
+      ],
+      "deliverables": [
+        "Adapters LTX2.5/Wan/QwenImage y finishing FlashVSR+/SeedVR2",
+        "Manifests por receta/encoder/LoRA/VAE con límites del modelo",
+        "Entry points reales, selección por capacidades/recursos y outputs validados"
+      ],
+      "acceptance_ids": [
+        "A10"
+      ],
+      "invariant": "Los tests CPU prueban contratos, no calidad o compatibilidad CUDA.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W09",
+      "title": "Atlas offline, selección estricta y expansión válida",
+      "depends_on": [
+        "W01",
+        "W04",
+        "W07"
+      ],
+      "owner_area": "atlas",
+      "requirements": [
+        "R18",
+        "R20"
+      ],
+      "programs": [
+        "P08"
+      ],
+      "capabilities": [
+        "C07"
+      ],
+      "deliverables": [
+        "Integrar/reparar #63 según estado actual, validar vista explícita y prompt-place",
+        "Bundle interno con archivos/licencias/hashes y mapa de coverage",
+        "Ampliación gratuita verificable y gaps por municipio; no inflar catálogo"
+      ],
+      "acceptance_ids": [
+        "A11"
+      ],
+      "invariant": "Strict_exact nunca sustituye el lugar ni acepta cámara desconocida como verificada.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W10",
+      "title": "Activos 3D, partes y ajuste inverso",
+      "depends_on": [
+        "W03",
+        "W04",
+        "W07"
+      ],
+      "owner_area": "geometry/assets",
+      "requirements": [
+        "R06",
+        "R08"
+      ],
+      "programs": [
+        "P05",
+        "P11"
+      ],
+      "capabilities": [
+        "C09",
+        "C10"
+      ],
+      "deliverables": [
+        "Trellis/PartCrafter/MapAnything y exportación consistente",
+        "Mitsuba/DrJit/DiffReg con fixture CPU y restricciones observables",
+        "Part IDs/PBR/cámaras y zonas inferidas persistentes"
+      ],
+      "acceptance_ids": [
+        "A12"
+      ],
+      "invariant": "Fijar transforms/color/alpha; no simular geometría con una imagen plana sin declararlo.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W11",
+      "title": "Cámaras, reconstrucción y ensayo de rodaje",
+      "depends_on": [
+        "W08",
+        "W09",
+        "W10"
+      ],
+      "owner_area": "camera/spatial",
+      "requirements": [
+        "R07",
+        "R08",
+        "R18"
+      ],
+      "programs": [
+        "P06",
+        "P08"
+      ],
+      "capabilities": [
+        "C05",
+        "C07",
+        "C08",
+        "C20"
+      ],
+      "deliverables": [
+        "Reconstrucción/calibración multivista y heldout con cobertura",
+        "Animatics y optimizador de focal/path/oclusiones",
+        "Guías de depth/puntos/flow a motores de video con correspondencia"
+      ],
+      "acceptance_ids": [
+        "A13"
+      ],
+      "invariant": "Datos insuficientes impiden cámara factual; no rellenar fachadas como observadas.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W12",
+      "title": "Física, vehículos y productos articulados",
+      "depends_on": [
+        "W03",
+        "W07",
+        "W10"
+      ],
+      "owner_area": "physics",
+      "requirements": [
+        "R08"
+      ],
+      "programs": [
+        "P09",
+        "P11"
+      ],
+      "capabilities": [
+        "C10",
+        "C15",
+        "C18",
+        "C19"
+      ],
+      "deliverables": [
+        "Chrono/PyChrono y Blender headless con export/state cache",
+        "Partes/joints/límites, contactos, FX y trayectorias de objeto",
+        "Guías para transferencia neural y métricas separadas de sim/resultado"
+      ],
+      "acceptance_ids": [
+        "A14"
+      ],
+      "invariant": "No atribuir física al video neural solo por tener una simulación previa.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W13",
+      "title": "Movimiento humano, rigging y actuación",
+      "depends_on": [
+        "W03",
+        "W05",
+        "W07",
+        "W10"
+      ],
+      "owner_area": "motion",
+      "requirements": [
+        "R08"
+      ],
+      "programs": [
+        "P10"
+      ],
+      "capabilities": [
+        "C11",
+        "C12",
+        "C13",
+        "C14",
+        "C15"
+      ],
+      "deliverables": [
+        "GVHMR/SAM3D Body/Skintokens/HY-Motion/MotionBricks y conversiones",
+        "Contactos/root motion/retarget y Wan-Animate/Wan-Move",
+        "Fixtures de pies/joints y derechos de body/data"
+      ],
+      "acceptance_ids": [
+        "A15"
+      ],
+      "invariant": "ReMoGen/InterMimic solo cuando licencia y Blackwell estén resueltos.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W18",
+      "title": "Foley, separación y sonido causal",
+      "depends_on": [
+        "W03",
+        "W05",
+        "W07"
+      ],
+      "owner_area": "audio/sfx",
+      "requirements": [
+        "R08",
+        "R09"
+      ],
+      "programs": [
+        "P13"
+      ],
+      "capabilities": [
+        "C25"
+      ],
+      "deliverables": [
+        "ControlFoley y MMAudio/SAM-Audio con eventos/stems",
+        "Mezcla con timebase compartido, onsets/loudness y referencias",
+        "Borrar causa elimina solo eventos vinculados"
+      ],
+      "acceptance_ids": [
+        "A20"
+      ],
+      "invariant": "No descargar código del engine desde nodos de ComfyUI en runtime.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W19",
+      "title": "Música, voz en español y actuación vocal",
+      "depends_on": [
+        "W07",
+        "W18"
+      ],
+      "owner_area": "audio/voice/music",
+      "requirements": [
+        "R08",
+        "R09"
+      ],
+      "programs": [
+        "P12",
+        "P13"
+      ],
+      "capabilities": [
+        "C16",
+        "C26",
+        "C27"
+      ],
+      "deliverables": [
+        "ACE-Step y Qwen3-TTS/IndexTTS, variantes y lexicon colombiano",
+        "Beat map/estructura, hablantes y pistas separadas",
+        "Datasets de pronunciación y test de sincronía preparados"
+      ],
+      "acceptance_ids": [
+        "A20",
+        "A21"
+      ],
+      "invariant": "No inferir acento paisa por idioma español ni stems por generación conjunta.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W14",
+      "title": "Avatar facial editable",
+      "depends_on": [
+        "W07",
+        "W13",
+        "W19"
+      ],
+      "owner_area": "avatars",
+      "requirements": [
+        "R08"
+      ],
+      "programs": [
+        "P12"
+      ],
+      "capabilities": [
+        "C16"
+      ],
+      "deliverables": [
+        "Audio2Face3D y mapping real al rig del estudio",
+        "Integrar InfiniteTalk y slots de identidad/voz por hablante",
+        "Evaluar MARCUS/GTAvatar condicionales sin redistribuir activos gated"
+      ],
+      "acceptance_ids": [
+        "A16"
+      ],
+      "invariant": "Un morph mapping propio debe estar probado; SDK MIT no libera todos sus modelos.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W15",
+      "title": "Edición causal, matting y capas",
+      "depends_on": [
+        "W05",
+        "W07",
+        "W08"
+      ],
+      "owner_area": "editing/layers",
+      "requirements": [
+        "R08",
+        "R10"
+      ],
+      "programs": [
+        "P02",
+        "P03"
+      ],
+      "capabilities": [
+        "C24",
+        "C28",
+        "C29"
+      ],
+      "deliverables": [
+        "VOID sin dependencia cloud obligatoria, VACE/Retake y omnimatte",
+        "VideoMaMa/QwenLayered, alpha/color y conservación por región",
+        "Fixture actor-on/off con sombras/reflejos para ground truth"
+      ],
+      "acceptance_ids": [
+        "A17"
+      ],
+      "invariant": "No usar CorridorKey reempaquetado ni etiquetar una imagen como video multicapa.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W16",
+      "title": "Reiluminación, materiales y restilización temporal",
+      "depends_on": [
+        "W08",
+        "W10",
+        "W15"
+      ],
+      "owner_area": "lighting",
+      "requirements": [
+        "R08",
+        "R10"
+      ],
+      "programs": [
+        "P04"
+      ],
+      "capabilities": [
+        "C21",
+        "C22"
+      ],
+      "deliverables": [
+        "V-RGBX/DiffusionRenderer e ID-V2V con conversiones explícitas",
+        "Comp/identidad/logos protegidos, evaluación temporal y AOV valid flags",
+        "Comparadores solo si aportan y caben con términos permitidos"
+      ],
+      "acceptance_ids": [
+        "A18"
+      ],
+      "invariant": "No completar AOVs inexistentes con ceros y llamarlos estimados.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W17",
+      "title": "Memoria espacial, multishot y reconstrucción 4D",
+      "depends_on": [
+        "W08",
+        "W09",
+        "W10",
+        "W11",
+        "W13",
+        "W15"
+      ],
+      "owner_area": "worlds/continuity",
+      "requirements": [
+        "R08",
+        "R11",
+        "R18"
+      ],
+      "programs": [
+        "P05",
+        "P07"
+      ],
+      "capabilities": [
+        "C06",
+        "C17"
+      ],
+      "deliverables": [
+        "StoryMem y AlayaWorld en memoria de escena/versiones",
+        "OVOW a escena temporal editable con objetos/cámaras",
+        "Pruebas A→B→A, identidad y retorno; inferido separado de atlas"
+      ],
+      "acceptance_ids": [
+        "A19"
+      ],
+      "invariant": "No exigir H200 ni multiGPU para la ruta elegida sin declarar incompatibilidad.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W20",
+      "title": "Montaje, composición, color y entregables",
+      "depends_on": [
+        "W08",
+        "W15",
+        "W18",
+        "W19"
+      ],
+      "owner_area": "editing/delivery",
+      "requirements": [
+        "R09",
+        "R10"
+      ],
+      "programs": [
+        "P01",
+        "P03"
+      ],
+      "capabilities": [
+        "C02",
+        "C19",
+        "C24",
+        "C30",
+        "C31",
+        "C32"
+      ],
+      "deliverables": [
+        "HyperFrames local/Remotion/Blender/FFmpeg con presets editables",
+        "OTIO/OCIO, captions, safe areas, masters/stems/credit manifest",
+        "Encode 4K y versiones de aspecto conservando fuentes"
+      ],
+      "acceptance_ids": [
+        "A22"
+      ],
+      "invariant": "No CDN ni publish/cloud ocultos; créditos y licencias viajan con el proyecto.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W21",
+      "title": "Frontend agéntico y cliente multiplataforma",
+      "depends_on": [
+        "W04",
+        "W05",
+        "W20"
+      ],
+      "owner_area": "ui/client",
+      "requirements": [
+        "R04",
+        "R12",
+        "R13"
+      ],
+      "programs": [],
+      "capabilities": [],
+      "deliverables": [
+        "Componentes OpenCode auditados con StudioClient propio",
+        "Progreso/reconnect/cancel/resume, previews, timeline y evidencia/coverage",
+        "CLI común macOS/Windows/Linux y migración sin perder panel operativo"
+      ],
+      "acceptance_ids": [
+        "A23"
+      ],
+      "invariant": "Paridad primero; no introducir servidor de coding privilegiado por reutilizar estética.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W22",
+      "title": "Director autónomo integrado",
+      "depends_on": [
+        "W06",
+        "W11",
+        "W12",
+        "W13",
+        "W14",
+        "W16",
+        "W17",
+        "W20",
+        "W21"
+      ],
+      "owner_area": "director/integration",
+      "requirements": [
+        "R02",
+        "R03",
+        "R04",
+        "R07",
+        "R08",
+        "R11"
+      ],
+      "programs": [
+        "P01",
+        "P07"
+      ],
+      "capabilities": [
+        "C03",
+        "C04",
+        "C08",
+        "C20"
+      ],
+      "deliverables": [
+        "Prompt+assets→brief→constraints→planes→engines→QA→repair→delivery",
+        "Presupuestos persistentes, escalado multi-fidelidad y uso de memoria",
+        "Herramientas y UI exponen todas las rutas obligatorias con estados honestos"
+      ],
+      "acceptance_ids": [
+        "A05",
+        "A06",
+        "A24"
+      ],
+      "invariant": "No terminar en un script demo que el agente del producto no sabe invocar.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W24",
+      "title": "Banco de evaluación y demostraciones reproducibles",
+      "depends_on": [
+        "W03",
+        "W04",
+        "W05"
+      ],
+      "owner_area": "evaluation",
+      "requirements": [
+        "R08",
+        "R21"
+      ],
+      "programs": [
+        "P14"
+      ],
+      "capabilities": [
+        "C33"
+      ],
+      "deliverables": [
+        "Fixtures sintéticos/permitidos, métricas geométricas/audio/temporalidad",
+        "Harness D01–D05 con manifest de inputs/esperados/splits",
+        "Pruebas CPU reales y jobs GPU marcados pendientes, presupuesto por escenario"
+      ],
+      "acceptance_ids": [
+        "A25"
+      ],
+      "invariant": "Puede construirse temprano; no marcar renders futuros como resultados existentes.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W23",
+      "title": "Investigador autónomo y aprendizaje selectivo",
+      "depends_on": [
+        "W02",
+        "W22",
+        "W24"
+      ],
+      "owner_area": "research/learning",
+      "requirements": [
+        "R11",
+        "R20",
+        "R21"
+      ],
+      "programs": [
+        "P14"
+      ],
+      "capabilities": [
+        "C33",
+        "C34"
+      ],
+      "deliverables": [
+        "Experiment registry, Optuna/Pareto y jueces pertinentes",
+        "Holdouts/ablaciones y recetas por hardware, fallos incluidos",
+        "Preparación LoRA/adapters y promoción/rollback por PR"
+      ],
+      "acceptance_ids": [
+        "A26"
+      ],
+      "invariant": "No self-training sin permiso/datos, sin reset de budget ni promoción desde mocks.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W25",
+      "title": "Integración final, main e imagen candidata",
+      "depends_on": [
+        "W00",
+        "W01",
+        "W02",
+        "W03",
+        "W04",
+        "W05",
+        "W06",
+        "W07",
+        "W08",
+        "W09",
+        "W10",
+        "W11",
+        "W12",
+        "W13",
+        "W14",
+        "W15",
+        "W16",
+        "W17",
+        "W18",
+        "W19",
+        "W20",
+        "W21",
+        "W22",
+        "W23",
+        "W24"
+      ],
+      "owner_area": "release",
+      "requirements": [
+        "R14",
+        "R19",
+        "R20",
+        "R22"
+      ],
+      "programs": [
+        "P01",
+        "P02",
+        "P03",
+        "P04",
+        "P05",
+        "P06",
+        "P07",
+        "P08",
+        "P09",
+        "P10",
+        "P11",
+        "P12",
+        "P13",
+        "P14"
+      ],
+      "capabilities": [],
+      "deliverables": [
+        "Todas las capacidades con estado/evidencia y obligatorias preparadas",
+        "Checks AGENTS + CI final + image build/push/digest + smoke offline",
+        "Informe de limitaciones/pending GPU y protocolo operativo multiplataforma"
+      ],
+      "acceptance_ids": [
+        "A27",
+        "A28"
+      ],
+      "invariant": "Un bloqueo de build, licencia o requisito no resuelto impide ACCEPTED_PRE_GPU.",
+      "status": "specified_not_started",
+      "scope": "current_pre_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    },
+    {
+      "id": "W26",
+      "title": "Validación GPU final — fuera de autorización actual",
+      "depends_on": [
+        "W25"
+      ],
+      "owner_area": "gpu-validation",
+      "requirements": [
+        "R08",
+        "R09",
+        "R16",
+        "R21"
+      ],
+      "programs": [
+        "P01",
+        "P02",
+        "P03",
+        "P04",
+        "P05",
+        "P06",
+        "P07",
+        "P08",
+        "P09",
+        "P10",
+        "P11",
+        "P12",
+        "P13",
+        "P14"
+      ],
+      "capabilities": [],
+      "deliverables": [
+        "Campaña con RTX PRO 6000 real y perfiles host128/256 según disponibles",
+        "Demos neurales, peaks/time/cost y comparación con baselines",
+        "Parches/rebuild/redeploy acotados y cierre del pod en todos los caminos"
+      ],
+      "acceptance_ids": [
+        "A29"
+      ],
+      "invariant": "No ejecutar ni alquilar ahora. Necesita presupuesto/acceso explícitos posteriores.",
+      "status": "pending_separate_gpu_authorization",
+      "scope": "later_gpu",
+      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
+      "work_budget": {
+        "recommended_active_minutes_per_leaf": 60,
+        "max_active_minutes_per_leaf": 90,
+        "max_failed_acceptance_attempts": 3,
+        "counters_persist_on_resume": true,
+        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
+      },
+      "completion_evidence": [
+        "real PR/commit identifiers",
+        "semantic tests/log with private data redacted",
+        "inspected artifact pointers",
+        "conductor verification and merged/reconciled integration state"
+      ]
+    }
+  ]
+}
