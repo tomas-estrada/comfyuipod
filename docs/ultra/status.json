@@ -4,29 +4,23 @@
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
   "stage": "pre_gpu",
   "overall": "IN_PROGRESS",
-  "updated_utc": "2026-11-05T06:00:00Z",
+  "updated_utc": "2026-11-05T07:05:00Z",
   "work_items": {
-    "W00": {
-      "title": "Reconocimiento, reconciliacion de PRs y baseline",
-      "status": "done",
-      "evidence": "baseline b54195f; PR#58 merged (12a2774); PR#64 merged; PR#59 CONFLICTING deferred; PR#63 atlas base para W09",
+    "W00": {"title": "Baseline y reconciliacion de PRs", "status": "done", "level": "L1"},
+    "W01": {"title": "Integridad transaccional de modelos", "status": "merged", "pr": "#65", "level": "L1"},
+    "W02": {
+      "title": "Hardware, sizing y recetas con evidencia real",
+      "status": "in_review",
+      "prs": ["#66 recetas+hardware_detect", "#67 sizing/start_gate"],
+      "p0_fixed": ["P0 #4 simulated->measured", "P0 #5 recetas por clave de entorno", "P0 #6 start_gate sin staging Fase3", "P0 #7 hardware_detect nvidia-smi+cgroup"],
       "level": "L1"
     },
-    "W01": {
-      "title": "Integridad transaccional de modelos",
-      "status": "in_review",
-      "pr": "fix/ultra-w01-asset-integrity",
-      "p0_fixed": [
-        "cache corrupta preexistente aceptada en skip (verificacion tamano+hash antes de present)",
-        "hf download sin --revision (pin del manifiesto propagado al argv)",
-        "EXDEV destruye destino previo (publicacion transaccional: temporal same-fs + replace atomico + rollback)"
-      ],
-      "tests": "studio/tests/test_capability_resolver.py W01 regressions; 36 passed, 1 skipped (POSIX-only) local Windows",
-      "level": "L1",
-      "gpu_pending": false
-    }
+    "W03": {"title": "Scheduler/lease global de GPU", "status": "in_review", "pr": "#68", "tests": "test_gpu_lease.py 11 passed (ensayo multiproceso)", "level": "L1", "gpu_pending": "picos CUDA -> A29"}
   },
-  "next_batch": ["W02 (hardware/sizing/recetas - P0 #4,#5,#6,#7)"],
+  "next_batch": ["W03 integracion executor/motores", "W04 contratos/persistencia/DAG", "W07 fabrica engines/build"],
   "blockers": [],
-  "notes": "No GPU rentada, no APIs facturadas. Verificacion CPU local en venv Python 3.11 Windows; CI Linux es la autoridad de merge."
+  "known_env_issues": [
+    "test_mac_helper 3 tests fallan SOLO en Windows (fixture _clear_env quita SYSTEMROOT); pasan en CI Linux."
+  ],
+  "notes": "No GPU rentada, no APIs facturadas. CI Linux autoridad de merge. 7/7 P0 corregidos."
 }
