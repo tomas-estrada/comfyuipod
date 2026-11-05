@@ -192,19 +192,28 @@ def test_two_real_processes_contend_only_one_wins(tmp_path: Path) -> None:
     env = dict(os.environ)
     repo_studio = str(Path(__file__).resolve().parents[1])
     env["PYTHONPATH"] = repo_studio + os.pathsep + env.get("PYTHONPATH", "")
+    # Varios contendientes a la vez exponen la carrera de forma fiable (en CI
+    # Linux, dos no bastaban para que el timing la revelara siempre).
+    n = 4
     procs = [
         subprocess.Popen(
             [sys.executable, "-c", script, str(lock_dir), f"owner{i}"],
             stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             env=env,
         )
-        for i in range(2)
+        for i in range(n)
     ]
-    outs = [p.communicate(timeout=30)[0].strip() for p in procs]
-    results = [o.splitlines()[-1] if o else "" for o in outs]
+    results = []
+    for p in procs:
+        out, err = p.communicate(timeout=60)
+        # Ningún proceso debe reventar con una excepción (p. ej. la vieja carrera
+        # de token.seq que lanzaba FileNotFoundError).
+        assert p.returncode == 0, f"un contendiente reventó: rc={p.returncode} err={err[-300:]}"
+        results.append(out.strip().splitlines()[-1] if out.strip() else "")
     assert results.count("ACQUIRED") == 1, f"exactamente uno debe ganar: {results}"
-    assert results.count("BLOCKED") == 1, f"el otro debe quedar bloqueado: {results}"
+    assert results.count("BLOCKED") == n - 1, f"el resto debe bloquearse: {results}"
 
 
 def test_lock_dir_for_uses_comfy_data_dir() -> None:
