@@ -548,3 +548,101 @@ def test_real_download_process_is_killed_on_cancel() -> None:
     _terminate_tree(sibling)
     time.sleep(0.3)
     assert subprocess.run(["kill", "-0", str(me)], capture_output=True).returncode == 0
+
+
+# --------------------------------------------------------------------------
+# Filesystems distintos (política, punto 1: «the actual filesystems involved»)
+# --------------------------------------------------------------------------
+
+
+def test_disk_guard_checks_the_destination_filesystem_too(
+    data_dir: Path, fake_hf: Path, monkeypatch
+) -> None:
+    """Staging y destino pueden estar en volúmenes distintos.
+
+    La guarda miraba solo staging: un destino en otro volumen podía quedarse sin
+    espacio cuando el activo ya estaba descargado.
+    """
+    import shutil
+
+    from comfy_studio import asset_acquire
+
+    env = _env(fake_hf, data_dir)
+    resolution = resolve("video.face_restore", env=env)
+    _pin_fake_hashes(resolution)
+
+    real = shutil.disk_usage
+
+    def _fake_disk_usage(path):
+        usage = real(path)
+        # El staging tiene sitio de sobra; el destino está casi lleno.
+        if str(path).endswith(asset_acquire.STAGE_DIRNAME):
+            return type(usage)(10**12, 10**12, 0)
+        return type(usage)(10, 10, 0)
+
+    monkeypatch.setattr(asset_acquire.shutil, "disk_usage", _fake_disk_usage)
+    report = asset_acquire.acquire(resolution.missing, env=env)
+    assert report.entries
+    assert all(e.status == "failed" for e in report.entries)
+    assert any("espacio insuficiente" in (e.error or "") for e in report.entries)
+
+
+def test_free_bytes_for_takes_the_most_restrictive_filesystem() -> None:
+    """Con varios filesystems, manda el que menos sitio tenga."""
+    from comfy_studio.asset_acquire import _free_bytes_for
+
+    assert _free_bytes_for([Path("/tmp")]) is not None
+    assert _free_bytes_for([]) is None
+
+
+def test_move_survives_a_cross_device_destination(tmp_path: Path) -> None:
+    """`os.replace` falla con EXDEV entre volúmenes: se copia y se borra."""
+    import errno
+    import os as real_os
+
+    from comfy_studio.asset_acquire import _move
+
+    src = tmp_path / "src.bin"
+    dest = tmp_path / "dest.bin"
+    src.write_bytes(b"contenido" * 1000)
+
+    real_replace = real_os.replace
+
+    def _exdev(a, b):  # noqa: ANN001
+        raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+    real_os.replace = _exdev
+    try:
+        _move(src, dest)
+    finally:
+        real_os.replace = real_replace
+
+    assert dest.read_bytes() == b"contenido" * 1000
+    assert not src.exists(), "el original debe desaparecer tras copiarlo"
+
+
+def test_move_still_propagates_real_errors(tmp_path: Path) -> None:
+    """EXDEV se tolera; cualquier otro error de `os.replace` debe salir."""
+    import os as real_os
+
+    from comfy_studio.asset_acquire import _move
+
+    src = tmp_path / "src.bin"
+    dest = tmp_path / "dest.bin"
+    src.write_bytes(b"x")
+
+    real_replace = real_os.replace
+
+    def _boom(a, b):  # noqa: ANN001
+        raise OSError(13, "Permission denied")
+
+    real_os.replace = _boom
+    try:
+        raised = False
+        try:
+            _move(src, dest)
+        except OSError:
+            raised = True
+    finally:
+        real_os.replace = real_replace
+    assert raised, "un error que no es EXDEV no debe degradarse a copia"
