@@ -22,6 +22,7 @@ from comfy_studio.engines import (
     EngineTier,
     is_stub_mode,
 )
+from comfy_studio.engines.process import ProcessCancelled, run_cancellable
 
 _STUB_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 _STUB_MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 16
@@ -150,7 +151,7 @@ class UpscalerEngine:
                     "hornear el modelo pinned o usar STUDIO_STUB_UPSCALER=1"
                 ),
             )
-        return self._run_model(u, start)
+        return self._run_model(u, start, cancel_event=spec.cancel_event)
 
     @staticmethod
     def _parse(job: dict) -> UpscaleSpec:
@@ -161,7 +162,7 @@ class UpscalerEngine:
             mode=str(job.get("mode", "image")),
         )
 
-    def _run_model(self, u: UpscaleSpec, start: float) -> EngineResult:
+    def _run_model(self, u: UpscaleSpec, start: float, *, cancel_event=None) -> EngineResult:
         redactor = SecretRedactor()
         bin_path = (
             os.environ.get(_BIN_ENV) or shutil.which("realesrgan-ncnn-vulkan") or ""
@@ -186,13 +187,22 @@ class UpscalerEngine:
         ]
         u.output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            res = subprocess.run(
+            res = run_cancellable(
                 cmd,
+                cancel_event=cancel_event,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 timeout=u.timeout_s,
+            )
+        except ProcessCancelled:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error="upscaler cancelado",
+                payload={"cancelled": True},
             )
         except subprocess.TimeoutExpired:
             return EngineResult(

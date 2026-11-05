@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 20239)
+Total output lines: 1956
+
 """Cliente HTTP y parser de eventos WebSocket para ComfyUI (127.0.0.1:18188 / stub 39172)."""
 
 from __future__ import annotations
@@ -116,6 +119,10 @@ class ComfyUIConnectionError(ComfyUIError):
 
 class ComfyUIExecutionError(ComfyUIError):
     """Error de validación de grafo (400 / node_errors) o fallo de ejecución en nodo."""
+
+
+class ComfyUICancelledError(ComfyUIExecutionError):
+    """El prompt fue cancelado explícitamente por su propietario."""
 
 
 class PromptSubmission(BaseModel):
@@ -609,6 +616,7 @@ class ComfyUIClient:
                 ):
                     return
         redacted_msg = self._redact(error.message)
+        status = "cancelled" if isinstance(error, ComfyUICancelledError) else "error"
         error.message = redacted_msg
         error.args = (redacted_msg,)
         if error.prompt_id is None and eff_prompt_id is not None:
@@ -616,11 +624,12 @@ class ComfyUIClient:
         if job_id and self._store is not None:
             self._store.update_job(
                 job_id,
-                status="error",
+                status=status,
                 prompt_id=eff_prompt_id,
                 error=redacted_msg,
                 result={
                     "error": redacted_msg,
+                    "status": status,
                     "status_code": error.status_code,
                     "node_errors": self._redactor.redact_value(error.node_errors),
                 },
@@ -632,831 +641,10 @@ class ComfyUIClient:
                     "job_id": job_id,
                     "project_id": project_id,
                     "prompt_id": eff_prompt_id,
-                    "status": "error",
+                    "status": status,
                     "error": redacted_msg,
                 },
-            )
-
-    def _complete_job(
-        self,
-        result: PromptResult,
-        *,
-        job_id: str | None = None,
-        project_id: str | None = None,
-        progress_max: float | None = None,
-    ) -> None:
-        if job_id and self._store is not None:
-            existing = self._store.get_job(job_id)
-            if existing and existing.get("status") == "cancelled":
-                return
-        eff_max = float(progress_max) if progress_max is not None else 1.0
-        if job_id and self._store is not None:
-            if progress_max is None:
-                existing = self._store.get_job(job_id)
-                eff_max = float(max((existing or {}).get("progress_max") or 1.0, 1.0))
-            self._store.update_job(
-                job_id,
-                status="done",
-                prompt_id=result.prompt_id,
-                progress_value=eff_max,
-                progress_max=eff_max,
-                current_node=None,
-                result={
-                    "prompt_id": result.prompt_id,
-                    "outputs": [o.model_dump() for o in result.outputs],
-                },
-            )
-        if self._broker is not None:
-            self._broker.publish(
-                "progress",
-                {
-                    "job_id": job_id,
-                    "project_id": project_id,
-                    "prompt_id": result.prompt_id,
-                    "status": "done",
-                    "value": eff_max,
-                    "max": eff_max,
-                    "node": None,
-                },
-            )
-            self._broker.publish(
-                "job",
-                {
-                    "job_id": job_id,
-                    "project_id": project_id,
-                    "prompt_id": result.prompt_id,
-                    "status": "done",
-                    "outputs": [o.model_dump() for o in result.outputs],
-                },
-            )
-
-    async def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        json_body: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-        files: dict[str, Any] | None = None,
-        data: dict[str, Any] | None = None,
-        timeout: float | None = None,
-    ) -> httpx.Response:
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        req_timeout = httpx.Timeout(
-            timeout if timeout is not None else self.timeout,
-            connect=min(
-                self.connect_timeout,
-                timeout if timeout is not None else self.timeout,
-            ),
-        )
-
-        last_exc: Exception | None = None
-        for attempt in range(self.max_retries + 1):
-            try:
-                async with httpx.AsyncClient(
-                    transport=self._transport,
-                    timeout=req_timeout,
-                ) as client:
-                    response = await client.request(
-                        method,
-                        url,
-                        json=json_body,
-                        params=params,
-                        files=files,
-                        data=data,
-                    )
-
-                if response.status_code < 400:
-                    return response
-
-                # Comprobar si el código de estado HTTP es transitorio y quedan reintentos
-                if (
-                    response.status_code in self.retry_status_codes
-                    and attempt < self.max_retries
-                ):
-                    delay = self._compute_backoff(attempt)
-                    logger.warning(
-                        "ComfyUI %s %s devolvió %d (intento %d/%d); reintentando en %.2fs",
-                        method,
-                        path,
-                        response.status_code,
-                        attempt + 1,
-                        self.max_retries + 1,
-                        delay,
-                    )
-                    await self._sleep(delay)
-                    continue
-
-                # Error HTTP definitivo: parsear detalle y elevar
-                parsed_body: Any = None
-                try:
-                    parsed_body = response.json()
-                except Exception:
-                    parsed_body = response.text
-
-                err_msg, node_errors = _extract_error_message_from_body(
-                    parsed_body,
-                    f"ComfyUI HTTP {response.status_code} en {method} {path}",
-                )
-                redacted = self._redact(err_msg)
-                if response.status_code == 400 or node_errors:
-                    raise ComfyUIExecutionError(
-                        redacted,
-                        status_code=response.status_code,
-                        node_errors=node_errors,
-                        details=parsed_body,
-                        retriable=False,
-                    )
-                raise ComfyUIError(
-                    redacted,
-                    status_code=response.status_code,
-                    node_errors=node_errors,
-                    details=parsed_body,
-                    retriable=response.status_code in self.retry_status_codes,
-                )
-
-            except httpx.TimeoutException as exc:
-                last_exc = exc
-                if attempt < self.max_retries:
-                    delay = self._compute_backoff(attempt)
-                    logger.warning(
-                        "Timeout en ComfyUI %s %s (intento %d/%d); reintentando en %.2fs",
-                        method,
-                        path,
-                        attempt + 1,
-                        self.max_retries + 1,
-                        delay,
-                    )
-                    await self._sleep(delay)
-                    continue
-                raise ComfyUITimeoutError(
-                    self._redact(
-                        f"Timeout contactando ComfyUI en {method} {path} "
-                        f"tras {attempt + 1} intentos: {exc}"
-                    ),
-                    retriable=True,
-                ) from exc
-
-            except httpx.TransportError as exc:
-                last_exc = exc
-                if attempt < self.max_retries:
-                    delay = self._compute_backoff(attempt)
-                    logger.warning(
-                        "Error de transporte en ComfyUI %s %s (intento %d/%d); "
-                        "reintentando en %.2fs",
-                        method,
-                        path,
-                        attempt + 1,
-                        self.max_retries + 1,
-                        delay,
-                    )
-                    await self._sleep(delay)
-                    continue
-                raise ComfyUIConnectionError(
-                    self._redact(
-                        f"Error de conexión hacia ComfyUI en {method} {path} "
-                        f"tras {attempt + 1} intentos: {exc}"
-                    ),
-                    retriable=True,
-                ) from exc
-
-        raise ComfyUIConnectionError(
-            self._redact(f"Fallo agotando reintentos hacia ComfyUI: {last_exc}"),
-            retriable=True,
-        )
-
-    async def system_stats(self) -> dict[str, Any]:
-        """Consulta GET /system_stats."""
-        resp = await self._request("GET", "/system_stats")
-        data = resp.json()
-        return data if isinstance(data, dict) else {}
-
-    async def health_check(self) -> bool:
-        """Devuelve True si ComfyUI responde 200 en /system_stats."""
-        try:
-            await self.system_stats()
-            return True
-        except ComfyUIError:
-            return False
-
-    async def get_object_info(self, node_class: str | None = None) -> dict[str, Any]:
-        """Consulta GET /object_info o GET /object_info/{node_class}."""
-        path = f"/object_info/{node_class}" if node_class else "/object_info"
-        resp = await self._request("GET", path)
-        data = resp.json()
-        return data if isinstance(data, dict) else {}
-
-    async def submit_prompt(
-        self,
-        prompt: dict[str, Any],
-        *,
-        client_id: str | None = None,
-        extra_data: dict[str, Any] | None = None,
-        job_id: str | None = None,
-        project_id: str | None = None,
-    ) -> PromptSubmission:
-        """Envía un workflow en formato API a POST /prompt."""
-        if not isinstance(prompt, dict) or not prompt:
-            err = ComfyUIExecutionError(
-                "El grafo del prompt debe ser un objeto JSON no vacío en formato API de ComfyUI"
-            )
-            self._fail_job(err, job_id=job_id, project_id=project_id)
-            raise err
-
-        payload: dict[str, Any] = {
-            "prompt": prompt,
-            "client_id": client_id or self.client_id,
-        }
-        if extra_data:
-            payload["extra_data"] = extra_data
-
-        try:
-            resp = await self._request("POST", "/prompt", json_body=payload)
-        except ComfyUIError as exc:
-            self._fail_job(exc, job_id=job_id, project_id=project_id)
-            raise
-
-        data = resp.json()
-        if not isinstance(data, dict):
-            err = ComfyUIExecutionError("Respuesta inválida de POST /prompt")
-            self._fail_job(err, job_id=job_id, project_id=project_id)
-            raise err
-
-        node_errors = data.get("node_errors")
-        if isinstance(node_errors, dict) and node_errors:
-            msg, _ = _extract_error_message_from_body(
-                data, "ComfyUI reportó node_errors al encolar el prompt"
-            )
-            err = ComfyUIExecutionError(
-                self._redact(msg),
-                prompt_id=data.get("prompt_id"),
-                node_errors=node_errors,
-                details=data,
-            )
-            self._fail_job(
-                err,
-                job_id=job_id,
-                project_id=project_id,
-                prompt_id=data.get("prompt_id"),
-            )
-            raise err
-
-        prompt_id = str(data.get("prompt_id") or "").strip()
-        if not prompt_id:
-            err = ComfyUIExecutionError(
-                "ComfyUI no devolvió prompt_id en POST /prompt",
-                details=data,
-            )
-            self._fail_job(err, job_id=job_id, project_id=project_id)
-            raise err
-
-        submission = PromptSubmission(
-            prompt_id=prompt_id,
-            number=int(data.get("number") or 0),
-            node_errors={},
-        )
-
-        if job_id and self._store is not None:
-            self._store.update_job(
-                job_id,
-                status="running",
-                prompt_id=prompt_id,
-            )
-        if self._broker is not None:
-            self._broker.publish(
-                "job",
-                {
-                    "job_id": job_id,
-                    "project_id": project_id,
-                    "prompt_id": prompt_id,
-                    "status": "running",
-                    "number": submission.number,
-                },
-            )
-
-        return submission
-
-    async def get_queue(self) -> QueueStatus:
-        """Consulta GET /queue."""
-        resp = await self._request("GET", "/queue")
-        data = resp.json()
-        if not isinstance(data, dict):
-            return QueueStatus()
-        return QueueStatus(
-            queue_running=data.get("queue_running") or [],
-            queue_pending=data.get("queue_pending") or [],
-        )
-
-    async def get_history(self, prompt_id: str | None = None) -> dict[str, Any]:
-        """Consulta GET /history/{prompt_id} o GET /history."""
-        path = f"/history/{prompt_id}" if prompt_id else "/history"
-        resp = await self._request("GET", path)
-        data = resp.json()
-        return data if isinstance(data, dict) else {}
-
-    def _inspect_history_entry(
-        self,
-        prompt_id: str,
-        entry: dict[str, Any],
-    ) -> PromptResult | None:
-        status_block = entry.get("status")
-        status_str = "success"
-        completed = True
-        messages: list[Any] = []
-
-        if isinstance(status_block, dict):
-            status_str = str(status_block.get("status_str") or "success")
-            if "completed" in status_block:
-                completed = bool(status_block.get("completed"))
-            if isinstance(status_block.get("messages"), list):
-                messages = status_block["messages"]
-
-        if status_str == "error":
-            err_detail = f"Error de ejecución en ComfyUI para prompt {prompt_id}"
-            for msg in messages:
-                if (
-                    isinstance(msg, list)
-                    and len(msg) >= 2
-                    and msg[0] in {"execution_error", "execution_interrupted"}
-                    and isinstance(msg[1], dict)
-                ):
-                    exc_text = (
-                        msg[1].get("exception_message")
-                        or msg[1].get("message")
-                        or err_detail
-                    )
-                    node_type = msg[1].get("node_type") or msg[1].get("node_id") or ""
-                    err_detail = (
-                        f"{node_type}: {exc_text}" if node_type else str(exc_text)
-                    )
-                    break
-            raise ComfyUIExecutionError(
-                self._redact(err_detail),
-                prompt_id=prompt_id,
-                details=entry,
-            )
-
-        outputs = extract_outputs(entry)
-        if not completed and not outputs:
-            return None
-
-        return PromptResult(
-            prompt_id=prompt_id,
-            status_str=status_str,
-            completed=True,
-            outputs=outputs,
-            raw_history=entry,
-        )
-
-    async def poll_until_complete(
-        self,
-        prompt_id: str,
-        *,
-        poll_interval: float | None = None,
-        timeout: float | None = None,
-        job_id: str | None = None,
-        project_id: str | None = None,
-        finalize_job: bool = True,
-    ) -> PromptResult:
-        """Sondea /queue y /history/{prompt_id} hasta que el prompt complete o falle."""
-        interval = poll_interval if poll_interval is not None else self.poll_interval
-        max_wait = timeout if timeout is not None else self.poll_timeout
-        deadline = time.monotonic() + max_wait
-        tick = 0
-        absent_ticks = 0
-
-        try:
-            while True:
-                tick += 1
-                history_ok = True
-                try:
-                    history_map = await self.get_history(prompt_id)
-                except (ComfyUIConnectionError, ComfyUITimeoutError):
-                    # ComfyUI puede estar reiniciándose (comfyctl lo levanta en segundos):
-                    # no se falla el job a la primera; si al volver el prompt ya no está,
-                    # el contador de ausentes lo marca `interrupted` enseguida.
-                    # M7-SCR-004: con error de transporte NO sabemos si el prompt sigue
-                    # vivo, así que no cuenta como ausente.
-                    history_map = {}
-                    history_ok = False
-                entry = history_map.get(prompt_id)
-                if isinstance(entry, dict) and entry:
-                    result = self._inspect_history_entry(prompt_id, entry)
-                    if result is not None:
-                        progress_max = float(max(tick, 1))
-                        if finalize_job:
-                            self._complete_job(
-                                result,
-                                job_id=job_id,
-                                project_id=project_id,
-                                progress_max=progress_max,
-                            )
-                        elif job_id and self._store is not None:
-                            self._store.update_job(
-                                job_id,
-                                status="running",
-                                prompt_id=prompt_id,
-                                progress_value=progress_max,
-                                progress_max=progress_max,
-                            )
-                        return result
-
-                # Aún no está en /history: consultar /queue y emitir progreso de sondeo
-                queue_ok = True
-                try:
-                    queue = await self.get_queue()
-                except (ComfyUIConnectionError, ComfyUITimeoutError):
-                    queue = QueueStatus()
-                    queue_ok = False
-                is_running = prompt_id in queue.running_prompt_ids()
-                is_pending = prompt_id in queue.pending_prompt_ids()
-                if history_ok and queue_ok:
-                    # sólo con respuestas válidas de /history y /queue se puede afirmar
-                    # que el prompt desapareció (M7-SCR-004).
-                    if is_running or is_pending:
-                        absent_ticks = 0
-                    else:
-                        absent_ticks += 1
-                    if absent_ticks >= 10:
-                        # El prompt desapareció de /queue e /history: ComfyUI se reinició
-                        # (p. ej. OOM CUDA exit 137) y el prompt en memoria se perdió.
-                        lost_msg = self._redact(
-                            f"El prompt {prompt_id} desapareció de /queue e /history de ComfyUI "
-                            "(ComfyUI se reinició durante la ejecución)"
-                        )
-                        if job_id and self._store is not None:
-                            self._store.update_job(job_id, status="interrupted", error=lost_msg)
-                        raise ComfyUIExecutionError(lost_msg, prompt_id=prompt_id)
-                current_status = "running" if is_running else "queued"
-                estimated_max = float(max(tick + 1, 2))
-                current_val = float(tick)
-
-                if job_id and self._store is not None:
-                    self._store.update_job(
-                        job_id,
-                        status="running",
-                        prompt_id=prompt_id,
-                        progress_value=current_val,
-                        progress_max=estimated_max,
-                    )
-                if self._broker is not None:
-                    self._broker.publish(
-                        "progress",
-                        {
-                            "job_id": job_id,
-                            "project_id": project_id,
-                            "prompt_id": prompt_id,
-                            "status": current_status,
-                            "value": current_val,
-                            "max": estimated_max,
-                            "node": "poll",
-                        },
-                    )
-
-                if time.monotonic() >= deadline:
-                    raise ComfyUITimeoutError(
-                        self._redact(
-                            f"Timeout esperando completado del prompt "
-                            f"{prompt_id} tras {max_wait:.2f}s"
-                        ),
-                        prompt_id=prompt_id,
-                    )
-
-                await self._sleep(interval)
-
-        except ComfyUIError as exc:
-            self._fail_job(
-                exc,
-                job_id=job_id,
-                project_id=project_id,
-                prompt_id=prompt_id,
-            )
-            raise
-
-    def handle_ws_event(
-        self,
-        raw_message: str | bytes | dict[str, Any] | ComfyUIWsEvent,
-        *,
-        job_id: str | None = None,
-        project_id: str | None = None,
-    ) -> ComfyUIWsEvent | None:
-        """Parsea un evento /ws de ComfyUI y lo proyecta al JobStore y al canal SSE."""
-        event = (
-            raw_message
-            if isinstance(raw_message, ComfyUIWsEvent)
-            else parse_ws_event(raw_message)
-        )
-        if event is None:
-            return None
-
-        if event.event_type == "progress":
-            val = event.value if event.value is not None else 0.0
-            max_val = event.max if event.max is not None else 1.0
-            if job_id and self._store is not None:
-                self._store.update_job(
-                    job_id,
-                    status="running",
-                    prompt_id=event.prompt_id,
-                    progress_value=val,
-                    progress_max=max_val,
-                    current_node=event.node,
-                )
-            if self._broker is not None:
-                self._broker.publish(
-                    "progress",
-                    {
-                        "job_id": job_id,
-                        "project_id": project_id,
-                        "prompt_id": event.prompt_id,
-                        "status": "running",
-                        "value": val,
-                        "max": max_val,
-                        "node": event.node,
-                    },
-                )
-
-        elif event.event_type == "executing":
-            if event.node is not None:
-                if job_id and self._store is not None:
-                    self._store.update_job(
-                        job_id,
-                        status="running",
-                        prompt_id=event.prompt_id,
-                        current_node=event.node,
-                    )
-                if self._broker is not None:
-                    self._broker.publish(
-                        "progress",
-                        {
-                            "job_id": job_id,
-                            "project_id": project_id,
-                            "prompt_id": event.prompt_id,
-                            "status": "running",
-                            "node": event.node,
-                        },
-                    )
-            else:
-                # node=None en ComfyUI WS indica fin de ejecución del grafo, pero el
-                # job solo pasa a "done" vía _complete_job tras descargar y persistir
-                # las salidas. Marcar done aquí crearía una carrera con
-                # execute_prompt_job y expondría resultados aún no persistidos.
-                if self._broker is not None:
-                    self._broker.publish(
-                        "progress",
-                        {
-                            "job_id": job_id,
-                            "project_id": project_id,
-                            "prompt_id": event.prompt_id,
-                            "status": "running",
-                            "node": None,
-                            "execution_complete": True,
-                        },
-                    )
-
-        elif event.event_type == "executed":
-            if self._broker is not None:
-                self._broker.publish(
-                    "progress",
-                    {
-                        "job_id": job_id,
-                        "project_id": project_id,
-                        "prompt_id": event.prompt_id,
-                        "status": "running",
-                        "node": event.node,
-                        "executed_output": event.output,
-                    },
-                )
-
-        elif event.event_type == "status":
-            if self._broker is not None:
-                self._broker.publish(
-                    "job",
-                    {
-                        "job_id": job_id,
-                        "project_id": project_id,
-                        "prompt_id": event.prompt_id,
-                        "queue_remaining": event.queue_remaining,
-                    },
-                )
-
-        elif event.event_type in {"execution_error", "execution_interrupted"}:
-            err = ComfyUIExecutionError(
-                self._redact(event.error_message or f"ComfyUI {event.event_type}"),
-                prompt_id=event.prompt_id,
-                details=event.raw_data,
-            )
-            self._fail_job(
-                err,
-                job_id=job_id,
-                project_id=project_id,
-                prompt_id=event.prompt_id,
-            )
-            raise err
-
-        return event
-
-    async def view_output(
-        self,
-        filename: str,
-        *,
-        subfolder: str = "",
-        storage_type: str = "output",
-        job_id: str | None = None,
-        project_id: str | None = None,
-        prompt_id: str | None = None,
-    ) -> bytes:
-        """Descarga bytes de una salida o input mediante GET /view."""
-        try:
-            resp = await self._request(
-                "GET",
-                "/view",
-                params={
-                    "filename": filename,
-                    "subfolder": subfolder,
-                    "type": storage_type,
-                },
-            )
-        except ComfyUIError as exc:
-            if exc.prompt_id is None and prompt_id is not None:
-                exc.prompt_id = prompt_id
-            if job_id is not None:
-                self._fail_job(
-                    exc,
-                    job_id=job_id,
-                    project_id=project_id,
-                    prompt_id=prompt_id,
-                )
-            raise
-        return resp.content
-
-    async def upload_image(
-        self,
-        data: bytes | Path,
-        filename: str | None = None,
-        *,
-        subfolder: str = "",
-        overwrite: bool = True,
-        storage_type: str = "input",
-        mime_type: str = "image/png",
-    ) -> ComfyUIUploadResult:
-        """Sube una imagen a ComfyUI mediante POST /upload/image."""
-        if isinstance(data, Path):
-            raw_bytes = data.read_bytes()
-            effective_name = filename or data.name
-        else:
-            raw_bytes = data
-            effective_name = filename or "upload.png"
-
-        resp = await self._request(
-            "POST",
-            "/upload/image",
-            files={"image": (effective_name, raw_bytes, mime_type)},
-            data={
-                "subfolder": subfolder,
-                "overwrite": "true" if overwrite else "false",
-                "type": storage_type,
-            },
-        )
-        body = resp.json()
-        return ComfyUIUploadResult(
-            name=str(body.get("name") or effective_name),
-            subfolder=str(body.get("subfolder") or subfolder),
-            storage_type=str(body.get("type") or storage_type),
-            overwrite=bool(body.get("overwrite", overwrite)),
-        )
-
-    async def upload_video(
-        self,
-        data: bytes | Path,
-        filename: str | None = None,
-        *,
-        subfolder: str = "",
-        overwrite: bool = True,
-        storage_type: str = "input",
-        mime_type: str = "video/mp4",
-    ) -> ComfyUIUploadResult:
-        """Sube un vídeo para VideoHelperSuite (VHS_LoadVideo).
-
-        Verificado en Kosinkadink/ComfyUI-VideoHelperSuite (web/js/VHS.core.js):
-        VHS sube vídeos mediante POST /upload/image con el campo multipart 'image'.
-        """
-        if isinstance(data, Path):
-            raw_bytes = data.read_bytes()
-            effective_name = filename or data.name
-        else:
-            raw_bytes = data
-            effective_name = filename or "upload.mp4"
-
-        return await self.upload_image(
-            raw_bytes,
-            filename=effective_name,
-            subfolder=subfolder,
-            overwrite=overwrite,
-            storage_type=storage_type,
-            mime_type=mime_type,
-        )
-
-    async def upload_audio(
-        self,
-        data: bytes | Path,
-        filename: str | None = None,
-        *,
-        subfolder: str = "",
-        overwrite: bool = True,
-        storage_type: str = "input",
-        mime_type: str = "audio/wav",
-    ) -> ComfyUIUploadResult:
-        """Sube un audio para LoadAudio mediante POST /upload/audio.
-
-        ComfyUI core acepta /upload/audio con el campo multipart 'audio'.
-        """
-        if isinstance(data, Path):
-            raw_bytes = data.read_bytes()
-            effective_name = filename or data.name
-        else:
-            raw_bytes = data
-            effective_name = filename or "upload.wav"
-
-        resp = await self._request(
-            "POST",
-            "/upload/audio",
-            files={"audio": (effective_name, raw_bytes, mime_type)},
-            data={
-                "subfolder": subfolder,
-                "overwrite": "true" if overwrite else "false",
-                "type": storage_type,
-            },
-        )
-        body = resp.json()
-        return ComfyUIUploadResult(
-            name=str(body.get("name") or effective_name),
-            subfolder=str(body.get("subfolder") or subfolder),
-            storage_type=str(body.get("type") or storage_type),
-            overwrite=bool(body.get("overwrite", overwrite)),
-        )
-
-    async def interrupt(self) -> dict[str, Any]:
-        """Envía POST /interrupt para detener la ejecución activa."""
-        resp = await self._request("POST", "/interrupt")
-        data = resp.json()
-        return data if isinstance(data, dict) else {"interrupted": True}
-
-    async def free_memory(
-        self,
-        *,
-        unload_models: bool = True,
-        free_memory: bool = True,
-    ) -> dict[str, Any]:
-        """Envía POST /free para descargar modelos o liberar VRAM."""
-        resp = await self._request(
-            "POST",
-            "/free",
-            json_body={
-                "unload_models": unload_models,
-                "free_memory": free_memory,
-            },
-        )
-        data = resp.json()
-        return data if isinstance(data, dict) else {"freed": True}
-
-    async def _drain_sampler(
-        self,
-        sample_task: asyncio.Task[dict[str, Any]],
-    ) -> tuple[dict[str, Any], bool]:
-        """Espera al muestreador y devuelve (pico medido, ¿medido de verdad?).
-
-        «¿Medido de verdad?» es «la muestra de cierre salió bien»
-        (`peak["closing_ok"]`), no «entró al menos una muestra»: la primera se
-        toma junto al `submit_prompt`, antes de que ComfyUI cargue los modelos, y
-        su valor es el ocioso. Contarla como medición buena era el defecto de R6
-        devuelto por la puerta de atrás —un `/system_stats` final caído dejaba
-        `status="ok"` con la VRAM ociosa, y de ahí un veredicto de encaje falso.
-
-        Se captura `Exception`, NO solo `TimeoutError`. `TimeoutError` es
-        subclase de `OSError` (y por tanto de `Exception`), así que sigue
-        cubierto; pero además `sample_system_stats_peak` interpreta el payload
-        de `/system_stats` FUERA de su propio `try`, así que un `devices` con
-        forma inesperada o un `vram_used` no numérico hacen que la tarea termine
-        con una excepción. Si esa excepción saliera de aquí, abortaría un render
-        que YA terminó: el job se quedaría en `queued`, no habría fila de
-        medición y las salidas no se descargarían ni persistirían, con el cerrojo
-        ya soltado. Ese era el riesgo de la F4: al estrechar el `except` a
-        `TimeoutError` el error del muestreador se llevaba por delante el render.
-
-        `asyncio.CancelledError` es `BaseException` desde Python 3.8, así que
-        sigue saliendo: un render cancelado mientras se drena no se registra
-        como una medición correcta de un render que no terminó (F4).
-
-        El segundo elemento del tuple dice si la medición sirve o no. Antes el
-        fallo se tragaba EN SILENCIO y la fila se escribía igual con
-        `status="ok"`: `recipe_for_template` filtra por `status == "ok"`, así que
-        una medición perdida se contaba como buena y las recetas juzgaban
-        `assess_vram_fit` sin dato, sin un solo aviso en el log. Ahora el camino
-        sin medida se registra con su propio estado y se deja rastro.
-        """
-        try:
-            peak = await asyncio.wait_for(sample_task, timeout=_SAMPLER_DRAIN_TIMEOUT_S)
-        except TimeoutError:
+  …8239 tokens truncated…      except TimeoutError:
             # El orden NO es para hacer alcanzable el timeout: `TimeoutError`
             # (y `asyncio.TimeoutError`, que ES `TimeoutError`) ya lo cubre el
             # `except Exception` de abajo, porque su MRO pasa por `Exception`
@@ -1684,6 +872,7 @@ class ComfyUIClient:
         poll_interval: float | None = None,
         timeout: float | None = None,
         persist_outputs: bool = True,
+        cancel_event: Any | None = None,
     ) -> PromptResult:
         """Ciclo de alto nivel: submit -> poll -> descarga /view -> registro en proyecto."""
         # Exclusión mutua del trabajo GPU pesado: un solo render a la vez. Se
@@ -1735,6 +924,11 @@ class ComfyUIClient:
             )
             sample_task.add_done_callback(_discard_sampler_error)
             try:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ComfyUICancelledError(
+                        "El render fue cancelado antes de enviarse",
+                        details={"cancelled": True},
+                    )
                 submission = await self.submit_prompt(
                     prompt,
                     job_id=job_id,
@@ -1747,8 +941,9 @@ class ComfyUIClient:
                     job_id=job_id,
                     project_id=project_id,
                     finalize_job=False,
+                    cancel_event=cancel_event,
                 )
-            except BaseException:
+            except BaseException as exc:
                 # El muestreador se para con el cerrojo todavía cogido: si no,
                 # la tarea quedaría girando en `while not stop.is_set()` para
                 # siempre. NO se espera a que acabe: un fallo o una cancelación
@@ -1757,6 +952,18 @@ class ComfyUIClient:
                 # render con el muestreador colgado retenía el cerrojo 5 s.
                 stop_sampling.set()
                 sample_task.cancel()
+                if isinstance(exc, ComfyUICancelledError):
+                    # This cancellation was requested for our own prompt, so
+                    # it is safe to unload while the GPU gate is still held.
+                    # Mark before the idle check so this job does not block its
+                    # own cleanup; other queued work still prevents /free.
+                    self._fail_job(
+                        exc,
+                        job_id=job_id,
+                        project_id=project_id,
+                        prompt_id=exc.prompt_id,
+                    )
+                    await self._release_gpu_when_idle(exclude_job_id=job_id)
                 raise
             # Render correcto: se pide el paro y se espera al muestreador SIN
             # soltar el cerrojo. Su última muestra (ver
