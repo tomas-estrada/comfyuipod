@@ -616,9 +616,15 @@ PYBOOTSTRAP
         return 0
     fi
 
-    local repo remote target filename repo_type expected line
-    while IFS=$'\t' read -r repo remote target filename repo_type expected; do
+    local repo remote target filename repo_type expected extra
+    while IFS=$'\t' read -r repo remote target filename repo_type expected extra; do
         [ -n "${repo}" ] || continue
+        if [ -n "${extra}" ]; then
+            # Una línea con campos de más es un manifiesto corrupto: mejor no
+            # descargar nada de ella que adivinar qué campo es cada cosa.
+            log "AVISO: línea de manifiesto con campos extra, se ignora (${repo})."
+            continue
+        fi
         bytes_total=$((bytes_total + ${expected:-0}))
         hf_fetch "${repo}" "${remote}" "${target}" "${filename}" "${repo_type}" "${expected:-0}" || true
     done <<< "${plan}"
