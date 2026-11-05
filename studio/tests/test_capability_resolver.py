@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -437,3 +438,113 @@ def test_acquire_without_declared_hash_still_works(data_dir: Path, fake_hf: Path
     need.sha1 = None
     report = asset_acquire.acquire([need], env=_env(fake_hf, data_dir))
     assert report.entries[0].status == "downloaded"
+
+
+# --------------------------------------------------------------------------
+# Cancelación durante la descarga (política, punto 4: «cancellation»)
+# --------------------------------------------------------------------------
+
+
+def test_cancel_midway_reports_cancelled_without_retrying(
+    data_dir: Path, fake_hf: Path, monkeypatch
+) -> None:
+    """Cancelar durante la descarga no es un fallo: no se reintenta.
+
+    El cliente real se cancela en `_run_hf_download`; aquí se comprueba el
+    cableado de `acquire`/`_acquire_one`: estado `cancelled`, staging limpio y
+    sin backoff (reintentar un cancelado gastaría ancho de banda inútilmente).
+    """
+    from comfy_studio import asset_acquire
+
+    env = _env(fake_hf, data_dir)
+    resolution = resolve("video.face_restore", env=env)
+    _pin_fake_hashes(resolution)
+
+    # El usuario cancela *durante* la primera descarga, no antes de empezar.
+    state = {"cancel": False}
+
+    def _user_cancelled() -> bool:
+        return state["cancel"]
+
+    def _download_then_cancel(argv: list[str], **_: object) -> int:
+        stage = Path(argv[argv.index("--local-dir") + 1])
+        target = stage / argv[3]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"parcial")
+        state["cancel"] = True
+        return asset_acquire.CANCELLED_RETURNCODE
+
+    monkeypatch.setattr(asset_acquire, "_run_hf_download", _download_then_cancel)
+
+    report = asset_acquire.acquire(
+        resolution.missing, env=env, should_cancel=_user_cancelled
+    )
+    assert report.cancelled is True
+    cancelled = [e for e in report.entries if e.status == "cancelled"]
+    assert cancelled, [e.status for e in report.entries]
+    for entry in cancelled:
+        assert entry.attempts == 1, "un cancelado no debe reintentarse"
+    # El staging queda limpio para que la recuperación no vea un fichero parcial.
+    stage = Path(report.stage_dir)
+    assert not any(stage.rglob("*.safetensors")), "quedó un parcial en staging"
+
+
+def test_real_download_process_is_killed_on_cancel() -> None:
+    """El proceso real se mata en ~1 s, con su árbol y sin tocar grupos ajenos."""
+    import os
+    import subprocess
+    import time
+
+    from comfy_studio.asset_acquire import (
+        CANCELLED_RETURNCODE,
+        TIMEOUT_RETURNCODE,
+        _run_hf_download,
+        _terminate_tree,
+    )
+
+    me = os.getpid()
+    slow = [sys.executable, "-c", "import time; time.sleep(60)"]
+    t0 = time.monotonic()
+    rc = _run_hf_download(slow, timeout=60, should_cancel=lambda: time.monotonic() - t0 > 1.5)
+    assert rc == CANCELLED_RETURNCODE
+    assert time.monotonic() - t0 < 10, "la cancelación debe surtir efecto de inmediato"
+
+    t0 = time.monotonic()
+    assert _run_hf_download(slow, timeout=2, should_cancel=None) == TIMEOUT_RETURNCODE
+    assert time.monotonic() - t0 < 10
+    assert (
+        _run_hf_download(
+            [sys.executable, "-c", "import sys; sys.exit(3)"],
+            timeout=10,
+            should_cancel=None,
+        )
+        == 3
+    )
+
+    # Hijo sin sesión propia: muere con el grupo del cliente.
+    script = (
+        "import subprocess,sys,time\n"
+        "p=subprocess.Popen(['sleep','300'])\n"
+        "sys.stdout.write(str(p.pid)+chr(10)); sys.stdout.flush()\n"
+        "time.sleep(60)\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    child = int(proc.stdout.readline())
+    _terminate_tree(proc)
+    time.sleep(0.4)
+    assert (
+        subprocess.run(["kill", "-0", str(child)], capture_output=True).returncode != 0
+    ), "quedó un descargador huérfano escribiendo en staging"
+    subprocess.run(["kill", "-9", str(child)], capture_output=True)
+
+    # Un proceso del grupo del test NO debe matar al test: `killpg` solo se
+    # aplica cuando el cliente liderea su grupo.
+    sibling = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    _terminate_tree(sibling)
+    time.sleep(0.3)
+    assert subprocess.run(["kill", "-0", str(me)], capture_output=True).returncode == 0
