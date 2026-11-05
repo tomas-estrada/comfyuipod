@@ -351,7 +351,14 @@ async def test_system_stats_sampler_measures_the_real_peak() -> None:
             # VRAM creciente: el pico debe ser el último valor.
             used = 1024**3 * (10 + self.calls)
             return {
-                "devices": [{"name": "RTX 5090", "vram_total": 32 * 1024**3, "vram_used": used}],
+                "devices": [
+                    {
+                        "name": "RTX 5090",
+                        "vram_total": 32 * 1024**3,
+                        "vram_used": used,
+                        "driver_version": "570.124.06",
+                    }
+                ],
                 "system": {"ram_used": 1024**2 * 100},
                 "cuda_version": "12.8",
             }
@@ -372,6 +379,57 @@ async def test_system_stats_sampler_measures_the_real_peak() -> None:
     assert peak["gpu_name"] == "RTX 5090"
     assert peak["cuda"] == "12.8"
     assert peak["ram_peak_mb"] == 100
+    # El driver se mide en el mismo host y momento que el render: la receta debe
+    # describir la máquina donde se midió de verdad, no la de `strict-check`.
+    assert peak["driver"] == "570.124.06"
+
+
+@pytest.mark.anyio
+async def test_sampler_accepts_other_driver_key_names() -> None:
+    """Las versiones de ComfyUI no publican la misma clave."""
+    import asyncio
+
+    from comfy_studio.comfyui_client import sample_system_stats_peak
+
+    class _OldClient:
+        async def system_stats(self) -> dict:
+            return {
+                "devices": [{"name": "RTX 4090", "vram_used": 1024**3, "driver": "550.90"}],
+            }
+
+    stop = asyncio.Event()
+
+    async def _stopper() -> None:
+        await asyncio.sleep(0.05)
+        stop.set()
+
+    task = asyncio.create_task(_stopper())
+    peak = await sample_system_stats_peak(_OldClient(), stop=stop, interval=0.01)
+    await task
+    assert peak["driver"] == "550.90"
+
+
+@pytest.mark.anyio
+async def test_driver_is_none_when_comfyui_does_not_publish_it() -> None:
+    """Si ComfyUI no lo publica, se queda a None: no se inventa."""
+    import asyncio
+
+    from comfy_studio.comfyui_client import sample_system_stats_peak
+
+    class _BareClient:
+        async def system_stats(self) -> dict:
+            return {"devices": [{"name": "RTX 4090", "vram_used": 1024**3}]}
+
+    stop = asyncio.Event()
+
+    async def _stopper() -> None:
+        await asyncio.sleep(0.05)
+        stop.set()
+
+    task = asyncio.create_task(_stopper())
+    peak = await sample_system_stats_peak(_BareClient(), stop=stop, interval=0.01)
+    await task
+    assert peak["driver"] is None
 
 
 @pytest.mark.anyio
