@@ -15,6 +15,59 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("comfy_studio.projects")
+#: Objetivo de hardware de la política (punto 5): «a single consumer GPU with
+#: approximately 32 GB VRAM». Orientativo: la comprobación real es la medición.
+TARGET_VRAM_GB = 32
+
+#: Orden en el que la política dice investigar antes de subir de hardware.
+#: Cada una es específica del modelo: la política prohíbe aplicar flags
+#: genéricos a ciegas, tratar RAM como intercambiable con VRAM o afirmar
+#: compatibilidad universal. Por eso ninguna se marca como «sirve»: hay que
+#: medirla.
+MEMORY_OPTIMISATIONS: tuple[dict[str, str], ...] = (
+    {
+        "id": "precision_quantization",
+        "label": "Precisión y cuantización adecuadas",
+        "note": (
+            "fp8/fp16 según soporte real del modelo; reducir la precisión "
+            "puede degradar la calidad."
+        ),
+    },
+    {
+        "id": "sequential_offload",
+        "label": "Descarga secuencial (sequential scheduling y unloading)",
+        "note": "Ya implementada en el cliente: se libera la VRAM cuando no queda trabajo.",
+    },
+    {
+        "id": "model_group_offload",
+        "label": "Offloading de modelo o grupo",
+        "note": (
+            "Mueve pesos a RAM de host; más lento, y la RAM de host no es "
+            "intercambiable con VRAM."
+        ),
+    },
+    {
+        "id": "cpu_components",
+        "label": "Componentes compatibles en CPU",
+        "note": (
+            "Solo para partes que el pipeline permita (p. ej. VAE, tokenizador)."
+        ),
+    },
+    {
+        "id": "vae_tiling",
+        "label": "VAE tiling y otras optimizaciones de memoria soportadas",
+        "note": "Reduce el pico de VRAM del VAE a cambio de tiempo y posibles costuras.",
+    },
+    {
+        "id": "workload_params",
+        "label": "Parámetros de carga coherentes con la calidad pedida",
+        "note": (
+            "Resolución, frames y batch; bajar la calidad no es aceptable "
+            "salvo petición."
+        ),
+    },
+)
+
 SCHEMA_VERSION = 3
 PROJECT_SUBDIRS: tuple[str, ...] = ("uploads", "outputs", "keyframes", "voice")
 
@@ -283,6 +336,70 @@ CREATE TABLE IF NOT EXISTS render_measurements (
 CREATE INDEX IF NOT EXISTS idx_render_measurements_template
     ON render_measurements(template_id, created_at DESC);
 """
+
+
+
+def assess_vram_fit(
+    *,
+    vram_peak_mb: int | None,
+    ram_peak_mb: int | None = None,
+    host_ram_gb: float | None = None,
+    target_vram_gb: float = TARGET_VRAM_GB,
+) -> dict[str, Any]:
+    """¿Cabe la receta medida en el GPU objetivo, y qué probar si no?
+
+    Punto 5: «Before recommending more expensive hardware, investigate supported
+    combinations of…». Devuelve el hueco libre contra el objetivo y, si no cabe,
+    la lista ordenada de optimizaciones que la política mide **antes** de subir
+    de hardware.
+
+    No afirma que una optimización funcione: son específicas del modelo y hay que
+    medirlas. Tampoco trata la RAM de host como VRAM.
+    """
+    target_mb = int(target_vram_gb * 1024)
+    result: dict[str, Any] = {
+        "target_vram_gb": target_vram_gb,
+        "target_vram_mb": target_mb,
+        "measured": vram_peak_mb is not None,
+        "vram_peak_mb": vram_peak_mb,
+        # La RAM de host medida viaja con la receta: la política exige
+        # verificarla en cada oferta y no confundirla con VRAM. El almacén no
+        # sabe cuánta RAM tiene la máquina, así que solo publica el pico medido.
+        "ram_peak_mb": ram_peak_mb,
+        "fits": None,
+        "headroom_mb": None,
+        "utilisation_pct": None,
+        "optimisations": [],
+    }
+    if vram_peak_mb is None:
+        # Sin medición no se puede afirmar nada: la política pide medidas.
+        result["note"] = "sin medición de VRAM todavía; ejecuta una vez para medir"
+        return result
+
+    result["fits"] = vram_peak_mb <= target_mb
+    result["headroom_mb"] = target_mb - vram_peak_mb
+    result["utilisation_pct"] = round(100.0 * vram_peak_mb / target_mb, 1)
+    if result["fits"]:
+        return result
+
+    # No cabe: se listan las opciones en el orden de la política. Ninguna se
+    # marca como válida sin medirla.
+    result["optimisations"] = [dict(o) for o in MEMORY_OPTIMISATIONS]
+    result["note"] = (
+        "no cabe en el objetivo; medir estas opciones antes de recomendar "
+        "hardware más caro"
+    )
+    if ram_peak_mb is not None and host_ram_gb:
+        result["host_ram"] = {
+            "peak_mb": ram_peak_mb,
+            "available_gb": host_ram_gb,
+            "note": (
+                "la RAM de host NO es intercambiable con VRAM; solo sirve para "
+                "offloading, a costa de tiempo"
+            ),
+        }
+    return result
+
 
 
 class ProjectStore:
@@ -2119,6 +2236,18 @@ class ProjectStore:
             "gpu_name": latest.get("gpu_name"),
             "driver": latest.get("driver"),
             "cuda": latest.get("cuda"),
+            "vram_fit": assess_vram_fit(
+                vram_peak_mb=max(vram) if vram else None,
+                ram_peak_mb=(
+                    max(
+                        r["ram_peak_mb"]
+                        for r in ok
+                        if r.get("ram_peak_mb") is not None
+                    )
+                    if any(r.get("ram_peak_mb") is not None for r in ok)
+                    else None
+                ),
+            ),
         }
 
     @staticmethod

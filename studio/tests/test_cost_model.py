@@ -256,3 +256,92 @@ def test_parser_extracts_profile_guards() -> None:
     assert "flux1-dev-fp8.safetensors" in plan
     assert "minimal" not in plan["flux1-dev-fp8.safetensors"]
     assert "all" in plan["flux1-dev-fp8.safetensors"]
+
+
+# --------------------------------------------------------------------------
+# Ajuste al GPU objetivo (política, punto 5)
+# --------------------------------------------------------------------------
+
+
+def test_recipe_reports_whether_it_fits_the_target_gpu(tmp_path: Path) -> None:
+    """La receta medida debe decir si cabe en ~32 GB, no solo dar números."""
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "db.sqlite3")
+    store.record_render_measurement(
+        template_id="wan_i2v",
+        params={"width": 832, "frames": 81},
+        duration_s=120.0,
+        status="ok",
+        vram_peak_mb=20_000,
+        ram_peak_mb=30_000,
+        gpu_name="RTX 5090",
+        driver="580.00",
+        cuda="12.8",
+    )
+    recipe = store.recipe_for_template("wan_i2v")
+    assert recipe is not None and recipe["measured"] is True
+    fit = recipe["vram_fit"]
+    assert fit["target_vram_gb"] == 32
+    assert fit["fits"] is True
+    assert fit["headroom_mb"] == 32 * 1024 - 20_000
+    assert fit["optimisations"] == []
+
+
+def test_recipe_lists_optimisations_when_it_does_not_fit(tmp_path: Path) -> None:
+    """Si no cabe, se miden las opciones de la política antes de subir de hardware."""
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "db.sqlite3")
+    store.record_render_measurement(
+        template_id="wan_i2v",
+        params={"width": 1280, "frames": 121},
+        duration_s=900.0,
+        status="ok",
+        vram_peak_mb=40_000,
+    )
+    recipe = store.recipe_for_template("wan_i2v")
+    fit = recipe["vram_fit"]
+    assert fit["fits"] is False
+    assert fit["headroom_mb"] < 0
+    ids = [o["id"] for o in fit["optimisations"]]
+    # El orden es el de la política: de lo más barato a lo más invasivo.
+    assert ids[0] == "precision_quantization"
+    assert "vae_tiling" in ids and "sequential_offload" in ids
+    assert ids[-1] == "workload_params"
+
+
+def test_fit_assessment_never_claims_an_optimisation_works() -> None:
+    """«These methods are model-specific. Do not apply generic flags blindly.»"""
+    from comfy_studio.projects import assess_vram_fit
+
+    fit = assess_vram_fit(vram_peak_mb=40_000)
+    for option in fit["optimisations"]:
+        assert option["note"], "cada opción debe decir por qué podría no servir"
+        assert "works" not in option
+        assert "guaranteed" not in option
+
+
+def test_fit_without_measurement_says_so() -> None:
+    """Sin medición no se afirma nada: la política pide resultados medidos."""
+    from comfy_studio.projects import assess_vram_fit
+
+    fit = assess_vram_fit(vram_peak_mb=None)
+    assert fit["measured"] is False
+    assert fit["fits"] is None
+    assert "sin medición" in fit["note"]
+
+
+def test_host_ram_is_not_treated_as_vram() -> None:
+    from comfy_studio.projects import assess_vram_fit
+
+    fit = assess_vram_fit(vram_peak_mb=40_000, ram_peak_mb=60_000, host_ram_gb=64)
+    assert fit["host_ram"]["peak_mb"] == 60_000
+    assert "NO es intercambiable" in fit["host_ram"]["note"]
+
+
+def test_target_vram_is_configurable() -> None:
+    from comfy_studio.config import StudioConfig
+
+    assert StudioConfig.from_env({}).target_vram_gb == 32
+    assert StudioConfig.from_env({"STUDIO_TARGET_VRAM_GB": "48"}).target_vram_gb == 48
