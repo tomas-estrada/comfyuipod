@@ -106,3 +106,11 @@ def test_duplicate_id_is_a_problem() -> None:
     }
     problems, _ = mod.validate(manifest, set())
     assert any("id duplicado" in p for p in problems)
+
+
+def test_verified_public_engines_have_code_revision() -> None:
+    mod = _load_module()
+    manifest = mod.load_json(mod.DEFAULT_MANIFEST)
+    by_id = {e["id"]: e for e in manifest["engines"]}
+    assert by_id["ffmpeg"]["code_revision"] == "n9.0.2"
+    assert by_id["whisperx"]["code_revision"] == "v3.8.6"
