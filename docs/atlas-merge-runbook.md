@@ -7,8 +7,16 @@ test completo (incluido el paso nuevo **"Smoke Test del atlas dentro de la image
 con `verify-bundle` + `serve-check` sobre `/opt/studio-atlas`) y, solo si todo pasa, promueve
 a `:latest`/semver en GHCR.
 
-Estado actual: rama `vibe/atlas-aburra-bc3e3f`, head `c5d762b…` (mergeada sobre `main`
+Estado actual: rama `vibe/atlas-aburra-bc3e3f`, head `082755f…` (mergeada sobre `main`
 `b54195f`), PR #63 OPEN y mergeable, 1895 archivos, +22 759/−96.
+
+**CI verde sobre el head final**: run `41971677682` (pull_request, head `082755f`) →
+`validate` success (incluye `verify-bundle --root atlas` sobre el checkout y 845 tests),
+`rust` success, `build-and-push` success con el paso **"Smoke Test del atlas dentro de la
+imagen candidata"** en success (la imagen candidata contiene y verifica el bundle en
+`/opt/studio-atlas`); "Promover a latest" queda `skipped` en PR por diseño (sólo main).
+Fix previo: `pillow` añadido a `studio[dev]` (el run `41969195322` falló sólo en
+`test_composicion_asset_alfa_sobre_fondo_real` por falta de PIL en el venv de CI).
 
 ## 0. Pre-merge (ya ejecutado en el head de la rama)
 
