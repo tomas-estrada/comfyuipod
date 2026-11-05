@@ -1,0 +1,46 @@
+{
+  "schema": "ultra-status/1",
+  "goal_revision": "upgrades-ultra-version @ PR#64 (merged)",
+  "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
+  "stage": "pre_gpu",
+  "overall": "IN_PROGRESS",
+  "updated_utc": "2026-11-05T06:15:00Z",
+  "work_items": {
+    "W00": {
+      "title": "Reconocimiento, reconciliacion de PRs y baseline",
+      "status": "done",
+      "evidence": "baseline b54195f; PR#58 merged (12a2774); PR#64 merged; PR#59 CONFLICTING deferred; PR#63 atlas base para W09",
+      "level": "L1"
+    },
+    "W01": {
+      "title": "Integridad transaccional de modelos",
+      "status": "in_review",
+      "pr": "fix/ultra-w01-asset-integrity (#65)",
+      "p0_fixed": [
+        "cache corrupta preexistente aceptada en skip",
+        "hf download sin --revision",
+        "EXDEV destruye destino previo"
+      ],
+      "level": "L1"
+    },
+    "W02": {
+      "title": "Hardware, sizing y recetas con evidencia real",
+      "status": "in_review",
+      "pr": "fix/ultra-w02-resources-recipes",
+      "p0_fixed": [
+        "simulated->measured: recipe_for_template excluye muestras simuladas (P0 #4)",
+        "recetas incompatibles agregadas: clave de entorno agrupa solo lo comparable (P0 #5)",
+        "variable inventa VRAM/RAM: hardware_detect.py intersecta perfil con nvidia-smi+cgroup real (P0 #7)"
+      ],
+      "p0_pending": [
+        "P0 #6 sizing sobre catalogo (storage_requirement.py + comfyctl S5): separado por riesgo cross-lenguaje Rust/Python"
+      ],
+      "tests": "test_cache_policy.py W02 (P0 #4,#5,#7); 10 passed local",
+      "level": "L1",
+      "gpu_pending": false
+    }
+  },
+  "next_batch": ["W02 P0 #6 sizing (Rust+Python)", "W03 scheduler/lease GPU", "W04 contratos/DAG"],
+  "blockers": [],
+  "notes": "No GPU rentada, no APIs facturadas. Verificacion CPU local en venv Python 3.11 Windows; CI Linux es la autoridad de merge."
+}
