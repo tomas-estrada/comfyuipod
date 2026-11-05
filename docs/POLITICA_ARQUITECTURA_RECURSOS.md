@@ -324,6 +324,16 @@ N, pendientes de pesos N, sin instalar N, sin integración N». Sigue siendo `wa
 nunca `fatal`, porque un motor instalado que pide pesos de tarea es el caso
 normal, no un fallo.
 
+### Liberación de VRAM cuando no queda trabajo
+
+`POST /free` existía en el cliente pero **nunca se llamaba en producción**: los
+modelos se quedaban residentes en VRAM tras cada render. Ahora, al terminar un
+render y persistir las salidas, `_release_gpu_when_idle()` descarga los modelos
+**solo si no queda ningún job en vuelo** — liberar con la cola llena penalizaría
+el rendimiento sin ganar nada. Controlable con `STUDIO_UNLOAD_WHEN_IDLE`
+(por defecto `1`) y silencioso si ComfyUI no responde: liberar VRAM es una
+optimización, nunca debe tumbar un render ya terminado.
+
 ### Pendiente
 
 - **Clasificar las Fases 1/2 por perfil**: el manifiesto core declara `class`,
