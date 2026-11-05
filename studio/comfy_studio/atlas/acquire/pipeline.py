@@ -799,9 +799,8 @@ class AcquisitionPipeline:
             by_mun.setdefault(mun, []).append(r)
         created = 0
         with store.batch():
-            for mun, bbox in MUNICIPALITY_BBOX.items():
+            for mun in MUNICIPALITY_BBOX:
                 mun_refs = by_mun.get(mun, [])
-                covered = store.search_places_fts(mun, limit=5)
                 # si el municipio ya tiene lugares con vistas, no hace falta sector
                 with_views = [p for p in store.list_places(municipality=mun, limit=500)
                               if store.views_for_place(p.place_id)]

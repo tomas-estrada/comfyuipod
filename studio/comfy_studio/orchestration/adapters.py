@@ -205,10 +205,56 @@ class EngineRunnerAdapter:
         *,
         template_registry: Any | None = None,
         default_comfy_template: str = _DEFAULT_COMFY_TEMPLATE,
+        atlas_service: Any | None = None,
     ) -> None:
         self._engines = dict(engines)
         self._registry = template_registry
         self._default_template = default_comfy_template
+        self._atlas = atlas_service
+
+    def _resolve_atlas_background(self, job: dict[str, Any]) -> dict[str, Any]:
+        """Resuelve el fondo del atlas referenced en `job['atlas']` a un archivo local real.
+
+        Valida que el ref exista en el catálogo, que la ruta quede dentro de
+        files/ (sin path traversal) y que el archivo exista; inyecta
+        `background_image` con la ruta absoluta para la plantilla. Si algo falla
+        devuelve ok=False tipado (nunca un placeholder).
+        """
+        atlas_ctx = job.get("atlas")
+        if not isinstance(atlas_ctx, dict) or self._atlas is None:
+            return job
+        try:
+            available = self._atlas.available()
+        except Exception:  # noqa: BLE001
+            available = False
+        if not available:
+            return {
+                "_atlas_error": "atlas no disponible en el pod (sin catálogo en STUDIO_ATLAS_DIR)"
+            }
+        ref_id = atlas_ctx.get("ref_id") or ""
+        ref = self._atlas.store.get_reference(ref_id) if ref_id else None
+        if ref is None:
+            return {"_atlas_error": f"referencia de atlas desconocida: {ref_id!r}"}
+        files_root = (self._atlas.root / "files").resolve()
+        path = (files_root / ref.file_path).resolve()
+        try:
+            path.relative_to(files_root)
+        except ValueError:
+            return {"_atlas_error": "file_path del atlas escapa de files/ (path traversal)"}
+        if not path.is_file():
+            return {"_atlas_error": f"archivo del atlas ausente en disco: {ref.file_path}"}
+        resolved = dict(job)
+        resolved["background_image"] = str(path)
+        resolved["atlas_resolved"] = {
+            "ref_id": ref.ref_id,
+            "place_id": atlas_ctx.get("place_id"),
+            "view_id": atlas_ctx.get("view_id"),
+            "sha256": ref.sha256,
+            "license": ref.license,
+            "attribution": ref.attribution,
+            "capture_date": ref.capture_date,
+        }
+        return resolved
 
     def _resolve_graph(self, job: dict[str, Any]) -> dict[str, Any]:
         """Devuelve `job` con `graph` resuelto desde una plantilla si falta.
@@ -252,6 +298,15 @@ class EngineRunnerAdapter:
                 "error": f"motor no disponible en el servidor: {engine!r}",
             }
         job = dict(job)
+        resolved_atlas = self._resolve_atlas_background(job)
+        if isinstance(resolved_atlas, dict) and "_atlas_error" in resolved_atlas:
+            return {
+                "ok": False,
+                "engine": engine,
+                "error": f"atlas: {resolved_atlas['_atlas_error']}",
+            }
+        if isinstance(resolved_atlas, dict):
+            job = resolved_atlas
         if engine in _GRAPH_ENGINES:
             job = self._resolve_graph(job)
         spec = EngineRunSpec(job=job, cost_cap=cost_cap)
@@ -384,6 +439,7 @@ def build_server_collaborators(
     compositor_engine: Any | None = None,
     available_nodes: set[str] | None = None,
     template_registry: Any | None = None,
+    atlas_service: Any | None = None,
 ) -> Collaborators:
     """Arma el `Collaborators` real del servidor desde las piezas disponibles.
 
@@ -393,7 +449,9 @@ def build_server_collaborators(
     """
     planner = LLMPlannerAdapter(llm_client) if llm_client is not None else None
     runner = (
-        EngineRunnerAdapter(engines, template_registry=template_registry)
+        EngineRunnerAdapter(
+            engines, template_registry=template_registry, atlas_service=atlas_service
+        )
         if engines
         else None
     )

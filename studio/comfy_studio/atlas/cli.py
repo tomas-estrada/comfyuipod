@@ -247,18 +247,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_acquire)
 
-    p = sub.add_parser("package", help="empaqueta el bundle para /opt/studio-atlas")
+    p = sub.add_parser("package", help="cura y empaqueta el bundle publicable (atlas/)")
     p.add_argument("--dest", required=True)
-    p.add_argument("--with-files", action="store_true")
+    p.add_argument("--max-shipped", type=int, default=620)
     p.set_defaults(func=cmd_package)
 
     p = sub.add_parser(
-        "shards",
-        help="crea shards tar.gz de files/ para Releases (fijados por hash)",
+        "verify-bundle",
+        help="verificación completa del bundle (bloquea promoción si falla)",
     )
-    p.add_argument("--out", required=True)
-    p.add_argument("--shard-mb", type=int, default=100)
-    p.set_defaults(func=cmd_shards)
+    p.add_argument("--no-files", action="store_true")
+    p.set_defaults(func=cmd_verify_bundle)
 
     p = sub.add_parser("serve-check", help="diagnóstico del atlas dentro del pod (offline)")
     p.set_defaults(func=cmd_serve_check)

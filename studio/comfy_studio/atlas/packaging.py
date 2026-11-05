@@ -23,8 +23,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from comfy_studio.atlas.models import ResolutionClass
 from comfy_studio.atlas.geo import ABURRA_BBOX, in_bbox
+from comfy_studio.atlas.models import ResolutionClass
 from comfy_studio.atlas.service import ATLAS_VERSION, AtlasService
 from comfy_studio.atlas.store import AtlasStore, sha256_file
 
@@ -50,7 +50,8 @@ def curate_refs(store: AtlasStore, max_shipped: int) -> list:
     # sólo se publican referencias georreferenciadas dentro del Valle de Aburrá
     with_gps = [
         r for r in refs
-        if r.gps_lat is not None and r.gps_lon is not None and in_bbox(r.gps_lat, r.gps_lon, ABURRA_BBOX)
+        if r.gps_lat is not None and r.gps_lon is not None
+        and in_bbox(r.gps_lat, r.gps_lon, ABURRA_BBOX)
     ]
     without_gps: list = []
     with_gps.sort(key=lambda r: (r.quality, r.width or 0), reverse=True)

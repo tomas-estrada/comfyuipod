@@ -323,10 +323,16 @@ MCP_EXPECTED_TOOL_NAMES = {
     "plan_production",
     "get_plan",
     "production_status",
+    "atlas_stats",
+    "atlas_search_places",
+    "atlas_resolve_place",
+    "atlas_place_detail",
+    "atlas_select_view",
 }
 
 
 def test_mcp_tools_list_is_exactly_the_allowed_tools(client: TestClient) -> None:
+    # las lecturas del atlas (atlas_*) son seguras y forman parte del subset permitido
     tools = _rpc(client, "tools/list", {}).json()["result"]["tools"]
     names = [t["name"] for t in tools]
     assert len(names) == len(MCP_EXPECTED_TOOL_NAMES)

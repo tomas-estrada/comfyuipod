@@ -137,12 +137,20 @@ class AtlasService:
                 municipality=municipality, kind=kind, bbox=bbox, limit=1000, offset=0
             )
         out: list[dict[str, Any]] = []
-        for p in merged[offset : offset + limit]:
+        scanned = 0
+        for p in merged:
+            if scanned >= offset + limit + offset and len(out) >= limit:
+                break
+            scanned += 1
             views = store.views_for_place(p.place_id)
             cov = store.get_coverage(p.place_id)
             if min_views and len(views) < min_views:
                 continue
+            if scanned <= offset:
+                continue
             out.append(self._place_summary(p, views=len(views), coverage=cov))
+            if len(out) >= limit:
+                break
         return out
 
     def _place_summary(
