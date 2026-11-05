@@ -468,6 +468,24 @@ a:focus-visible {
     color: var(--text-secondary);
 }
 
+/* M7: chips de evidencia del montaje desde brief */
+.evidence-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.4rem;
+    width: 100%;
+}
+
+.evidence-chip {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 0.12rem 0.55rem;
+}
+
 .item-actions {
     display: flex;
     flex-wrap: wrap;
