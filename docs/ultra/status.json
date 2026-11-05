@@ -69,8 +69,9 @@
   "gpu_campaign_W26": "No ejecutada por diseno (no GPU rentada, no APIs facturadas). Protocolo preparado en docs/ultra/CLOSING.md; demos.py deja los pasos neurales como pending_gpu.",
   "blockers": [],
   "known_env_issues": [
-    "test_mac_helper 3 tests fallan SOLO en Windows (SYSTEMROOT limpiado por fixture); pasan en CI Linux (autoridad).",
+    "pytest studio/tests en main: 1046 passed, 1 skipped, 7 failed SOLO en Windows; en CI Linux (autoridad) el job 'Validar paquete comfy_studio ... pytest' pasa (run 42005385668 success).",
+    "Los 7 fallos son sensibles al entorno POSIX: 3x test_mac_helper (fixture limpia os.environ -> sin SYSTEMROOT en Windows), 2x test_m5_capture3d (setenv PATH='' rompe el lanzamiento de subprocess en Windows), 2x test_atlas_* (lanzan scripts/storage_requirement.py como subprocess bajo entorno despojado). storage_requirement.py --profile studio --json ejecutado directo produce JSON valido.",
     "test_gpu_lease multiproceso y tests POSIX son sensibles a Windows; verificados en CI Linux."
   ],
-  "notes": "No GPU rentada, no APIs facturadas. CI Linux es la autoridad. 36 PRs mergeados (#58,#63,#64 integrados; #65-#100). Backlog Ultra W00-W25 cerrado a nivel contrato. W26 (GPU) fuera de fase por diseno."
+  "notes": "No GPU rentada, no APIs facturadas. CI Linux es la autoridad. 36 PRs mergeados (#58,#63,#64 integrados; #65-#101). Backlog Ultra W00-W25 cerrado a nivel contrato L1. W26 (GPU) fuera de fase por diseno. ruff check studio scripts config/probes: All checks passed."
 }
