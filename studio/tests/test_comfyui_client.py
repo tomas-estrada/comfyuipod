@@ -811,3 +811,169 @@ async def test_execute_prompt_job_emits_done_only_after_outputs_persisted(
 
 
 
+
+
+# --------------------------------------------------------------------------
+# Exclusión mutua del trabajo GPU pesado (política, punto 3)
+# --------------------------------------------------------------------------
+
+
+class _StubSubmission:
+    prompt_id = "prompt-1"
+
+
+class _StubResult:
+    prompt_id = "prompt-1"
+    outputs: list = []
+
+
+def _gpu_client(**kwargs: object) -> ComfyUIClient:
+    """Cliente sin transporte: los métodos GPU y la liberación se sustituyen."""
+    import asyncio
+
+    client = ComfyUIClient(
+        base_url="http://stub-comfyui.local:39172",
+        poll_interval=0.01,
+        poll_timeout=5.0,
+        sleep_func=kwargs.pop("sleep_func", asyncio.sleep),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+    async def _no_free(**__: object) -> dict:
+        return {"freed": True}
+
+    client.free_memory = _no_free
+    return client
+
+
+@pytest.mark.anyio
+async def test_gpu_work_is_serialized_one_at_a_time(monkeypatch) -> None:
+    """«Un trabajo GPU pesado a la vez»: dos renders nunca se solapan en GPU."""
+    import asyncio
+
+    from comfy_studio import comfyui_client as client_mod
+
+    client = _gpu_client()
+
+    state = {"active": 0, "peak": 0}
+
+    async def _slow_submit(prompt: dict, **_: object) -> object:
+        return _StubSubmission()
+
+    async def _slow_poll(prompt_id: str, **_: object) -> object:
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        try:
+            await asyncio.sleep(0.05)
+        finally:
+            state["active"] -= 1
+        return _StubResult()
+
+    monkeypatch.setattr(client, "submit_prompt", _slow_submit)
+    monkeypatch.setattr(client, "poll_until_complete", _slow_poll)
+    monkeypatch.setattr(
+        client_mod, "sample_system_stats_peak", _noop_sampler
+    )
+
+    await asyncio.gather(
+        client.execute_prompt_job({"a": 1}),
+        client.execute_prompt_job({"a": 2}),
+        client.execute_prompt_job({"a": 3}),
+    )
+    assert state["peak"] == 1, "los renders GPU se solaparon"
+
+
+async def _noop_sampler(client: object, *, stop: object, interval: float = 2.0) -> dict:
+    return {"vram_peak_mb": None, "ram_peak_mb": None, "samples": 0}
+
+
+@pytest.mark.anyio
+async def test_gpu_gate_is_released_after_a_failure(monkeypatch) -> None:
+    """Un render que falla no debe dejar el cerrojo cogido para siempre."""
+    import asyncio
+
+    from comfy_studio import comfyui_client as client_mod
+
+    client = _gpu_client()
+
+    async def _boom_submit(prompt: dict, **_: object) -> object:
+        raise RuntimeError("ComfyUI rechazó el prompt")
+
+    async def _ok_poll(prompt_id: str, **_: object) -> object:
+        return _StubResult()
+
+    monkeypatch.setattr(client, "submit_prompt", _boom_submit)
+    monkeypatch.setattr(client, "poll_until_complete", _ok_poll)
+    monkeypatch.setattr(client_mod, "sample_system_stats_peak", _noop_sampler)
+
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            await client.execute_prompt_job({"a": 1})
+
+    # El cerrojo sigue utilizable: un render posterior entra sin quedarse colgado.
+    async def _ok_submit(prompt: dict, **_: object) -> object:
+        return _StubSubmission()
+
+    monkeypatch.setattr(client, "submit_prompt", _ok_submit)
+    result = await asyncio.wait_for(client.execute_prompt_job({"a": 2}), timeout=5.0)
+    assert result.prompt_id == "prompt-1"
+
+
+@pytest.mark.anyio
+async def test_gpu_gate_is_released_after_cancellation(monkeypatch) -> None:
+    """Cancelar un render libera la reserva; el siguiente no queda bloqueado."""
+    import asyncio
+
+    from comfy_studio import comfyui_client as client_mod
+
+    client = _gpu_client()
+
+    async def _slow_submit(prompt: dict, **_: object) -> object:
+        return _StubSubmission()
+
+    async def _hang_poll(prompt_id: str, **_: object) -> object:
+        await asyncio.sleep(30)
+        return _StubResult()
+
+    monkeypatch.setattr(client, "submit_prompt", _slow_submit)
+    monkeypatch.setattr(client, "poll_until_complete", _hang_poll)
+    monkeypatch.setattr(client_mod, "sample_system_stats_peak", _noop_sampler)
+
+    task = asyncio.create_task(client.execute_prompt_job({"a": 1}))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    async def _ok_poll(prompt_id: str, **_: object) -> object:
+        return _StubResult()
+
+    monkeypatch.setattr(client, "poll_until_complete", _ok_poll)
+    result = await asyncio.wait_for(client.execute_prompt_job({"a": 2}), timeout=5.0)
+    assert result.prompt_id == "prompt-1"
+
+
+@pytest.mark.anyio
+async def test_gpu_gate_can_be_injected() -> None:
+    """La infraestructura existente puede compartir un único semáforo."""
+    import asyncio
+
+    from comfy_studio import comfyui_client as client_mod
+
+    shared = asyncio.Semaphore(1)
+    client = _gpu_client(gpu_gate=shared)
+
+    async def _ok_submit(prompt: dict, **_: object) -> object:
+        return _StubSubmission()
+
+    async def _ok_poll(prompt_id: str, **_: object) -> object:
+        return _StubResult()
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(client, "submit_prompt", _ok_submit)
+    monkeypatch.setattr(client, "poll_until_complete", _ok_poll)
+    monkeypatch.setattr(client_mod, "sample_system_stats_peak", _noop_sampler)
+    try:
+        assert client._acquire_gpu_gate() is shared
+    finally:
+        monkeypatch.undo()

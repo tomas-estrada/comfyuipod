@@ -400,6 +400,7 @@ class ComfyUIClient:
         redactor: SecretRedactor | None = None,
         sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
         unload_when_idle: bool = True,
+        gpu_gate: asyncio.Semaphore | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.client_id = client_id
@@ -419,6 +420,12 @@ class ComfyUIClient:
         self._sleep = sleep_func
         # Política (puntos 3 y 5): liberar VRAM cuando no queda trabajo.
         self._unload_when_idle = bool(unload_when_idle)
+        # Política (punto 3): «Un trabajo GPU pesado a la vez». La exclusión
+        # mutua vive en el cliente porque es el único punto por el que pasa
+        # toda submission a ComfyUI (registro de plantillas, recuperación al
+        # arrancar y runner de motor), así ningún ejecutor puede colarse.
+        self._gpu_gate = gpu_gate
+        self._gpu_gate_loop: asyncio.AbstractEventLoop | None = None
 
     def _redact(self, text: str) -> str:
         return self._redactor.redact(text)
@@ -1263,6 +1270,23 @@ class ComfyUIClient:
         data = resp.json()
         return data if isinstance(data, dict) else {"freed": True}
 
+    def _acquire_gpu_gate(self) -> asyncio.Semaphore:
+        """Semáforo de un solo trabajo GPU pesado, atado al loop en curso.
+
+        Se crea perezosamente y se rehace si cambia el loop: un `asyncio.Semaphore`
+        construido fuera de un loop (o reutilizado entre dos) queda atado al
+        primero y fallaría en el segundo.
+        """
+        loop = asyncio.get_running_loop()
+        # Solo se rehace cuando el loop CAMBIA: en la primera llamada hay que
+        # respetar un semáforo inyectado desde fuera, no descartarlo.
+        if self._gpu_gate is None or (
+            self._gpu_gate_loop is not None and self._gpu_gate_loop is not loop
+        ):
+            self._gpu_gate = asyncio.Semaphore(1)
+        self._gpu_gate_loop = loop
+        return self._gpu_gate
+
     async def _release_gpu_when_idle(self) -> None:
         """Descarga los modelos cuando no queda trabajo (política, puntos 3 y 5).
 
@@ -1348,19 +1372,24 @@ class ComfyUIClient:
         sample_task = asyncio.create_task(
             sample_system_stats_peak(self, stop=stop_sampling, interval=2.0)
         )
-        submission = await self.submit_prompt(
-            prompt,
-            job_id=job_id,
-            project_id=project_id,
-        )
-        result = await self.poll_until_complete(
-            submission.prompt_id,
-            poll_interval=poll_interval,
-            timeout=timeout,
-            job_id=job_id,
-            project_id=project_id,
-            finalize_job=False,
-        )
+        # Exclusión mutua del trabajo GPU pesado: un solo render a la vez. Se
+        # suelta con `async with`, así que también se libera si el render falla
+        # o se cancela. La descarga de salidas y el registro quedan FUERA: son
+        # I/O, no cómputo GPU, y mantener el cerrojo ahí serializaría de más.
+        async with self._acquire_gpu_gate():
+            submission = await self.submit_prompt(
+                prompt,
+                job_id=job_id,
+                project_id=project_id,
+            )
+            result = await self.poll_until_complete(
+                submission.prompt_id,
+                poll_interval=poll_interval,
+                timeout=timeout,
+                job_id=job_id,
+                project_id=project_id,
+                finalize_job=False,
+            )
         stop_sampling.set()
         try:
             peak = await asyncio.wait_for(sample_task, timeout=5.0)
