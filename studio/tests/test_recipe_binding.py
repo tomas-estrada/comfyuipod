@@ -97,3 +97,52 @@ def test_binds_over_a_real_planned_state() -> None:
     # salvo las que ninguna receta pudo resolver (marcadas, no inventadas).
     for ly in gen_layers:
         assert ly.template_id or "recipe_unresolved" in ly.params
+
+
+def _state_with_layer(kind: str, params: dict | None = None):
+    """Estado mínimo con una capa del kind indicado (sin plantilla)."""
+    shot = Shot(description="capa", id="s1")
+    shot.layers = [Layer(kind=kind, engine="comfyui", params=params or {})]
+    st = ProductionState(idea="test")
+    st.sequences = [Sequence(title="seq", id="seq1", shots=[shot])]
+    return st, shot
+
+
+def test_image_kind_binds_image_recipe() -> None:
+    """Una capa kind='image' enlaza la receta de imagen (image.generate)."""
+    st, shot = _state_with_layer("image", params={"width": 1024, "height": 1024, "frames": 1})
+    summary = bind_recipes(st, vram_budget_mb=VRAM_96)
+    assert summary["bound"] == 1
+    layer = shot.layers[0]
+    assert layer.params.get("recipe_id") == "qwen_image_1024"
+    assert layer.template_id == "sdxl_image"
+    assert layer.engine == "qwen-image21"
+
+
+def test_i2v_kind_binds_i2v_recipe() -> None:
+    """Una capa kind='i2v' enlaza la receta image-to-video."""
+    st, shot = _state_with_layer(
+        "i2v", params={"width": 1280, "height": 720, "frames": 81}
+    )
+    summary = bind_recipes(st, vram_budget_mb=VRAM_96)
+    assert summary["bound"] == 1
+    layer = shot.layers[0]
+    assert layer.params.get("recipe_id") == "wan22_i2v_720p"
+    assert layer.template_id == "wan_i2v"
+    assert layer.engine == "wan22"
+
+
+def test_explicit_capability_overrides_kind() -> None:
+    """params={'capability': ...} explícito gana sobre el kind."""
+    st, shot = _state_with_layer(
+        "i2v",
+        params={"capability": "image.generate", "width": 1024, "height": 1024, "frames": 1},
+    )
+    summary = bind_recipes(st, vram_budget_mb=VRAM_96)
+    assert summary["bound"] == 1
+    layer = shot.layers[0]
+    # La capability explícita (image.generate) gana: enlaza la receta de imagen,
+    # no la de i2v que correspondería al kind.
+    assert layer.params.get("recipe_id") == "qwen_image_1024"
+    assert layer.template_id == "sdxl_image"
+    assert layer.engine == "qwen-image21"
