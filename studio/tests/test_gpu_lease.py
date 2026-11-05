@@ -7,6 +7,7 @@ cancelación/unload y checkpoint/resume.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -174,9 +175,28 @@ def test_checkpoint_resume_does_not_duplicate_stage(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_two_real_processes_contend_only_one_wins(tmp_path: Path) -> None:
-    """Dos procesos reales intentan el heavy lease; exactamente uno lo gana."""
+@pytest.mark.parametrize("recover_dead_owner", [False, True])
+def test_two_real_processes_contend_only_one_wins(
+    tmp_path: Path, recover_dead_owner: bool
+) -> None:
+    """Contenders reales, también al recuperar un owner muerto, tienen un ganador."""
     lock_dir = tmp_path / ".gpu-lease"
+    if recover_dead_owner:
+        lock_dir.mkdir(parents=True)
+        (lock_dir / "heavy.lock").write_text(
+            json.dumps(
+                {
+                    "owner": "dead-owner",
+                    "token": 1,
+                    "pid": 0,
+                    "engine": "wan_t2v",
+                    "vram_mb": 1000,
+                    "ram_mb": 1000,
+                    "acquired_at": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
     script = (
         "import sys, time\n"
         "from comfy_studio.orchestration.gpu_lease import (\n"
