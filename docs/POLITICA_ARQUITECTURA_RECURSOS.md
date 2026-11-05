@@ -334,12 +334,22 @@ el rendimiento sin ganar nada. Controlable con `STUDIO_UNLOAD_WHEN_IDLE`
 (por defecto `1`) y silencioso si ComfyUI no responde: liberar VRAM es una
 optimización, nunca debe tumbar un render ya terminado.
 
+### La selección por perfil es dato, no un `case` en bash
+
+Qué descarga cada `MODEL_PROFILE` vivía en guardas `=~ ^(all|general)$` dentro
+de `scripts/download-models.sh`. Ahora el manifiesto core declara `profiles` por
+entrada (26 activos) y [`scripts/check_profile_parity.py`](../scripts/check_profile_parity.py)
+extrae estáticamente esa selección del bash y la compara con el manifiesto — el
+mismo patrón que la paridad O-11. Si los dos se separan, CI falla con el detalle.
+
+No se ha refactorizado el bash a un bucle sobre el manifiesto: funciona, está
+ cubierto por un fixture de log, y el riesgo no compensaba el beneficio. Lo que
+importa es que la decisión sea ahora versionada y verificada.
+
 ### Pendiente
 
-- **Clasificar las Fases 1/2 por perfil**: el manifiesto core declara `class`,
-  pero la selección por `MODEL_PROFILE` sigue viviendo en bash.
-- **Driver medido**: `recipe_for_template` expone GPU y CUDA, pero el driver se
-  toma de `strict-check` (S2), no de la medición.
+- **Egress**: se modela la transferencia de bajada con un precio por GB
+  orientativo; falta el precio real del proveedor.
 - **Egress**: se modela la transferencia de bajada con un precio por GB
   orientativo; falta el precio real del proveedor.
 ## 5. Hardware objetivo
@@ -396,6 +406,6 @@ Pendiente: modelo de coste de transferencia/egress y de arranque en frío.
 > → la tarea se ejecuta;
 > → los recursos se liberan y los activos reutilizables se retienen según política.
 
-Los pasos 1, 2, 3, 5 y 6 están implementados. Quedan como trabajo pendiente las
-**recetas de ejecución medidas** (paso 4) y la retención de caché con política
-explícita (paso 6).
+Los siete pasos están implementados y verificados en CI. Queda pendiente solo el
+precio real de egress del proveedor (hoy se usa un precio por GB orientativo) y
+tomar el driver de la medición de render en lugar de `strict-check`.
