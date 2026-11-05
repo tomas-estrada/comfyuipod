@@ -113,11 +113,23 @@ class AcquisitionReport:
 
 
 def _move(src: Path, dest: Path) -> None:
-    """Mueve `src` a `dest`, aunque estén en filesystems distintos.
+    """Mueve `src` a `dest` de forma atómica, aunque estén en volúmenes distintos.
 
-    `os.replace` falla con `EXDEV` si staging y destino están en volúmenes
+    `os.replace` falla con `EXDEV` si staging y destino están en filesystems
     diferentes, que es perfectamente posible (`custom_nodes/*` vive bajo
-    `COMFY_APP_DIR`). En ese caso se copia y se borra el original.
+    `COMFY_APP_DIR`). El fallback antiguo copiaba **directamente sobre `dest`
+    final**: si la copia fallaba a mitad (disco lleno, cancelación), dejaba un
+    fichero parcial en el destino y había destruido la versión previa válida.
+
+    Defecto P0 del plan Ultra (W01). La publicación debe ser transaccional:
+
+      1. copiar a un temporal EN EL MISMO FILESYSTEM que `dest`;
+      2. `flush` + `fsync` del contenido y del directorio;
+      3. `os.replace` del temporal sobre `dest` (atómico, same-fs);
+      4. si algo falla, borrar el temporal y dejar intacto el `dest` previo.
+
+    Así una copia interrumpida nunca publica un parcial ni destruye lo que ya
+    había.
     """
     try:
         os.replace(src, dest)
@@ -125,11 +137,36 @@ def _move(src: Path, dest: Path) -> None:
     except OSError as exc:
         if getattr(exc, "errno", None) != errno.EXDEV:
             raise
-    with open(src, "rb") as reader, open(dest, "wb") as writer:
-        for chunk in iter(lambda: reader.read(1024 * 1024), b""):
-            writer.write(chunk)
-        writer.flush()
-        os.fsync(writer.fileno())
+
+    # Temporal en el directorio de destino => mismo filesystem => replace atómico.
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.parent / f".{dest.name}.incoming-{os.getpid()}.tmp"
+    try:
+        with open(src, "rb") as reader, open(tmp, "wb") as writer:
+            for chunk in iter(lambda: reader.read(1024 * 1024), b""):
+                writer.write(chunk)
+            writer.flush()
+            os.fsync(writer.fileno())
+        # Publicación atómica: hasta aquí `dest` previo sigue intacto.
+        os.replace(tmp, dest)
+    except BaseException:
+        # Cualquier fallo (incluida cancelación): no publicar parcial, no tocar
+        # el destino previo. Se limpia el temporal y se propaga el error.
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    # fsync del directorio para que el rename sobreviva a un corte de energía.
+    try:
+        dir_fd = os.open(str(dest.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        # En plataformas sin fsync de directorio (Windows) no es fatal.
+        pass
     src.unlink(missing_ok=True)
 
 
@@ -304,19 +341,30 @@ def _terminate_tree(proc: subprocess.Popen[str]) -> None:
     grupo de procesos, pero **solo si el cliente lo lidera** (lo garantiza el
     `start_new_session=True` de `_run_hf_download`): un `killpg` sobre un grupo
     ajeno mataría procesos que no son nuestros, incluido el nuestro.
+
+    Portabilidad: `os.getpgid`/`os.killpg` y `SIGKILL` solo existen en POSIX.
+    En Windows no hay grupos de proceso POSIX ni `SIGKILL`; se cae a
+    `terminate()`/`kill()` del propio `Popen`, que allí usa `TerminateProcess`.
+    El pod de producción es Linux, pero el cliente debe poder ejecutarse (y
+    probarse) en Windows/macOS sin reventar por un atributo ausente.
     """
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            pgid = os.getpgid(proc.pid)
-        except OSError:
-            pgid = None
-        if pgid is not None and pgid == proc.pid:
+    hard_sig = getattr(signal, "SIGKILL", signal.SIGTERM)
+    getpgid = getattr(os, "getpgid", None)
+    killpg = getattr(os, "killpg", None)
+    for sig in (signal.SIGTERM, hard_sig):
+        pgid = None
+        if getpgid is not None and killpg is not None:
             try:
-                os.killpg(pgid, sig)
+                pgid = getpgid(proc.pid)
             except OSError:
-                pass
+                pgid = None
+            if pgid is not None and pgid == proc.pid:
+                try:
+                    killpg(pgid, sig)
+                except OSError:
+                    pass
         try:
-            proc.kill() if sig is signal.SIGKILL else proc.terminate()
+            proc.kill() if sig is hard_sig else proc.terminate()
         except OSError:
             pass
         try:
@@ -373,15 +421,54 @@ def _acquire_one(    need: Any,
     should_cancel: Callable[[], bool] | None,
 ) -> AcquiredEntry:
     dest = Path(need.dest_path) if need.dest_path else None
+    expected_bytes = int(need.bytes or 0)
     if dest is not None and dest.is_file() and dest.stat().st_size > 0:
-        if progress:
-            progress(need.filename, "skipped")
-        return AcquiredEntry(
-            filename=need.filename,
-            dest_path=str(dest),
-            status="skipped",
-            bytes=dest.stat().st_size,
+        # Un fichero preexistente NO es «presente» por el solo hecho de existir
+        # y no estar vacío. Un parcial, un fichero corrupto o uno sustituido
+        # tienen tamaño > 0 y pasarían como adquiridos. La política (R15) exige
+        # verificar tamaño e integridad antes de anunciar disponible; de lo
+        # contrario un activo de 7 bytes frente a 26 esperados se reutilizaría.
+        # Defecto P0 del plan Ultra (W01): caché corrupta aceptada sin verificar.
+        actual_size = dest.stat().st_size
+        has_hash = bool(getattr(need, "sha256", None) or getattr(need, "sha1", None))
+        # Prioridad de verificación:
+        #  - si el manifiesto declara hash, ese hash es la autoridad (subsume el
+        #    tamaño): un contenido que casa el hash es el fichero correcto;
+        #  - si NO hay hash («where available»), el tamaño exacto es la única
+        #    señal disponible, así que un tamaño distinto descalifica el fichero.
+        integrity = _verify_integrity(dest, need)
+        if has_hash:
+            size_ok = True  # el hash ya cubre el contenido completo
+        else:
+            size_ok = expected_bytes <= 0 or actual_size == expected_bytes
+        if size_ok and integrity is True:
+            if progress:
+                progress(need.filename, "skipped")
+            return AcquiredEntry(
+                filename=need.filename,
+                dest_path=str(dest),
+                status="skipped",
+                bytes=actual_size,
+            )
+        # El fichero existente no verifica: se descarta y se vuelve a adquirir,
+        # en vez de anunciarlo disponible. No se deja un corrupto en su sitio.
+        detail = (
+            str(integrity)
+            if integrity is not True
+            else f"tamaño {actual_size} != esperado {expected_bytes}"
         )
+        if progress:
+            progress(need.filename, "corrupt:redownload")
+        try:
+            dest.unlink()
+        except OSError:
+            # Si no se puede borrar, no se puede garantizar integridad: fail-closed.
+            return AcquiredEntry(
+                filename=need.filename,
+                dest_path=str(dest),
+                status="failed",
+                error=f"fichero existente no verificable y no borrable: {detail}",
+            )
 
     if not need.repo_id or not need.remote_path or dest is None:
         return AcquiredEntry(
@@ -430,18 +517,27 @@ def _acquire_one(    need: Any,
 
         if progress:
             progress(need.filename, f"downloading:{attempt}")
+        argv = [
+            cli,
+            "download",
+            str(need.repo_id),
+            str(need.remote_path),
+            "--repo-type",
+            str(need.repo_type or "model"),
+            "--local-dir",
+            str(stage),
+        ]
+        # Pin inmutable: si el manifiesto declara una revisión (commit), TODAS
+        # las rutas de descarga deben fijarla. Omitir `--revision` haría que el
+        # CLI baje el contenido de `main`, que puede diferir del hash fijado y
+        # fallaría la verificación de integridad después (o, peor, cambiaría en
+        # silencio bajo nosotros). Es un defecto P0 del plan Ultra (W01).
+        revision = getattr(need, "revision", None)
+        if revision:
+            argv += ["--revision", str(revision)]
         try:
             returncode = _run_hf_download(
-                [
-                    cli,
-                    "download",
-                    str(need.repo_id),
-                    str(need.remote_path),
-                    "--repo-type",
-                    str(need.repo_type or "model"),
-                    "--local-dir",
-                    str(stage),
-                ],
+                argv,
                 timeout=timeout,
                 should_cancel=should_cancel,
             )
