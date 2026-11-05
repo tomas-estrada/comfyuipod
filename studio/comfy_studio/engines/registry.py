@@ -87,7 +87,10 @@ def build_default_registry() -> EngineRegistry:
             "blender",
             EngineTier.WARM,
             wired=True,
-            note="runner existente (blender.py); adaptador de contrato pendiente",
+            note=(
+                "runner existente (blender.py); SIN binario en la imagen — "
+                "modo 3D requiere Blender instalado (ver preparedness)"
+            ),
         )
     )
     reg.register(
@@ -119,7 +122,7 @@ def build_default_registry() -> EngineRegistry:
             "audio",
             EngineTier.WARM,
             wired=True,
-            note="STT real vía worker ASR; TTS requiere integrar síntesis",
+            note="STT real vía worker ASR (pesos faster-whisper); TTS Kokoro horneado",
         )
     )
     reg.register(
@@ -149,7 +152,10 @@ def build_default_registry() -> EngineRegistry:
             "music_gen",
             EngineTier.WARM,
             wired=True,
-            note="MusicGen/Stable Audio; modelo pinned en imagen",
+            note=(
+                "MusicGen/Stable Audio: audiocraft horneado --no-deps; "
+                "deps pesadas y pesos en runtime"
+            ),
         )
     )
     reg.register(
@@ -157,7 +163,7 @@ def build_default_registry() -> EngineRegistry:
             "lipsync",
             EngineTier.WARM,
             wired=True,
-            note="Wav2Lip-style; modelo pinned en imagen",
+            note="Wav2Lip-style: repo horneado por SHA; checkpoint wav2lip_gan.pth en runtime",
         )
     )
     reg.register(
@@ -173,7 +179,10 @@ def build_default_registry() -> EngineRegistry:
             "capture3d",
             EngineTier.INSTALLABLE,
             wired=True,
-            note="Nerfstudio NeRF/Gaussian Splatting; binarios pinned en imagen",
+            note=(
+                "Nerfstudio horneado; binarios pinned en imagen y "
+                "tiny-cuda-nn compilado en el volumen"
+            ),
         )
     )
     reg.register(

@@ -8,6 +8,7 @@ pub mod idle;
 pub mod logtail;
 pub mod redact;
 pub mod report;
+pub mod storage;
 pub mod strict;
 pub mod supervisor;
 pub mod sys;

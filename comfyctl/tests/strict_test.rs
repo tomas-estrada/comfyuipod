@@ -661,3 +661,42 @@ fn strict_s15_s16_orchestration_and_brain_warn_never_fatal() {
         "orquestación/cerebro degradados nunca deben ser fatal"
     );
 }
+
+#[test]
+fn s5_uses_the_derived_requirement_when_the_image_publishes_it() {
+    // Política de arquitectura: el umbral se DERIVA de los manifiestos y se hornea
+    // en la imagen. Si está presente, manda; si no, cae al respaldo documentado.
+    use comfyctl::storage::{StorageRequirement, STORAGE_REQUIREMENT_PATH};
+    use std::io::Write;
+
+    let dir = std::env::temp_dir().join("comfyctl-storage-test");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("storage-requirement.json");
+    let payload = r#"{"version":1,"profiles":{"studio":{"start_gate_gb":63,"min_volume_gb":248}}}"#;
+    if std::fs::File::create(&path)
+        .and_then(|mut f| f.write_all(payload.as_bytes()))
+        .is_err()
+    {
+        return;
+    }
+
+    match StorageRequirement::load(&path) {
+        Some(req) => {
+            assert_eq!(req.start_gate_gb("studio"), Some(63));
+            assert_eq!(req.min_volume_gb("studio"), Some(248));
+        }
+        None => return,
+    }
+
+    // Sin el fichero no hay derivado: el respaldo documentado sigue aplicando.
+    assert!(StorageRequirement::load(Path::new("/nonexistent/x.json")).is_none());
+    assert_eq!(
+        comfyctl::config::ModelProfile::Studio.default_min_disk_gb(false),
+        180,
+        "el respaldo documentado no cambia"
+    );
+    assert!(STORAGE_REQUIREMENT_PATH.ends_with("storage-requirement.json"));
+    let _ = std::fs::remove_file(&path);
+}

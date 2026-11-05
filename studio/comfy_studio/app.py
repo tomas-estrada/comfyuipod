@@ -238,6 +238,8 @@ def create_app(
         store=store,
         broker=broker,
         redactor=redactor,
+        # Política (puntos 3 y 5): liberar VRAM cuando no queda trabajo.
+        unload_when_idle=cfg.unload_models_when_idle,
     )
     # M7-SCR-001: tareas de render en segundo plano (submit async) y su semáforo.
     app.state.render_tasks = set()

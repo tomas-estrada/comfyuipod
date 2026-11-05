@@ -157,6 +157,9 @@ def create_stub_comfyui_app(state: ComfyUIStubState | None = None) -> FastAPI:
                     "name": "cuda:0 NVIDIA GeForce RTX 5090 (stub)",
                     "type": "cuda",
                     "index": 0,
+                    # ComfyUI publica el driver del host en algunas versiones;
+                    # la medición lo lee de aquí (política, punto 5).
+                    "driver_version": "570.124.06",
                     "vram_total": 34359738368,
                     "vram_free": 30064771072,
                     "torch_vram_total": 34359738368,

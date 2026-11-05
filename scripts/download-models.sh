@@ -543,8 +543,113 @@ for m in data["models"]:
     log "======================================================================"
 }
 
+run_bootstrap() {
+    FAILED_MODELS=()
+    # Arranque: SOLO lo que el manifiesto declara bootstrap genuino.
+    #
+    # La decisión de qué es bootstrap está versionada en el manifiesto, no en
+    # este script. Hoy el conjunto está vacío a propósito: ni un VAE ni un
+    # restaurador facial son requisito para abrir la API y descubrir
+    # capacidades (política, punto 4). Un modelo task/optional no se descarga
+    # sin petición explícita de capacidad.
+    local manifest="${STUDIO_CORE_MANIFEST:-/etc/comfyui/models-core.json}"
+    if [ ! -f "${manifest}" ]; then
+        manifest="${SCRIPT_DIR}/../config/models-core.json"
+    fi
+
+    log "======================================================================"
+    log "INICIANDO ARRANQUE (solo bootstrap imprescindible)"
+    log "Manifiesto: ${manifest}"
+    log "======================================================================"
+
+    # El manifiesto emite exactamente los argumentos de hf_fetch. Si no se puede
+    # leer, no se descarga nada: fallar cerrado es mejor que llenar el disco con
+    # el catálogo completo por una ruta mal resuelta.
+    local plan
+    plan="$(python3 - "${manifest}" <<'PYBOOTSTRAP' 2>/dev/null || true
+import json
+import os
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        data = json.load(handle)
+except Exception:
+    sys.exit(0)
+
+comfy = os.environ.get("COMFY_DATA_DIR") or "/workspace/comfyui-data"
+for entry in data.get("models", []):
+    if entry.get("class") != "bootstrap":
+        continue
+    dest = str(entry.get("dest_path") or "")
+    if not dest:
+        continue
+    parts = dest.split("/")
+    if parts[0] == "models":
+        target = os.path.join(comfy, *parts[:-1])
+    else:
+        target = os.path.join(comfy, dest)
+    print("\t".join([
+        str(entry.get("repo_id") or ""),
+        str(entry.get("remote_path") or ""),
+        target,
+        parts[-1],
+        str(entry.get("repo_type") or "model"),
+        str(entry.get("bytes") or 0),
+    ]))
+PYBOOTSTRAP
+)"
+
+    local planned=0 bytes_total=0
+    if [ -n "${plan}" ]; then
+        planned="$(printf '%s\n' "${plan}" | grep -c . || true)"
+    fi
+    log "PLAN ARRANQUE: ${planned} archivos bootstrap."
+
+    if [ "${planned}" = "0" ]; then
+        log "Nada que descargar para abrir la API: el arranque no arrastra modelos."
+        log "Las capacidades se precargan a petición (dependencias y bytes visibles)."
+        log "======================================================================"
+        log "FASE ARRANQUE COMPLETADA."
+        log "======================================================================"
+        print_summary "ARRANQUE"
+        return 0
+    fi
+
+    local repo remote target fname repo_type expected extra
+    local -a fetch_args
+    while IFS=$'\t' read -r repo remote target fname repo_type expected extra; do
+        [ -n "${repo}" ] || continue
+        if [ -n "${extra}" ]; then
+            # Una línea con campos de más es un manifiesto corrupto: mejor no
+            # descargar nada de ella que adivinar qué campo es cada cosa.
+            log "AVISO: línea de manifiesto con campos extra, se ignora (${repo})."
+            continue
+        fi
+        bytes_total=$((bytes_total + ${expected:-0}))
+        # Se pasa por array a propósito: la paridad O-11 de CI extrae los
+        # nombres de activo de las llamadas literales `hf_fetch "..." "..." ...`
+        # y una llamada con variables se colaría en esa lista como si fuera un
+        # modelo más.
+        fetch_args=("${repo}" "${remote}" "${target}" "${fname}" "${repo_type}" "${expected:-0}")
+        hf_fetch "${fetch_args[@]}" || true
+    done <<< "${plan}"
+
+    log "======================================================================"
+    log "FASE ARRANQUE COMPLETADA (${planned} archivos bootstrap)."
+    log "======================================================================"
+    print_summary "ARRANQUE"
+}
+
 case "${1:---all}" in
+    --bootstrap)
+        # Arranque normal del pod: solo bootstrap. Nada de task/optional sin
+        # petición, y nada de Fase 2/3 en segundo plano.
+        run_bootstrap
+        ;;
     --phase1)
+        # Se mantiene por compatibilidad para operadores que quieran el paquete
+        # histórico de Fase 1 explícitamente. El arranque NO lo usa.
         run_phase1
         ;;
     --phase2)

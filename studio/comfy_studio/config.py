@@ -11,6 +11,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from comfy_studio import model_assets
+from comfy_studio.hardware_profile import (
+    DEFAULT_PROFILE,
+    RAM_OPTIONS_GB,
+    HardwareProfile,
+)
+from comfy_studio.hardware_profile import (
+    from_env as _hardware_profile_from_env,
+)
+
 SECRET_PLACEHOLDER = "[REDACTED]"
 
 DEFAULT_STUDIO_LLM_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
@@ -392,6 +402,22 @@ class StudioConfig:
     studio_ffmpeg_timeout_s: float = DEFAULT_STUDIO_FFMPEG_TIMEOUT_S
     studio_ffprobe_timeout_s: float = DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
     max_concurrent_renders: int = DEFAULT_MAX_CONCURRENT_RENDERS
+    # Política (puntos 3 y 5): descargar modelos de VRAM cuando no queda trabajo.
+    unload_models_when_idle: bool = True
+    # Arquitectura vigente: perfil de hardware (RTX PRO 6000 Blackwell, 96 GB de
+    # VRAM; RAM 128/256 GB). `target_vram_gb` se mantiene como proyección del
+    # perfil para no romper a quien lo lea, pero la fuente es el perfil.
+    hardware_profile: HardwareProfile = DEFAULT_PROFILE
+    target_vram_gb: int = DEFAULT_PROFILE.vram_gb
+    target_ram_gb: int = DEFAULT_PROFILE.ram_gb
+
+    @property
+    def hardware_profile_name(self) -> str:
+        return self.hardware_profile.name
+
+    @property
+    def ram_options_gb(self) -> tuple[int, ...]:
+        return RAM_OPTIONS_GB
     studio_api_token: str | None = field(default=None, repr=False)
     studio_enable_mcp: bool = True
     # M3.1: protocolo de workers de ML en subprocesso (ComfyUI interpreter).
@@ -562,6 +588,19 @@ class StudioConfig:
             max_concurrent_renders=_positive_int(
                 "STUDIO_MAX_CONCURRENT_RENDERS", DEFAULT_MAX_CONCURRENT_RENDERS
             ),
+            unload_models_when_idle=_parse_bool(
+                source.get("STUDIO_UNLOAD_WHEN_IDLE"), default=True
+            ),
+            # El perfil es la fuente; los overrides explícitos se aplican dentro
+            # de `_hardware_profile_from_env`, así que sus valores ya vienen
+            # reflejados y se usan como valor por omisión.
+            hardware_profile=_hardware_profile_from_env(source),
+            target_vram_gb=_positive_int(
+                "STUDIO_TARGET_VRAM_GB", _hardware_profile_from_env(source).vram_gb
+            ),
+            target_ram_gb=_positive_int(
+                "STUDIO_TARGET_RAM_GB", _hardware_profile_from_env(source).ram_gb
+            ),
             studio_api_token=source.get("STUDIO_API_TOKEN", "").strip() or None,
             studio_enable_mcp=_parse_bool(source.get("STUDIO_ENABLE_MCP"), default=True),
             # M3.1: binario Python del worker (ComfyUI interpreter por defecto).
@@ -606,35 +645,60 @@ class StudioConfig:
     def masked_comfy_pass_status(self) -> str:
         return "<definida>" if self.comfy_pass else "<no definida>"
 
-    def minimax_weights_available(self) -> bool:
+    def minimax_weights_expected(self) -> bool:
         """
-        ¿Están previstos los pesos del grupo MiniMax H3 (Hailuo 3.0)?
+        ¿Se pidió el grupo MiniMax H3 (Hailuo 3.0)?
 
         `STUDIO_INCLUDE_MINIMAX=1` hace que `download-models.sh` descargue el
-        set local Ref2VA pruned-int8 (+42.03 GB: DiT 19.5 GiB + Qwen3-VL nvfp4
-        14.6 GiB + VAEs + LoRA turbo); sin él la plantilla `minimax_r2v` no se
-        ofrece ni acepta submits.
+        set local Ref2VA pruned-int8 (+63.00 GB en 6 archivos: DiT ref2va +
+        Singularity v2, Qwen3-VL nvfp4, VAEs de vídeo/audio y LoRA turbo); sin
+        él la plantilla `minimax_r2v` no se ofrece ni acepta submits.
+
+        Es una señal de **intención**: no afirma que los archivos estén en disco.
         """
         return bool(self.studio_include_minimax)
 
-    def animate_weights_available(self) -> bool:
+    def minimax_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """¿Están los pesos de MiniMax H3 realmente en disco?
+
+        Política de activos: «disponible» es un hecho del filesystem, no de la
+        entorno. Un grupo pedido pero aún descargando NO está disponible.
         """
-        ¿Están previstos los pesos del grupo Animate (Wan 2.2 Animate 14B)?
+        return self.minimax_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_MINIMAX", env
+        )
+
+    def animate_weights_expected(self) -> bool:
+        """
+        ¿Se pidió el grupo Animate (Wan 2.2 Animate 14B)?
 
         `STUDIO_INCLUDE_ANIMATE=1` hace que `download-models.sh` descargue
-        `wan2.2_animate_14B_int8_convrot.safetensors` (+17.15 GiB); sin él la
+        `wan2.2_animate_14B_int8_convrot.safetensors` (+18.41 GB); sin él la
         plantilla `wan_animate` no se ofrece ni acepta submits.
         """
         return bool(self.studio_include_animate)
 
-    def three_d_weights_available(self) -> bool:
-        """¿Están previstos los pesos del grupo 3D (Hunyuan3D) en este pod?
+    def animate_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """¿Está `wan2.2_animate_14B_int8_convrot.safetensors` en disco?"""
+        return self.animate_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_ANIMATE", env
+        )
+
+    def three_d_weights_expected(self) -> bool:
+        """¿Se pidió el grupo 3D (Hunyuan3D) en este pod?
 
         `STUDIO_INCLUDE_3D=1` o `MODEL_PROFILE=unreal` hacen que
-        `download-models.sh` descargue `hunyuan_3d_v2.1.safetensors`; sin ellos la
-        plantilla `hunyuan3d_image_to_3d` no es ofrecida ni acepta submits.
+        `download-models.sh` descargue `hunyuan_3d_v2.1.safetensors` (+7.37 GB);
+        sin ellos la plantilla `hunyuan3d_image_to_3d` no es ofrecida ni acepta
+        submits.
         """
         return bool(self.studio_include_3d)
+
+    def three_d_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """¿Está `hunyuan_3d_v2.1.safetensors` en disco?"""
+        return self.three_d_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_3D", env
+        )
 
     def redactor(self) -> SecretRedactor:
         return SecretRedactor.from_config(self)
@@ -668,6 +732,10 @@ class StudioConfig:
             "STUDIO_FFMPEG_TIMEOUT_S": str(self.studio_ffmpeg_timeout_s),
             "STUDIO_FFPROBE_TIMEOUT_S": str(self.studio_ffprobe_timeout_s),
             "STUDIO_MAX_CONCURRENT_RENDERS": str(self.max_concurrent_renders),
+            "STUDIO_UNLOAD_WHEN_IDLE": "1" if self.unload_models_when_idle else "0",
+            "STUDIO_HARDWARE_PROFILE": str(self.hardware_profile_name),
+            "STUDIO_TARGET_VRAM_GB": str(self.target_vram_gb),
+            "STUDIO_TARGET_RAM_GB": str(self.target_ram_gb),
             "STUDIO_UPLOAD_MAX_TOTAL_MB": str(self.upload_max_total_bytes // (1024 * 1024)),
             "STUDIO_API_TOKEN": "<definido>" if self.studio_api_token else "<no definido>",
             "STUDIO_ENABLE_MCP": "1" if self.studio_enable_mcp else "0",

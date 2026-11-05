@@ -835,14 +835,16 @@ filter_offers_json() {
     local min_vram_gb="$3"
     local min_disk_gb="$4"
     local min_inet_down="$5"
+    local min_cpu_ram_gb="${6:-32}"
 
-    OFFERS_JSON="${raw_offers}" "${PYTHON_BIN}" - "${target_gpu}" "${min_vram_gb}" "${min_disk_gb}" "${min_inet_down}" << 'PYEOF'
+    OFFERS_JSON="${raw_offers}" "${PYTHON_BIN}" - "${target_gpu}" "${min_vram_gb}" "${min_disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}" << 'PYEOF'
 import json, os, sys
 
 target_gpu = sys.argv[1].strip().replace(" ", "_").upper()
 min_vram_gb = float(sys.argv[2])
 min_disk_gb = float(sys.argv[3])
 min_inet_down = float(sys.argv[4])
+min_cpu_ram_gb = float(sys.argv[5]) if len(sys.argv) > 5 else 32.0
 
 data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
 rows = data.get("offers", data) if isinstance(data, dict) else data
@@ -860,12 +862,15 @@ for r in rows:
     vram_gb = vram_raw / 1024.0 if vram_raw > 256 else vram_raw
     if vram_gb and vram_gb + 0.5 < min_vram_gb:
         continue
+    # Política de hardware: la RAM del host se VERIFICA, no se infiere de la GPU.
+    # Una oferta sin `cpu_ram` declarado se rechaza en lugar de pasar por defecto.
     cram_raw = float(r.get("cpu_ram") or 0)
     cram_gb = cram_raw / 1024.0 if cram_raw > 512 else cram_raw
-    if cram_gb and cram_gb + 0.5 < 32.0:
+    if not cram_gb or cram_gb + 0.5 < min_cpu_ram_gb:
         continue
-    cuda_v = float(r.get("cuda_vers") or 12.8)
-    if cuda_v < 12.8:
+    # Igual con la versión de CUDA del host: sin dato no se alquila.
+    cuda_v = float(r.get("cuda_vers") or 0)
+    if not cuda_v or cuda_v < 12.8:
         continue
     disk = float(r.get("disk_space") or 0)
     if disk < min_disk_gb:
@@ -930,19 +935,44 @@ cmd_rent() {
     local disk_gb="120"
     local min_vram_gb="24"
     local min_inet_down="500"
+    local min_cpu_ram_gb="32"
     if [ "${profile}" = "studio" ]; then
         min_vram_gb="32"
         min_inet_down="5000"
-        # Decisión del manifiesto Fase 3: el perfil studio requiere >= 200 GB de disco
-        # (~163.24 GB / ~152.03 GiB en 77 modelos + espacio de trabajo y S5=180 GB), y >= 250 GB
-        # si se activa el opt-in STUDIO_INCLUDE_ANIMATE=1 (+18.41 GB de wan2.2_animate_14B_int8_convrot).
-        local min_studio_disk_gb="200"
-        if [ "${STUDIO_INCLUDE_ANIMATE:-0}" = "1" ]; then
-            min_studio_disk_gb="250"
+        # El mínimo de disco se DERIVA de scripts/storage_requirement.py (política de
+        # arquitectura: 180/200/250 GB eran estimaciones, no requisitos). El cálculo
+        # suma imagen + arranque + modelos de tarea + pico de staging + reservas, y
+        # refleja los opt-in pedidos. Si el script no es localizable se vuelve al
+        # mínimo estático documentado, con aviso.
+        local derived_disk_gb=""
+        local req_script=""
+        local self_dir
+        self_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+        for candidate in \
+            "${self_dir}/../../scripts/storage_requirement.py" \
+            "${COMFY_REPO_ROOT:-}/scripts/storage_requirement.py"; do
+            if [ -n "${candidate}" ] && [ -f "${candidate}" ]; then
+                req_script="${candidate}"
+                break
+            fi
+        done
+        if [ -n "${req_script}" ]; then
+            local -a opt_args=()
+            [ "${STUDIO_INCLUDE_ANIMATE:-0}" = "1" ] && opt_args+=(--opt-in STUDIO_INCLUDE_ANIMATE)
+            [ "${STUDIO_INCLUDE_3D:-0}" = "1" ] && opt_args+=(--opt-in STUDIO_INCLUDE_3D)
+            [ "${STUDIO_INCLUDE_MINIMAX:-0}" = "1" ] && opt_args+=(--opt-in STUDIO_INCLUDE_MINIMAX)
+            derived_disk_gb="$(python3 "${req_script}" --profile studio "${opt_args[@]+"${opt_args[@]}"}" --json 2>/dev/null \
+                | python3 -c 'import json,sys; print(json.load(sys.stdin)["min_volume_gb"])' 2>/dev/null)" || derived_disk_gb=""
+        fi
+        if [ -n "${derived_disk_gb}" ]; then
+            min_studio_disk_gb="${derived_disk_gb}"
+        else
+            min_studio_disk_gb="248"
+            echo "[AVISO] No se pudo derivar el mínimo de disco (scripts/storage_requirement.py); usando ${min_studio_disk_gb} GB. Define COMFY_REPO_ROOT si el helper está instalado fuera del repo." >&2
         fi
         disk_gb="${COMFY_DISK_GB:-${min_studio_disk_gb}}"
         if ! [[ "${disk_gb}" =~ ^[0-9]+$ ]] || [ "${disk_gb}" -lt "${min_studio_disk_gb}" ]; then
-            die "COMFY_DISK_GB='${disk_gb}' es insuficiente o inválido para 'comfy rent studio': el perfil 'studio' requiere al menos ${min_studio_disk_gb} GB de disco (>=200 GB base; >=250 GB con STUDIO_INCLUDE_ANIMATE=1 para alojar ~163.24 GB de modelos y cumplir S5=180 GB)."
+            die "COMFY_DISK_GB='${disk_gb}' es insuficiente o inválido para 'comfy rent studio': el perfil 'studio' deriva un mínimo de ${min_studio_disk_gb} GB (imagen + arranque + modelos de tarea + pico de staging + reservas; ver scripts/storage_requirement.py). Puedes subirlo con COMFY_DISK_GB si tu carga de trabajo lo justifica."
         fi
 
         # VAL-SERVER-005: Lectura oculta (read -r -s) de STUDIO_LLM_KEY sin eco en terminal,
@@ -967,13 +997,16 @@ cmd_rent() {
     # V27: cuda_vers es el campo documentado en vastai search offers ("machine max
     # supported cuda version"); cuda_max_good no existe en el esquema documentado.
     # Sin --direct no se exige direct_port_count: los puertos van proxy-mapeados.
-    local base_filters="gpu_ram>=${min_vram_gb} cpu_ram>=32 cuda_vers>=12.8 inet_down>=${min_inet_down} disk_space>=${disk_gb} reliability>=0.98 verified=true rentable=true"
+    # Política de hardware: el objetivo es UNA GPU de consumo. Sin num_gpus=1 una
+    # oferta multi-GPU puede pasar el filtro de gpu_ram (agregado o por GPU) y
+    # alquilarse como si fuera una única tarjeta de 32 GB.
+    local base_filters="num_gpus=1 gpu_ram>=${min_vram_gb} cpu_ram>=${min_cpu_ram_gb} cuda_vers>=12.8 inet_down>=${min_inet_down} disk_space>=${disk_gb} reliability>=0.98 verified=true rentable=true"
     local query="gpu_name=RTX_5090 ${base_filters}"
 
     echo "Buscando ofertas RTX 5090 en Vast.ai (perfil=${profile}, disco>=${disk_gb} GB, red>=${min_inet_down} Mbps)..."
     local raw_offers offers_json
     raw_offers="$(search_offers "${query}")"
-    offers_json="$(filter_offers_json "${raw_offers}" "RTX_5090" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}")"
+    offers_json="$(filter_offers_json "${raw_offers}" "RTX_5090" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}")"
 
     local offer_id
     offer_id="$(OFFERS_JSON="${offers_json}" "${PYTHON_BIN}" -c '
@@ -987,7 +1020,7 @@ print(rows[0]["id"] if rows else "")
         echo "No se encontraron RTX 5090 disponibles; buscando fallback RTX 4090..."
         query="gpu_name=RTX_4090 ${base_filters}"
         raw_offers="$(search_offers "${query}")"
-        offers_json="$(filter_offers_json "${raw_offers}" "RTX_4090" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}")"
+        offers_json="$(filter_offers_json "${raw_offers}" "RTX_4090" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}")"
         offer_id="$(OFFERS_JSON="${offers_json}" "${PYTHON_BIN}" -c '
 import json, os
 rows = json.loads(os.environ.get("OFFERS_JSON", "[]"))

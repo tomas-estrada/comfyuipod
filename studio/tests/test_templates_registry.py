@@ -776,7 +776,16 @@ def test_hunyuan3d_is_offered_when_three_d_weights_opt_in(
     studio_config: StudioConfig,
     studio_data_dir: Path,
     stub_comfyui_transport,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # La disponibilidad es un hecho del disco: sembramos los pesos del grupo
+    # bajo el COMFY_DATA_DIR temporal para que la sonda los encuentre.
+    from comfy_studio import model_assets
+
+    monkeypatch.setenv("COMFY_DATA_DIR", str(studio_data_dir))
+    for path in model_assets.paths_for_flag("STUDIO_INCLUDE_3D"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pesos")
     cfg = dataclasses.replace(studio_config, studio_include_3d=True)
     app = create_app(config=cfg, comfyui_transport=stub_comfyui_transport)
     with TestClient(app) as c:
@@ -803,18 +812,28 @@ def test_hunyuan3d_is_offered_when_three_d_weights_opt_in(
 
 
 def test_config_three_d_weights_follow_opt_in_and_unreal_profile(studio_data_dir: Path) -> None:
+    """La intención la marca el entorno; la disponibilidad la marca el disco.
+
+    Política de activos: `*_weights_expected()` es «se pidió», y
+    `*_weights_available()` es «está en disco». Un grupo pedido pero aún no
+    descargado NO está disponible.
+    """
     base = StudioConfig.from_env({"STUDIO_DATA_DIR": str(studio_data_dir)})
+    assert base.three_d_weights_expected() is False
     assert base.three_d_weights_available() is False
 
     opt_in = StudioConfig.from_env(
         {"STUDIO_DATA_DIR": str(studio_data_dir), "STUDIO_INCLUDE_3D": "1"}
     )
-    assert opt_in.three_d_weights_available() is True
+    assert opt_in.three_d_weights_expected() is True
+    # Pedido, pero sin archivos en el STUDIO_DATA_DIR temporal: no disponible.
+    assert opt_in.three_d_weights_available() is False
 
     unreal = StudioConfig.from_env(
         {"STUDIO_DATA_DIR": str(studio_data_dir), "MODEL_PROFILE": "unreal"}
     )
-    assert unreal.three_d_weights_available() is True
+    assert unreal.three_d_weights_expected() is True
+    assert unreal.three_d_weights_available() is False
 
     renounced = StudioConfig.from_env(
         {
@@ -823,6 +842,41 @@ def test_config_three_d_weights_follow_opt_in_and_unreal_profile(studio_data_dir
             "STUDIO_INCLUDE_3D": "0",
         }
     )
+    assert renounced.three_d_weights_expected() is False
     assert renounced.three_d_weights_available() is False
+
+
+def test_config_weights_become_available_once_files_land(
+    studio_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Disponibilidad = intención + archivos reales en disco."""
+    from comfy_studio import model_assets
+
+    monkeypatch.setenv("COMFY_DATA_DIR", str(studio_data_dir))
+    cfg = StudioConfig.from_env(
+        {
+            "STUDIO_DATA_DIR": str(studio_data_dir),
+            "STUDIO_INCLUDE_ANIMATE": "1",
+            "COMFY_DATA_DIR": str(studio_data_dir),
+        }
+    )
+    assert cfg.animate_weights_expected() is True
+    assert cfg.animate_weights_available() is False
+
+    # Sin manifiesto no se puede afirmar nada: sigue sin estar disponible.
+    assert model_assets.flag_present("STUDIO_INCLUDE_ANIMATE") is False
+
+    dest = model_assets.paths_for_flag("STUDIO_INCLUDE_ANIMATE")
+    assert dest, "el manifiesto debe declarar el grupo animate"
+    for path in dest:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pesos")
+
+    assert cfg.animate_weights_available() is True
+    assert model_assets.missing_for_flag("STUDIO_INCLUDE_ANIMATE") == []
+
+    # Un archivo vacío no cuenta: la integridad mínima es tamaño > 0.
+    dest[0].write_bytes(b"")
+    assert cfg.animate_weights_available() is False
 
 

@@ -1,5 +1,6 @@
 //! `config` — Parseo tipado de variables de entorno y lectura efímera de `/run/comfyui-pass` (§6.2, §9).
 
+use crate::storage::StorageRequirement;
 use crate::sys;
 use std::collections::BTreeMap;
 use std::env;
@@ -49,6 +50,13 @@ impl ModelProfile {
         matches!(self, Self::Studio | Self::Unreal)
     }
 
+    /// Umbral de disco de **respaldo**, usado cuando la imagen no publica el
+    /// requisito derivado (`/etc/comfyui/storage-requirement.json`).
+    ///
+    /// El valor vigente lo deriva `scripts/storage_requirement.py` a partir de
+    /// los manifiestos, la imagen y las reservas; esta tabla solo es el respaldo
+    /// documentado para imágenes antiguas o desarrollo. Ver
+    /// `crate::storage::StorageRequirement`.
     pub const fn default_min_disk_gb(self, skip_download: bool) -> u64 {
         if skip_download {
             return 5;
@@ -202,7 +210,12 @@ impl RuntimeConfig {
         };
 
         let strict_start = !matches!(get("STRICT_START"), Some("0" | "false"));
-        let default_disk = model_profile.default_min_disk_gb(skip_model_download);
+        // Política de arquitectura: el umbral se DERIVA de los manifiestos y se
+        // hornea en la imagen. El respaldo solo aplica si no está disponible.
+        let derived_disk = StorageRequirement::load_default()
+            .and_then(|req| req.start_gate_gb(model_profile.as_str()));
+        let default_disk =
+            derived_disk.unwrap_or_else(|| model_profile.default_min_disk_gb(skip_model_download));
         let strict_min_disk_gb = get_u64("STRICT_MIN_DISK_GB", default_disk);
 
         let comfy_pass = secret_file_pass.or_else(|| {
