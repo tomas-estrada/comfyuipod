@@ -296,3 +296,32 @@ def test_executor_resuelve_fondo_atlas_real(
     # ref desconocida -> fallo tipado, no placeholder
     bad = adapter.run_layer("comfyui", {"kind": "gen", "atlas": {"ref_id": "ref_nope"}})
     assert bad["ok"] is False and "atlas:" in bad["error"]
+
+
+def test_produccion_registrada_en_atlas(
+    atlas_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(atlas_root))
+    reset_shared_atlas_service()
+    from comfy_studio.orchestration.service import ProductionService
+    from comfy_studio.orchestration.state import ProductionState
+
+    svc = shared_atlas_service()
+    ps = ProductionService(atlas_service=svc)
+    state = ProductionState(idea="plano en el puente")
+    state.phase = "done"
+    state.metadata["atlas"] = {
+        "place_id": "plc_medellin_puente_4sur",
+        "view_id": "view_ref_a",
+        "ref_id": "ref_a",
+        "background_path": "aa/ref_a.png",
+        "camera": {"lat": 6.2089, "lon": -75.5671},
+        "limitations": [],
+    }
+    ps._record_atlas_production(state)
+    prods = svc.store.list_productions()
+    assert len(prods) == 1
+    assert prods[0].place_id == "plc_medellin_puente_4sur"
+    assert prods[0].view_id == "view_ref_a"
+    assert prods[0].params["ref_id"] == "ref_a"
+    assert any(e["kind"] == "atlas_production_recorded" for e in state.log)

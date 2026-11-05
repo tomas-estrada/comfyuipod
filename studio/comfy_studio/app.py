@@ -418,6 +418,7 @@ def create_app(
         collaborators=orch_collaborators,
         store=store,
         broker=broker,
+        atlas_service=app.state.atlas,
     )
 
     mcp_ctx = McpContext(
