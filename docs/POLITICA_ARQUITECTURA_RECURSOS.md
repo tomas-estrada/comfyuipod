@@ -606,8 +606,11 @@ Los siete pasos están implementados y verificados en CI.
 | C. Capacidad elegida: dependencias, reutilización, corrupción, cancelación, disco lleno | **Hecho** | Descarga real de un activo público de 32 B (`ByteDance/LatentSync-1.6 config.json`, pin sha1) → `downloaded`; segundo intento `skipped` con 0 descargas; destino corrupto → se re-descarga y restaura; volumen de 40 MB con margen de 10 GiB → `failed` con «espacio insuficiente» y ningún parcial promocionado |
 | D. Grafo final con procesamiento real en CPU | **Pendiente** | Requiere el grafo consumiendo los activos declarados con el stack existente |
 | E. GPU pesada serializada, liberación tras fallo, mediciones simuladas separadas | **Hecho** | 4 pruebas de control; `assess_vram_fit` con `fits: null` y nota explícita cuando no hay medición |
-| F. Paquete instalado e imagen candidata en CI | **En curso** | PR #106: Validate y Rust en verde, Build en ejecución |
+| F. Paquete instalado e imagen candidata en CI | **Hecho** | PR #106 fusionado en `main` como `957d6e6`. Los tres jobs en verde sobre el SHA final y sobre el merge. Imagen de producción `ghcr.io/tomas-estrada/comfyuipod:latest` / `:sha-957d6e6`, digest `sha256:4f99cd5ceb320052262440bb592007be01cf8ed98bc7b97ba59304fe174323a6`. El atlas se verifica **dentro** de la imagen candidata (`verify-bundle` + `serve-check` sobre `/opt/studio-atlas`), así que solo se anuncia incluido si pertenece a ese commit y a esa imagen |
 
 Queda pendiente solo el precio real de egress del proveedor (hoy se usa un precio
-por GB orientativo), más las mediciones GPU reales y el diagnóstico Blackwell
-específico en `comfyctl strict-check`.
+por GB orientativo), más las mediciones GPU reales, el diagnóstico Blackwell
+específico en `comfyctl strict-check` y el criterio D (grafo final consumiendo
+los activos declarados con procesamiento real en CPU). **No hay ejecución GPU
+validada**: `assess_vram_fit` sigue devolviendo `fits: null` hasta que exista un
+render medido, y ninguna prueba de este lote usó GPU.
