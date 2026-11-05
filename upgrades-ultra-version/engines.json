@@ -207,7 +207,7 @@
       "capabilities": [
         "C31"
       ],
-      "code_revision": null,
+      "code_revision": "v4.0.541",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
