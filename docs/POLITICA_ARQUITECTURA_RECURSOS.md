@@ -20,7 +20,7 @@ a partir de componentes reales:
 | Componente | Origen |
 |---|---|
 | Imagen publicada + sobrecarga de filesystem | tamaño medido (`--image-bytes`); se carga al volumen solo si la imagen vive en él (`--image-on-volume`) |
-| Arranque (Fase 1 + Fase 2 del perfil) | `PROFILE_BOOTSTRAP_BYTES` del script |
+| Bootstrap real (`class == "bootstrap"`; actualmente vacío) | `PROFILE_BOOTSTRAP_BYTES` del script |
 | Modelos de tarea (Fase 3 base + opt-ins pedidos) | `config/models-studio.json` (`meta.default_bytes` + grupos `opt_in`) |
 | Pico de staging | archivo más grande × 2 (`.incomplete` + copia final coexisten) |
 | Reserva de descarga | `HF_DISK_MARGIN_BYTES` (10 GiB) |
@@ -43,26 +43,23 @@ scripts/storage_requirement.py --profile studio --check    # falla si un umbral 
 `scripts/storage_requirement.py` junto al helper o en `COMFY_REPO_ROOT`) y
 `COMFY_DISK_GB` permite subirlo cuando la carga de trabajo lo justifica.
 
-### Hallazgos actuales (verificados el 2026-11-04)
+### Valores actuales derivados (verificados el 2026-11-05)
 
-| Perfil | Puerta derivada | Umbral S5 declarado | Volumen derivado | Mínimo `comfy rent` |
-|---|---:|---:|---:|---:|
-| `minimal` | 14.8 GB | 10 GB ⚠ | 37 GB | 120 GB |
-| `general` / `realistic` | 75.0 GB | 45 GB ⚠ | 97 GB | 120 GB |
-| `anime` | 79.8 GB | 45 GB ⚠ | 102 GB | 120 GB |
-| `all` | 113.2 GB | 75 GB ⚠ | 135 GB | 120 GB ⚠ |
-| `studio` | 62.6 GB | 180 GB ✓ | 248 GB | 248 GB (derivado) |
-| `unreal` | 62.6 GB | 210 GB ✓ | 256 GB | 256 GB (derivado) |
+| Perfil | Gate de arranque S5 | Volumen mínimo derivado | Mínimo del helper |
+|---|---:|---:|---:|
+| `minimal` | 11 GB | 34 GB | 120 GB (conservador) |
+| `general` / `realistic` / `anime` / `all` | 11 GB | 67 GB | 120 GB (conservador) |
+| `studio` | 11 GB | 231 GB | 231 GB (derivado) |
+| `unreal` | 11 GB | 238 GB | 238 GB (derivado) |
 
-⚠ = el umbral queda por debajo de lo derivado.
+El gate S5, el tamaño mínimo del volumen y el default conservador del helper son valores distintos. Los overrides opt-in elevan el volumen derivado. Usa `scripts/storage_requirement.py --all-profiles` y vuelve a calcular tras cambiar manifiestos, imagen o trabajo previsto.
 
 **Estado:** el umbral ya **no está codificado a mano**. El `Dockerfile` ejecuta
 `storage_requirement.py --all-profiles` en el build y hornea el resultado en
 `/etc/comfyui/storage-requirement.json`; `comfyctl` lo lee al arrancar
 ([`comfyctl/src/storage.rs`](../comfyctl/src/storage.rs)) y S5 comprueba el
 número derivado. Si el fichero no existe (imagen antigua, desarrollo), cae al
-respaldo documentado en `default_min_disk_gb`, que sigue siendo la tabla de
-siempre. Test de integración: `s5_uses_the_derived_requirement_when_the_image_publishes_it`.
+respaldo de compatibilidad en `default_min_disk_gb` solo cuando la imagen carece del JSON derivado; no lo tomes como sizing actual. Test de integración: `s5_uses_the_derived_requirement_when_the_image_publishes_it`.
 
 ---
 
@@ -201,10 +198,7 @@ Cada entrada lleva `class` explícita:
 | `optional` | variantes y mejoras (grupos `opt_in`) |
 
 **Una colección grande de modelos no es bootstrap porque un motor la soporte.**
-El resultado de clasificar de verdad: de 68.02 GB en el núcleo, solo
-**2.86 GB (10 archivos)** son bootstrap —el stack facial/VAE que la Fase 1 trae
-antes de abrir ComfyUI—. Los 65.16 GB restantes son selección de modelo. En la
-Fase 3, los 163.71 GB son `task` y los tres grupos opt-in `optional`.
+**Estado actual:** los 26 activos core (68.02 GB) son modelos de tarea/selección; no hay pesos `bootstrap` que hagan falta para abrir la API. Por eso el arranque normal descarga cero archivos. Los 163.71 GB del manifiesto Studio son también activos de tarea; los grupos opt-in son opcionales y solo se adquieren si el operador los solicita.
 
 ### Resolvedor de capacidades
 
@@ -336,34 +330,36 @@ componentes que la política pide, y hace explícito el que suele ignorarse:
 scripts/storage_requirement.py --profile studio --cost --hours 3
 ```
 
+El ejemplo siguiente supone una sesión fría de 3 horas que descarga toda la selección base de Studio; el arranque normal no descarga esos modelos. Los precios de GPU, disco y transferencia son supuestos ilustrativos del script, no una cotización actual.
+
 ```
-Coste de sesión (3.0h, GPU $0.55/h, disco 248 GB, 500 Mbps)
+Coste de sesión (3.0h, GPU $0.55/h, disco 231 GB, 500 Mbps)
   imagen                       15.60 GB
-  modelos                     180.90 GB
-  transferencia total         196.50 GB ($1.97)
+  modelos                     163.71 GB
+  transferencia total         179.31 GB ($1.79)
   arranque en frío              0.07 h
-  descarga de modelos           0.87 h
-  GPU facturada sin producir   0.87 h ($0.48)
-  horas productivas            2.13 h
+  descarga de modelos           0.80 h
+  GPU facturada sin producir   0.80 h ($0.44)
+  horas productivas            2.20 h
   coste GPU                 $    1.65
-  coste disco               $    0.15
-  coste transferencia       $    1.97
-  TOTAL                     $    3.77
-  por hora productiva       $    1.77
+  coste disco               $    0.14
+  coste transferencia       $    1.79
+  TOTAL                     $    3.59
+  por hora productiva       $    1.63
 ```
+
+Nota de implementación: `--cost` todavía imprime el comparador «umbral declarado S5» de 180 GB, que corresponde al respaldo de compatibilidad. En la imagen construida, `comfyctl` lee `storage-requirement.json` y usa el gate derivado de 11 GB; no confundas ese rótulo heredado con el gate de runtime.
 
 Dos consecuencias que el modelo hace visibles:
 
-- En una sesión corta, la transferencia manda: bajar 180 GB a 500 Mbps son ~50
-  min de GPU cobrando sin producir. **Un render más largo puede ser el mejor
+- En una sesión corta, la transferencia manda: traer 179.31 GB (imagen + selección
+  Studio) a 500 Mbps toma unos 48 min de GPU cobrando sin producir. **Un render más largo puede ser el mejor
   negocio** si evita una segunda sesión.
 - La métrica honesta es el **coste por hora productiva**, no el `$/h` de la GPU.
   Por eso `comfy rent` ordena por precio pero el presupuesto se justifica con
   mediciones y ofertas reales, no con latencia.
 
-La imagen se cuenta como transferencia aunque no ocupe el volumen de datos: se
-descarga en cada arranque en frío. Las capases reutilizables (`buildcache`,
-`mode=max`) ya están en CI; lo que falta es un modelo de egress, no de disco.
+La imagen puede volver a transferirse en un host frío; los pesos del catálogo no se bajan automáticamente al arrancar. Las capas reutilizables (`buildcache`, `mode=max`) ya están en CI. El coste de egress real del proveedor sigue pendiente y la salida del script es orientativa.
 
 S14 (`engine_roster`) informa además de la taxonomía de preparación: «preparados
 N, pendientes de pesos N, sin instalar N, sin integración N». Sigue siendo `warn`
@@ -534,8 +530,7 @@ métodos son por modelo.
 ### Arranque bajo demanda
 
 El arranque principal descarga **solo** bootstrap, y bootstrap es **vacío por
-diseño**: las 10 entradas que tenía `config/models-core.json` se reclasificaron a
-`task`. Pertenecer a Fase 1 no convierte un VAE ni un restaurador facial en
+diseño**: las entradas del manifiesto core están clasificadas como `task` u `optional`. Pertenecer a Fase 1 no convierte un VAE ni un restaurador facial en
 requisito para abrir la API y descubrir capacidades. `run_bootstrap()` resuelve
 las entradas `class == "bootstrap"` del manifiesto; si el manifiesto no se puede
 leer, **no descarga nada** (falla cerrado en lugar de llenar el disco con el
@@ -544,22 +539,16 @@ operarios.
 
 La puerta de arranque (S5) se deriva de las descargas bootstrap reales, no de un
 número fijo: hoy **11 GB** (0 de descarga + 0 de pico de arranque + 10 GiB de
-margen), bajo el umbral declarado de 180 GB. Es la cifra honesta de «cuánto hace
-falta tener libre para abrir la API con los pesos vacíos»; el requisito del
-volumen es otro número y sigue siendo derivado (`min_volume_gb`: 231 GB para
-`studio`, 238 GB para `unreal`, 34 GB para `minimal`).
+margen). Es la cifra honesta de «cuánto hace falta tener libre para abrir la API
+con los pesos vacíos». El valor de 180 GB solo se usa como respaldo en imágenes
+antiguas sin el JSON generado. El volumen total es otro valor derivado
+(`min_volume_gb`: 231 GB para `studio`, 238 GB para `unreal`, 34 GB para `minimal`).
 
-La puerta **excluye** el pico de staging de la Fase 3: esa descarga corre en
-segundo plano *después* de que ComfyUI está listo, así que cobrarla inflaba el
-arranque con espacio que todavía no necesita. El volumen total sí reserva el
-mayor de los tres picos —arranque, tarea en segundo plano y demanda—, porque no
-coinciden en el tiempo.
+La puerta **excluye** el staging de modelos de tarea, porque esos activos se adquieren bajo demanda después de que ComfyUI está listo. El volumen total sí reserva los modelos elegidos, el mayor pico de staging y el espacio de trabajo; vuelve a calcularlo si cambia la selección de activos.
 
 ### Pendiente
 
-- **Mediciones GPU reales**: `assess_vram_fit` devuelve `fits: null` con
-  «sin medición de VRAM todavía; ejecuta una vez para medir». **No se declara
-  ejecución GPU validada por un import ni por un stub.**
+- **Cobertura GPU parcial:** W26 registra una sola demo SDXL en hardware RTX PRO 6000 Blackwell Max-Q; eso prueba una ejecución, no todas las recetas ni el perfil de RAM 128/256. Las recetas sin medición conservan `fits: null` y requieren una ejecución real por combinación relevante. Los fixes de entrada y espacio en disco llegaron después de aquella imagen, por lo que falta repetir la prueba sobre una imagen construida desde `main` actual.
 - **Diagnóstico Blackwell** en `comfyctl strict-check`: **implementado** como
   check S17 (`blackwell_profile`). Reconoce `NVIDIA RTX PRO 6000 Blackwell` y
   confronta VRAM y RAM contra el perfil **seleccionado**, leído de las mismas
@@ -601,9 +590,9 @@ Pendiente: modelo de coste de transferencia/egress y de arranque en frío.
 > → la tarea se ejecuta;
 > → los recursos se liberan y los activos reutilizables se retienen según política.
 
-Los siete pasos están implementados y verificados en CI.
+Las rutas y contratos están implementados y cubiertos por pruebas; la validación de calidad real sigue dependiendo de mediciones por receta y del hardware usado.
 
-### Aceptación previa a GPU (2026-11-05)
+### Aceptación por niveles y evidencia GPU (2026-11-05)
 
 | Criterio | Estado | Evidencia |
 |---|---|---|
@@ -612,11 +601,6 @@ Los siete pasos están implementados y verificados en CI.
 | C. Capacidad elegida: dependencias, reutilización, corrupción, cancelación, disco lleno | **Hecho** | Descarga real de un activo público de 32 B (`ByteDance/LatentSync-1.6 config.json`, pin sha1) → `downloaded`; segundo intento `skipped` con 0 descargas; destino corrupto → se re-descarga y restaura; volumen de 40 MB con margen de 10 GiB → `failed` con «espacio insuficiente» y ningún parcial promocionado |
 | D. Grafo final con procesamiento real en CPU | **Hecho** | `image.generate` resuelve a motor `comfyui` + plantilla `sdxl_image` con el perfil de 96 GB propagado, y declara un activo `task` de 7.1 GB con su destino resuelto. El grafo final (7 nodos) lo consume en `CheckpointLoaderSimple.ckpt_name`, que es exactamente el fichero que declara la capacidad: no hay activo en el grafo que la capacidad no haya declarado ni activo declarado que el grafo no use. El procesamiento real en CPU lo demuestra `test_composicion_asset_alfa_sobre_fondo_real`, que compone un asset con alfa sobre un fondo real del bundle con Pillow y verifica con sha256 que los píxeles fuera del asset quedan idénticos |
 | E. GPU pesada serializada, liberación tras fallo, mediciones simuladas separadas | **Hecho** | 4 pruebas de control; `assess_vram_fit` con `fits: null` y nota explícita cuando no hay medición |
-| F. Paquete instalado e imagen candidata en CI | **Hecho** | PR #106 fusionado en `main` como `957d6e6`; los tres jobs en verde sobre el SHA final (`63096e0`), sobre el merge (`957d6e6`) y sobre la cabeza de `main` tras el cierre del registro (`7dc6b83`). La build del SHA de la arquitectura (`957d6e6`) publicó `ghcr.io/tomas-estrada/comfyuipod:sha-957d6e6` con digest `sha256:4f99cd5ceb320052262440bb592007be01cf8ed98bc7b97ba59304fe174323a6`. `:latest` es una etiqueta móvil que sigue a la cabeza de `main`, así que su digest cambia con cada commit aunque el contenido ejecutable no cambie: el digest de una build concreta se lee del log del job, no de la API de paquetes. El atlas se verifica **dentro** de la imagen candidata (`verify-bundle` + `serve-check` sobre `/opt/studio-atlas`), así que solo se anuncia incluido si pertenece a ese commit y a esa imagen |
+| F. Paquete instalado e imagen candidata en CI | **Hecho en esa revisión** | PR #106 fusionado en `main` como `957d6e6`; los tres jobs quedaron verdes para esas revisiones históricas (`63096e0`, `957d6e6` y `7dc6b83`); confirma CI y digest nuevamente antes de un release actual. La build de la revisión `957d6e6` publicó `ghcr.io/tomas-estrada/comfyuipod:sha-957d6e6` con digest `sha256:4f99cd5ceb320052262440bb592007be01cf8ed98bc7b97ba59304fe174323a6`; es evidencia histórica, no el digest de la imagen actual. `:latest` es una etiqueta móvil que sigue a la cabeza de `main`, así que su digest cambia con cada commit aunque el contenido ejecutable no cambie: el digest de una build concreta se lee del log del job, no de la API de paquetes. El atlas se verifica **dentro** de la imagen candidata (`verify-bundle` + `serve-check` sobre `/opt/studio-atlas`), así que solo se anuncia incluido si pertenece a ese commit y a esa imagen |
 
-Queda pendiente solo el precio real de egress del proveedor (hoy se usa un precio
-por GB orientativo) y las mediciones GPU reales. Los seis criterios de aceptación
-previa a GPU (A–F) quedan demostrados y el diagnóstico Blackwell (S17) está
-implementado. **No hay ejecución GPU validada**: `assess_vram_fit` sigue
-devolviendo `fits: null` hasta que exista un render medido, y ninguna prueba de
-este lote usó GPU.
+Los criterios A–F son la aceptación previa a GPU; no equivalen a aceptación de toda la plataforma. W26 añadió una demo SDXL acotada con costo registrado de USD 0.59, así que el estado es **GPU L3 parcial**. Los fixes operativos posteriores siguen sin retest en una imagen del `main` actual; otras plantillas, perfiles, baselines y holdouts no quedan validados por esa ejecución. El precio real de egress del proveedor también sigue pendiente.

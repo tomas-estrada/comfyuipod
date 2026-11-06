@@ -8,7 +8,7 @@ Convierte el repo en un laboratorio audiovisual personal, autónomo y reproducib
 
 Implementa las 34 capacidades C01–C34 y los 14 programas P01–P14 descritos en los anexos. Resuelve explícitamente las 30 alternativas N01–N30: son herramientas candidatas, no 30 obligaciones de instalar duplicados. Cada capacidad obligatoria necesita una ruta funcional; rechazar una alternativa no elimina el requisito. La superioridad se acreditará en tareas y métricas propias frente a baselines reproducibles; no afirmes superar universalmente a plataformas comerciales ni garantizar viralidad.
 
-Esta misión abarca implementación y preparación completa anterior a GPU. No alquiles pods, no gastes saldo de Vast.ai, no ejecutes APIs facturadas ni entrenamientos GPU en esta etapa. El resultado aceptable se llama “Ultra pre-GPU”; la denominación “Ultra validada” exige la posterior campaña GPU autorizada y sus evidencias. Preparar esa campaña es parte del trabajo actual.
+La misión incluye implementación, verificación y validación progresiva. W26 ya ejecutó una demo SDXL acotada (USD 0.59) en el digest `sha-f5c29dc`; el estado es GPU L3 parcial, no “Ultra validada”. No alquiles otro pod ni uses APIs facturadas sin autorización específica vigente. Resta probar los fixes operativos en una imagen actual y completar las recetas, perfiles, baselines y holdouts pendientes.
 
 ## Paquete obligatorio y precedencia
 
@@ -31,7 +31,7 @@ Si falta un anexo, busca primero su versión en la rama/PR de esta carpeta y el 
 
 ## Comienza por hechos y reparaciones
 
-Dentro de los primeros 10 minutos activos entrega un resumen breve con SHA local/remoto, árbol de trabajo, PRs existentes relevantes, último CI y próxima entrega. La referencia revisada es main b54195f0976d6c57b0ee04962e3059219db55d57, PR #62 integrada y CI 41964177024 correcto. Revalida todo si avanzó main; no vuelvas a imponer esta revisión sobre cambios posteriores. PR #63 del atlas estaba abierta en c12618815c5e7181bbb69e4ce9d249a0075fd3c4; revisa su código actual y aprovecha sus correcciones, sin asumir vigente su descripción antigua.
+Dentro de los primeros 10 minutos activos entrega un resumen breve con SHA local/remoto, árbol de trabajo, PRs existentes relevantes, último CI y próxima entrega. La referencia `b54195f` y el contexto de PR #63 son históricos. El checkout revisado para esta actualización es `main` en `5850191`; revalida estado, pruebas e imagen en el momento de trabajar. No vuelvas a imponer la revisión inicial sobre cambios posteriores ni uses `docs/ultra/status.json` como estado vivo: aún apunta a `f5c29dc`.
 
 Reproduce y corrige primero, si siguen presentes:
 - Caché: un archivo corrupto no vacío se acepta como adquirido y disponible sin verificar tamaño/hash.
@@ -79,15 +79,14 @@ Un obstáculo en una alternativa no detiene las tareas independientes: usa el su
 
 ## Cierre y evidencia
 
-Ejecuta las comprobaciones de AGENTS.md y los criterios por ítem. Las pruebas GPU futuras deben estar implementadas y seleccionables, pero pendientes/saltadas explícitamente en esta etapa: jamás convertir mocks, imports, un exit 0 o métricas de autores en validación propia.
+Ejecuta las comprobaciones de AGENTS.md y los criterios por ítem. W26 ya produjo una demo SDXL acotada en una imagen anterior; no la presentes como validación del `main` actual ni de otras recetas. Las pruebas adicionales quedan pendientes hasta que exista autorización específica para el gasto; nunca conviertas mocks, imports, exit 0 o métricas de autores en validación propia.
 
 Antes de cerrar entrega:
 1. Código integrado, PRs de cada lote y main CI correcto; SHA exacto de la revisión final.
 2. Una imagen candidata reproducible, construida/publicada por el workflow, con digest real, SBOM/avisos, motores preparados, recursos de UI locales y atlas offline. Si el build no cabe o no se puede publicar, es un bloqueo de release, no una entrega completada.
-3. Estado por C01–C34, P01–P14 y N01–N30, con ruta, prueba, artifact y nivel de evidencia. Toda capacidad obligatoria debe llegar al nivel pre-GPU definido; documentar una idea no lo satisface.
-4. Cinco demostraciones D01–D05 implementadas como escenarios reproducibles, fixtures CPU reales, salidas inspeccionables y campaña GPU preparada. Sus renders neurales pendientes no se presentan como producidos.
+3. Estado por C01–C34, P01–P14 y N01–N30, con ruta, prueba, artifact y nivel de evidencia. Toda capacidad obligatoria debe alcanzar al menos el nivel de evidencia de integración definido; exige evidencia GPU medida donde la afirmación dependa de ejecución neuronal. Documentar una idea no lo satisface.
+4. Cinco demostraciones D01–D05 reproducibles, fixtures CPU reales y salidas inspeccionables. W26 ya produjo una demo SDXL; los demás renders neurales, baselines y holdouts siguen pendientes y no se presentan como producidos.
 5. Reporte de los defectos iniciales, decisiones de motores/licencia, tamaños reales, compatibilidad Blackwell, migraciones/rollback y limitaciones concretas.
-6. Instrucciones multiplataforma de arranque/configuración y protocolo de pruebas GPU con presupuesto, limpieza de pods y diagnóstico, sin ejecutarlo todavía.
+6. Instrucciones multiplataforma de arranque/configuración y protocolo para repetir W26 y validar otras recetas, con autorización de presupuesto, limpieza de pods y diagnóstico; no asumas que la prueba de W26 habilita gasto futuro.
 
-Cierra como ACCEPTED_PRE_GPU solo si pasa acceptance.md. Usa BLOCKED_PRE_GPU con la lista exacta de requisitos restantes si no pasa. La misión de desarrollo no termina en “abrí una PR”; debe dejar el repo y la imagen listos para la validación final. El éxito científico posterior se decide por resultados medidos, no por cantidad de modelos instalados.
-
+Usa los estados de acceptance.md para distinguir integración de ejecución GPU: el estado actual es L3 parcial por una demo, no validación completa. Cierra solo cuando cada criterio aplicable tenga evidencia y la CI/imagen correspondan al SHA final. La misión no termina en “abrí una PR”; el éxito científico depende de resultados medidos, no de la cantidad de modelos instalados.

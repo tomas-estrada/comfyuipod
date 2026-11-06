@@ -1,7 +1,13 @@
 # ComfyUIPod Ultra — Informe de cierre pre-GPU
 
-Estado: **BLOCKED_PRE_GPU** (entrega parcial sólida; el resto del backlog de
-capacidades queda bloqueado/pendiente y visible, no degradado en silencio).
+> **Cierre histórico pre-GPU.** Este estado corresponde al corte indicado abajo,
+> antes de la demo W26; no describe el estado actual. W26 midió una generación
+> SDXL real y acotada, y dos hallazgos de operaciones recibieron fixes posteriores
+> en `main`. Consulta [el reporte W26](W26_GPU_RESULTS.md); falta repetir la
+> verificación en una imagen actual y completar las demás recetas.
+
+Estado al cierre de ese corte: **BLOCKED_PRE_GPU** (entrega parcial sólida; el
+resto del backlog de capacidades quedó pendiente y visible).
 
 Fecha: 2026-11-05 UTC. Revisión final de main: `1cbfb48`.
 

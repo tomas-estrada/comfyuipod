@@ -1,13 +1,13 @@
 # Guía de paso a producción — ComfyUI "Everything-Ready" para Vast.ai
 
-**Actualizado:** 2026-11-04 · **Fuente de código:** rama `main` (verifica el estado de CI del commit actual antes de desplegar).
+**Actualizado:** 2026-11-05 · **Código revisado:** `main` en `5850191`; comprueba la CI y digest de imagen más recientes antes de desplegar. La demo GPU W26 usó una imagen anterior y no valida automáticamente este `main`.
 **Público objetivo:** operadores desde Windows, macOS o Linux; los pasos con helper Bash se señalan explícitamente.
 
 ---
 
 ## A. Qué tienes ahora
 
-Tienes una imagen Docker Linux lista para producción que convierte una GPU RTX 5090 o RTX 4090 alquilada en Vast.ai en un ComfyUI protegido, accesible desde un navegador en Windows, macOS o Linux. La imagen incluye ComfyUI con 12 custom nodes preinstalados, un catálogo de modelos por fases, el portal `/home`, **Comfy Studio** en `/studio/` (plantillas, proyectos, percepción, transcripción/diarización, agente, galería, recuperación durable de jobs, webhooks y EDL), estado/diagnóstico en `/status` y el supervisor Rust `comfyctl`. El helper `tools/mac/comfy` es opcional y funciona desde una shell compatible en macOS/Linux; en Windows puede usarse dentro de WSL2. No se requiere Mac para usar la interfaz web. Consulta el [índice documental](README.md) y la [arquitectura](ARCHITECTURE.md) para los límites de plataforma y componentes.
+Tienes una imagen Docker Linux para un pod de un solo usuario. El perfil de hardware predeterminado es RTX PRO 6000 Blackwell (96 GB de VRAM) con 128 GB de RAM de host; hay una variante de RAM de 256 GB y un perfil heredado de GPU de consumo. El hardware objetivo no implica que todas las plantillas estén medidas. La imagen incluye ComfyUI, Studio, portal, diagnóstico y supervisor. El helper Bash es opcional (macOS/Linux o WSL2); la interfaz funciona en un navegador de Windows, macOS o Linux.
 
 > **Qué es real y qué es simulado en Comfy Studio.** La extracción de keyframes, `sqlite-vec`, el almacenamiento de identidades, el EDL y el render final son componentes reales. El backend ML arranca en `auto`: usa modelos reales si el probe de capacidades tiene éxito; de lo contrario usa simulación determinista, declarada por `simulated: true` y `simulation_notice`. `STUDIO_PERCEPTION_BACKEND=real` exige modelos reales y falla de forma explícita cuando no están disponibles; `sim` fuerza el camino simulado. Algunas funciones del índice visual CLIP permanecen deterministas incluso con backend real. Comprueba siempre el campo de respuesta antes de evaluar calidad. Si falta `sqlite-vec`, las funciones dependientes se degradan y reportan el motivo sin tumbar todo Studio.
 
@@ -31,9 +31,9 @@ git push -u origin main
 
 ### 2. Esperar el primer workflow verde — **YA HECHO en este repo**
 
-> El workflow ya corre en verde en cada push a `main`.
+> El workflow se configura para validar y publicar cambios; revisa el resultado del commit que vas a desplegar.
 
-**Qué hace:** en la pestaña **Actions** del repo, el workflow *"Build, Validate and Publish ComfyUI Vast.ai Image (GHCR)"* valida los scripts, compila la imagen Docker, le hace un smoke test y la publica en GHCR. **Medido en CI: ≈ 10.5 min** el job de build reutilizando la caché `buildcache`; la primera ejecución sin caché tarda bastante más.
+**Qué hace:** en la pestaña **Actions** del repo, el workflow *"Build, Validate and Publish ComfyUI Vast.ai Image (GHCR)"* valida los scripts, compila la imagen Docker, le hace un smoke test y la publica en GHCR. La duración depende de la caché y de la carga de CI; revisa el workflow reciente para conocer el estado y los artefactos de esa revisión.
 
 **Cómo sé que va bien:** el workflow aparece con un ✔ verde. Si falla, abre el job rojo y lee el paso marcado con ✘: cada nombre de paso indica qué se validaba (ShellCheck, Hadolint, SHAs de nodos, disponibilidad de modelos en HuggingFace, tests de Rust...).
 
@@ -51,7 +51,7 @@ Confirma el nombre exacto tras el primer push (aparece en la página del paquete
 
 ### 4. Crear cuenta en Vast.ai y añadir saldo
 
-**Qué haces:** registrarte en [cloud.vast.ai](https://cloud.vast.ai), verificar la cuenta y cargar saldo. Con **$5–10** te sobra para todas las pruebas de esta guía (una sesión de aceptación de una hora cuesta céntimos).
+**Qué haces:** registrarte en [cloud.vast.ai](https://cloud.vast.ai), verificar la cuenta y cargar saldo. Carga saldo solo tras revisar el precio de la oferta, el volumen de disco y la transferencia: los importes cambian por host, perfil y duración.
 
 **Cómo sé que va bien:** en *Billing* ves tu saldo disponible y en *Account* puedes copiar tu **API Key**.
 
@@ -91,21 +91,21 @@ echo 'export COMFY_IMAGE=ghcr.io/<tu-usuario>/comfyuipod:latest' >> ~/.zshrc
 **Qué haces:**
 
 ```bash
-comfy rent general   # perfil general: 27.75 GiB de modelos, buena prueba equilibrada
+comfy rent studio    # perfil objetivo; el helper deriva los recursos y el disco
 comfy open           # espera al arranque y abre el portal /home
 comfy report         # descarga /report.md y lo copia al portapapeles
 ```
 
-El helper te muestra el **Top 5 de ofertas RTX 5090 (o RTX 4090 si no hay 5090)** con **el precio por hora real antes de confirmar**: ahí ves exactamente lo que vas a pagar. El dry-run muestra además la imagen y el resumen de variables de entorno definidas (enmascaradas).
+El helper busca ofertas que cumplan el perfil de hardware configurado (por defecto RTX PRO 6000 Blackwell, 96 GB VRAM y 128 GB de RAM host) y muestra el precio vigente antes de confirmar. El dry-run muestra además la imagen y el resumen de variables de entorno definidas (enmascaradas).
 
-**Cómo sé que va bien:** primero ves la pantalla de espera (Fase 1 descargando los modelos ligeros, 1-3 min según red, tope 10); el portal `/home` carga con sus tarjetas; `/status` muestra GPU, VRAM y progreso de descargas; y al cabo de unos minutos ComfyUI abre y puedes arrastrar un workflow. Pulsa **R** en ComfyUI para refrescar los desplegables cuando termine la Fase 2 (~4–8 min a 1 Gbps / 500 Mbps en perfil `general`).
+**Cómo sé que va bien:** el portal `/home` y `/status` quedan disponibles durante el arranque y ComfyUI abre cuando terminan las comprobaciones. El bootstrap actual no descarga modelos por defecto. Si una tarea necesita pesos ausentes, solicítalos explícitamente y sigue ese progreso; los tiempos dependen de tamaño, red y oferta.
 
-> La lista de verificaciones completa de esta primera sesión está en [`docs/auditorias/AUDITORIA_AGENTE_V5.md`](auditorias/AUDITORIA_AGENTE_V5.md) (sección 3). De esa checklist, CI ya cierra en cada push verde: **V1** (build sin errores), **V6** (sin `IMPORT FAILED`), **V7** (`hf`/`hf_xet` correctos) y **V12** (limpieza de `user/`); la publicación del paquete GHCR como **Public** es el paso 3 de esta guía.
+> La lista de verificaciones completa de esta primera sesión está en [`docs/auditorias/AUDITORIA_AGENTE_V5.md`](auditorias/AUDITORIA_AGENTE_V5.md) (sección 3). Cuando el workflow de la revisión consultada está verde, CI cubre: **V1** (build sin errores), **V6** (sin `IMPORT FAILED`), **V7** (`hf`/`hf_xet` correctos) y **V12** (limpieza de `user/`); la publicación del paquete GHCR como **Public** es el paso 3 de esta guía.
 
 ### 8. Verificaciones clave de aceptación
 
-1. **Sesión real con descargas:** en `/status`, la Fase 2 avanza y los checkpoints del perfil `general` aparecen en ComfyUI tras pulsar `R`.
-2. **FATAL simulado:** alquila una instancia con una GPU pequeña (menos de 20 GB de VRAM, p. ej. una RTX 3060) — **créala a mano con `vastai create instance` (el helper filtra `gpu_ram>=24` y no puede alquilar GPUs pequeñas)**: el arranque estricto debe mostrar el **banner rojo FATAL** en `/home` y `/status`, y la instancia saldrá con código **20** pasados 10 minutos de gracia. Ejecuta `comfy destroy <id>` en cuanto lo veas para no pagar.
+1. **Adquisición real de una tarea:** solicita una capacidad/modelo que haga falta y verifica su descarga y estado en `/status`; el bootstrap vacío no baja modelos al iniciar.
+2. **FATAL de host:** valida el gate con los tests y fixtures de `comfyctl`; no alquiles una GPU incompatible ni una instancia facturable solo para provocar un fallo. En una oferta real revisa los requisitos del perfil y destrúyela si el panel muestra `FATAL`.
 3. **`comfy watch`:** muestra el estado en vivo desde la terminal cada 3 segundos.
 4. **Secretos redactados:** `comfy report --stdout` no muestra tu `COMFY_PASS` ni tokens: `comfyctl` los redacta automáticamente en `/report.md`.
 5. **Variables con espacios (cierra V27 / S-07) — VERIFICADO:** `comfy rent` cita **solo el valor** (`-e COMFYUI_EXTRA_ARGS="--fast --cpu"`), que es el contrato del parser de vast-cli (limpia comillas del valor, nunca de la clave), así que la clave llega intacta y V27 **pasa**. Ciérralo así: alquila con `COMFYUI_EXTRA_ARGS="--fast --cpu"` exportada y comprueba en `/status/api` que `env_masked` muestra `COMFYUI_EXTRA_ARGS` con su valor correcto.
@@ -159,9 +159,9 @@ comfy destroy <id>
 
 | Concepto | Coste aproximado | Notas |
 |---|---|---|
-| RTX 5090 (32 GB) | ~$0.45–0.95/h on-demand | El precio exacto se ve en `comfy rent` antes de confirmar (varía por oferta) |
-| Disco (120 GB) | Unos céntimos/hora adicionales | El helper alquila con `--disk 120` (suficiente para `all`: 63 GiB modelos + ~16 GB imagen); usa `--disk 150+` a mano si acumulas mucho output. Incluido en la estimación de coste total/hora que muestra `comfy rent` |
-| RTX 4090 (24 GB, fallback) | ~$0.30–0.55/h on-demand | El helper la busca automáticamente si no hay 5090 |
+| GPU objetivo | RTX PRO 6000 Blackwell (96 GB VRAM), 128 GB RAM host por defecto; la oferta real determina el precio | El helper filtra el perfil seleccionado y muestra el costo antes de crear la instancia |
+| Disco | Derivado por perfil; 231 GB para `studio` base en la revisión actual | Comprueba `scripts/storage_requirement.py`; el helper calcula el volumen y los opt-ins lo elevan |
+| Perfiles alternativos | GPU heredada de ~32 GB, no el objetivo principal | La compatibilidad del ejecutor no equivale a aceptación de todas las recetas |
 | Sesión de prueba de 1 h | Céntimos a ~$0.95 | Según la oferta elegida |
 | Instancia **parada** (no destruida) | El disco **sigue facturando** | Por eso el paso 9 es `destroy`, no "stop" |
 
@@ -174,10 +174,10 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 | Síntoma | Qué significa | Qué hacer |
 |---|---|---|
 | Banner rojo **FATAL** en `/home` / `/status` | El arranque estricto (`strict-check` S1–S10, o S1–S16 en `studio`/`unreal`) detectó un host incompatible (GPU, VRAM, RAM, disco...) | Ejecuta `comfy destroy <id>` y alquila otra oferta; el banner indica la causa y la remediación. La instancia sale sola con código 20 tras 10 min |
-| Pantalla de espera eterna | La Fase 1 está descargando o algo la bloqueó | Abre `/status` y mira el progreso de descargas y la pestaña de logs; el motor de triaje (17 patrones) suele nombrar la causa exacta |
+| Pantalla de espera eterna | El arranque o una comprobación se bloqueó | Abre `/status` y revisa las comprobaciones y logs; el motor de triaje (17 patrones) suele señalar la causa. Los modelos de tarea se descargan solo cuando se solicitan. |
 | Error 401 al abrir el portal | Contraseña incorrecta o no definida | `comfy pass <id>` recupera la contraseña autogenerada desde los logs de arranque |
 | ComfyUI no responde pero el portal sí | El supervisor está reiniciando `main.py` (OOM, crash CUDA, etc.) | Mira `/status` (clasifica la salida: 137 OOM, 134/139 crash nativo...) y `/report.md` para el informe completo |
-| Faltan modelos en los desplegables | Fase 2 aún en curso | Espera a que termine en `/status` y pulsa **R** en ComfyUI |
+| Faltan modelos en los desplegables | Los pesos de tarea aún no se han adquirido | Solicita el modelo requerido desde la capacidad de Studio o usa la descarga explícita; el arranque ya no descarga el catálogo en fases |
 | `comfy rent` falla con la imagen | `COMFY_IMAGE` mal exportada o paquete GHCR privado | Revisa el paso 6 y que el paquete sea público (paso 3) |
 | EDL/keyframes/ASR no encuentra `ffmpeg` o `ffprobe` | El ejecutable no está en el `PATH` que ve Studio | Consulta `/studio/api/health` → `media_tools.ffmpeg_available` / `ffprobe_available`; instala la herramienta en el entorno de Studio o define `STUDIO_FFMPEG_BIN` / `STUDIO_FFPROBE_BIN` con las rutas completas. |
 | Error de Studio difícil de localizar | Hace falta correlacionar una respuesta con el log | Guarda el `X-Request-Id` de la respuesta. Activa `STUDIO_JSON_LOGS=1` en la configuración de la instancia y busca ese valor en `request_id` de las líneas JSON. Mantén `STUDIO_SERVER_WORKERS=1`; el servidor rechaza varios workers. |
@@ -197,7 +197,7 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 ## F. Checklist final imprimible
 
 - ☑ 1. Repo en GitHub creado y `git push -u origin main` hecho (**ya hecho en este repo**)
-- ☑ 2. Workflow "Build, Validate and Publish" en verde en Actions (**ya hecho**; job de build ≈ 10.5 min con `buildcache`)
+- ☐ 2. Confirma que el workflow "Build, Validate and Publish" del commit que vas a desplegar terminó en verde
 - ☐ 3. Paquete GHCR `comfyuipod` puesto como **Public**
 - ☐ 4. Cuenta Vast.ai creada con $5–10 de saldo
 - ☐ 5. `vastai` instalado (pipx) con API key y helper `comfy` en `~/.local/bin`
@@ -208,4 +208,4 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 
 ---
 
-*Revisada contra la documentación y el código de `main` el 2026-11-04. Las auditorías históricas pueden describir revisiones anteriores; antes de desplegar, confirma que la CI del commit actual esté verde.*
+*Revisada contra `main` en `5850191` el 2026-11-05. El reporte W26 corresponde a un digest anterior y a una sola receta; antes de desplegar, confirma CI, digest y validación que corresponden al perfil/tarea que usarás.*

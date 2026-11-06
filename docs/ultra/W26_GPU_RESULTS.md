@@ -1,6 +1,6 @@
 # W26 — Resultados de la campaña GPU (demo acotada, ejecutada)
 
-Fecha: 2026-11-05. Estado: **demo neural L3 ejecutada y verificada; pod destruido**.
+Fecha: 2026-11-05. Estado: **demo neural L3 ejecutada y verificada en una imagen anterior; pod destruido**. Se ejecutó la imagen `sha-f5c29dc` (digest indicado abajo), no el `main` actual (`5850191`).
 
 Esta campaña fue acotada por presupuesto: una demostración completa de
 generación neural para cruzar la frontera L2→L3, no las cinco demos D01–D05 ni
@@ -74,32 +74,35 @@ sustituye una estimación declarada.
 - Verificado: **0 instancias activas** tras el destroy.
 - Saldo dejó de consumirse. Coste total 0.59 USD.
 
-## Hallazgos de operaciones (reales, pendientes de arreglo)
+## Hallazgos de operaciones de W26 y estado en `main`
 
-Dos bugs de arranque encontrados en el pod real; ninguno es de la capa de
-capacidades, ambos bloquean una campaña autónoma:
+La campaña detectó dos fallos operativos en el pod real. Ambos recibieron
+correcciones de código después de la ejecución de W26:
 
-1. **El entrypoint no arranca el servicio solo en vast.** Hubo que lanzar
-   `/start.sh` manualmente; `onstart.log` quedó en 0 bytes. Impacto: una campaña
-   automatizada no levantaría ComfyUI sin intervención.
-2. **`require_disk_space` en `download-models.sh` da falso "sin espacio".** Con
-   el overlay de vast (259 GB libres reales) el gate aborta todas las descargas
-   con "[sin espacio en disco]". Se evitó bajando el checkpoint directo con `hf`.
-   Impacto: bloquea la adquisición de pesos por el camino normal. **Release-blocker de ops.**
+1. **El entrypoint no arrancó el servicio automáticamente en Vast.ai.** W26 tuvo
+   que lanzar `/start.sh` a mano. El commit `dd09e5b` (PR #108) añadió el guard
+   de arranque idempotente y una prueba del `ENTRYPOINT` de Dockerfile.
+2. **`require_disk_space` dio un falso “sin espacio”.** El commit `50eab57`
+   (PR #105) hizo que la comprobación use el ancestro existente más cercano
+   cuando el staging aún no existe; el commit `ec3a5b7` corrigió además la
+   conversión de bloques de `df -Pk` a bytes y añadió cobertura de regresión.
 
-Ambos deben corregirse antes de una campaña D01–D05 desatendida.
+Estas correcciones están en el `main` actual, pero no se han vuelto a comprobar
+en una campaña GPU sobre el commit actual. La evidencia W26 demuestra una sola
+receta SDXL en el digest anterior; no acredita arranque autónomo ni adquisición
+de modelos en hardware real después de esos cambios.
 
 ## Alcance y honestidad
 
-- Lo logrado: **L3** para la plataforma (imagen+hardware+servicio+seguridad) y
-  **L3** para una generación de imagen SDXL real y medida.
+- Lo logrado: **L3 parcial** para una generación SDXL real y medida en el digest probado, además de observaciones de hardware y seguridad en ese pod. No es aceptación L3 de la plataforma actual: el arranque autónomo y el guard de disco se corrigieron después y aún no se han repetido en GPU.
 - Lo NO logrado: D01–D05 completas, video (LTX/Wan), voz, 3D, y **L4** (holdouts
   y baselines). La campaña fue deliberadamente acotada a 0.59 USD.
 - La VRAM de las demás recetas sigue siendo **estimada**, no medida.
 
 ## Próximos pasos para L4 / Ultra validada
 
-1. Arreglar los dos hallazgos de ops (entrypoint y gate de disco).
-2. Campaña completa D01–D05 con pesos de video/voz/3D y mediciones por receta.
+1. Repetir un smoke test de arranque y adquisición de un modelo en un pod real
+   sobre una imagen del `main` actual; registrar logs y teardown.
+2. Campaña D01–D05 con pesos de vídeo/voz/3D y mediciones por receta.
 3. Comparación contra baselines y holdouts (A29.8–A29.9), perfiles 128 y 256 por
    separado.

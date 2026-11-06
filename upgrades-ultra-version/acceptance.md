@@ -10,7 +10,7 @@ Cada aceptación produce evidencia inspeccionable en el commit/PR correctos y se
 - L3: ejecución GPU en hardware objetivo con artifact/telemetría propia y escenario pertinente.
 - L4: reproducido con seeds/escenas heldout y comparación de coste/calidad, no solo una muestra.
 
-Una capacidad obligatoria requiere L2 para candidato pre-GPU y L3 para validación funcional GPU. Un programa que afirma una mejora científica requiere L4 para esa afirmación. Una CI verde con mocks no eleva el nivel. L2 no se llama “función GPU validada”.
+Una capacidad obligatoria requiere L2 para integración verificable; L3 exige ejecución funcional GPU propia y L4 evidencia reproducida con holdouts. W26 registra L3 parcial para una receta SDXL, no para toda la plataforma. Una CI verde con mocks no eleva el nivel; L2 no se llama “función GPU validada”.
 
 ## Matriz de checks por lote
 
@@ -272,9 +272,11 @@ Usar entorno/fixture real del proyecto; documentar requisitos y verificar en CI 
 
 Cada PR incluye problema/comportamiento, alcance, evidencia pertinente y limitaciones. Después del merge revisar CI de main; no atribuir al merge tests hechos en otro SHA. Desactivar drafts cuando proceda para no bloquear por forma una aceptación pr_checks válida.
 
-### A28. Imagen/release pre-GPU
+### A28. Imagen/release pre-GPU (hito histórico)
 
-Para ACCEPTED_PRE_GPU deben cumplirse TODAS:
+> Este checklist corresponde al hito anterior a W26, no al estado actual. W26 ejecutó una demo SDXL acotada; la validación GPU actual sigue siendo parcial. Consulta [`docs/ultra/W26_GPU_RESULTS.md`](../docs/ultra/W26_GPU_RESULTS.md) para la evidencia y sus límites. Conserva estos criterios como registro de aceptación pre-GPU.
+
+Para el estado `ACCEPTED_PRE_GPU` debían cumplirse todas:
 1. W00–W25 aceptadas con evidencias; ningún C/P obligatorio reducido a enlace o placeholder.
 2. PRs integradas/reconciliadas y SHA final exacto en main.
 3. CI de esa revisión verde con regresiones semánticas y pruebas pertinentes, sin confundir skips GPU con validación.
@@ -288,9 +290,9 @@ Para ACCEPTED_PRE_GPU deben cumplirse TODAS:
 
 Si un punto falta, estado BLOCKED_PRE_GPU con requirement ID, evidencia, causa y siguiente acción concreta. Rechazar una opción N no bloquea si existe ruta obligatoria equivalente real; rechazar una C/P obligatoria sí impide éxito completo.
 
-### A29. Puerta futura GPU — no ejecutar ahora
+### A29. Campaña GPU W26 (ejecutada parcialmente; no iniciar otra sin autorización)
 
-Requiere autorización explícita de presupuesto total, precio máximo/hora, duración, disco y credenciales/instancia. El plan debe admitir instancia propia ya autorizada, no exigir Vast si el operador elige otra.
+W26 ejecutó una demo SDXL acotada por USD 0.59 y destruyó el pod. Se probó un digest anterior, no el `main` actual; el resultado y los límites están en [`docs/ultra/W26_GPU_RESULTS.md`](../docs/ultra/W26_GPU_RESULTS.md). La checklist siguiente conserva las salvaguardas para cualquier seguimiento: no autoriza por sí sola otro gasto. Una nueva campaña requiere aprobación explícita de presupuesto total, precio máximo/hora, duración, disco y credenciales/instancia; debe admitir una instancia propia ya autorizada y no exigir Vast si el operador elige otra.
 
 1. Preflight local: CLI/config/SSH/API, saldo y elegibilidad sin imprimir keys; diagnóstico y guía si la CLI no funciona.
 2. Fijar imagen por digest y comprobar driver/arquitectura/VRAM/RAM/cgroup/disco reales antes de pesos.

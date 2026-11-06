@@ -33,6 +33,6 @@ No modificar configs globales autogeneradas por Crew para fabricar permisos. Man
 - Mantener máximo cuatro workers concurrentes o límite menor instalado; no paralelizar archivos/contratos compartidos.
 - Fallos e intentos persisten tras resume. No reabrir infinito con distinto nombre.
 - Si falta un permiso real, registrar el bloqueo específico y continuar tareas independientes.
-- Toda petición de budget GPU/APIs de prueba queda para la fase posterior; no gastar para satisfacer un check pre-GPU.
+- W26 ya consumió USD 0.59 para una demo SDXL acotada. Esa autorización no habilita otros pods ni APIs facturadas: solicita autorización específica antes de cualquier gasto nuevo. Mientras tanto, completa pruebas CPU, documentación y fixes de imagen.
 - El backend del estudio sigue la API/orquestación existente/LangGraph. No sustituirlo por el framework usado para desarrollar el repo.
 
