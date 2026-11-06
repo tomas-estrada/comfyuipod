@@ -1416,8 +1416,13 @@ class ComfyUIClient:
                 "free_memory": free_memory,
             },
         )
-        data = resp.json()
-        return data if isinstance(data, dict) else {"freed": True}
+        try:
+            data = resp.json()
+        except ValueError:
+            # ComfyUI's /free route acknowledges success with an empty HTTP 200
+            # response (unlike our JSON test stub). HTTP success is the contract.
+            return {"freed": 200 <= resp.status_code < 300}
+        return data if isinstance(data, dict) else {"freed": 200 <= resp.status_code < 300}
 
     async def _drain_sampler(
         self,
