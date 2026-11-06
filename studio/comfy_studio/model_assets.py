@@ -252,6 +252,38 @@ def class_bytes(env: dict[str, str] | None = None) -> dict[str, int]:
     return totals
 
 
+def inventory(env: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Verdad en disco, entrada por entrada: qué llegó y qué falta.
+
+    Cada entrada del manifiesto con `dest_path` se resuelve y se hace `stat`:
+    `present` es un hecho del filesystem (existe y no está vacío) y
+    `bytes_on_disk` es el tamaño real medido o `None` («no disponible») cuando
+    el fichero no llegó. No se infiere del log de descarga ni de variables.
+    """
+    environment = os.environ if env is None else env
+    out: list[dict[str, Any]] = []
+    for entry in entries(env):
+        dest = entry.get("dest_path")
+        if not dest:
+            continue
+        path = resolve_dest(str(dest), environment)
+        try:
+            present = path.is_file() and path.stat().st_size > 0
+        except OSError:  # permisos o ruta rota: sin medición, no se inventa
+            present = False
+        out.append(
+            {
+                "name": path.name,
+                "dest_path": str(path),
+                "class": entry_class(entry),
+                "group": entry.get("opt_in") or "",
+                "present": present,
+                "bytes_on_disk": path.stat().st_size if present else None,
+            }
+        )
+    return out
+
+
 def summary(env: dict[str, str] | None = None) -> dict[str, Any]:
     """Resumen serializable para `/studio/api/status` y documentación."""
     manifest = load_manifest(env)
@@ -267,8 +299,7 @@ def summary(env: dict[str, str] | None = None) -> dict[str, Any]:
         "opt_in_entries": meta.get("opt_in_entries"),
         "opt_in_bytes": meta.get("opt_in_bytes"),
         "classes": {
-            name: {"entries": counts[name], "bytes": totals[name]}
-            for name in VALID_CLASSES
+            name: {"entries": counts[name], "bytes": totals[name]} for name in VALID_CLASSES
         },
         "opt_in_groups": {
             group: {

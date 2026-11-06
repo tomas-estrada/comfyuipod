@@ -129,6 +129,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
         errors_recent: Vec::new(),
         triage: Vec::new(),
         env_masked,
+        weights: comfyctl::collect::models::WeightStatus::default(),
         strict: Some(StrictReport {
             checked_at: "2026-10-19T11:58:00Z".to_string(),
             strict_start: true,
@@ -170,6 +171,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
         "## 8. Drift del entorno",
         "## 9. Modelos",
         "## 10. Arranque estricto",
+        "## 11. Pesos del flujo pedido",
     ] {
         assert!(md.contains(hdr), "Falta cabecera contractual: {hdr}");
     }

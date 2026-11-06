@@ -15,6 +15,7 @@ from comfy_studio.config import (
 from comfy_studio.engines.health import health_report
 from comfy_studio.engines.registry import build_default_registry
 from comfy_studio.media_bins import find_ffmpeg, find_ffprobe
+from comfy_studio.model_assets import inventory as model_assets_inventory
 from comfy_studio.model_assets import summary as model_assets_summary
 from comfy_studio.orchestration.health import orchestration_health_report
 from comfy_studio.projects import ProjectStore
@@ -26,6 +27,7 @@ from comfy_studio.webutil import (
 
 def register_routes(app: FastAPI) -> None:
     """Registra las rutas de este módulo directamente sobre `app` (mismo route_class)."""
+
     @app.get("/studio/api/health")
     @app.get("/health")
     async def health(request: Request) -> dict[str, Any]:
@@ -38,6 +40,16 @@ def register_routes(app: FastAPI) -> None:
         )
         perception_available = bool(getattr(request.app.state, "perception_available", False))
         perception_error = getattr(request.app.state, "perception_error", None)
+        model_inventory = model_assets_inventory()
+        missing_bootstrap = (
+            [
+                item["name"]
+                for item in model_inventory
+                if item["class"] == "bootstrap" and not item["present"]
+            ]
+            if model_inventory
+            else None
+        )
         payload = {
             "status": "ok",
             "server": "ok",
@@ -77,6 +89,14 @@ def register_routes(app: FastAPI) -> None:
                 len(active_store.list_jobs(status=s))
                 for s in ("queued", "running", "cancelling", "fetching")
             ),
+            # Pesos requeridos, como hecho del disco (no de la respuesta 200 de
+            # /health): los activos de clase `bootstrap` que el manifiesto
+            # declara y que no están en disco. Sin manifiesto no se puede
+            # afirmar nada: `required_ok` es None («no disponible»).
+            "weights": {
+                "required_ok": (not missing_bootstrap) if missing_bootstrap is not None else None,
+                "required_missing": missing_bootstrap or [],
+            },
             # M5-F7: estado por motor del roster (ready/stub/unwired) para que el
             # strict-check del supervisor observe cada motor, no solo que el studio vive.
             "engines": health_report(build_default_registry()),
@@ -86,6 +106,7 @@ def register_routes(app: FastAPI) -> None:
             "orchestration": orchestration_health_report(),
         }
         return active_redactor.redact_value(payload)
+
     @app.get("/studio/api/status")
     async def studio_status(request: Request) -> dict[str, Any]:
         active_cfg: StudioConfig = request.app.state.config
@@ -122,21 +143,21 @@ def register_routes(app: FastAPI) -> None:
             "env_masked": active_cfg.to_public_dict(),
             # Activos de modelo como dependencias de tarea: qué se pidió, qué
             # está en disco y en qué clase cae cada grupo (política de recursos).
-            "model_assets": model_assets_summary(),
+            # El inventario es la verdad por entrada: presentes con sus bytes reales
+            # en disco y ausentes con `bytes_on_disk: None` («no disponible»).
+            "model_assets": {
+                **model_assets_summary(),
+                "inventory": model_assets_inventory(),
+            },
             # Recetas medidas (política, punto 5) juzgadas contra el perfil de
             # hardware vigente: RTX PRO 6000 Blackwell de 96 GB, RAM 128/256.
             # RAM y VRAM se evalúan por separado.
             "recipes": [
                 recipe
                 for recipe in (
-                    active_store.recipe_for_template(
-                        t, profile=active_cfg.hardware_profile
-                    )
+                    active_store.recipe_for_template(t, profile=active_cfg.hardware_profile)
                     for t in sorted(
-                        {
-                            m["template_id"]
-                            for m in active_store.list_render_measurements(limit=200)
-                        }
+                        {m["template_id"] for m in active_store.list_render_measurements(limit=200)}
                     )
                 )
                 if recipe is not None
@@ -144,11 +165,13 @@ def register_routes(app: FastAPI) -> None:
             "hardware_profile": active_cfg.hardware_profile.to_dict(),
         }
         return active_redactor.redact_value(payload)
+
     @app.get("/studio/api/agent/tools")
     @app.get("/studio/api/tools")
     async def list_agent_tools(request: Request) -> dict[str, Any]:
         active_agent: StudioAgent = request.app.state.agent
         return {"tools": active_agent.tool_belt.to_openai_tools()}
+
     @app.get("/favicon.ico", include_in_schema=False)
     async def favicon() -> Response:
         return Response(status_code=204)

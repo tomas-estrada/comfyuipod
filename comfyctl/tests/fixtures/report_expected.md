@@ -66,3 +66,6 @@ Sin errores en `/var/log/nginx/error.log`.
 ## 10. Arranque estricto
 - **Resultado**: `ok` · **Modo estricto**: `true` · **Evaluado**: `2026-10-19T11:58:00Z`
 - `[OK]` **driver_cuda128** (Driver NVIDIA >= 570 (CUDA 12.8)): Driver NVIDIA 570.124.06 compatible con CUDA 12.8
+## 11. Pesos del flujo pedido
+- Estado de pesos: `no disponible` (no se pudo leer la raíz de modelos).
+
