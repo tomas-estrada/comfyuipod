@@ -1022,3 +1022,101 @@ fn strict_workspace_and_install_failures_are_fatal_with_remediation() {
         rep.checks
     );
 }
+
+#[test]
+fn strict_cuda_fatal_in_gpu_mode_and_perception_checks_warn_never_fatal() {
+    // O-13: Cierra los tres brazos de fallo de strict que solo se ejercian en su
+    // rama sana: S10 (cuda_torch) en modo GPU, y S13/S13c (percepción) que el
+    // contrato documenta como "warn nunca fatal". El test del runner CI pone
+    // cuda_torch_ok=false pero en modo --cpu, donde S10 es "Omitido en modo CPU",
+    // y el fixture studio solo toca perception.backend: nunca perception.ok/stale.
+
+    // 1. S10 en modo GPU (strict_require_gpu=true por defecto sin --cpu): PyTorch
+    //    sin contexto CUDA debe ser fatal con la remediation de re-alquiler.
+    let cfg_gpu = RuntimeConfig::from_map(&consumer_profile_vars(), None);
+    assert!(
+        cfg_gpu.strict_require_gpu,
+        "se espera modo GPU por defecto para ejercer el brazo fatal de S10"
+    );
+    let mut snap = base_healthy_snapshot();
+    snap.cuda_torch_ok = false;
+    snap.cuda_torch_detail = "RuntimeError: no CUDA driver is available".to_string();
+    let rep_gpu = evaluate_strict_checks(&cfg_gpu, &snap);
+    assert_eq!(
+        rep_gpu.result, "fatal",
+        "un S10 caido en modo GPU debia bloquear el arranque: {:?}",
+        rep_gpu.checks
+    );
+    let s10 = rep_gpu.checks.iter().find(|c| c.id == "S10");
+    assert!(
+        matches!(
+            s10,
+            Some(c) if c.name == "cuda_torch"
+                && c.status == "fatal"
+                && c.remediation
+                    .as_deref()
+                    .is_some_and(|r| r.contains("PyTorch no pudo inicializar"))
+        ),
+        "S10 debia fallar en fatal con la remediation de contexto CUDA: {s10:?}"
+    );
+
+    // 2. S13 (studio_perception caido) = warn, nunca fatal, con remediation de
+    //    sqlite-vec; el resto de Studio sigue vivo, asi que el resultado global
+    //    solo puede ser warn.
+    let mut vars = consumer_profile_vars();
+    vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    let cfg_studio = RuntimeConfig::from_map(&vars, None);
+    let mut snap = base_healthy_snapshot();
+    snap.disk_free_gb = 200.0;
+    snap.studio_perception_ok = false;
+    snap.studio_perception_detail = "percepción caída: sqlite-vec ausente".to_string();
+    let rep_s13 = evaluate_strict_checks(&cfg_studio, &snap);
+    assert_eq!(
+        rep_s13.result, "warn",
+        "S13 caido debia quedar en warn y no tumbar el arranque: {:?}",
+        rep_s13.checks
+    );
+    let s13 = rep_s13.checks.iter().find(|c| c.id == "S13");
+    assert!(
+        matches!(
+            s13,
+            Some(c) if c.name == "studio_perception"
+                && c.status == "warn"
+                && c.remediation
+                    .as_deref()
+                    .is_some_and(|r| r.contains("sqlite-vec"))
+        ),
+        "S13 debia fallar en warn con la remediation de sqlite-vec: {s13:?}"
+    );
+
+    // 3. S13c (indice desactualizado) = warn con detail y remediation que apuntan
+    //    al reindex; S13 sigue ok, porque un indice viejo no es percepción caída.
+    let mut snap = base_healthy_snapshot();
+    snap.disk_free_gb = 200.0;
+    snap.studio_perception_stale = true;
+    let rep_s13c = evaluate_strict_checks(&cfg_studio, &snap);
+    assert_eq!(
+        rep_s13c.result, "warn",
+        "un indice de percepción desactualizado debia quedar en warn: {:?}",
+        rep_s13c.checks
+    );
+    let s13c = rep_s13c.checks.iter().find(|c| c.id == "S13c");
+    assert!(
+        matches!(
+            s13c,
+            Some(c) if c.name == "studio_perception_stale"
+                && c.status == "warn"
+                && c.detail.contains("768/512")
+                && c.detail.contains("reindex")
+                && c.remediation
+                    .as_deref()
+                    .is_some_and(|r| r.contains("POST /studio/api/perception/reindex"))
+        ),
+        "S13c debia fallar en warn con el detail y la remediation de reindex: {s13c:?}"
+    );
+    let s13_ok = rep_s13c.checks.iter().find(|c| c.id == "S13");
+    assert!(
+        matches!(s13_ok, Some(c) if c.status == "ok"),
+        "S13 debia seguir ok cuando solo el indice esta desactualizado: {s13_ok:?}"
+    );
+}
