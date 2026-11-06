@@ -21,6 +21,7 @@ de modo que esta capa no depende de él en CI.
 from __future__ import annotations
 
 from collections.abc import Callable
+from threading import Event
 from typing import Any, Protocol
 
 from comfy_studio.orchestration.state import (
@@ -38,7 +39,7 @@ class ShotEvaluator(Protocol):
     devuelve un dict de métricas, p.ej. {'vbench': 0.72}. El stub lo cumple.
     """
 
-    def evaluate(self, shot: Shot) -> dict[str, float]:
+    def evaluate(self, shot: Shot, *, cancel_event: Event | None = None) -> dict[str, float]:
         """Puntúa la salida del shot; devuelve métricas numéricas."""
         ...
 
@@ -55,7 +56,7 @@ class StubShotEvaluator:
     def __init__(self, score: float = 0.9) -> None:
         self._score = score
 
-    def evaluate(self, shot: Shot) -> dict[str, float]:
+    def evaluate(self, shot: Shot, *, cancel_event: Event | None = None) -> dict[str, float]:
         # cada replan sube un poco el score (modela "mejora al reintentar").
         bonus = 0.1 * (shot.replan_attempts)
         return {"vbench": min(1.0, self._score + bonus)}
@@ -140,6 +141,7 @@ def evaluate_and_replan(
     *,
     reselect_template: TemplateReselector | None = None,
     replan_shot: Callable[[Shot, ProductionState], bool] | None = None,
+    cancel_event: Event | None = None,
 ) -> ProductionState:
     """Evalúa el shot en EVALUATING y decide aceptar o replanificar (nodo del grafo).
 
@@ -153,8 +155,10 @@ def evaluate_and_replan(
     for shot in state.all_shots():
         if shot.status != ShotStatus.EVALUATING:
             continue
+        if cancel_event is not None and cancel_event.is_set():
+            return state
 
-        score = ev.evaluate(shot)
+        score = ev.evaluate(shot, cancel_event=cancel_event)
         shot.last_score = score
 
         if _passes_acceptance(score, shot.acceptance):

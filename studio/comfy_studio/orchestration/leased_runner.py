@@ -21,6 +21,7 @@ CPU (A04); la generación real es del runner envuelto.
 
 from __future__ import annotations
 
+from threading import Event
 from typing import Any
 
 from comfy_studio.orchestration.gpu_lease import (
@@ -60,7 +61,12 @@ class LeasedEngineRunner:
         self._unload = unload
 
     def run_layer(
-        self, engine: str, job: dict[str, Any], *, cost_cap: float | None = None
+        self,
+        engine: str,
+        job: dict[str, Any],
+        *,
+        cost_cap: float | None = None,
+        cancel_event: Event | None = None,
     ) -> dict[str, Any]:
         if not _is_heavy(engine):
             # Capa de CPU: valida el presupuesto de RAM sin tomar el lock GPU.
@@ -87,7 +93,9 @@ class LeasedEngineRunner:
                     "error": f"admisión RAM rechazada: {exc}",
                     "lease": "error",
                 }
-            return self._inner.run_layer(engine, job, cost_cap=cost_cap)
+            return self._inner.run_layer(
+                engine, job, cost_cap=cost_cap, cancel_event=cancel_event
+            )
 
         # Capa pesada: adquirir el heavy lease antes de tocar la GPU.
         try:
@@ -120,7 +128,9 @@ class LeasedEngineRunner:
             }
 
         try:
-            result = self._inner.run_layer(engine, job, cost_cap=cost_cap)
+            result = self._inner.run_layer(
+                engine, job, cost_cap=cost_cap, cancel_event=cancel_event
+            )
         except BaseException as engine_error:
             # El lease se libera también cuando falla/cancela el motor. Si la
             # liberación o el unload fallan, no ocultarlo bajo la excepción

@@ -35,7 +35,7 @@ class _RecordingRunner:
         self._lease = lease
         self.calls: list[dict[str, Any]] = []
 
-    def run_layer(self, engine, job, *, cost_cap=None):  # noqa: ANN001
+    def run_layer(self, engine, job, *, cost_cap=None, cancel_event=None):  # noqa: ANN001
         held = self._lease.current() is not None
         self.calls.append({"engine": engine, "lease_held": held})
         return {"ok": True, "engine": engine, "output_path": f"/out/{engine}.mp4"}
@@ -104,7 +104,7 @@ def test_lease_released_even_if_inner_raises(tmp_path: Path) -> None:
     lease = _lease(tmp_path)
 
     class _Boom:
-        def run_layer(self, engine, job, *, cost_cap=None):  # noqa: ANN001
+        def run_layer(self, engine, job, *, cost_cap=None, cancel_event=None):  # noqa: ANN001
             raise RuntimeError("render reventó")
 
     runner = LeasedEngineRunner(_Boom(), lease)
@@ -120,7 +120,9 @@ def test_engine_exception_surfaces_cleanup_failure(tmp_path: Path) -> None:
     lease = _lease(tmp_path)
 
     class _Boom:
-        def run_layer(self, engine, job, *, cost_cap=None):  # noqa: ANN001
+        def run_layer(
+            self, engine, job, *, cost_cap=None, cancel_event=None
+        ):  # noqa: ANN001
             raise RuntimeError("render reventó")
 
     runner = LeasedEngineRunner(_Boom(), lease, unload=lambda: False)

@@ -15,6 +15,7 @@ adaptador de cada motor— se inyecta desde el server, misma forma de resultado.
 
 from __future__ import annotations
 
+from threading import Event
 from typing import Any, Protocol
 
 from comfy_studio.orchestration.state import (
@@ -33,7 +34,12 @@ class EngineRunner(Protocol):
     """
 
     def run_layer(
-        self, engine: str, job: dict[str, Any], *, cost_cap: float | None = None
+        self,
+        engine: str,
+        job: dict[str, Any],
+        *,
+        cost_cap: float | None = None,
+        cancel_event: Event | None = None,
     ) -> dict[str, Any]:
         """Ejecuta una capa en `engine`; devuelve resultado tipado como dict."""
         ...
@@ -43,7 +49,12 @@ class StubEngineRunner:
     """Runner determinista para CI/tests: 'ejecuta' escribiendo una ruta stub."""
 
     def run_layer(
-        self, engine: str, job: dict[str, Any], *, cost_cap: float | None = None
+        self,
+        engine: str,
+        job: dict[str, Any],
+        *,
+        cost_cap: float | None = None,
+        cancel_event: Event | None = None,
     ) -> dict[str, Any]:
         kind = job.get("kind", "gen")
         return {
@@ -98,7 +109,10 @@ def topological_shots(state: ProductionState) -> list[Shot]:
 
 
 def execute_next_shot(
-    state: ProductionState, runner: EngineRunner | None = None
+    state: ProductionState,
+    runner: EngineRunner | None = None,
+    *,
+    cancel_event: Event | None = None,
 ) -> ProductionState:
     """Ejecuta el siguiente shot ejecutable (nodo `execute` del grafo).
 
@@ -144,11 +158,16 @@ def execute_next_shot(
         shot.status = ShotStatus.RUNNING
         last_output: str | None = None
         for layer in shot.layers:
+            if cancel_event is not None and cancel_event.is_set():
+                return state
             job = {"kind": layer.kind, "shot": shot.id, **layer.params}
             if layer.template_id:
                 job["template_id"] = layer.template_id
             result = run.run_layer(
-                layer.engine, job, cost_cap=shot.cost_cap_usd or None
+                layer.engine,
+                job,
+                cost_cap=shot.cost_cap_usd or None,
+                cancel_event=cancel_event,
             )
             if not result.get("ok", False):
                 shot.error = str(result.get("error", "fallo de capa sin detalle"))[:500]

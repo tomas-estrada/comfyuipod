@@ -32,9 +32,11 @@ import json
 import logging
 from collections.abc import Mapping
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from comfy_studio.engines import EngineRunSpec
+from comfy_studio.engines.process import ProcessCancelled, run_cancellable
 from comfy_studio.orchestration.conductor import Collaborators
 from comfy_studio.orchestration.evaluator import make_template_reselector
 from comfy_studio.orchestration.gpu_lease import GpuLease
@@ -344,7 +346,12 @@ class EngineRunnerAdapter:
         return resolved
 
     def run_layer(
-        self, engine: str, job: dict[str, Any], *, cost_cap: float | None = None
+        self,
+        engine: str,
+        job: dict[str, Any],
+        *,
+        cost_cap: float | None = None,
+        cancel_event: Event | None = None,
     ) -> dict[str, Any]:
         impl = self._engines.get(engine)
         if impl is None:
@@ -374,7 +381,7 @@ class EngineRunnerAdapter:
                         "el fondo no llegaría al grafo (usar p. ej. wan_i2v)"
                     ),
                 }
-        spec = EngineRunSpec(job=job, cost_cap=cost_cap)
+        spec = EngineRunSpec(job=job, cost_cap=cost_cap, cancel_event=cancel_event)
         try:
             raw = _run_engine_sync(impl, spec)
         except Exception as exc:
@@ -415,11 +422,13 @@ class QaShotEvaluator:
         self._pass_score = pass_score
         self._fail_score = fail_score
 
-    def evaluate(self, shot: Shot) -> dict[str, float]:
+    def evaluate(self, shot: Shot, *, cancel_event: Event | None = None) -> dict[str, float]:
         if not shot.output_path:
             return {"vbench": 0.0}
         job = {"video_path": shot.output_path, "acceptance": dict(shot.acceptance)}
-        spec = EngineRunSpec(job=job, cost_cap=shot.cost_cap_usd or None)
+        spec = EngineRunSpec(
+            job=job, cost_cap=shot.cost_cap_usd or None, cancel_event=cancel_event
+        )
         try:
             raw = _run_engine_sync(self._qa, spec)
         except Exception as exc:
@@ -456,7 +465,13 @@ class EngineAssembler:
         self._editor = editor_engine
         self._compositor = compositor_engine
 
-    def assemble(self, production_id: str, clips: list[dict[str, Any]]) -> dict[str, Any]:
+    def assemble(
+        self,
+        production_id: str,
+        clips: list[dict[str, Any]],
+        *,
+        cancel_event: Event | None = None,
+    ) -> dict[str, Any]:
         # El `EditorEngine` espera el job en la forma de `TimelineSpec`:
         # `clips` en la RAÍZ (no anidado bajo `timeline`) con {path, duration_s,
         # transition_in?}, y un `output_path` obligatorio para el reel final.
@@ -473,7 +488,7 @@ class EngineAssembler:
             "output_path": f"projects/default/outputs/{production_id}_reel.mp4",
             "mode": "assemble",
         }
-        spec = EngineRunSpec(job=job)
+        spec = EngineRunSpec(job=job, cancel_event=cancel_event)
         try:
             raw = _run_engine_sync(self._editor, spec)
         except Exception as exc:
@@ -592,7 +607,11 @@ def build_server_collaborators(
 
 
 def _extract_keyframes_sync(
-    video_path: str, *, max_frames: int = 8, timeout_s: float = 60.0
+    video_path: str,
+    *,
+    max_frames: int = 8,
+    timeout_s: float = 60.0,
+    cancel_event: Event | None = None,
 ) -> list[bytes]:
     """Extrae hasta `max_frames` keyframes JPEG de un vídeo con ffmpeg.
 
@@ -625,7 +644,15 @@ def _extract_keyframes_sync(
             str(out_dir / "kf_%02d.jpg"),
         ]
         try:
-            subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False)
+            run_cancellable(
+                cmd,
+                capture_output=True,
+                timeout=timeout_s,
+                check=False,
+                cancel_event=cancel_event,
+            )
+        except ProcessCancelled:
+            return []
         except subprocess.TimeoutExpired:
             return []
         frames: list[bytes] = []
@@ -659,15 +686,19 @@ class VisionShotEvaluator:
         self._max_frames = max_frames
         self._timeout_s = timeout_s
 
-    def evaluate(self, shot: Shot) -> dict[str, float]:
+    def evaluate(self, shot: Shot, *, cancel_event: Event | None = None) -> dict[str, float]:
         from comfy_studio.agent.llm import build_vision_content_part
 
         if not shot.output_path:
             return {"semantic": 0.0}
+        if cancel_event is not None and cancel_event.is_set():
+            return {"semantic": 0.0}
         frames = _extract_keyframes_sync(
-            shot.output_path, max_frames=self._max_frames
+            shot.output_path, max_frames=self._max_frames, cancel_event=cancel_event
         )
         if not frames:
+            return {"semantic": 0.0}
+        if cancel_event is not None and cancel_event.is_set():
             return {"semantic": 0.0}
         content: list[dict[str, Any]] = [
             {
@@ -685,12 +716,24 @@ class VisionShotEvaluator:
             {"role": "user", "content": content},
         ]
         try:
-            response = asyncio.run(
-                asyncio.wait_for(
-                    self._llm.complete(messages, temperature=0.1),
-                    timeout=self._timeout_s,
+            async def _complete_or_cancel():
+                task = asyncio.create_task(
+                    asyncio.wait_for(
+                        self._llm.complete(messages, temperature=0.1),
+                        timeout=self._timeout_s,
+                    )
                 )
-            )
+                while not task.done():
+                    if cancel_event is not None and cancel_event.is_set():
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                        raise ProcessCancelled("semantic evaluation cancelled")
+                    await asyncio.sleep(0.05)
+                return task.result()
+
+            response = asyncio.run(_complete_or_cancel())
+        except ProcessCancelled:
+            return {"semantic": 0.0}
         except Exception as exc:  # noqa: BLE001
             logger.warning("VisionShotEvaluator: LLM de visión falló (%s).", exc)
             return {"semantic": 0.0}
@@ -728,10 +771,10 @@ class SemanticQaEvaluator:
         self._tech = QaShotEvaluator(qa_engine)
         self._vision = VisionShotEvaluator(llm_client) if llm_client is not None else None
 
-    def evaluate(self, shot: Shot) -> dict[str, float]:
-        scores = dict(self._tech.evaluate(shot))
+    def evaluate(self, shot: Shot, *, cancel_event: Event | None = None) -> dict[str, float]:
+        scores = dict(self._tech.evaluate(shot, cancel_event=cancel_event))
         if self._vision is not None:
-            scores.update(self._vision.evaluate(shot))
+            scores.update(self._vision.evaluate(shot, cancel_event=cancel_event))
         else:
             scores["semantic"] = 0.0
         return scores

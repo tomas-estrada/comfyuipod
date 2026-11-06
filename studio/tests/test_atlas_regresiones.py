@@ -12,6 +12,7 @@ Cada defecto reportado se reproduce y se fija con una prueba:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -22,6 +23,10 @@ from comfy_studio.atlas.acquire.pipeline import (
     MUNICIPALITY_UNKNOWN,
     AcquisitionPipeline,
     _municipality_for,
+)
+from comfy_studio.atlas.agent_tools import (
+    AtlasPrepareShotArgs,
+    handle_atlas_prepare_shot,
 )
 from comfy_studio.atlas.models import Environment, Place, View
 from comfy_studio.atlas.service import AtlasService
@@ -239,3 +244,190 @@ def test_adapter_inyecta_image_input_y_rechaza_t2v(
         "prompt": "un carro", "atlas": atlas_ctx,
     })
     assert bad2["ok"] is False and "hash" in bad2["error"]
+
+
+# ---------------------------------------------------------------------------
+# 6) el fondo real llega al grafo con bytes y procedencia intactos
+# ---------------------------------------------------------------------------
+
+
+def _fake_adapter(atlas_root: Path, tmp_path: Path, svc, captured: list) -> object:
+    from comfy_studio.orchestration.adapters import EngineRunnerAdapter
+
+    class FakeEngine:
+        name = "comfyui"
+
+        def run(self, spec):  # noqa: ANN001
+            captured.append(dict(spec.job))
+            from comfy_studio.engines import EngineResult
+
+            return EngineResult(ok=True, engine="comfyui", verb="run",
+                                payload={"output_path": "/tmp/out.mp4"})
+
+    return EngineRunnerAdapter(
+        {"comfyui": FakeEngine()},
+        template_registry=get_default_registry(),
+        atlas_service=svc,
+        comfyui_input_dir=str(tmp_path / "comfyui_input"),
+    )
+
+
+def test_fondo_llega_con_bytes_y_procedencia(
+    atlas_dos_puentes: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(atlas_dos_puentes))
+    from comfy_studio.atlas.agent_tools import reset_shared_atlas_service
+
+    reset_shared_atlas_service()
+    shot = asyncio.run(handle_atlas_prepare_shot(
+        AtlasPrepareShotArgs(place_id="plc_alfa", prompt="un carro"),
+        context=None,
+    ))
+    assert shot["ok"] is True, shot
+    ctx = shot["atlas_context"]
+    # la herramienta ya lleva procedencia del fondo real
+    assert ctx["background_sha256"] == shot["reference"]["sha256"]
+    assert ctx["license"] == shot["reference"]["license"]
+    assert ctx["attribution"] == shot["reference"]["attribution"]
+    from comfy_studio.atlas.agent_tools import shared_atlas_service
+
+    svc = shared_atlas_service()
+    ref = svc.store.get_reference(ctx["ref_id"])
+    assert ref is not None
+    captured: list[dict] = []
+    adapter = _fake_adapter(atlas_dos_puentes, tmp_path, svc, captured)
+    res = adapter.run_layer("comfyui", {"kind": "gen", "shot": "s1",
+                                        "template_id": "wan_i2v",
+                                        "prompt": "un carro", "atlas": ctx})
+    assert res["ok"] is True, res.get("error")
+    job = captured[0]
+    bg = Path(job["background_image"])
+    # el fondo vive dentro de files/ y sus bytes son los catalogados
+    bg.relative_to((atlas_dos_puentes / "files").resolve())
+    assert sha256_file(bg) == ref.sha256 == job["background_sha256"]
+    copied = tmp_path / "comfyui_input" / job["atlas_image_input"]
+    assert copied.is_file() and sha256_file(copied) == ref.sha256
+    assert job["graph"]["8"]["inputs"]["image"] == job["atlas_image_input"]
+    resolved = job["atlas_resolved"]
+    assert resolved["license"] == ref.license
+    assert resolved["attribution"] == ref.attribution
+    assert resolved["capture_date"] == ref.capture_date
+    assert resolved["sha256"] == ref.sha256
+
+
+def test_fondo_ausente_bloquea_sin_placeholder(
+    atlas_dos_puentes: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(atlas_dos_puentes))
+    from comfy_studio.atlas.agent_tools import (
+        reset_shared_atlas_service,
+        shared_atlas_service,
+    )
+
+    reset_shared_atlas_service()
+    svc = shared_atlas_service()
+    (atlas_dos_puentes / "files" / "aa" / "ref_plc_alfa.png").unlink()
+    shot = svc.prepare_shot(place_id="plc_alfa")
+    assert shot["status"] == "file_missing"
+    captured: list[dict] = []
+    adapter = _fake_adapter(atlas_dos_puentes, tmp_path, svc, captured)
+    bad = adapter.run_layer("comfyui", {"kind": "gen", "shot": "s1",
+                                        "template_id": "wan_i2v",
+                                        "prompt": "un carro",
+                                        "atlas": {"place_id": "plc_alfa",
+                                                  "view_id": "view_ref_plc_alfa",
+                                                  "ref_id": "ref_plc_alfa"}})
+    assert bad["ok"] is False and "ausente" in bad["error"]
+    assert not captured, "sin fondo no hay grafo ni ejecución"
+
+
+def test_path_traversal_del_fondo_bloqueado(
+    atlas_dos_puentes: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(atlas_dos_puentes))
+    from comfy_studio.atlas.agent_tools import (
+        reset_shared_atlas_service,
+        shared_atlas_service,
+    )
+
+    reset_shared_atlas_service()
+    svc = shared_atlas_service()
+    evil = _ref("ref_evil", "plc_alfa", 6.20, -75.58, title="Evil")
+    evil.file_path = "../../atlas_evil.png"
+    svc.store.upsert_reference(evil)
+    svc.store.upsert_view(View(view_id="view_evil", place_id="plc_alfa",
+                               ref_id="ref_evil", lat=6.20, lon=-75.58))
+    shot = svc.prepare_shot(place_id="plc_alfa", view_id="view_evil")
+    assert shot["status"] == "unsafe_path"
+    captured: list[dict] = []
+    adapter = _fake_adapter(atlas_dos_puentes, tmp_path, svc, captured)
+    bad = adapter.run_layer("comfyui", {"kind": "gen", "shot": "s1",
+                                        "template_id": "wan_i2v",
+                                        "prompt": "un carro",
+                                        "atlas": {"place_id": "plc_alfa",
+                                                  "view_id": "view_evil",
+                                                  "ref_id": "ref_evil"}})
+    assert bad["ok"] is False and "escapa" in bad["error"]
+
+
+def test_seleccion_por_proyecto_no_contamina(
+    atlas_dos_puentes: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(atlas_dos_puentes))
+    from comfy_studio.atlas.agent_tools import (
+        reset_shared_atlas_service,
+        shared_atlas_service,
+    )
+
+    reset_shared_atlas_service()
+    svc = shared_atlas_service()
+    shot_a = svc.prepare_shot(place_id="plc_alfa", prompt="plano A",
+                              project_id="prod_a")
+    assert shot_a["status"] == "ok"
+    assert svc.get_selection("prod_a")["place_id"] == "plc_alfa"
+    # otro proyecto no hereda el fondo: resuelve por sí mismo (Beta explícito)
+    shot_b = svc.prepare_shot(place="Puente Beta", prompt="plano B",
+                              project_id="prod_b")
+    assert shot_b["status"] == "ok" and shot_b["place_id"] == "plc_beta"
+    assert svc.get_selection("prod_b")["place_id"] == "plc_beta"
+    assert svc.get_selection("prod_a")["place_id"] == "plc_alfa"
+
+
+def test_dos_fondos_procedencia_distinta(
+    atlas_dos_puentes: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(atlas_dos_puentes))
+    from comfy_studio.atlas.agent_tools import (
+        reset_shared_atlas_service,
+        shared_atlas_service,
+    )
+
+    reset_shared_atlas_service()
+    svc = shared_atlas_service()
+    beta = svc.store.get_reference("ref_plc_beta")
+    assert beta is not None
+    beta.author = "Otra Autora"
+    beta.license = "CC0-1.0"
+    beta.attribution = "Otra Autora, CC0-1.0"
+    make_png(atlas_dos_puentes / "files" / beta.file_path, 32, 32, color=(1, 2, 3))
+    beta.sha256 = sha256_file(atlas_dos_puentes / "files" / beta.file_path)
+    beta.bytes = (atlas_dos_puentes / "files" / beta.file_path).stat().st_size
+    svc.store.upsert_reference(beta)
+    svc.store.set_license(beta.ref_id, beta.license, None, beta.attribution, None)
+    captured: list[dict] = []
+    adapter = _fake_adapter(atlas_dos_puentes, tmp_path, svc, captured)
+    for pid, rid, vid in (("plc_alfa", "ref_plc_alfa", "view_ref_plc_alfa"),
+                          ("plc_beta", "ref_plc_beta", "view_ref_plc_beta")):
+        res = adapter.run_layer("comfyui", {"kind": "gen", "shot": pid,
+                                            "template_id": "wan_i2v",
+                                            "prompt": "un carro",
+                                            "atlas": {"place_id": pid, "view_id": vid,
+                                                      "ref_id": rid}})
+        assert res["ok"] is True, res.get("error")
+    assert len(captured) == 2
+    assert captured[0]["background_sha256"] != captured[1]["background_sha256"]
+    assert captured[0]["atlas_image_input"] != captured[1]["atlas_image_input"]
+    assert captured[0]["atlas_resolved"]["attribution"] != (
+        captured[1]["atlas_resolved"]["attribution"])
+    assert json.dumps(captured[0]["graph"], sort_keys=True) != json.dumps(
+        captured[1]["graph"], sort_keys=True)

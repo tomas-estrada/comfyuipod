@@ -1,10 +1,11 @@
-"""Cliente LLM compatible-OpenAI (DashScope primario + fallback DeepSeek + visión base64)."""
+﻿"""Cliente LLM compatible-OpenAI (DashScope primario + fallback DeepSeek + visión base64)."""
 
 from __future__ import annotations
 
 import base64
 import json
 import logging
+import re
 import uuid
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
@@ -18,6 +19,10 @@ from ..stubs.llm import StubLLMClient
 logger = logging.getLogger("comfy_studio.agent.llm")
 
 ALLOWED_IMAGE_MIMES = frozenset({"image/png", "image/jpeg", "image/jpg", "image/webp"})
+
+_IMAGE_MIME_SAFE = re.compile(r"image/(?:png|jpeg|webp)")
+# Token estricto de RFC 4648 (sin padding), que admite el relleno `=` que se valida aparte.
+_STD_B64_TOKEN = re.compile(r"[A-Za-z0-9+/]*={0,2}")
 
 
 class LLMProviderError(RuntimeError):
@@ -84,14 +89,41 @@ def build_vision_content_part(
     }
 
 
+# Tope de tamaño de la imagen embebida: evita que un data URL gigante infle la petición.
+_DATA_URL_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
+
 def validate_DataUrl_only(url_value: str) -> None:
-    """Garantiza que una URL de imagen para el LLM sea estrictamente data:image/...;base64,."""
+    """Garantiza que una imagen para el LLM sea estrictamente `data:image/<mime>;base64,<b64>`.
+
+    Rechaza (mínimo riesgo SSRF / fuga de URL interna del pod hacia el proveedor LLM):
+    - Cualquier valor que no empiece por `data:image/` (http/https, `file://`, `//host`, `data://`).
+    - `data:` de un MIME no-imagen (`data:text/html;base64,...`, `data:application/...`).
+    - Cualquier data URL sin el marcador canónico `;base64,` (e.g. `data:image/png,<url>`),
+      o cuyo payload no sea base64 canónico con padding (con `,` y caracteres sueltos
+      afuera del alfabeto albergarían una URL incrustada como `http://127.0.0.1:8188/...`).
+    """
     cleaned = (url_value or "").strip()
-    if not cleaned.startswith("data:image/") or ";base64," not in cleaned:
-        raise ValueError(
-            "Las imágenes/keyframes para el LLM deben ir en base64 (data:image/...;base64,...); "
-            "nunca se permiten URLs HTTP/HTTPS ni URLs con autenticación del pod."
-        )
+    validation_error = ValueError(
+        "Las imágenes/keyframes para el LLM deben ir en base64 (data:image/...;base64,...); "
+        "nunca se permiten URLs HTTP/HTTPS ni URLs con autenticación del pod."
+    )
+    if not cleaned.startswith("data:image/"):
+        raise validation_error
+    try:
+        mime_part, payload = cleaned[len("data:") :].split(",", 1)
+    except ValueError:
+        raise validation_error from None
+    # Sólo `base64`; `charset=` y otros metadatos permitirían colar URLs en el parámetro.
+    mime_part, _, is_base64 = mime_part.rpartition(";")
+    if is_base64 != "base64" or not _IMAGE_MIME_SAFE.fullmatch(mime_part.strip().lower()):
+        raise validation_error
+    encoded = payload.strip()
+    if not encoded or len(encoded) % 4 != 0 or not _STD_B64_TOKEN.fullmatch(encoded):
+        raise validation_error
+    image_size = len(encoded) * 3 // 4 - encoded.count("=")
+    if image_size > _DATA_URL_MAX_IMAGE_BYTES:
+        raise validation_error
 
 
 def validate_no_auth_urls_in_messages(messages: Sequence[dict[str, Any]]) -> None:

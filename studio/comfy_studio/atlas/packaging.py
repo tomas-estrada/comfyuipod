@@ -225,6 +225,103 @@ def build_bundle(
     return stats
 
 
+def _stable_file_hashes(root: Path, *subdirs: str) -> list[dict[str, Any]]:
+    """Lista ordenada path->sha256 de archivos bajo subdirs (huella estable)."""
+    out: list[dict[str, Any]] = []
+    for sub in subdirs:
+        base = root / sub
+        if not base.is_dir():
+            continue
+        for p in sorted(base.rglob("*")):
+            if p.is_file():
+                out.append({
+                    "path": str(p.relative_to(root)),
+                    "sha256": sha256_file(p),
+                    "bytes": p.stat().st_size,
+                })
+    out.sort(key=lambda e: e["path"])
+    return out
+
+
+def _stable_db_dump(db_path: Path) -> dict[str, str]:
+    """Volcado lógico ordenado del catálogo (estable aunque el binario varíe).
+
+    El archivo SQLite puede diferir byte a byte entre construcciones idénticas
+    (layout de páginas, freelist); el contenido lógico ordenado por rowid no.
+    Se excluyen tablas internas de SQLite.
+    """
+    import hashlib
+    import sqlite3
+
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        tables = [
+            r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+                " AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()
+        ]
+        dump: dict[str, str] = {}
+        for table in tables:
+            # las tablas FTS5/rtree no exponen rowid ordenable por SQL: se
+            # ordena en Python por el contenido serializado (determinista).
+            try:
+                rows = con.execute(
+                    f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()
+            except sqlite3.OperationalError:
+                rows = con.execute(f'SELECT * FROM "{table}"').fetchall()
+            serial = sorted(
+                json.dumps([str(v) for v in row], ensure_ascii=False)
+                for row in rows
+            )
+            h = hashlib.sha256()
+            h.update(json.dumps(serial, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+            dump[table] = h.hexdigest()
+        return dump
+    finally:
+        con.close()
+
+
+def fingerprint_bundle(root: Path) -> dict[str, Any]:
+    """Huella estable de un bundle construido (para probar reproducibilidad).
+
+    Excluye a propósito `manifest.json` (lleva `generated_ts`) y los bytes de
+    `catalog.db` (layout binario); en su lugar se vuelcan las tablas en orden.
+    Todo lo demás (files/, previews/, licenses/, osm/, sources.json,
+    ATTRIBUTION.md) entra por path+sha256 ordenados.
+    """
+    root = Path(root)
+    top: list[dict[str, Any]] = []
+    for name in ("sources.json", "ATTRIBUTION.md"):
+        p = root / name
+        if p.is_file():
+            top.append({"path": name, "sha256": sha256_file(p),
+                        "bytes": p.stat().st_size})
+    return {
+        "files": _stable_file_hashes(root, "files", "previews", "licenses", "osm"),
+        "top": top,
+        "db": _stable_db_dump(root / "catalog.db"),
+    }
+
+
+def diff_fingerprints(a: dict[str, Any], b: dict[str, Any]) -> list[str]:
+    """Diferencias entre dos huellas (`[]` == reproducibles)."""
+    diffs: list[str] = []
+    for section in ("files", "top", "db"):
+        ma = {e["path"]: e["sha256"] for e in a.get(section, [])} if isinstance(
+            a.get(section), list) else dict(a.get(section, {}))
+        mb = {e["path"]: e["sha256"] for e in b.get(section, [])} if isinstance(
+            b.get(section), list) else dict(b.get(section, {}))
+        for path in sorted(set(ma) | set(mb)):
+            if path not in ma:
+                diffs.append(f"solo en B: {path}")
+            elif path not in mb:
+                diffs.append(f"solo en A: {path}")
+            elif ma[path] != mb[path]:
+                diffs.append(f"distinto: {path}")
+    return diffs
+
+
 def verify_bundle(root: Path, *, require_files: bool = True) -> dict[str, Any]:
     """Verificación completa del bundle (CI + smoke test dentro de la imagen)."""
     root = Path(root)

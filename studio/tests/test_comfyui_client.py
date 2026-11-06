@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from comfy_studio.comfyui_client import (
+    ComfyUICancelledError,
     ComfyUIClient,
     ComfyUIConnectionError,
     ComfyUIError,
@@ -24,6 +27,48 @@ from comfy_studio.projects import ProjectStore
 from comfy_studio.stubs.comfyui import ComfyUIStubState, create_stub_comfyui_app
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def test_execute_prompt_job_cancels_only_its_prompt_and_unloads(
+    studio_data_dir: Path,
+) -> None:
+    state = ComfyUIStubState(healthy=True, poll_ticks_before_complete=100)
+    stub_app = create_stub_comfyui_app(state)
+    store = ProjectStore(studio_data_dir)
+    project = store.create_project(name="Cancel active render")
+    job = store.create_job(kind="render", project_id=project["id"])
+    client = ComfyUIClient(
+        base_url="http://stub-comfyui.local:39173",
+        transport=httpx.ASGITransport(app=stub_app),
+        store=store,
+        poll_interval=0.01,
+    )
+    cancel = threading.Event()
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            client.execute_prompt_job(
+                {"1": {"class_type": "KSampler", "inputs": {}}},
+                job_id=job["id"],
+                project_id=project["id"],
+                cancel_event=cancel,
+            )
+        )
+        for _ in range(100):
+            if state.prompts:
+                break
+            await asyncio.sleep(0.01)
+        assert state.prompts
+        prompt_id = state.prompts[0]["prompt_id"]
+        cancel.set()
+        with pytest.raises(ComfyUICancelledError):
+            await task
+        assert prompt_id not in state.pending_prompts
+        assert state.interrupted is True
+        assert store.get_job(job["id"])["status"] == "cancelled"
+        assert state.freed_count == 1
+
+    asyncio.run(_run())
 
 
 @pytest.fixture()

@@ -86,6 +86,7 @@ def cmd_prepare_shot(args: argparse.Namespace) -> int:
             lat=args.lat,
             lon=args.lon,
             heading_deg=args.heading,
+            fov_deg=args.fov,
             prompt=args.prompt or "",
             verify_file=not args.no_verify,
         )
@@ -183,7 +184,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="raíz del atlas (default: $STUDIO_ATLAS_DIR o /opt/studio-atlas)",
     )
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--root", default=None, help=argparse.SUPPRESS)
+    # SUPPRESS para no pisar el --root global cuando va antes del subcomando.
+    common.add_argument("--root", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", required=True)
 
     def sub_cmd(name: str, help_text: str) -> argparse.ArgumentParser:
@@ -224,6 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lat", type=float)
     p.add_argument("--lon", type=float)
     p.add_argument("--heading", type=float, dest="heading")
+    p.add_argument("--fov", type=float)
     p.add_argument("--prompt", default="")
     p.add_argument("--no-verify", action="store_true")
     p.set_defaults(func=cmd_prepare_shot)

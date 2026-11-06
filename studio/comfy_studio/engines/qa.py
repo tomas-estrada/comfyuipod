@@ -36,6 +36,7 @@ from comfy_studio.engines import (
     EngineTier,
     is_stub_mode,
 )
+from comfy_studio.engines.process import ProcessCancelled, run_cancellable
 from comfy_studio.media_bins import find_ffmpeg
 
 _VBENCH_PY_ENV = "STUDIO_QA_VBENCH_PYTHON"  # intérprete del venv aislado de VBench
@@ -147,7 +148,7 @@ class QaEngine:
                 verb="run",
                 error="FFmpeg no disponible (STUDIO_FFMPEG_BIN o PATH); usa STUDIO_STUB_QA=1",
             )
-        return self._run_qa(qa, ffmpeg, start)
+        return self._run_qa(qa, ffmpeg, start, cancel_event=spec.cancel_event)
 
     @staticmethod
     def _parse(job: dict) -> QaSpec:
@@ -156,7 +157,7 @@ class QaEngine:
             acceptance=dict(job.get("acceptance", {})),
         )
 
-    def _run_qa(self, qa: QaSpec, ffmpeg: str, start: float) -> EngineResult:
+    def _run_qa(self, qa: QaSpec, ffmpeg: str, start: float, *, cancel_event=None) -> EngineResult:
         redactor = SecretRedactor()
         # Nivel 1: una sola pasada de FFmpeg con los detectores a null sink.
         cmd = [
@@ -171,13 +172,22 @@ class QaEngine:
             "-",
         ]
         try:
-            res = subprocess.run(
+            res = run_cancellable(
                 cmd,
+                cancel_event=cancel_event,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 timeout=qa.timeout_s,
+            )
+        except ProcessCancelled:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error="QA cancelada",
+                payload={"cancelled": True},
             )
         except subprocess.TimeoutExpired:
             return EngineResult(
@@ -205,7 +215,9 @@ class QaEngine:
         vbench_payload = None
         vbench_py = self._vbench_python()
         if vbench_py:
-            vbench_payload = self._run_vbench(vbench_py, qa, redactor)
+            vbench_payload = self._run_vbench(
+                vbench_py, qa, redactor, cancel_event=cancel_event
+            )
             # VBench informa pero NO invalida por sí solo salvo que el shot lo exija.
             if vbench_payload and qa.acceptance.get("require_vbench"):
                 min_score = float(qa.acceptance.get("min_vbench", 0.0))
@@ -223,7 +235,9 @@ class QaEngine:
             },
         )
 
-    def _run_vbench(self, vbench_py: str, qa: QaSpec, redactor: SecretRedactor) -> dict | None:
+    def _run_vbench(
+        self, vbench_py: str, qa: QaSpec, redactor: SecretRedactor, *, cancel_event=None
+    ) -> dict | None:
         """Nivel 2: invoca VBench en su venv aislado. Nunca lanza: devuelve None si falla."""
         cmd = [
             vbench_py,
@@ -234,15 +248,16 @@ class QaEngine:
             str(qa.video_path),
         ]
         try:
-            res = subprocess.run(
+            res = run_cancellable(
                 cmd,
+                cancel_event=cancel_event,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 timeout=qa.timeout_s,
             )
-        except (subprocess.TimeoutExpired, OSError):
+        except (ProcessCancelled, subprocess.TimeoutExpired, OSError):
             return None
         if res.returncode != 0:
             return None

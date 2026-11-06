@@ -21,6 +21,8 @@ se cablean en el server (como el resto). Los colaboradores reales se inyectan v�
 
 from __future__ import annotations
 
+import json
+from threading import Event
 from typing import Any
 
 from comfy_studio.engines.storyboard_gate import StoryboardGate, StoryboardState
@@ -92,6 +94,7 @@ class ProductionService:
         # `cancel_production`; este set es la vía que sí llega al lazo vía
         # `graph.should_cancel`.
         self._cancel_requested: set[str] = set()
+        self._cancel_events: dict[str, Event] = {}
         # Atlas georreferenciado: registra producciones que usaron el atlas
         # (lugar/vista/ref/cámara quedan en el catálogo, recuperables).
         self._atlas = atlas_service
@@ -305,6 +308,9 @@ class ProductionService:
             state.metadata["cancel_requested"] = True
             state.record("cancel_requested", stage=state.phase)
             self._cancel_requested.add(production_id)
+            active_event = self._cancel_events.get(production_id)
+            if active_event is not None:
+                active_event.set()
             event = "production_cancel_requested"
         self.checkpointer.save(state)
         self._publish(
@@ -320,6 +326,7 @@ class ProductionService:
     def approve_plan(self, production_id: str) -> dict[str, Any]:
         """El humano aprueba; corre el lazo caro y devuelve el resultado."""
         state = self._load(production_id)
+        expected_state_json = json.dumps(state.to_dict(), ensure_ascii=False)
         # una producción cancelada por el humano no se puede aprobar (fail-closed);
         # el resto de fases terminales (done/failed) mantienen el approve idempotente.
         if state.phase == "cancelled":
@@ -369,15 +376,51 @@ class ProductionService:
         state.storyboard_approved = True
         state.phase = "executing"
         state.record("approved")
-        # persistir la transición ANTES de correr el lazo: si no, un cancel que
-        # llegue antes del primer checkpoint del grafo leería `awaiting_approval`
-        # y tomaría la vía terminal mientras el lazo arranca igualmente (M7-AGT-001).
-        self.checkpointer.save(state)
+        # Compare-and-set ANTES del lazo: solo una petición puede reclamar el
+        # snapshot awaiting_approval. Los reintentos concurrentes se convierten
+        # en una respuesta idempotente de ejecución en curso.
+        if not self.checkpointer.claim_phase(
+            state,
+            expected_phase="awaiting_approval",
+            expected_state_json=expected_state_json,
+        ):
+            latest = self._load(production_id)
+            if latest.phase == "executing":
+                return {
+                    "production_id": production_id,
+                    "phase": latest.phase,
+                    "already_in_progress": True,
+                    "status": self._status_dict(latest),
+                }
+            if latest.phase in ("done", "simulated"):
+                return {
+                    "production_id": production_id,
+                    "phase": latest.phase,
+                    "final_output_path": latest.final_output_path,
+                    "output_asset_ids": latest.metadata.get("output_asset_ids") or [],
+                    "status": self._status_dict(latest),
+                }
+            if latest.phase == "cancelled":
+                raise ProductionNotApprovedError(
+                    "la producción fue cancelada; no se puede aprobar"
+                )
+            if latest.phase == "awaiting_approval":
+                raise ProductionNotApprovedError(
+                    "el plan cambió durante la aprobación; vuelve a intentarlo"
+                )
+            raise ProductionAlreadyTerminalError(
+                f"la producción ya está en fase {latest.phase}"
+            )
 
         # correr el lazo caro (ejecución + evaluación + replan + ensamblaje).
+        cancel_event = Event()
+        self._cancel_events[production_id] = cancel_event
+        if production_id in self._cancel_requested:
+            cancel_event.set()
         graph = build_production_graph(
             checkpointer=self.checkpointer,
             collaborators=self.collaborators,
+            cancel_event=cancel_event,
         )
         if self.broker is not None:
             # progreso en vivo por SSE: un evento por paso persistido del grafo.
@@ -386,7 +429,7 @@ class ProductionService:
             )
         # cancelación cooperativa en proceso: `cancel_production` durante la
         # ejecución sólo persiste el flag; el hook es lo que detiene el lazo.
-        graph.should_cancel = lambda: production_id in self._cancel_requested
+        graph.should_cancel = cancel_event.is_set
         self._publish(
             "production_approved",
             {
@@ -399,6 +442,7 @@ class ProductionService:
             final = graph.run(state)
         finally:
             self._cancel_requested.discard(production_id)
+            self._cancel_events.pop(production_id, None)
         self._finalize_artifact_status(final)
         registered = self._register_outputs_in_gallery(final)
         self.checkpointer.save(final)
