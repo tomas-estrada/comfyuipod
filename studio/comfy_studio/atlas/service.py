@@ -44,6 +44,22 @@ def _selection_file(project_id: str | None) -> str:
     return f"selection_{pid}.json"
 
 
+#: cuadrantes de rumbo en orden canónico (0°=N, 90°=E).
+_QUADRANT_ORDER: tuple[str, ...] = ("N", "E", "S", "W")
+
+
+def heading_quadrant(heading_deg: float) -> str:
+    """Cuadrante cardinal de un rumbo en grados (N/E/S/W)."""
+    h = heading_deg % 360.0
+    if h < 45.0 or h >= 315.0:
+        return "N"
+    if h < 135.0:
+        return "E"
+    if h < 225.0:
+        return "S"
+    return "W"
+
+
 class AtlasUnavailableError(RuntimeError):
     """El atlas no está disponible (sin catálogo en la raíz indicada)."""
 
@@ -173,7 +189,7 @@ class AtlasService:
             views = self._usable_views(p.place_id)
             if min_views and len(views) < min_views:
                 continue
-            cov = store.get_coverage(p.place_id)
+            cov = self.coverage_for(p.place_id, views=views)
             filtered.append(self._place_summary(p, views=len(views), coverage=cov))
         return filtered[offset : offset + limit]
 
@@ -213,7 +229,7 @@ class AtlasService:
             return {
                 "status": "ambiguous",
                 "candidates": [self._place_summary(p, views=len(self._usable_views(p.place_id)),
-                                                   coverage=store.get_coverage(p.place_id))
+                                                   coverage=self.coverage_for(p.place_id))
                                for p in exact],
                 "hint": "Indica municipio o coordenadas para desambiguar",
             }
@@ -225,7 +241,7 @@ class AtlasService:
             return {
                 "status": "ambiguous",
                 "candidates": [self._place_summary(p, views=len(self._usable_views(p.place_id)),
-                                                   coverage=store.get_coverage(p.place_id))
+                                                   coverage=self.coverage_for(p.place_id))
                                for p in alias_hits],
             }
         # FTS como último recurso (parcial)
@@ -239,7 +255,7 @@ class AtlasService:
             return {
                 "status": "ambiguous",
                 "candidates": [self._place_summary(p, views=len(self._usable_views(p.place_id)),
-                                                   coverage=store.get_coverage(p.place_id))
+                                                   coverage=self.coverage_for(p.place_id))
                                for p in fts],
             }
         return {"status": "not_found", "query": query}
@@ -270,7 +286,7 @@ class AtlasService:
             raise KeyError(f"lugar desconocido: {place_id}")
         views = self._usable_views(place_id)
         refs = store.references_for_place(place_id)
-        cov = store.get_coverage(place_id)
+        cov = self.coverage_for(place_id, views=views)
         scenarios = store.scenarios_for_place(place_id)
         return {
             **self._place_summary(place, views=len(views), coverage=cov),
@@ -279,6 +295,61 @@ class AtlasService:
             "scenarios": [s.to_dict() for s in scenarios],
             "provenance": place.provenance,
         }
+
+    # -- cobertura honesta (medida, no almacenada) ---------------------------------
+
+    def coverage_for(self, place_id: str, views: list[View] | None = None) -> Coverage:
+        """Cobertura medida en vivo desde vistas usables (nunca un valor guardado).
+
+        Cuenta vistas usables reales, cuadrantes de rumbo cubiertos/faltantes
+        (N/E/S/W sobre `heading_deg` conocido), licencias distintas de las
+        referencias usables y fechas de captura mínima/máxima. Sin rumbos
+        inventados: lo desconocido se cuenta como `heading_unknown`.
+        """
+        store = self.store
+        if views is None:
+            views = self._usable_views(place_id)
+        headings = sorted(v.heading_deg for v in views if v.heading_deg is not None)
+        unknown = sum(1 for v in views if v.heading_deg is None)
+        covered = sorted({heading_quadrant(h) for h in headings}, key=_QUADRANT_ORDER.index)
+        missing = [q for q in _QUADRANT_ORDER if q not in covered]
+        licenses: dict[str, int] = {}
+        dates: list[str] = []
+        for v in views:
+            ref = store.get_reference(v.ref_id)
+            if ref is None:
+                continue
+            licenses[ref.license] = licenses.get(ref.license, 0) + 1
+            if ref.capture_date:
+                dates.append(ref.capture_date)
+        dates.sort()
+        return Coverage(
+            place_id=place_id,
+            views_observed=len(views),
+            backed={
+                "view_ids": [v.view_id for v in views],
+                "headings_deg": headings,
+                "quadrants_covered": covered,
+                "licenses": licenses,
+                "refs_usable": len(views),
+            },
+            unobserved={
+                "quadrants_missing": missing,
+                "heading_unknown": unknown,
+            },
+            evidence_newest=dates[-1] if dates else None,
+            evidence_oldest=dates[0] if dates else None,
+            confidence_basis=(
+                f"{len(views)} vistas usables, {len(headings)} rumbos conocidos, "
+                f"{len(licenses)} licencias"
+            ),
+        )
+
+    def recompute_coverage(self, place_id: str) -> Coverage:
+        """Mide la cobertura y la persiste (repara valores guardados obsoletos)."""
+        cov = self.coverage_for(place_id)
+        self.store.upsert_coverage(cov)
+        return cov
 
     def _usable_views(self, place_id: str) -> list[View]:
         """Vistas de un lugar cuya referencia está usable (enviada en el bundle)."""
