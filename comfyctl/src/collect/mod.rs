@@ -7,6 +7,7 @@ pub mod phases;
 pub mod procfs;
 
 use crate::collect::gpu::{collect_gpu_status, GpuStatus};
+use crate::collect::models::{collect_weight_status, WeightStatus};
 use crate::collect::phases::{collect_phases_status, format_phase_banner, PhasesStatus};
 use crate::collect::procfs::{
     build_masked_env, collect_comfyui_status, collect_memory_and_disk, collect_services_status,
@@ -40,6 +41,8 @@ pub struct StatusApiPayload {
     pub errors_recent: Vec<RecentError>,
     pub triage: Vec<TriageHit>,
     pub env_masked: BTreeMap<String, String>,
+    /// Estado de pesos del perfil medido en disco (qué falta y qué llegó).
+    pub weights: WeightStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub strict: Option<StrictReport>,
 }
@@ -66,6 +69,7 @@ pub fn build_status_api_payload(
 
     let services = collect_services_status(cfg);
     let strict = load_strict_report(&cfg.strict_json_path);
+    let weights = collect_weight_status(&cfg.comfy_data_dir, cfg.model_profile.as_str());
     let phase_banner = format_phase_banner(&comfyui, &phases, strict.as_ref());
 
     let mut log_buffers: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -133,6 +137,7 @@ pub fn build_status_api_payload(
         errors_recent,
         triage,
         env_masked,
+        weights,
         strict,
     }
 }

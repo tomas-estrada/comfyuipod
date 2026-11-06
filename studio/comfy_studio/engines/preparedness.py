@@ -392,6 +392,7 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
         EnginePrepSpec(
             name="atlas-offline",
             modules=("comfy_studio.atlas.packaging",),
+            config_env=("STUDIO_ATLAS_ROOT",),
             note="empaquetado/verificación del bundle del atlas; módulo packaging",
         ),
         EnginePrepSpec(

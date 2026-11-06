@@ -1502,6 +1502,45 @@ def test_panel_chat_after_deleting_only_project_recovers_and_never_posts_to_dele
     assert "toast-success" in after_chat["toastClass"]
 
 
+def test_panel_surfaces_load_errors_for_templates_jobs_and_gallery() -> None:
+    """Los refrescos automáticos avisan cuando la API falla en vez de tragarse el error."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+
+    for function_name in ("loadTemplates", "refreshJobs", "refreshGallery"):
+        fn_start = app_js.index(f"async function {function_name}(")
+        next_fn = app_js.find("async function ", fn_start + 1)
+        fn_end = next_fn if next_fn != -1 else len(app_js)
+        fn_body = app_js[fn_start:fn_end]
+        assert "setToast" in fn_body, f"{function_name} debe avisar al usuario si falla la API"
+        assert "catch" in fn_body
+        assert "Ignorar error" not in fn_body
+        assert "Ignorar error transitorio" not in fn_body
+
+
+def test_panel_health_shows_engine_preparation_and_missing_weights() -> None:
+    """El panel distingue alcanzable de preparado: pesos ausentes y stubs son visibles."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "weights_present" in app_js
+    assert "weights_required" in app_js
+    assert "missing" in app_js
+    assert "simulated" in app_js
+    assert "health.engines" in app_js
+
+
+def test_panel_health_does_not_claim_comfyui_ready_without_engine_preparation() -> None:
+    """Un ComfyUI alcanzable no se etiqueta como listo si falta preparación."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+    health_fn_start = app_js.index("async function refreshHealthAndStatus()")
+    health_fn_end = app_js.index("function renderEnginePreparation(", health_fn_start)
+    health_fn = app_js[health_fn_start:health_fn_end]
+
+    assert "health.comfyui === \"ok\"" in health_fn
+    assert "health.engines" in health_fn
+    assert "ComfyUI: OK" not in health_fn
+    assert "ComfyUI: reachable" not in health_fn
+
+
 def test_panel_render_template_doc_uses_api_template_schema(
     client: TestClient,
 ) -> None:

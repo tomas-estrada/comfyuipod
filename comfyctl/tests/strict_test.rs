@@ -918,3 +918,107 @@ fn strict_unknown_model_profile_warns_and_never_falls_over() {
     // Nunca fatal: con STRICT_START activo el resultado general queda en 'warn'.
     assert_eq!(rep.result, "warn");
 }
+
+#[test]
+fn strict_ram_probe_failure_warns_without_remediation_and_is_never_fatal() {
+    // Rama `else` de S4: si no se puede leer /proc/meminfo el check sale en
+    // `warn` con el detalle que explica la causa y SIN remediation —no hay nada
+    // que remediar si no conocemos la RAM—. Se prueban los dos valores que puede
+    // arrastrar un probe caido:
+    //   - 65536 (RAM sana): sin el guard `if snap.ram_probe_ok` el check daria
+    //     la RAM por buena y saldria `ok`;
+    //   - 0 (el probe ni devolvio valor): sin el guard saldria `fatal` y
+    //     bloquearia el arranque.
+    // En ambos casos lo correcto es el mismo aviso.
+    let cfg = RuntimeConfig::from_map(&consumer_profile_vars(), None);
+
+    for ram_mb in [65_536, 0] {
+        let mut snap = base_healthy_snapshot();
+        snap.ram_probe_ok = false;
+        snap.ram_total_mb = ram_mb;
+        let rep = evaluate_strict_checks(&cfg, &snap);
+
+        assert_eq!(
+            rep.checks.len(),
+            11,
+            "[{ram_mb} MB] ningun check debe desaparecer: {:?}",
+            rep.checks
+        );
+
+        let s4 = rep.checks.iter().find(|c| c.id == "S4");
+        assert!(
+            matches!(
+                s4,
+                Some(c) if c.status == "warn"
+                    && c.remediation.is_none()
+                    && c.detail.contains("meminfo")
+            ),
+            "[{ram_mb} MB] S4 debia quedar en warn, sin remediation y con el detalle del probe caido: {s4:?}"
+        );
+
+        // El mismo campo alimenta el `ram_ok` de S17: tambien baja a warn en
+        // lugar de volverse fatal cuando la RAM no pudo medirse.
+        let s17 = rep.checks.iter().find(|c| c.id == "S17");
+        assert!(
+            matches!(s17, Some(c) if c.status == "warn"),
+            "[{ram_mb} MB] S17 debia avisar al no poder confirmar la RAM del host: {s17:?}"
+        );
+
+        // Un probe caido avisa; nunca bloquea el arranque.
+        assert_eq!(
+            rep.result, "warn",
+            "[{ram_mb} MB] solo deben quedar avisos: {:?}",
+            rep.checks
+        );
+    }
+}
+
+#[test]
+fn strict_workspace_and_install_failures_are_fatal_with_remediation() {
+    // Brazo de fallo de S6 (workspace no escribible) y S8 (instalacion de
+    // ComfyUI incompleta). Ambos usan `status_for(ok, true)`, asi que con
+    // STRICT_START activo son FATAL y cada uno arrastra su propia remediation.
+    // Hasta ahora solo se habian ejercitado en su brazo ok (test del runner CI).
+    let cfg = RuntimeConfig::from_map(&consumer_profile_vars(), None);
+    assert!(cfg.strict_start, "este test asume STRICT_START activo");
+
+    let mut snap = base_healthy_snapshot();
+    snap.workspace_writable = false;
+    snap.comfy_install_ok = false;
+    snap.comfy_install_detail = "falta extra_model_paths.yaml".to_string();
+
+    let rep = evaluate_strict_checks(&cfg, &snap);
+
+    let s6 = rep.checks.iter().find(|c| c.id == "S6");
+    assert!(
+        matches!(
+            s6,
+            Some(c) if c.status == "fatal"
+                && c.detail.contains("No se puede escribir")
+                && c.remediation
+                    .as_deref()
+                    .is_some_and(|r| r.contains("solo lectura"))
+        ),
+        "S6 debia fallar en fatal con la remediation de volumen montado en solo lectura: {s6:?}"
+    );
+
+    let s8 = rep.checks.iter().find(|c| c.id == "S8");
+    assert!(
+        matches!(
+            s8,
+            Some(c) if c.status == "fatal"
+                && c.detail.contains("falta extra_model_paths.yaml")
+                && c.remediation
+                    .as_deref()
+                    .is_some_and(|r| r.contains("/opt/ComfyUI"))
+        ),
+        "S8 debia fallar en fatal con la remediation de imagen Docker: {s8:?}"
+    );
+
+    // Dos prerrequisitos caidos = arranque bloqueado.
+    assert_eq!(
+        rep.result, "fatal",
+        "el resultado general debia ser fatal: {:?}",
+        rep.checks
+    );
+}

@@ -35,6 +35,18 @@ DEFAULT_MAX_LLM_CALLS_PER_TURN = 24
 HISTORY_SUMMARY_THRESHOLD = 40
 HISTORY_KEEP_RECENT = 20
 SUB_AGENT_MAX_ITERATIONS = 4
+MAX_TOOL_RESULT_CHARS = 16000
+
+
+def _serialize_tool_result_for_context(result: dict[str, Any]) -> str:
+    serialized = json.dumps(result, ensure_ascii=False, default=str)
+    if len(serialized) <= MAX_TOOL_RESULT_CHARS:
+        return serialized
+    marker = (
+        f"\n...[truncado: resultado de herramienta truncado a {MAX_TOOL_RESULT_CHARS} "
+        f"caracteres para el contexto; total {len(serialized)} caracteres]"
+    )
+    return serialized[:MAX_TOOL_RESULT_CHARS] + marker
 
 # M1.4: `max_iterations` y el agotamiento del presupuesto de llamadas LLM son
 # condiciones DISTINTAS con remedios distintos (subir iteraciones vs subir el
@@ -519,6 +531,7 @@ class StudioAgent:
             broker=self._broker,
             config=self._config,
             delegate_runner=_delegate_runner if self._allow_delegation else None,
+            call_budget=budget,
         )
 
         all_tool_calls: list[dict[str, Any]] = []
@@ -714,19 +727,20 @@ class StudioAgent:
                 )
                 yield res_ev
 
+                tool_content = _serialize_tool_result_for_context(safe_res)
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "name": tc.name,
-                        "content": json.dumps(safe_res, ensure_ascii=False),
+                        "content": tool_content,
                     }
                 )
                 if self._persist_memory:
                     self._store.add_chat_message(
                         project["id"],
                         role="tool",
-                        content=json.dumps(safe_res, ensure_ascii=False),
+                        content=tool_content,
                         tool_calls=[
                             {"tool_call_id": tc.id, "name": tc.name, "is_error": is_error}
                         ],
