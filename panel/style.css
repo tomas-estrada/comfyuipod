@@ -845,3 +845,193 @@ a:focus-visible {
 .atlas-view-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .atlas-view-card img { width: 100%; border-radius: 6px; aspect-ratio: 4 / 3; object-fit: cover; background: #0e1420; }
 .badge { background: var(--accent, #2c6); color: #04140b; border-radius: 999px; padding: 2px 10px; font-size: 12px; align-self: center; }
+
+
+/* Cinematic Studio: local still-image direction workspace */
+.cinematic-hero {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    padding: 1.25rem 1.4rem;
+    border: 1px solid rgba(56, 189, 248, 0.32);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(120deg, rgba(14, 116, 144, 0.28), var(--bg-surface) 64%);
+}
+
+.cinematic-hero h2 {
+    margin: 0.2rem 0 0;
+    font-size: clamp(1.35rem, 2.5vw, 1.8rem);
+    letter-spacing: -0.02em;
+}
+
+.cinematic-hero p {
+    margin: 0.35rem 0 0;
+    color: var(--text-secondary);
+}
+
+.cinematic-eyebrow {
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+}
+
+.cinematic-local-badge {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(52, 211, 153, 0.4);
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+    background: var(--success-bg);
+    color: var(--success);
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.cinematic-license-notice {
+    margin-bottom: 1rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid rgba(251, 191, 36, 0.45);
+    border-radius: var(--radius-md);
+    background: var(--warning-bg);
+    color: #fde68a;
+    font-size: 0.84rem;
+}
+
+.cinematic-license-notice a {
+    color: #fef3c7;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+
+.cinematic-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.85fr);
+    align-items: start;
+    gap: 1.1rem;
+}
+
+.cinematic-options-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.8rem;
+}
+
+.cinematic-label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.cinematic-counter {
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.cinematic-advanced {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.75rem 0.85rem;
+    background: rgba(15, 23, 42, 0.35);
+}
+
+.cinematic-advanced summary {
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 0.88rem;
+    font-weight: 700;
+}
+
+.cinematic-advanced[open] summary {
+    margin-bottom: 0.8rem;
+}
+
+.cinematic-advanced .form-group + .form-row,
+.cinematic-advanced .form-row + .checkbox-label,
+.cinematic-advanced .checkbox-label + .form-group {
+    margin-top: 0.7rem;
+}
+
+.cinematic-hint {
+    margin: 0.45rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
+.cinematic-actions {
+    align-items: center;
+}
+
+.cinematic-actions .inline-status {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.cinematic-prompt-preview {
+    min-height: 9rem;
+    margin: 0;
+    padding: 0.9rem;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: #080d18;
+    color: #dbeafe;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.84rem;
+    line-height: 1.65;
+}
+
+.cinematic-job-status {
+    margin-bottom: 0.75rem;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    font-size: 0.84rem;
+    overflow-wrap: anywhere;
+}
+
+.cinematic-pipeline-note {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    line-height: 1.55;
+}
+
+#cinematic-jobs-link[hidden],
+#cinematic-gallery-link[hidden] {
+    display: none !important;
+}
+
+.cinematic-side-panel > .btn + .btn {
+    margin-left: 0.35rem;
+}
+
+@media (max-width: 960px) {
+    .cinematic-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 620px) {
+    .cinematic-options-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .cinematic-hero {
+        align-items: flex-start;
+        padding: 1rem;
+    }
+}
+
+#cinematic-seed-group[hidden] {
+    display: none !important;
+}

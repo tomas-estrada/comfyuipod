@@ -16,6 +16,11 @@
         galleryItems: [],
         selectedGalleryAssetId: null,
         templates: [],
+        cinematicOptions: null,
+        cinematicOptionsLoading: false,
+        cinematicJobId: null,
+        cinematicJobProjectId: null,
+        cinematicLastProjectId: null,
         jobs: [],
         edlData: null,
         adsData: null,
@@ -132,7 +137,7 @@
     }
 
     function switchView(viewName) {
-        const validViews = ["projects", "chat", "jobs", "gallery", "edl", "ads", "atlas", "login"];
+        const validViews = ["projects", "chat", "jobs", "cinematic", "gallery", "edl", "ads", "atlas", "login"];
         const target = validViews.includes(viewName) ? viewName : "projects";
         state.activeView = target;
 
@@ -154,6 +159,9 @@
 
         if (target === "jobs") {
             refreshJobs();
+        } else if (target === "cinematic") {
+            loadCinematicOptions();
+            renderCinematicWorkspace();
         } else if (target === "gallery") {
             refreshGallery();
         } else if (target === "edl") {
@@ -164,6 +172,284 @@
             refreshAtlas();
         } else if (target === "login") {
             refreshHealthAndStatus();
+        }
+    }
+
+    const CINEMATIC_SELECT_IDS = {
+        shot: "cinematic-shot-select",
+        camera: "cinematic-camera-select",
+        light: "cinematic-light-select",
+        look: "cinematic-look-select",
+    };
+
+    function fillCinematicSelect(select, choices, selectedValue, valueKey, labelKey) {
+        if (!select) return;
+        select.replaceChildren();
+        choices.forEach((choice) => {
+            const option = document.createElement("option");
+            option.value = valueKey ? String(choice[valueKey]) : String(choice);
+            option.textContent = labelKey ? String(choice[labelKey]) : String(choice);
+            select.appendChild(option);
+        });
+        if (selectedValue != null) select.value = String(selectedValue);
+    }
+
+    async function loadCinematicOptions() {
+        if (state.cinematicOptions || state.cinematicOptionsLoading) return;
+        state.cinematicOptionsLoading = true;
+        const statusEl = document.getElementById("cinematic-submit-status");
+        if (statusEl) statusEl.textContent = "Cargando dirección y formatos…";
+        try {
+            const response = await apiFetch("/studio/api/cinematic/options");
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            if (!data.choices || !data.defaults || !Array.isArray(data.aspect_ratios)) {
+                throw new Error("La respuesta de opciones no tiene el formato esperado.");
+            }
+            state.cinematicOptions = data;
+            Object.entries(CINEMATIC_SELECT_IDS).forEach(([field, id]) => {
+                fillCinematicSelect(
+                    document.getElementById(id),
+                    data.choices[field] || [],
+                    data.defaults[field]
+                );
+            });
+            fillCinematicSelect(
+                document.getElementById("cinematic-aspect-select"),
+                data.aspect_ratios,
+                data.defaults.aspect_ratio,
+                "value",
+                "label"
+            );
+            const negative = document.getElementById("cinematic-negative-input");
+            const steps = document.getElementById("cinematic-steps-input");
+            const cfg = document.getElementById("cinematic-cfg-input");
+            const randomSeed = document.getElementById("cinematic-random-seed");
+            const seed = document.getElementById("cinematic-seed-input");
+            if (negative) negative.value = data.defaults.negative_prompt || "";
+            if (steps) steps.value = String(data.defaults.steps);
+            if (cfg) cfg.value = String(data.defaults.cfg);
+            if (randomSeed) randomSeed.checked = Boolean(data.defaults.random_seed);
+            if (seed) seed.value = String(data.defaults.seed);
+            state.cinematicLastProjectId = null;
+        } catch (err) {
+            if (statusEl) {
+                statusEl.textContent = `No se pudieron cargar las opciones: ${err.message}. Vuelve a abrir esta vista para reintentar.`;
+            }
+        } finally {
+            state.cinematicOptionsLoading = false;
+            renderCinematicWorkspace();
+        }
+    }
+
+    function updateCinematicPromptPreview() {
+        const options = state.cinematicOptions;
+        const sceneEl = document.getElementById("cinematic-scene-input");
+        const previewEl = document.getElementById("cinematic-prompt-preview");
+        const countEl = document.getElementById("cinematic-scene-count");
+        const scene = sceneEl ? sceneEl.value.trim() : "";
+        if (countEl) {
+            const limit = options && options.limits ? options.limits.scene_max_length : 900;
+            countEl.textContent = `${sceneEl ? sceneEl.value.length : 0} / ${limit}`;
+        }
+        if (previewEl) {
+            if (!options) {
+                previewEl.textContent = "El prompt aparecerá aquí cuando carguen las opciones.";
+            } else {
+                const shot = document.getElementById(CINEMATIC_SELECT_IDS.shot)?.value || "";
+                const camera = document.getElementById(CINEMATIC_SELECT_IDS.camera)?.value || "";
+                const light = document.getElementById(CINEMATIC_SELECT_IDS.light)?.value || "";
+                const look = document.getElementById(CINEMATIC_SELECT_IDS.look)?.value || "";
+                const firstParts = [shot, scene].filter(Boolean);
+                const finalParts = [camera, light, look].filter(Boolean);
+                const sceneHasPunctuation = /[.!?…]$/u.test(scene);
+                const composed = firstParts.length && finalParts.length
+                    ? `${firstParts.join(". ")}${sceneHasPunctuation ? " " : ". "}${finalParts.join(". ")}`
+                    : firstParts.concat(finalParts).join(". ");
+                previewEl.textContent = composed || "Escribe una escena para componer el prompt.";
+            }
+        }
+        const randomSeed = document.getElementById("cinematic-random-seed");
+        const seedGroup = document.getElementById("cinematic-seed-group");
+        const seedInput = document.getElementById("cinematic-seed-input");
+        const useRandom = Boolean(randomSeed && randomSeed.checked);
+        if (seedGroup) seedGroup.hidden = useRandom;
+        if (seedInput) seedInput.disabled = useRandom;
+    }
+
+    function renderCinematicWorkspace() {
+        const project =
+            state.projects.find((item) => item.id === state.activeProjectId) ||
+            (state.activeProjectDetail && state.activeProjectDetail.id === state.activeProjectId
+                ? state.activeProjectDetail
+                : null);
+        if (state.cinematicLastProjectId !== state.activeProjectId) {
+            const aspect = document.getElementById("cinematic-aspect-select");
+            const validAspects = new Set(
+                (state.cinematicOptions && state.cinematicOptions.aspect_ratios || []).map(
+                    (item) => item.value
+                )
+            );
+            if (project && aspect && validAspects.has(project.aspect_ratio)) {
+                aspect.value = project.aspect_ratio;
+            }
+            if (state.cinematicJobProjectId && state.cinematicJobProjectId !== state.activeProjectId) {
+                state.cinematicJobId = null;
+                state.cinematicJobProjectId = null;
+                const jobStatus = document.getElementById("cinematic-job-status");
+                const jobsLink = document.getElementById("cinematic-jobs-link");
+                const galleryLink = document.getElementById("cinematic-gallery-link");
+                if (jobStatus) jobStatus.textContent = "Los jobs aparecerán aquí después de enviar un render.";
+                if (jobsLink) jobsLink.hidden = true;
+                if (galleryLink) galleryLink.hidden = true;
+            }
+            state.cinematicLastProjectId = state.activeProjectId;
+        }
+        const badge = document.getElementById("cinematic-project-badge");
+        if (badge) {
+            badge.textContent = project
+                ? `Proyecto: ${project.name || project.id}`
+                : "Selecciona un proyecto";
+        }
+        const submit = document.getElementById("cinematic-submit-btn");
+        if (submit) submit.disabled = !state.activeProjectId || !state.cinematicOptions;
+        const statusEl = document.getElementById("cinematic-submit-status");
+        if (statusEl && !state.cinematicOptions && !state.cinematicOptionsLoading) {
+            statusEl.textContent = "No se pudieron cargar las opciones; vuelve a abrir esta vista para reintentar.";
+        } else if (statusEl && !state.cinematicJobId && !state.cinematicOptionsLoading) {
+            statusEl.textContent = project
+                ? "Listo. El resultado se guardará en este proyecto."
+                : "Selecciona o crea un proyecto antes de generar.";
+        }
+        updateCinematicPromptPreview();
+    }
+
+    function resetCinematicDirection() {
+        const options = state.cinematicOptions;
+        if (!options) return;
+        Object.entries(CINEMATIC_SELECT_IDS).forEach(([field, id]) => {
+            const select = document.getElementById(id);
+            if (select) select.value = options.defaults[field];
+        });
+        const project = state.projects.find((item) => item.id === state.activeProjectId);
+        const aspect = document.getElementById("cinematic-aspect-select");
+        if (aspect) {
+            const validAspects = new Set(options.aspect_ratios.map((item) => item.value));
+            aspect.value = project && validAspects.has(project.aspect_ratio)
+                ? project.aspect_ratio
+                : options.defaults.aspect_ratio;
+        }
+        const negative = document.getElementById("cinematic-negative-input");
+        const steps = document.getElementById("cinematic-steps-input");
+        const cfg = document.getElementById("cinematic-cfg-input");
+        const randomSeed = document.getElementById("cinematic-random-seed");
+        const seed = document.getElementById("cinematic-seed-input");
+        if (negative) negative.value = options.defaults.negative_prompt;
+        if (steps) steps.value = String(options.defaults.steps);
+        if (cfg) cfg.value = String(options.defaults.cfg);
+        if (randomSeed) randomSeed.checked = Boolean(options.defaults.random_seed);
+        if (seed) seed.value = String(options.defaults.seed);
+        updateCinematicPromptPreview();
+    }
+
+    async function copyCinematicPrompt() {
+        const preview = document.getElementById("cinematic-prompt-preview");
+        const prompt = preview ? preview.textContent.trim() : "";
+        if (!prompt || !state.cinematicOptions || !navigator.clipboard) {
+            setToast("No hay un prompt listo para copiar en este contexto.", "error");
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(prompt);
+            setToast("Prompt copiado al portapapeles.", "success");
+        } catch (_err) {
+            setToast("El navegador no permitió copiar el prompt.", "error");
+        }
+    }
+
+    async function submitCinematicRender(event) {
+        event.preventDefault();
+        const projectId = state.activeProjectId;
+        const options = state.cinematicOptions;
+        const statusEl = document.getElementById("cinematic-submit-status");
+        const jobStatus = document.getElementById("cinematic-job-status");
+        const submit = document.getElementById("cinematic-submit-btn");
+        if (!projectId || !options) {
+            if (statusEl) statusEl.textContent = "Selecciona un proyecto y espera a que carguen las opciones.";
+            return;
+        }
+        const randomSeedEl = document.getElementById("cinematic-random-seed");
+        const payload = {
+            scene: document.getElementById("cinematic-scene-input").value,
+            shot: document.getElementById(CINEMATIC_SELECT_IDS.shot).value,
+            camera: document.getElementById(CINEMATIC_SELECT_IDS.camera).value,
+            light: document.getElementById(CINEMATIC_SELECT_IDS.light).value,
+            look: document.getElementById(CINEMATIC_SELECT_IDS.look).value,
+            aspect_ratio: document.getElementById("cinematic-aspect-select").value,
+            negative_prompt: document.getElementById("cinematic-negative-input").value,
+            steps: Number(document.getElementById("cinematic-steps-input").value),
+            cfg: Number(document.getElementById("cinematic-cfg-input").value),
+            random_seed: Boolean(randomSeedEl && randomSeedEl.checked),
+            seed: Number(document.getElementById("cinematic-seed-input").value),
+        };
+        if (submit) submit.disabled = true;
+        if (statusEl) statusEl.textContent = "Enviando el plano a la cola local de ComfyUI…";
+        if (jobStatus) jobStatus.textContent = "Validando ajustes y creando el job del proyecto…";
+        try {
+            const response = await apiFetch(
+                `/studio/api/projects/${encodeURIComponent(projectId)}/cinematic/submit`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                }
+            );
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                const detail = typeof result.detail === "string" ? result.detail : `HTTP ${response.status}`;
+                throw new Error(detail);
+            }
+            state.cinematicJobId = result.job_id;
+            state.cinematicJobProjectId = projectId;
+            const jobLink = document.getElementById("cinematic-jobs-link");
+            const galleryLink = document.getElementById("cinematic-gallery-link");
+            if (jobLink) jobLink.hidden = false;
+            if (galleryLink) galleryLink.hidden = true;
+            if (jobStatus) {
+                jobStatus.textContent = `Job ${result.job_id} en cola · ${result.width}×${result.height} · semilla ${result.seed}.`;
+            }
+            if (statusEl) statusEl.textContent = `Render encolado en el proyecto. Job ${result.job_id}.`;
+            const seed = document.getElementById("cinematic-seed-input");
+            if (seed) seed.value = String(result.seed);
+            setToast(`Render cinematográfico encolado: ${result.job_id}.`, "success");
+            if (state.activeProjectId === projectId) {
+                await refreshJobs();
+                const savedJob = state.jobs.find((job) => job.id === result.job_id);
+                if (savedJob) {
+                    updateCinematicJobStatus({ job_id: result.job_id, status: savedJob.status });
+                }
+            }
+        } catch (err) {
+            if (jobStatus) jobStatus.textContent = `No se pudo encolar el render: ${err.message}`;
+            if (statusEl) statusEl.textContent = "El render no se pudo enviar. Revisa los ajustes y vuelve a intentar.";
+            setToast(`Error al generar imagen: ${err.message}`, "error");
+        } finally {
+            renderCinematicWorkspace();
+        }
+    }
+
+    function updateCinematicJobStatus(data) {
+        if (!data || data.job_id !== state.cinematicJobId) return;
+        const jobStatus = document.getElementById("cinematic-job-status");
+        const galleryLink = document.getElementById("cinematic-gallery-link");
+        const statusEl = document.getElementById("cinematic-submit-status");
+        const label = String(data.status || "updated");
+        if (jobStatus) jobStatus.textContent = `Job ${data.job_id}: ${label}.`;
+        if (label === "done") {
+            if (galleryLink) galleryLink.hidden = false;
+            if (statusEl) statusEl.textContent = "Imagen generada y guardada en la galería del proyecto.";
+        } else if (["error", "failed", "cancelled", "interrupted"].includes(label)) {
+            if (statusEl) statusEl.textContent = `El render terminó con estado ${label}. Consulta el job para ver el detalle.`;
         }
     }
 
@@ -315,6 +601,7 @@
                 renderProjectAssets();
                 renderKeyframesSelector();
                 renderTemplateAssetOptions();
+                renderCinematicWorkspace();
             }
         } catch (_err) {
             setToast("No se pudo cargar la lista de proyectos.", "error");
@@ -462,6 +749,7 @@
         state.activeProjectId = projectId;
         renderProjectsList();
         syncChatControlsState();
+        renderCinematicWorkspace();
 
         const reqSeq = ++state.selectProjectSeq;
         const runSelect = (async () => {
@@ -486,6 +774,7 @@
                 state.activeProjectDetail = detail;
                 state.assets = Array.isArray(detail.assets) ? detail.assets : [];
                 state.jobs = Array.isArray(detail.jobs) ? detail.jobs : [];
+                renderCinematicWorkspace();
                 if (Array.isArray(detail.edl_versions)) {
                     state.edlData = {
                         project_id: projectId,
@@ -2665,6 +2954,7 @@
             es.addEventListener("job", function (evt) {
                 try {
                     const data = JSON.parse(evt.data);
+                    updateCinematicJobStatus(data);
                     if (banner) {
                         banner.innerHTML = `Actualización de Job <code>${escapeHtml(data.job_id || "")}</code>: estado <strong>${escapeHtml(data.status || "updated")}</strong>`;
                     }
@@ -2862,6 +3152,28 @@
             btn.addEventListener("click", () => {
                 switchView(btn.getAttribute("data-view"));
             });
+        });
+
+        const cinematicForm = document.getElementById("cinematic-submit-form");
+        if (cinematicForm) cinematicForm.addEventListener("submit", submitCinematicRender);
+        const cinematicReset = document.getElementById("cinematic-reset-btn");
+        if (cinematicReset) cinematicReset.addEventListener("click", resetCinematicDirection);
+        const cinematicCopy = document.getElementById("cinematic-copy-prompt-btn");
+        if (cinematicCopy) cinematicCopy.addEventListener("click", copyCinematicPrompt);
+        [
+            "cinematic-scene-input",
+            "cinematic-shot-select",
+            "cinematic-camera-select",
+            "cinematic-light-select",
+            "cinematic-look-select",
+            "cinematic-aspect-select",
+            "cinematic-random-seed",
+        ].forEach((id) => {
+            const control = document.getElementById(id);
+            if (control) {
+                control.addEventListener("input", updateCinematicPromptPreview);
+                control.addEventListener("change", updateCinematicPromptPreview);
+            }
         });
 
         const refreshAtlasBtn = document.getElementById("refresh-atlas-btn");
@@ -3382,6 +3694,8 @@
         await refreshHealthAndStatus();
         await loadTemplates();
         await refreshProjects();
+        await loadCinematicOptions();
+        renderCinematicWorkspace();
         connectProgressSse();
     }
 

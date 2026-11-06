@@ -86,12 +86,14 @@ def test_panel_static_files_served_at_studio_root(client: TestClient) -> None:
         "nav-projects",
         "nav-chat",
         "nav-jobs",
+        "nav-cinematic",
         "nav-gallery",
         "nav-edl",
         "nav-login",
         "view-projects",
         "view-chat",
         "view-jobs",
+        "view-cinematic",
         "view-gallery",
         "view-edl",
         "view-login",
@@ -117,6 +119,8 @@ def test_panel_static_files_served_at_studio_root(client: TestClient) -> None:
     assert "javascript" in resp_js.headers.get("content-type", "")
     assert "/studio/api/projects" in resp_js.text
     assert "/studio/api/progress" in resp_js.text
+    assert "/studio/api/cinematic/options" in resp_js.text
+    assert "cinematic-submit-form" in html
 
     # /favicon.ico responde 204 para evitar errores 404 en consola del navegador
     resp_fav = client.get("/favicon.ico")
@@ -1593,4 +1597,3 @@ def test_panel_does_not_offer_templates_without_weights(client: TestClient) -> N
     assert len(result["optionsAfter"]) > len(options_before) - 1
     # La tarjeta de documentación muestra la plantilla seleccionada (disponible).
     assert result["optionsAfter"][0] in result["docCardText"] or "Wan" in result["docCardText"]
-
