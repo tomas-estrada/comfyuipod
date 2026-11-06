@@ -480,6 +480,9 @@ class SearchResult:
             "coverage": self.coverage,
             "matched_nodes": list(self.matched_nodes),
             "installed_pack": self.installed_pack,
+            # Procedencia también en la raíz: quién consume el resultado no tiene
+            # que entrar en `template` para saber si el índice era real y fresco.
+            "provenance": self.template.provenance,
         }
 
 
@@ -498,6 +501,7 @@ class DiscoveredTemplate:
     text: str  # resumen/descripción para el match léxico
     required_nodes: list[str] = field(default_factory=list)
     source: str = "community"
+    provenance: str = ""  # 'community:cache' | 'community:network' | 'community:unavailable' | ''
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -507,6 +511,7 @@ class DiscoveredTemplate:
             "text": self.text,
             "required_nodes": list(self.required_nodes),
             "source": self.source,
+            "provenance": self.provenance,
         }
 
 
@@ -581,6 +586,14 @@ class CommunityTemplateSearch:
         if not index_result.entries:
             return []
 
+        # Map the fetch source to a provenance label visible to callers.
+        if index_result.source == "network":
+            provenance = "community:network"
+        elif index_result.source == "cache":
+            provenance = "community:cache"
+        else:
+            provenance = "community:unavailable"
+
         # Score every entry.
         results: list[SearchResult] = []
         for entry in index_result.entries:
@@ -596,6 +609,7 @@ class CommunityTemplateSearch:
                         text=entry.title + ". " + entry.description,
                         required_nodes=list(matched),
                         source="community",
+                        provenance=provenance,
                     ),
                     relevance=relevance,
                     coverage=coverage,
@@ -629,10 +643,17 @@ class CommunityTemplateSearch:
         *,
         output_kind: str,
         limit: int,
+        installed_nodes: set[str] | Iterable[str] | None = None,
     ) -> list[DiscoveredTemplate]:
         """Satisfy the ``DiscoveryProvider`` protocol.
 
         ``output_kind`` is accepted but the public index has no output_kind
         field, so it is intentionally ignored (no fabricated filter).
+
+        ``installed_nodes`` is forwarded to ``search_templates`` so that
+        community packs can attribute their required node classes from the
+        pod's actual installed nodes.
         """
-        return self.search_templates(query, limit=limit)
+        return self.search_templates(
+            query, installed_nodes=installed_nodes, limit=limit
+        )
