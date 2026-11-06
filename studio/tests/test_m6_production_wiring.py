@@ -117,7 +117,7 @@ def test_normal_studio_project_flow_publishes_cpu_video_artifact(
             return {"ok": True, "output_path": str(clip)}
 
     class Evaluator:
-        def evaluate(self, _shot):
+        def evaluate(self, _shot, *, cancel_event=None):
             return {"vbench": 1.0, "semantic": 1.0}
 
     class Assembler:
