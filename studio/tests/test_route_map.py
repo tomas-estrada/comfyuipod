@@ -1,7 +1,6 @@
-"""M7-SCR-002: paridad del mapa de rutas tras la extracción de app.py a routers/.
+"""M7-SCR-002: paridad del mapa tras extraer app.py a routers/ y rutas posteriores.
 
-Lista dorada (método + path) generada con el `app.py` monolítico original; la app
-tras el split debe exponer exactamente las mismas rutas.
+La lista conserva las rutas del monolito original e incluye extensiones intencionales.
 """
 
 from __future__ import annotations
@@ -36,6 +35,7 @@ EXPECTED_ROUTES: list[str] = [
     "GET /studio/api/atlas/selection",
     "GET /studio/api/atlas/stats",
     "GET /studio/api/atlas/verify",
+    "GET /studio/api/cinematic/options",
     "POST /studio/api/atlas/select-view",
     "GET /studio/api/health",
     "GET /studio/api/jobs",
@@ -102,6 +102,7 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/brief/understand",
     "POST /studio/api/projects/{project_id}/brief/{version}/approve",
     "POST /studio/api/projects/{project_id}/chat",
+    "POST /studio/api/projects/{project_id}/cinematic/submit",
     "POST /studio/api/projects/{project_id}/diarize",
     "POST /studio/api/projects/{project_id}/edl",
     "POST /studio/api/projects/{project_id}/edl/build",

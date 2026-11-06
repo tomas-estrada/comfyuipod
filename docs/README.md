@@ -13,6 +13,7 @@ Este índice orienta la documentación del repositorio y señala cuál es la fue
 | Arquitectura canónica en 5 fases (línea base aprobada, matriz de requisitos y contrato de variables/secretos) | [`ARCHITECTURE_CANONICAL.md`](ARCHITECTURE_CANONICAL.md) |
 | Consultar plantillas incluidas y su finalidad | [`plantillas.md`](plantillas.md) |
 | Estudio de anuncios (brief → guion → storyboard → variantes con QA) | [`estudio_anuncios.md`](estudio_anuncios.md) |
+| Estudio Cinemático (dirección visual → prompt → render SDXL local) | [`cinematic-studio.md`](cinematic-studio.md) |
 | Investigación competitiva limpia (Kling, Higgsfield, Suno, “Omni”, +8) y selección open source | [`propuestas/INVESTIGACION_COMPETITIVA_2026-11-04.md`](propuestas/INVESTIGACION_COMPETITIVA_2026-11-04.md) |
 | Seguir el recorrido por carpetas y archivos principales | [`walkthrough.md`](walkthrough.md) |
 | Consultar decisiones técnicas y su justificación | [`decisiones.md`](decisiones.md) |

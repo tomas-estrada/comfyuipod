@@ -35,11 +35,14 @@
             <button type="button" id="nav-chat" class="nav-tab" data-view="chat" aria-selected="false">
                 2. Chat del Agente
             </button>
-            <button type="button" id="nav-jobs" class="nav-tab" data-view="jobs" aria-selected="false">
-                3. Jobs y Render
-            </button>
-            <button type="button" id="nav-gallery" class="nav-tab" data-view="gallery" aria-selected="false">
-                4. Galería y Descargas
+                <button type="button" id="nav-jobs" class="nav-tab" data-view="jobs" aria-selected="false">
+                    3. Jobs y Render
+                </button>
+                <button type="button" id="nav-cinematic" class="nav-tab" data-view="cinematic" aria-selected="false">
+                    Estudio Cinemático
+                </button>
+                <button type="button" id="nav-gallery" class="nav-tab" data-view="gallery" aria-selected="false">
+                    4. Galería y Descargas
             </button>
             <button type="button" id="nav-edl" class="nav-tab" data-view="edl" aria-selected="false">
                 5. Timeline EDL
@@ -386,6 +389,144 @@
                         <p class="empty-hint">No hay jobs registrados todavía.</p>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <!-- VISTA: ESTUDIO CINEMÁTICO (prompt composition + local SDXL template) -->
+        <section id="view-cinematic" class="studio-view" data-view-panel="cinematic" aria-labelledby="heading-cinematic" hidden>
+            <div class="cinematic-hero">
+                <div>
+                    <span class="cinematic-eyebrow">IMAGEN FIJA · COMFYUI LOCAL</span>
+                    <h2 id="heading-cinematic">Estudio Cinemático</h2>
+                    <p>Define la escena, compón el plano y genera una imagen dentro del proyecto activo.</p>
+                </div>
+                <span class="cinematic-local-badge">Sin API de generación alojada</span>
+            </div>
+
+            <div class="cinematic-license-notice" role="note">
+                <strong>Uso previsto: investigación y uso no comercial únicamente.</strong> El flujo SDXL existente usa Juggernaut XI, cuyo modelo está publicado bajo
+                <a href="https://huggingface.co/RunDiffusion/Juggernaut-XI-v11" target="_blank" rel="noopener noreferrer">CC BY-NC-ND 4.0</a>.
+                Sus términos incluyen uso no comercial, no distribuir derivados y restricciones de hospedaje; revisa el modelo antes de usarlo.
+                Este cambio no incluye pesos; el perfil de modelos existente puede descargarlos sujeto a acceso y licencia. Consulta también la <a href="https://github.com/tomas-estrada/comfyuipod/blob/main/docs/cinematic-studio.md" target="_blank" rel="noopener noreferrer">guía del Estudio Cinemático</a>.
+            </div>
+
+            <div class="cinematic-grid">
+                <section class="panel-card" aria-labelledby="cinematic-controls-heading">
+                    <div class="card-header">
+                        <div>
+                            <h3 id="cinematic-controls-heading">Diseña tu plano</h3>
+                            <p class="card-subtitle">La selección se compone en un prompt y se guarda con el job del proyecto.</p>
+                        </div>
+                        <span id="cinematic-project-badge" class="code-badge">Sin proyecto activo</span>
+                    </div>
+
+                    <form id="cinematic-submit-form" class="studio-form">
+                        <div class="form-group">
+                            <div class="cinematic-label-row">
+                                <label for="cinematic-scene-input">Escena</label>
+                                <span id="cinematic-scene-count" class="cinematic-counter">0 / 900</span>
+                            </div>
+                            <textarea id="cinematic-scene-input" name="scene" rows="4" minlength="3" maxlength="900" required
+                                      placeholder="Ej. Una viajera observa la ciudad desde una azotea bajo la lluvia al anochecer"></textarea>
+                        </div>
+
+                        <div class="cinematic-options-grid">
+                            <div class="form-group">
+                                <label for="cinematic-shot-select">Tipo de plano</label>
+                                <select id="cinematic-shot-select" name="shot" required>
+                                    <option value="">Cargando opciones…</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="cinematic-camera-select">Cámara y lente (guía textual)</label>
+                                <select id="cinematic-camera-select" name="camera" required>
+                                    <option value="">Cargando opciones…</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="cinematic-light-select">Iluminación</label>
+                                <select id="cinematic-light-select" name="light" required>
+                                    <option value="">Cargando opciones…</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="cinematic-look-select">Look de color</label>
+                                <select id="cinematic-look-select" name="look" required>
+                                    <option value="">Cargando opciones…</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="cinematic-aspect-select">Formato</label>
+                                <select id="cinematic-aspect-select" name="aspect_ratio" required>
+                                    <option value="">Cargando opciones…</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <details class="cinematic-advanced">
+                            <summary>Ajustes avanzados de generación</summary>
+                            <div class="form-group">
+                                <label for="cinematic-negative-input">Prompt negativo</label>
+                                <textarea id="cinematic-negative-input" name="negative_prompt" rows="2" maxlength="2000"></textarea>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group flex-1">
+                                    <label for="cinematic-steps-input">Pasos de muestreo</label>
+                                    <input type="number" id="cinematic-steps-input" name="steps" min="1" max="100" step="1" value="35" required>
+                                </div>
+                                <div class="form-group flex-1">
+                                    <label for="cinematic-cfg-input">CFG</label>
+                                    <input type="number" id="cinematic-cfg-input" name="cfg" min="1" max="20" step="0.1" value="5" required>
+                                </div>
+                            </div>
+                            <label class="checkbox-label" for="cinematic-random-seed">
+                                <input type="checkbox" id="cinematic-random-seed" name="random_seed" checked>
+                                Usar una semilla aleatoria para cada render
+                            </label>
+                            <div id="cinematic-seed-group" class="form-group" hidden>
+                                <label for="cinematic-seed-input">Semilla reproducible</label>
+                                <input type="number" id="cinematic-seed-input" name="seed" min="0" max="2147483647" step="1" value="42" required>
+                            </div>
+                            <p class="cinematic-hint">Juggernaut XI recomienda 30–40 pasos y CFG 3–7; los ajustes actuales se guardan en el job.</p>
+                        </details>
+
+                        <div class="form-actions cinematic-actions">
+                            <button type="submit" id="cinematic-submit-btn" class="btn btn-primary" disabled>
+                                Generar imagen en este proyecto
+                            </button>
+                            <button type="button" id="cinematic-reset-btn" class="btn btn-secondary">
+                                Restablecer dirección
+                            </button>
+                            <span id="cinematic-submit-status" class="inline-status" role="status" aria-live="polite">Carga las opciones y selecciona un proyecto para comenzar.</span>
+                        </div>
+                    </form>
+                </section>
+
+                <aside class="panel-card cinematic-side-panel" aria-label="Vista previa del prompt y estado del render">
+                    <div class="card-header">
+                        <div>
+                            <h3>Prompt compuesto</h3>
+                            <p class="card-subtitle">Vista previa en el mismo orden usado por el servidor.</p>
+                        </div>
+                        <button type="button" id="cinematic-copy-prompt-btn" class="btn btn-secondary btn-sm">Copiar</button>
+                    </div>
+                    <pre id="cinematic-prompt-preview" class="cinematic-prompt-preview" aria-live="polite">El prompt aparecerá aquí cuando carguen las opciones.</pre>
+                    <p class="cinematic-hint">El tipo de plano, lente y cámara son indicaciones de texto; no simulan físicamente una óptica.</p>
+                    <div class="divider"></div>
+                    <h4 class="section-subtitle">Seguimiento</h4>
+                    <div id="cinematic-job-status" class="cinematic-job-status" role="status" aria-live="polite">Los jobs aparecerán aquí después de enviar un render.</div>
+                    <button type="button" id="cinematic-jobs-link" class="btn btn-accent btn-sm" data-goto-view="jobs" hidden>
+                        Ver progreso en Jobs →
+                    </button>
+                    <button type="button" id="cinematic-gallery-link" class="btn btn-secondary btn-sm" data-goto-view="gallery" hidden>
+                        Abrir galería del proyecto →
+                    </button>
+                    <div class="divider"></div>
+                    <div class="cinematic-pipeline-note">
+                        <strong>Flujo local:</strong> SDXL existente → cola de ComfyUI → historial del proyecto → galería de salidas.
+                        No se crea un motor separado ni se envían imágenes a Comfy Router.
+                    </div>
+                </aside>
             </div>
         </section>
 
