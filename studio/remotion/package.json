@@ -11,10 +11,10 @@
     "render": "remotion render Reel"
   },
   "dependencies": {
-    "@remotion/cli": "4.0.413",
+    "@remotion/cli": "4.0.541",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "remotion": "4.0.413"
+    "remotion": "4.0.541"
   },
   "devDependencies": {
     "@types/react": "19.2.0",
