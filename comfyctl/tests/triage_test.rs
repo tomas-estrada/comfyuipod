@@ -276,3 +276,37 @@ fn truncate_chars_cuenta_caracteres_y_no_parte_multibyte() {
     assert_eq!(truncate_chars("año", 0), "");
     assert_eq!(truncate_chars("", 5), "");
 }
+
+#[test]
+fn triage_recent_errors_are_newest_first_and_default_to_reciente_without_timestamp() {
+    // `errors_recent` se construye recorriendo el buffer con `.rev()`: en
+    // /status/api el error más reciente debe salir primero. Y `ts_rx` solo
+    // reconoce una marca ISO al principio de la línea; si no la hay, el campo
+    // cae en el default "reciente" en lugar de quedar vacío.
+    let engine = TriageEngine::load(Some(Path::new("../scripts/triage_patterns.json")));
+    let mut buffers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    buffers.insert(
+        "comfyui".to_string(),
+        vec![
+            "2026-10-19 10:00:00 ERROR: fallo antiguo A".to_string(),
+            "2026-10-19 11:00:00 ERROR: fallo intermedio B".to_string(),
+            "ERROR: fallo sin marca de tiempo C".to_string(),
+        ],
+    );
+
+    let (_, recent) = engine.evaluate(&buffers, false);
+
+    assert_eq!(
+        recent.iter().map(|e| e.ts.as_str()).collect::<Vec<_>>(),
+        ["reciente", "2026-10-19 11:00:00", "2026-10-19 10:00:00",],
+        "errors_recent debe ir del mas reciente al mas antiguo: {recent:?}"
+    );
+    assert!(
+        recent.first().is_some_and(|e| e.line.contains('C')),
+        "el primero debe ser el error sin marca de tiempo: {recent:?}"
+    );
+    assert!(
+        recent.last().is_some_and(|e| e.line.contains('A')),
+        "el ultimo debe ser el mas antiguo: {recent:?}"
+    );
+}
