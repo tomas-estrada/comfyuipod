@@ -189,3 +189,49 @@ fn redactor_from_config_covers_vast_api_token_and_webhook_secret() {
     assert!(!cleaned.contains("webhook-secret-value-789"), "{cleaned}");
     assert!(cleaned.contains("[REDACTED]"));
 }
+
+#[test]
+fn redactor_does_not_mangle_port_urls_when_line_contains_later_email() {
+    // rx_url_auth debe cubrir `user:pass@host`, pero NO debe confundir los dos
+    // puntos de un PUERTO (`host:8443`) con los de unas credenciales: antes del
+    // fix, el `.*` voraz tragaba hasta el último `@` de la línea y destruía el
+    // puerto, el path y el email benignos (falsa redacción de texto no secreto).
+    let redactor = SecretRedactor::new(None, None);
+    let input = "GET https://api.example.com:8443/v1/models notify user@example.com ok";
+    let out = redactor.redact(input);
+    assert_eq!(
+        out, input,
+        "rx_url_auth mangled a benign URL+email line: {out}"
+    );
+}
+
+#[test]
+fn redactor_redacts_secrets_in_json_quoted_form() {
+    // Un dump de config en JSON escribe comillas entre el nombre y los dos
+    // puntos: `"STUDIO_LLM_KEY": "..."`. rx_studio_env exige `[:=]` justo tras
+    // el nombre, asi que antes del fix el valor se filtraba entero.
+    let redactor = SecretRedactor::new(None, None);
+    // El valor con espacios es la forma real de env_masked
+    // (`"<oculto: definido por el usuario>"`): tomarse solo hasta el primer
+    // espacio dejaba texto suelto y rompia el JSON de /status/api. El valor
+    // con escape `\"` cubre las contrasenas que contienen comilla.
+    let input = r#"{"COMFY_PASS": "<oculto: definido por el usuario>", "STUDIO_LLM_KEY": "json-secret-value-1", "STUDIO_API_TOKEN": "pa\"ss"}"#;
+    let out = redactor.redact(input);
+    assert!(!out.contains("json-secret-value-1"), "fuga: {out}");
+    assert!(!out.contains("definido por el usuario"), "fuga: {out}");
+    assert!(!out.contains(r#"pa\"ss"#), "fuga: {out}");
+    assert!(out.contains("[REDACTED]"), "{out}");
+    // El JSON sigue siendo JSON: las comillas del valor se re-emiten. Sin
+    // esto, /status/api deja de parsear y todas sus claves parecen faltar.
+    let parsed: serde_json::Value = serde_json::from_str(&out).unwrap_or(serde_json::Value::Null);
+    for key in ["COMFY_PASS", "STUDIO_LLM_KEY", "STUDIO_API_TOKEN"] {
+        assert!(
+            parsed.get(key).is_some_and(|v| v == "[REDACTED]"),
+            "JSON roto o valor '{key}' sin redactar: {out}"
+        );
+    }
+    // La forma de entorno sin comillas sigue comportandose como antes.
+    let env = redactor.redact("env STUDIO_API_TOKEN=inline-token-1 PORT=8188");
+    assert!(env.contains("STUDIO_API_TOKEN=[REDACTED]"), "{env}");
+    assert!(env.contains("PORT=8188"), "{env}");
+}

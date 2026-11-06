@@ -44,6 +44,22 @@ def _selection_file(project_id: str | None) -> str:
     return f"selection_{pid}.json"
 
 
+#: cuadrantes de rumbo en orden canónico (0°=N, 90°=E).
+_QUADRANT_ORDER: tuple[str, ...] = ("N", "E", "S", "W")
+
+
+def heading_quadrant(heading_deg: float) -> str:
+    """Cuadrante cardinal de un rumbo en grados (N/E/S/W)."""
+    h = heading_deg % 360.0
+    if h < 45.0 or h >= 315.0:
+        return "N"
+    if h < 135.0:
+        return "E"
+    if h < 225.0:
+        return "S"
+    return "W"
+
+
 class AtlasUnavailableError(RuntimeError):
     """El atlas no está disponible (sin catálogo en la raíz indicada)."""
 
@@ -131,43 +147,51 @@ class AtlasService:
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
+        from comfy_studio.atlas.geo import bbox_intersects, in_bbox
+
         store = self.store
         if q:
-            places = store.search_places_fts(q, limit=200)
             norm = normalize_text(q)
             exact = store.get_place_by_norm_name(norm, municipality)
+            alias_exact = store.get_places_by_alias_norm(norm, municipality)
+            places = store.search_places_fts(q, limit=200)
             seen: set[str] = set()
-            merged = [p for p in exact if not (p.place_id in seen or seen.add(p.place_id))]
-            for p in places:
+            # prioridad real: nombre exacto > alias exacto > rank FTS5
+            merged = []
+            for p in exact + alias_exact + places:
                 if p.place_id not in seen:
                     seen.add(p.place_id)
                     merged.append(p)
-            # filtro adicional por municipio/kind sobre los resultados textuales
+            # filtros sobre los resultados textuales (incluye bbox si se pide)
             if municipality:
                 merged = [p for p in merged if p.municipality == municipality]
             if environment:
                 merged = [p for p in merged if str(p.kind) == environment]
+            if bbox is not None:
+                kept = []
+                for p in merged:
+                    if p.lat is not None and p.lon is not None:
+                        if in_bbox(p.lat, p.lon, bbox):
+                            kept.append(p)
+                    elif p.bounds is not None:
+                        if bbox_intersects(p.bounds, bbox):
+                            kept.append(p)
+                    # sin geometría: no se afirma que esté dentro
+                merged = kept
         else:
             kind = environment
             merged = store.list_places(
                 municipality=municipality, kind=kind, bbox=bbox, limit=1000, offset=0
             )
-        out: list[dict[str, Any]] = []
-        scanned = 0
+        # aplica min_views antes de paginar para que offset/limit sean honestos
+        filtered: list = []
         for p in merged:
-            if scanned >= offset + limit + offset and len(out) >= limit:
-                break
-            scanned += 1
             views = self._usable_views(p.place_id)
-            cov = store.get_coverage(p.place_id)
             if min_views and len(views) < min_views:
                 continue
-            if scanned <= offset:
-                continue
-            out.append(self._place_summary(p, views=len(views), coverage=cov))
-            if len(out) >= limit:
-                break
-        return out
+            cov = self.coverage_for(p.place_id, views=views)
+            filtered.append(self._place_summary(p, views=len(views), coverage=cov))
+        return filtered[offset : offset + limit]
 
     def _place_summary(
         self, place, *, views: int, coverage: Coverage | None
@@ -205,22 +229,19 @@ class AtlasService:
             return {
                 "status": "ambiguous",
                 "candidates": [self._place_summary(p, views=len(self._usable_views(p.place_id)),
-                                                   coverage=store.get_coverage(p.place_id))
+                                                   coverage=self.coverage_for(p.place_id))
                                for p in exact],
                 "hint": "Indica municipio o coordenadas para desambiguar",
             }
-        # alias exacto
-        alias_hits: list = []
-        for p in store.list_places(municipality=municipality, limit=1000):
-            if norm in [normalize_text(a) for a in p.aliases] or norm == normalize_text(p.name):
-                alias_hits.append(p)
+        # alias exacto (insensible a acentos vía normalize_text)
+        alias_hits = store.get_places_by_alias_norm(norm, municipality)
         if len(alias_hits) == 1:
             return {"status": "confirmed", "place": self.place_detail(alias_hits[0].place_id)}
         if len(alias_hits) > 1:
             return {
                 "status": "ambiguous",
                 "candidates": [self._place_summary(p, views=len(self._usable_views(p.place_id)),
-                                                   coverage=store.get_coverage(p.place_id))
+                                                   coverage=self.coverage_for(p.place_id))
                                for p in alias_hits],
             }
         # FTS como último recurso (parcial)
@@ -234,7 +255,7 @@ class AtlasService:
             return {
                 "status": "ambiguous",
                 "candidates": [self._place_summary(p, views=len(self._usable_views(p.place_id)),
-                                                   coverage=store.get_coverage(p.place_id))
+                                                   coverage=self.coverage_for(p.place_id))
                                for p in fts],
             }
         return {"status": "not_found", "query": query}
@@ -265,7 +286,7 @@ class AtlasService:
             raise KeyError(f"lugar desconocido: {place_id}")
         views = self._usable_views(place_id)
         refs = store.references_for_place(place_id)
-        cov = store.get_coverage(place_id)
+        cov = self.coverage_for(place_id, views=views)
         scenarios = store.scenarios_for_place(place_id)
         return {
             **self._place_summary(place, views=len(views), coverage=cov),
@@ -274,6 +295,61 @@ class AtlasService:
             "scenarios": [s.to_dict() for s in scenarios],
             "provenance": place.provenance,
         }
+
+    # -- cobertura honesta (medida, no almacenada) ---------------------------------
+
+    def coverage_for(self, place_id: str, views: list[View] | None = None) -> Coverage:
+        """Cobertura medida en vivo desde vistas usables (nunca un valor guardado).
+
+        Cuenta vistas usables reales, cuadrantes de rumbo cubiertos/faltantes
+        (N/E/S/W sobre `heading_deg` conocido), licencias distintas de las
+        referencias usables y fechas de captura mínima/máxima. Sin rumbos
+        inventados: lo desconocido se cuenta como `heading_unknown`.
+        """
+        store = self.store
+        if views is None:
+            views = self._usable_views(place_id)
+        headings = sorted(v.heading_deg for v in views if v.heading_deg is not None)
+        unknown = sum(1 for v in views if v.heading_deg is None)
+        covered = sorted({heading_quadrant(h) for h in headings}, key=_QUADRANT_ORDER.index)
+        missing = [q for q in _QUADRANT_ORDER if q not in covered]
+        licenses: dict[str, int] = {}
+        dates: list[str] = []
+        for v in views:
+            ref = store.get_reference(v.ref_id)
+            if ref is None:
+                continue
+            licenses[ref.license] = licenses.get(ref.license, 0) + 1
+            if ref.capture_date:
+                dates.append(ref.capture_date)
+        dates.sort()
+        return Coverage(
+            place_id=place_id,
+            views_observed=len(views),
+            backed={
+                "view_ids": [v.view_id for v in views],
+                "headings_deg": headings,
+                "quadrants_covered": covered,
+                "licenses": licenses,
+                "refs_usable": len(views),
+            },
+            unobserved={
+                "quadrants_missing": missing,
+                "heading_unknown": unknown,
+            },
+            evidence_newest=dates[-1] if dates else None,
+            evidence_oldest=dates[0] if dates else None,
+            confidence_basis=(
+                f"{len(views)} vistas usables, {len(headings)} rumbos conocidos, "
+                f"{len(licenses)} licencias"
+            ),
+        )
+
+    def recompute_coverage(self, place_id: str) -> Coverage:
+        """Mide la cobertura y la persiste (repara valores guardados obsoletos)."""
+        cov = self.coverage_for(place_id)
+        self.store.upsert_coverage(cov)
+        return cov
 
     def _usable_views(self, place_id: str) -> list[View]:
         """Vistas de un lugar cuya referencia está usable (enviada en el bundle)."""
@@ -305,10 +381,59 @@ class AtlasService:
 
     # -- selección de vista / cámara ----------------------------------------------
 
+    #: bonus (resta al score) por calibración verificada: una cámara verificada
+    #: prepara mejor una toma que una sin calibrar.
+    _CALIB_BONUS: dict[str, float] = {
+        "verified": -20.0, "estimated": -10.0, "uncalibrated": 0.0,
+    }
+    #: bonus por fiabilidad de fecha: captura real > solo subida > desconocida.
+    _DATE_BONUS: dict[str, float] = {
+        "captured": -10.0, "uploaded_only": -5.0, "unknown": 0.0, "historical": 0.0,
+    }
+
+    @classmethod
+    def _score_candidate(
+        cls,
+        view: View,
+        ref: Any | None,
+        *,
+        dist_m: float | None,
+        heading_diff: float | None,
+        heading_unknown: bool,
+        fov_diff: float | None,
+        fov_unknown: bool,
+    ) -> float:
+        """Score multicriterio de una vista (menor = mejor fondo para la toma).
+
+        Suma distancia (m) + 2×dif_rumbo (°) + dif_FOV (°); la calidad pesa
+        hasta 150 (decide entre vistas del mismo punto); lo desconocido
+        penaliza neutro (mitad de la tolerancia) en vez de 0 ficticio;
+        calibración, fecha de captura y resolución dan bonus acotados.
+        """
+        score = max(0.0, dist_m or 0.0)
+        if heading_diff is not None:
+            score += 2.0 * heading_diff
+        elif heading_unknown:
+            score += 22.5
+        if fov_diff is not None:
+            score += 1.0 * fov_diff
+        elif fov_unknown:
+            score += 7.5
+        quality = ref.quality if ref is not None else 0.0
+        score += (1.0 - min(max(quality, 0.0), 1.0)) * 150.0
+        score += cls._CALIB_BONUS.get(str(view.calib_state), 0.0)
+        score += cls._DATE_BONUS.get(
+            str(ref.date_reliability) if ref is not None else "unknown", 0.0
+        )
+        width = ref.width if ref is not None and ref.width else 0
+        score -= (min(width, 2048) / 2048.0) * 10.0
+        return score
+
     def select_view(
         self,
         place_id: str,
         *,
+        exact_view_id: str | None = None,
         lat: float | None = None,
         lon: float | None = None,
         heading_deg: float | None = None,
@@ -322,7 +447,9 @@ class AtlasService:
         - Rumbo pedido con rumbo conocido en la vista y diferencia > tolerancia:
           NO se acepta; se devuelve status="unsupported_camera" con la limitación
           tipada y las vistas disponibles del mismo lugar.
-        - Si la vista más cercana no es compatible, se busca otra compatible.
+        - Entre las compatibles se elige por score multicriterio (menor = mejor):
+          distancia + rumbo + FOV + calidad + calibración + fiabilidad de fecha
+          + resolución; empate se rompe por view_id (determinista).
         - Desconocido sigue siendo desconocido: se devuelve como limitación
           (heading_unknown / fov_unknown), nunca como 0 ni como compatible.
         """
@@ -331,6 +458,16 @@ class AtlasService:
         if place is None:
             raise KeyError(f"lugar desconocido: {place_id}")
         views = self._usable_views(place_id)
+        if exact_view_id is not None:
+            requested_view = store.get_view(exact_view_id)
+            if requested_view is None or requested_view.place_id != place_id:
+                return {
+                    "status": "view_not_found",
+                    "place_id": place_id,
+                    "view_id": exact_view_id,
+                    "available_views": [self._view_dict(x, store) for x in views],
+                }
+            views = [view for view in views if view.view_id == exact_view_id]
         if not views:
             return {
                 "status": "no_views",
@@ -344,10 +481,17 @@ class AtlasService:
             d = abs((a - b) % 360.0)
             return min(d, 360.0 - d)
 
-        def evaluate(view: View) -> tuple[list[dict[str, Any]], float | None]:
-            """(limitaciones, distancia_m) para una vista dada la cámara pedida."""
+        def evaluate(view: View) -> tuple[list[dict[str, Any]], float | None,
+                                           float | None, float | None]:
+            """(limitaciones, distancia_m, dif_rumbo, dif_fov) para la cámara pedida.
+
+            `dif_rumbo`/`dif_fov` son None si no se pidió o si la vista no los
+            tiene registrados (entonces hay limitación tipada, no un 0).
+            """
             lims: list[dict[str, Any]] = []
             dist: float | None = None
+            hdiff: float | None = None
+            fdiff: float | None = None
             if (
                 lat is not None and lon is not None
                 and view.lat is not None and view.lon is not None
@@ -367,63 +511,65 @@ class AtlasService:
                         "detail": "La vista no tiene rumbo registrado; no se afirma compatibilidad",
                     })
                 else:
-                    diff = angular_diff(heading_deg, view.heading_deg)
-                    if diff > heading_tolerance_deg:
+                    hdiff = angular_diff(heading_deg, view.heading_deg)
+                    if hdiff > heading_tolerance_deg:
                         lims.append({
                             "code": "heading_mismatch",
                             "detail": f"Rumbo pedido {heading_deg:.0f}° vs vista "
-                                      f"{view.heading_deg:.0f}° (dif {diff:.0f}° > "
+                                      f"{view.heading_deg:.0f}° (dif {hdiff:.0f}° > "
                                       f"{heading_tolerance_deg:.0f}°)",
                             "requested_deg": heading_deg,
                             "view_deg": view.heading_deg,
-                            "diff_deg": round(diff, 1),
+                            "diff_deg": round(hdiff, 1),
                         })
             if fov_deg is not None:
                 if view.fov_deg is None:
                     lims.append({"code": "fov_unknown", "detail": "FOV no estimado en esta vista"})
-                elif abs(fov_deg - view.fov_deg) > 15.0:
-                    lims.append({
-                        "code": "fov_mismatch",
-                        "detail": f"FOV pedido {fov_deg:.0f}° vs vista {view.fov_deg:.0f}°",
-                    })
-            return lims, dist
+                else:
+                    fdiff = abs(fov_deg - view.fov_deg)
+                    if fdiff > 15.0:
+                        lims.append({
+                            "code": "fov_mismatch",
+                            "detail": f"FOV pedido {fov_deg:.0f}° vs vista {view.fov_deg:.0f}°",
+                        })
+            return lims, dist, hdiff, fdiff
 
         def hard_incompatible(lims: list[dict[str, Any]]) -> bool:
             return any(lim["code"] in ("heading_mismatch", "fov_mismatch") for lim in lims)
 
-        # elegir: primero la más cercana; si es incompatible, buscar otra compatible
-        chosen: View | None = None
-        chosen_lims: list[dict[str, Any]] = []
-        if lat is not None and lon is not None:
-            with_dist = [(v, haversine_m(lat, lon, v.lat, v.lon))
-                         for v in views if v.lat is not None and v.lon is not None]
-            with_dist.sort(key=lambda t: t[1])
-            candidates = [v for v, _ in with_dist] or views
-        else:
-            candidates = sorted(
-                views,
-                key=lambda v: (store.get_reference(v.ref_id).quality
-                               if store.get_reference(v.ref_id) else 0.0),
-                reverse=True,
+        def scored(view: View) -> tuple[float, View, list[dict[str, Any]]]:
+            lims, dist, hdiff, fdiff = evaluate(view)
+            ref = store.get_reference(view.ref_id)
+            return (
+                self._score_candidate(
+                    view, ref, dist_m=dist, heading_diff=hdiff,
+                    heading_unknown=(
+                        heading_deg is not None and view.heading_deg is None
+                    ),
+                    fov_diff=fdiff,
+                    fov_unknown=fov_deg is not None and view.fov_deg is None,
+                ),
+                view,
+                lims,
             )
-        for v in candidates:
-            lims, _ = evaluate(v)
-            if not hard_incompatible(lims):
-                chosen, chosen_lims = v, lims
-                break
-        if chosen is None:
-            # ninguna compatible: devolver la más cercana con sus limitaciones duras
-            v = candidates[0]
-            chosen, chosen_lims = v, evaluate(v)[0]
+
+        # ranking: la compatible con mejor score; si ninguna lo es, la mejor
+        # puntuada con sus limitaciones duras (unsupported_camera).
+        compatibles = [s for s in (scored(v) for v in views) if not hard_incompatible(s[2])]
+        if compatibles:
+            compatibles.sort(key=lambda t: (t[0], t[1].view_id))
+            _, chosen, chosen_lims = compatibles[0]
             return {
-                "status": "unsupported_camera",
+                "status": "ok",
                 "place_id": place_id,
                 "view": self._view_dict(chosen, store),
                 "limitations": chosen_lims,
                 "available_views": [self._view_dict(x, store) for x in views],
             }
+        fallback = sorted((scored(v) for v in views), key=lambda t: (t[0], t[1].view_id))
+        _, chosen, chosen_lims = fallback[0]
         return {
-            "status": "ok",
+            "status": "unsupported_camera",
             "place_id": place_id,
             "view": self._view_dict(chosen, store),
             "limitations": chosen_lims,
@@ -441,6 +587,7 @@ class AtlasService:
         lat: float | None = None,
         lon: float | None = None,
         heading_deg: float | None = None,
+        fov_deg: float | None = None,
         prompt: str = "",
         verify_file: bool = True,
         project_id: str | None = None,
@@ -498,14 +645,22 @@ class AtlasService:
                 })
         pid = resolved_place["place_id"]
         if view_id:
-            view = store.get_view(view_id)
-            if view is None or view.place_id != pid:
-                return {"status": "view_not_found", "view_id": view_id, "place_id": pid}
-            sel = self.select_view(pid, lat=lat, lon=lon, heading_deg=heading_deg)
-            chosen = view
+            sel = self.select_view(
+                pid,
+                exact_view_id=view_id,
+                lat=lat,
+                lon=lon,
+                heading_deg=heading_deg,
+                fov_deg=fov_deg,
+            )
+            if sel["status"] != "ok":
+                return {**sel, "place_id": pid}
+            chosen = store.get_view(sel["view"]["view_id"])
             limitations.extend(sel.get("limitations", []))
         else:
-            sel = self.select_view(pid, lat=lat, lon=lon, heading_deg=heading_deg)
+            sel = self.select_view(
+                pid, lat=lat, lon=lon, heading_deg=heading_deg, fov_deg=fov_deg
+            )
             if sel["status"] != "ok":
                 return {"status": sel["status"], "place_id": pid,
                         "limitation": sel.get("limitation"),

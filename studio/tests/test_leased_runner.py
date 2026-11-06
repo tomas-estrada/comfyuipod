@@ -12,7 +12,7 @@ from typing import Any
 
 from comfy_studio.orchestration.executor import execute_next_shot
 from comfy_studio.orchestration.gpu_lease import AdmissionBudget, GpuLease
-from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
+from comfy_studio.orchestration.leased_runner import LeaseCleanupError, LeasedEngineRunner
 from comfy_studio.orchestration.state import (
     Layer,
     ProductionState,
@@ -83,6 +83,26 @@ def test_lease_released_even_if_inner_raises(tmp_path: Path) -> None:
     assert lease.current() is None
 
 
+def test_engine_exception_surfaces_cleanup_failure(tmp_path: Path) -> None:
+    lease = _lease(tmp_path)
+
+    class _Boom:
+        def run_layer(
+            self, engine, job, *, cost_cap=None, cancel_event=None
+        ):  # noqa: ANN001
+            raise RuntimeError("render reventó")
+
+    runner = LeasedEngineRunner(_Boom(), lease, unload=lambda: False)
+    try:
+        runner.run_layer("comfyui", {"kind": "gen"})
+    except LeaseCleanupError as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+    else:
+        raise AssertionError("cleanup failure was hidden by the engine exception")
+    assert lease.current() is not None  # uncertain GPU state blocks later engines
+    assert lease.release(lease.current(), unload=lambda: True)["released"] is True
+
+
 def test_busy_gpu_returns_typed_failure_not_overwrite(tmp_path: Path) -> None:
     lease = _lease(tmp_path)
     # Otro owner VIVO tiene la GPU.
@@ -109,6 +129,40 @@ def test_unload_runs_on_release(tmp_path: Path) -> None:
     runner = LeasedEngineRunner(_RecordingRunner(lease), lease, unload=_unload)
     runner.run_layer("comfyui", {"kind": "gen"})
     assert calls["n"] == 1
+
+
+def test_unload_failure_cannot_report_success(tmp_path: Path) -> None:
+    lease = _lease(tmp_path)
+    runner = LeasedEngineRunner(
+        _RecordingRunner(lease), lease, unload=lambda: False
+    )
+
+    result = runner.run_layer("comfyui", {"kind": "gen"})
+
+    assert result["ok"] is False
+    assert result["lease"] == "cleanup_failed"
+    assert result["lease_cleanup_failed"] is True
+    assert "cleanup failed" in result["error"]
+    # Uncertain GPU state remains quarantined until cleanup is verified.
+    grant = lease.current()
+    assert grant is not None
+    assert lease.release(grant, unload=lambda: True)["released"] is True
+    assert lease.current() is None
+
+
+def test_unload_exception_cannot_report_success(tmp_path: Path) -> None:
+    lease = _lease(tmp_path)
+
+    def _unload() -> bool:
+        raise OSError("device reset failed")
+
+    runner = LeasedEngineRunner(_RecordingRunner(lease), lease, unload=_unload)
+    result = runner.run_layer("comfyui", {"kind": "gen"})
+
+    assert result["ok"] is False
+    assert result["lease"] == "cleanup_failed"
+    assert lease.current() is not None
+    assert lease.release(lease.current(), unload=lambda: True)["released"] is True
 
 
 def test_executor_end_to_end_with_leased_runner(tmp_path: Path) -> None:
