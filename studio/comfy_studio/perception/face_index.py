@@ -365,9 +365,10 @@ class InsightFaceIndex:
             "keyframes_scanned": len(keyframes),
             "faces_detected": len(all_dets),
             "detections": all_dets,
-            # M3-IDEA-005: la detección actual es sintética/determinista; los
-            # pesos reales de buffalo_l no se cargan aún (M3-IDEA-003).
-            "simulated": True,
+            # M3-IDEA-005: en sim/auto la detección es determinista local;
+            # en real `detect_faces_in_image` delega en el worker
+            # (require_real_payload) y el flag refleja el modo real.
+            "simulated": not is_real_backend(),
             "simulation_notice": SIMULATED_ML_NOTICE,
         }
 
