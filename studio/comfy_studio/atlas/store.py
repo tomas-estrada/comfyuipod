@@ -183,6 +183,24 @@ class AtlasStore:
                 ).fetchall()
             return [_row_to_place(r) for r in rows]
 
+    def get_places_by_alias_norm(
+        self, alias_norm: str, municipality: str | None = None
+    ) -> list[Place]:
+        """Lugares cuyo alias normalizado coincide exactamente (insensible a acentos)."""
+        with self._lock:
+            if municipality:
+                rows = self._conn.execute(
+                    "SELECT * FROM places WHERE municipality=?", (municipality,)
+                ).fetchall()
+            else:
+                rows = self._conn.execute("SELECT * FROM places").fetchall()
+            out = []
+            for r in rows:
+                place = _row_to_place(r)
+                if any(normalize_text(a) == alias_norm for a in place.aliases):
+                    out.append(place)
+            return out
+
     def search_places_fts(self, query: str, limit: int = 20) -> list[Place]:
         with self._lock:
             try:
@@ -822,11 +840,16 @@ class AtlasStore:
 
 
 def _fts_query(query: str) -> str:
-    """Convierte texto libre en una consulta FTS5 segura (AND de tokens)."""
+    """Convierte texto libre en consulta FTS5 segura (AND de prefijos).
+
+    Cada token normalizado (sin acentos) se busca como prefijo (`"tok"*`)
+    para que "boter" encuentre "botero". El esquema FTS5 usa
+    `unicode61 remove_diacritics 2`, así que "medellin" casa con "Medellín".
+    """
     tokens = [t for t in normalize_text(query).split() if t]
     if not tokens:
         return '""'
-    return " AND ".join('"' + t.replace('"', '""') + '"' for t in tokens)
+    return " AND ".join('"' + t.replace('"', '""') + '"*' for t in tokens)
 
 
 def _row_to_place(row: sqlite3.Row) -> Place:
