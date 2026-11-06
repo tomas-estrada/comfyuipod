@@ -92,21 +92,27 @@ def stop_process_group(pgid: int, *, grace_s: float = 2.0) -> bool:
         return True
     except OSError:
         return False
-    deadline = time.monotonic() + max(0.0, grace_s)
-    while time.monotonic() < deadline:
-        if not process_group_exists(pgid):
-            return True
-        time.sleep(0.05)
+    if _wait_until_group_gone(pgid, max(0.0, grace_s)):
+        return True
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
         return True
     except OSError:
         return False
-    deadline = time.monotonic() + max(1.0, grace_s)
+    return _wait_until_group_gone(pgid, max(1.0, grace_s))
+
+
+def _wait_until_group_gone(pgid: int, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    absent_checks = 0
     while time.monotonic() < deadline:
         if not process_group_exists(pgid):
-            return True
+            absent_checks += 1
+            if absent_checks >= 3:
+                return True
+        else:
+            absent_checks = 0
         time.sleep(0.05)
     return not process_group_exists(pgid)
 

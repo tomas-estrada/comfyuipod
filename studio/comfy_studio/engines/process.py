@@ -11,9 +11,9 @@ from threading import Event
 from typing import Any
 
 from comfy_studio.engines.process_registry import (
-    process_group_exists,
     process_group_scope_active,
     register_process_group,
+    stop_process_group,
     unregister_process_group,
 )
 
@@ -82,10 +82,8 @@ def run_cancellable(
                 wait_s = min(wait_s, remaining)
             try:
                 stdout, stderr = proc.communicate(timeout=wait_s)
-                if os.name == "posix" and process_group_exists(proc.pid):
-                    _terminate_tree(proc)
-                    if process_group_exists(proc.pid):
-                        raise RuntimeError("engine child process group cleanup failed")
+                if os.name == "posix" and not stop_process_group(proc.pid):
+                    raise RuntimeError("engine child process group cleanup failed")
                 completed = subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
                 if check and completed.returncode:
                     raise subprocess.CalledProcessError(
@@ -98,7 +96,7 @@ def run_cancellable(
             except subprocess.TimeoutExpired:
                 continue
     finally:
-        if marker is not None and not process_group_exists(proc.pid):
+        if marker is not None and stop_process_group(proc.pid):
             unregister_process_group(marker)
 
 
