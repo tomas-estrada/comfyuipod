@@ -371,6 +371,7 @@ class ProposeEdlArgs(BaseModel):
     cuts: list[EdlCutItem] = Field(
         ...,
         min_length=1,
+        max_length=200,
         description="Lista ordenada de cortes con tiempos de entrada/salida y razón.",
     )
     notes: str = Field(
