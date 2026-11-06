@@ -223,7 +223,7 @@ def build_default_registry() -> EngineRegistry:
     reg.register(
         EngineEntry(
             "reference-local",
-            EngineTier.RESIDENT,
+            EngineTier.WARM,
             wired=True,
             note=(
                 "Análisis local de referencias: cortes/beats/OCR/cámara -> receta editable "
