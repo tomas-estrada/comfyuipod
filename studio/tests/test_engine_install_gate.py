@@ -118,5 +118,5 @@ def test_install_con_dinamico_apagado_no_hace_nada(
         assert res.ok is False, name
         assert res.verb == "install" and res.engine == name
         probados += 1
-    assert probados == 19
+    assert probados == 20
     assert list(tmp_path.iterdir()) == [], "install no debe escribir nada"

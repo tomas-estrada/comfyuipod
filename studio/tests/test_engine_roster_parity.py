@@ -85,4 +85,4 @@ def test_manifest_extra_ids_are_reported_not_fatal() -> None:
     assert len(extras) == expected
     # No fail-hard; reportar.
     print(f"[roster_parity] engines.json declara {len(extras)} ids fuera del roster")
-    assert len(roster_names) == 20
+    assert len(roster_names) == 21
