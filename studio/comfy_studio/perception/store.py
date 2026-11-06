@@ -117,6 +117,22 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def validate_embedding_dim(embedding: list[float], dim: int, *, name: str) -> None:
+    """Valida un embedding antes de persistir/buscar (sin GPU).
+
+    Solo se rechaza lo que antes se truncaba en silencio: vectores vacíos o
+    más largos que la dimensión del backend (`CLIP_EMBED_DIM`/`FACE_EMBED_DIM`).
+    Los vectores cortos siguen rellenándose con ceros en `pack_float32_vector`.
+    """
+    if not embedding:
+        raise ValueError(f"{name} vacío: se requiere al menos 1 dimensión")
+    if len(embedding) > dim:
+        raise ValueError(
+            f"{name} con {len(embedding)} dimensiones excede la dimensión "
+            f"del índice ({dim})"
+        )
+
+
 def pack_float32_vector(vec: list[float] | tuple[float, ...], dim: int) -> bytes:
     """Empaqueta y normaliza L2 un vector float32 para sqlite-vec.
 
@@ -283,6 +299,7 @@ class PerceptionVectorStore:
         visual_tags: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        validate_embedding_dim(embedding, CLIP_EMBED_DIM, name="embedding CLIP")
         blob = pack_float32_vector(embedding, CLIP_EMBED_DIM)
         now = _utc_now_iso()
         tags_json = json.dumps(visual_tags or [], ensure_ascii=False)
@@ -417,6 +434,7 @@ class PerceptionVectorStore:
         top_k: int = 10,
         source_asset_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        validate_embedding_dim(query_embedding, CLIP_EMBED_DIM, name="query CLIP")
         query_blob = pack_float32_vector(query_embedding, CLIP_EMBED_DIM)
         query_vec = unpack_float32_vector(query_blob, CLIP_EMBED_DIM)
         requested = max(1, int(top_k))
@@ -494,6 +512,7 @@ class PerceptionVectorStore:
         embedding: list[float],
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        validate_embedding_dim(embedding, FACE_EMBED_DIM, name="embedding facial")
         blob = pack_float32_vector(embedding, FACE_EMBED_DIM)
         now = _utc_now_iso()
         meta_json = json.dumps(metadata or {}, ensure_ascii=False)
@@ -634,6 +653,7 @@ class PerceptionVectorStore:
         identity_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        validate_embedding_dim(embedding, FACE_EMBED_DIM, name="embedding facial")
         blob = pack_float32_vector(embedding, FACE_EMBED_DIM)
         det_id = f"fdet-{uuid.uuid4().hex[:12]}"
         now = _utc_now_iso()
@@ -704,6 +724,7 @@ class PerceptionVectorStore:
         top_k: int = 20,
         min_similarity: float = 0.55,
     ) -> list[dict[str, Any]]:
+        validate_embedding_dim(query_embedding, FACE_EMBED_DIM, name="query facial")
         query_blob = pack_float32_vector(query_embedding, FACE_EMBED_DIM)
         query_vec = unpack_float32_vector(query_blob, FACE_EMBED_DIM)
         with self._connection() as conn:
