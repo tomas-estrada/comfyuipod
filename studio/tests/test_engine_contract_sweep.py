@@ -26,7 +26,7 @@ def test_roster_y_clases_en_sincronia() -> None:
     assert roster == set(ENGINE_CLASSES), (
         f"deriva roster<->clases: {roster ^ set(ENGINE_CLASSES)}"
     )
-    assert len(roster) == 16
+    assert len(roster) == 17
 
 
 def test_cada_motor_resuelve_y_declara_nombre_y_tier() -> None:

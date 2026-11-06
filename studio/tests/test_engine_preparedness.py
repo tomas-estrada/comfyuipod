@@ -138,8 +138,8 @@ def test_execution_validated_only_after_a_real_run() -> None:
 def test_probe_never_touches_the_network_or_gpu() -> None:
     """La sonda completa corre sin red y sin GPU: solo stat/which/find_spec."""
     report = probe_all(env={"PATH": "/usr/bin:/bin", "COMFY_DATA_DIR": "/nonexistent"})
-    assert len(report.engines) == 16
-    assert sum(report.counts().values()) == 16
+    assert len(report.engines) == 17
+    assert sum(report.counts().values()) == 17
     assert set(report.counts()) == {
         "ready",
         "weights_required",
@@ -169,14 +169,14 @@ def test_health_report_exposes_both_views() -> None:
     blob = json.dumps(rep)
     # La vista antigua (cableado) se conserva intacta. El reparto ready/stub
     # depende del entorno (CI activa STUDIO_STUB_*), así que no se fija un
-    # literal: lo invariante es que cubre los 16 motores y ninguno queda
+    # literal: lo invariante es que cubre los 17 motores y ninguno queda
     # sin cablear.
     assert rep["counts"]["unwired"] == 0
-    assert sum(rep["counts"].values()) == len(rep["engines"]) == 16
-    assert rep["counts"]["ready"] + rep["counts"]["stub"] == 16
+    assert sum(rep["counts"].values()) == len(rep["engines"]) == 17
+    assert rep["counts"]["ready"] + rep["counts"]["stub"] == 17
     # La nueva (preparación) llega además por motor y agregada.
     assert "preparedness" in rep
-    assert len(rep["preparedness"]["engines"]) == 16
+    assert len(rep["preparedness"]["engines"]) == 17
     assert all("prep" in e for e in rep["engines"])
     assert '"preparedness"' in blob
 

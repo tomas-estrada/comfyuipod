@@ -1,7 +1,7 @@
-"""PR engines-health-states: los 7 niveles, probados en los 16 motores.
+"""PR engines-health-states: los 7 niveles, probados en los 17 motores.
 
 Pines deterministas sobre un árbol sintético en tmp (sin GPU, sin red):
-un árbol completo deja a los 16 en `ready` (prueba que cada spec es
+un árbol completo deja a los 17 en `ready` (prueba que cada spec es
 satisfacible y documenta qué necesita cada motor); sin pesos el estado es
 `weights_required` y nunca `loaded`/validado; cada hueco reporta su prefijo.
 """
@@ -48,7 +48,7 @@ def _exe(path: Path) -> str:
 
 
 def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Árbol sintético completo: todo lo que los 16 specs piden existe."""
+    """Árbol sintético completo: todo lo que los 17 specs piden existe."""
     bin_dir = tmp_path / "bin"
     data = tmp_path / "data"
     app = tmp_path / "ComfyUI"
@@ -70,6 +70,8 @@ def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]
         "STUDIO_UPSCALER_BIN": _exe(bin_dir / "upscaler"),
         "STUDIO_UPSCALER_MODEL_DIR": str(data / "models" / "upscaler"),
         "STUDIO_COMPOSITOR_BIN": _exe(bin_dir / "natron"),
+        "STUDIO_LLM_SERVER_BIN": _exe(bin_dir / "llama-server"),
+        "STUDIO_LLM_SERVER_MODEL": str(data / "models" / "llm" / "model.gguf"),
         "STUDIO_ROTO_MODEL_DIR": str(data / "models" / "sam3"),
         "STUDIO_HEAVY_VIDEO_BASE_URL": "http://127.0.0.1:9",
         "STUDIO_HEAVY_VIDEO_MODEL": "fake-model",
@@ -86,19 +88,22 @@ def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]
         wdir.mkdir(parents=True, exist_ok=True)
         (wdir / "weights.bin").write_bytes(b"fake-weights")
     (Path(env["STUDIO_LIPSYNC_MODEL_DIR"]) / "wav2lip_gan.pth").write_bytes(b"fake")
+    llm_model = Path(env["STUDIO_LLM_SERVER_MODEL"])
+    llm_model.parent.mkdir(parents=True, exist_ok=True)
+    llm_model.write_bytes(b"fake-gguf")
     monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
     return env
 
 
-def test_arbol_completo_deja_los_16_ready(
+def test_arbol_completo_deja_los_17_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     env = _full_env(tmp_path, monkeypatch)
     report = probe_all(env=env, module_finder=lambda m: True)
-    assert len(report.engines) == 16
+    assert len(report.engines) == 17
     not_ready = {n: p.state for n, p in report.engines.items() if p.state != "ready"}
     assert not_ready == {}, f"motores no listos con árbol completo: {not_ready}"
-    assert report.counts() == {"ready": 16, "weights_required": 0,
+    assert report.counts() == {"ready": 17, "weights_required": 0,
                                "not_installed": 0, "integration_missing": 0}
 
 
