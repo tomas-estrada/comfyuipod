@@ -270,6 +270,29 @@ def test_ensure_municipality_sector_places_omite_si_ya_hay_vistas(
     assert not any(p.sector == "cluster_referencias" for p in store.list_places(limit=1000))
 
 
+def test_ensure_municipality_sector_places_rellamada_re_upserta_el_mismo_sector(
+    mant_pipe: AcquisitionPipeline,
+) -> None:
+    """CUP-ATL-03: ancla la re-ejecución tras una creación exitosa.
+
+    El sector creado no tiene vistas, así que el guard `with_views` no salta en
+    una segunda pasada con las mismas 5 referencias GPS: la función re-upserta
+    el MISMO place_id y vuelve a devolver {"sectors_created": 1}. Es
+    idempotente por place_id, pero el contador no distingue "creado" de
+    "ya existía" (comportamiento actual documentado, no corregido aquí).
+    """
+    store = mant_pipe.svc.store
+    _seed_cluster_refs(store, 0, 5)
+
+    assert mant_pipe.ensure_municipality_sector_places() == {"sectors_created": 1}
+    # misma evidencia, segunda ejecución: el contador vuelve a informar 1
+    assert mant_pipe.ensure_municipality_sector_places() == {"sectors_created": 1}
+
+    # ... pero el store conserva un único lugar-sector (re-upsert del mismo id)
+    sectors = [p for p in store.list_places(limit=1000) if p.sector == "cluster_referencias"]
+    assert [p.place_id for p in sectors] == ["plc_medellin_sector_00"]
+
+
 # ---------------------------------------------------------------------------
 # refine_seed_coordinates
 # ---------------------------------------------------------------------------
