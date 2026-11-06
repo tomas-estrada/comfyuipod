@@ -63,7 +63,30 @@ class LeasedEngineRunner:
         self, engine: str, job: dict[str, Any], *, cost_cap: float | None = None
     ) -> dict[str, Any]:
         if not _is_heavy(engine):
-            # Capa de CPU: no toma el lock de GPU. Se ejecuta directo.
+            # Capa de CPU: valida el presupuesto de RAM sin tomar el lock GPU.
+            requested_ram = job.get("lease_ram_mb", self._ram)
+            if isinstance(requested_ram, bool) or not isinstance(requested_ram, int):
+                return {
+                    "ok": False,
+                    "engine": engine,
+                    "error": "lease_ram_mb debe ser entero",
+                    "lease": "error",
+                }
+            try:
+                self._lease.acquire(
+                    owner=self._owner,
+                    engine=engine,
+                    vram_mb=0,
+                    ram_mb=requested_ram,
+                    heavy=False,
+                )
+            except LeaseError as exc:
+                return {
+                    "ok": False,
+                    "engine": engine,
+                    "error": f"admisión RAM rechazada: {exc}",
+                    "lease": "error",
+                }
             return self._inner.run_layer(engine, job, cost_cap=cost_cap)
 
         # Capa pesada: adquirir el heavy lease antes de tocar la GPU.
