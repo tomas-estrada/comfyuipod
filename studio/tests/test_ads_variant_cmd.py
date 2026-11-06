@@ -13,10 +13,10 @@ Cubre funciones puras de `comfy_studio.ads.pipeline`:
 Ningún test lanza ffmpeg/ffprobe reales: las ramas de vídeo parchean
 `comfy_studio.ads.pipeline.probe_media_info` y las de imagen ni siquiera lo invocan.
 
-Documenta (sin corregir, regla de repo) el bug actual de audio: `audio_filters`
-(pipeline.py:349, :353, :357) nunca se fusiona a `filters` al armar
-`filter_complex` (pipeline.py:366), así que los productores `aresample` se
-descartan y `anull`/`amix` consumen etiquetas sin productor.
+Los anclajes de audio fijan el comportamiento corregido por #214: los
+productores `aresample` de `audio_filters` (pipeline.py:353, :357) se fusionan
+a `filters` vía `filters.extend(audio_filters)` (pipeline.py:362) antes de
+`anull`/`amix`, de modo que toda etiqueta consumida tiene productor.
 """
 
 from __future__ import annotations
@@ -241,9 +241,12 @@ def test_ffmpeg_cmd_voice_only_uses_anull_and_shortest(tmp_path: Path) -> None:
     # La voz entra después de la imagen (input idx 1) y su `-i` está en el argv.
     assert cmd.index(str(img)) < cmd.index(str(voice))
     assert cmd[cmd.index(str(voice)) - 1] == "-i"
-    # The resampler output is present in filter_complex and feeds the audio passthrough.
+    # Productor incluido desde el fix #214 (pipeline.py:362): la etiqueta
+    # [a_voice] la produce "[1:a]aresample=44100[a_voice]" (pipeline.py:353)
+    # antes de que anull (pipeline.py:367) la consuma.
     assert "[1:a]aresample=44100[a_voice]" in fc
     assert "[a_voice]anull[aout]" in fc
+    assert fc.index("[1:a]aresample") < fc.index("[a_voice]anull")
     assert "amix" not in fc and "a_music" not in fc
     assert _has_subseq(
         cmd, ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k", "-shortest"]
@@ -268,9 +271,11 @@ def test_ffmpeg_cmd_music_only_uses_anull(tmp_path: Path) -> None:
     fc = _filter_complex(cmd)
     assert cmd.index(str(img)) < cmd.index(str(music))
     assert cmd[cmd.index(str(music)) - 1] == "-i"
-    # The music resampler output is present and feeds the audio passthrough.
+    # Productor incluido desde el fix #214 (pipeline.py:362): [a_music] la
+    # produce "[1:a]aresample=44100[a_music]" (pipeline.py:357) antes de anull.
     assert "[1:a]aresample=44100[a_music]" in fc
     assert "[a_music]anull[aout]" in fc
+    assert fc.index("[1:a]aresample") < fc.index("[a_music]anull")
     assert "a_voice" not in fc and "amix" not in fc
     assert _has_subseq(
         cmd, ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k", "-shortest"]
@@ -302,7 +307,8 @@ def test_ffmpeg_cmd_voice_and_music_uses_amix(tmp_path: Path) -> None:
         < cmd.index(str(voice))
         < cmd.index(str(music))
     )
-    # Both input resamplers must be in the same graph as the mixer.
+    # Productores incluidos desde el fix #214 (pipeline.py:362) antes de amix
+    # (pipeline.py:364): etiqueta de voz [2:a] y de música [3:a].
     assert "[2:a]aresample=44100[a_voice]" in fc
     assert "[3:a]aresample=44100[a_music]" in fc
     assert (
@@ -310,6 +316,7 @@ def test_ffmpeg_cmd_voice_and_music_uses_amix(tmp_path: Path) -> None:
         in fc
     )
     assert "anull" not in fc
+    assert fc.index("[2:a]aresample") < fc.index("[3:a]aresample") < fc.index("amix")
     assert _has_subseq(
         cmd, ["-map", "[aout]", "-c:a", "aac", "-b:a", "128k", "-shortest"]
     )
