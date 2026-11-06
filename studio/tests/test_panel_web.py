@@ -1502,6 +1502,24 @@ def test_panel_chat_after_deleting_only_project_recovers_and_never_posts_to_dele
     assert "toast-success" in after_chat["toastClass"]
 
 
+def test_panel_chat_keeps_draft_when_submission_fails() -> None:
+    """El texto del chat no se descarta antes de saber si el envío tuvo éxito."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+    submit_start = app_js.index('chatForm.addEventListener("submit"')
+    submit_end = app_js.index('// Limpiar historial de chat', submit_start)
+    submit_body = app_js[submit_start:submit_end]
+
+    clear_index = submit_body.index('input.value = ""')
+    send_index = submit_body.index("await sendChatMessage(text)")
+    assert clear_index > send_index, "el input solo se limpia después de un envío exitoso"
+
+    send_start = app_js.index("async function sendChatMessage(")
+    send_end = app_js.index("function parseSseFrame(", send_start)
+    send_body = app_js[send_start:send_end]
+    assert "return false" in send_body
+    assert "return true" in send_body
+
+
 def test_panel_surfaces_load_errors_for_templates_jobs_and_gallery() -> None:
     """Los refrescos automáticos avisan cuando la API falla en vez de tragarse el error."""
     app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
