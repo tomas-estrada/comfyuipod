@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from comfy_studio.ads.pipeline import _Segment, _ffmpeg_variant_cmd
+from comfy_studio.ads.pipeline import _ffmpeg_variant_cmd, _Segment
 
 
 @pytest.mark.parametrize(
