@@ -918,3 +918,57 @@ fn strict_unknown_model_profile_warns_and_never_falls_over() {
     // Nunca fatal: con STRICT_START activo el resultado general queda en 'warn'.
     assert_eq!(rep.result, "warn");
 }
+
+#[test]
+fn strict_ram_probe_failure_warns_without_remediation_and_is_never_fatal() {
+    // Rama `else` de S4: si no se puede leer /proc/meminfo el check sale en
+    // `warn` con el detalle que explica la causa y SIN remediation —no hay nada
+    // que remediar si no conocemos la RAM—. Se prueban los dos valores que puede
+    // arrastrar un probe caido:
+    //   - 65536 (RAM sana): sin el guard `if snap.ram_probe_ok` el check daria
+    //     la RAM por buena y saldria `ok`;
+    //   - 0 (el probe ni devolvio valor): sin el guard saldria `fatal` y
+    //     bloquearia el arranque.
+    // En ambos casos lo correcto es el mismo aviso.
+    let cfg = RuntimeConfig::from_map(&consumer_profile_vars(), None);
+
+    for ram_mb in [65_536, 0] {
+        let mut snap = base_healthy_snapshot();
+        snap.ram_probe_ok = false;
+        snap.ram_total_mb = ram_mb;
+        let rep = evaluate_strict_checks(&cfg, &snap);
+
+        assert_eq!(
+            rep.checks.len(),
+            11,
+            "[{ram_mb} MB] ningun check debe desaparecer: {:?}",
+            rep.checks
+        );
+
+        let s4 = rep.checks.iter().find(|c| c.id == "S4");
+        assert!(
+            matches!(
+                s4,
+                Some(c) if c.status == "warn"
+                    && c.remediation.is_none()
+                    && c.detail.contains("meminfo")
+            ),
+            "[{ram_mb} MB] S4 debia quedar en warn, sin remediation y con el detalle del probe caido: {s4:?}"
+        );
+
+        // El mismo campo alimenta el `ram_ok` de S17: tambien baja a warn en
+        // lugar de volverse fatal cuando la RAM no pudo medirse.
+        let s17 = rep.checks.iter().find(|c| c.id == "S17");
+        assert!(
+            matches!(s17, Some(c) if c.status == "warn"),
+            "[{ram_mb} MB] S17 debia avisar al no poder confirmar la RAM del host: {s17:?}"
+        );
+
+        // Un probe caido avisa; nunca bloquea el arranque.
+        assert_eq!(
+            rep.result, "warn",
+            "[{ram_mb} MB] solo deben quedar avisos: {:?}",
+            rep.checks
+        );
+    }
+}
