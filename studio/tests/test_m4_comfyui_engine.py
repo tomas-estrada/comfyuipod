@@ -42,7 +42,12 @@ class _FakeClient:
         return {node_class: self._info[node_class]} if node_class in self._info else {}
 
     async def execute_prompt_job(
-        self, graph: dict, *, job_id: str | None = None, project_id: str | None = None
+        self,
+        graph: dict,
+        *,
+        job_id: str | None = None,
+        project_id: str | None = None,
+        cancel_event=None,
     ) -> _FakeResult:
         self.last_graph = graph
         return _FakeResult(["render_0001.png"])

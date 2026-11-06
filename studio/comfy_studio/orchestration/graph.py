@@ -116,6 +116,7 @@ class ProductionGraph:
                 # el estado en vuelo no ve el flag persistido por otra petición,
                 # así que el hook en proceso es la vía que sí llega al lazo.
                 state.phase = "cancelled"
+                state.metadata["cancel_requested"] = True
                 state.record("cancelled", stage="execution")
                 self._checkpoint(state)
                 if self.on_step is not None:
