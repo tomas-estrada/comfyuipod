@@ -115,6 +115,7 @@ def test_image_kind_binds_image_recipe() -> None:
     assert summary["bound"] == 1
     layer = shot.layers[0]
     assert layer.params.get("recipe_id") == "qwen_image_1024"
+    assert layer.params.get("lease_vram_mb") == int(18000 * 1.15)
     assert layer.template_id == "sdxl_image"
     assert layer.engine == "qwen-image21"
 
