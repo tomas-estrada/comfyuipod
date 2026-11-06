@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
+import unicodedata
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -401,3 +403,236 @@ def _parse_index(data: dict) -> list[CommunityIndexEntry]:
             )
         )
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Tokenization and node attribution
+# ---------------------------------------------------------------------------
+
+
+def tokenize(text: str) -> set[str]:
+    """Lowercase alphanumeric tokens, splitting on non-alphanumerics and on
+    lowercase→uppercase transitions that signal a new word.
+
+    Accents are stripped so that e.g. 'animación' and 'animacion' match.
+
+    Examples
+    --------
+    >>> tokenize("ComfyUI-IPAdapter")
+    {'comfyui', 'ipadapter'}
+    >>> tokenize("IPAdapterApply")
+    {'ipadapter', 'apply'}
+    >>> tokenize("animación")
+    {'animacion'}
+    """
+    # 1. Normalize to NFKD and strip combining marks (accents).
+    normalized = unicodedata.normalize("NFKD", text or "")
+    stripped = "".join(c for c in normalized if not unicodedata.combining(c))
+    # 2. Replace non-alphanumeric runs with a single space.
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", " ", stripped)
+    # 3. Split before an uppercase letter that is followed by a lowercase letter
+    #    and is itself preceded by a lowercase letter or digit.  This splits
+    #    "IPAdapterApply" into "IPAdapter" + "Apply" but keeps "ComfyUI"
+    #    together because the 'U' is followed by 'I' (not lowercase).
+    split = re.sub(r"(?<=[a-z0-9])(?=[A-Z][a-z])", " ", cleaned)
+    # 4. Lowercase and collect contiguous alphanumeric runs.
+    return {w for w in re.findall(r"[a-z0-9]+", split.lower()) if w}
+
+
+def attribute_nodes(pack_title: str, installed_nodes: Iterable[str]) -> list[str]:
+    """Return the installed node names that share at least one token with `pack_title`.
+
+    The result is sorted and de-duplicated. Pure function; no I/O.
+    """
+    title_tokens = tokenize(pack_title)
+    if not title_tokens:
+        return []
+    matched: list[str] = []
+    seen: set[str] = set()
+    for node_name in installed_nodes:
+        node_tokens = tokenize(node_name)
+        if title_tokens & node_tokens and node_name not in seen:
+            seen.add(node_name)
+            matched.append(node_name)
+    matched.sort()
+    return matched
+
+
+# ---------------------------------------------------------------------------
+# Search result and search engine
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class SearchResult:
+    """One ranked result from a community template search."""
+
+    template: DiscoveredTemplate
+    relevance: float = 0.0          # 0..1 lexical overlap intent <-> title+description
+    coverage: int = 0               # number of installed nodes attributed to this pack
+    matched_nodes: list[str] = field(default_factory=list)  # those nodes, sorted
+    installed_pack: bool = False    # True when coverage > 0
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "template": self.template.to_public_dict(),
+            "relevance": self.relevance,
+            "coverage": self.coverage,
+            "matched_nodes": list(self.matched_nodes),
+            "installed_pack": self.installed_pack,
+        }
+
+
+@dataclass(slots=True)
+class DiscoveredTemplate:
+    """Una plantilla candidata hallada en una fuente comunitaria (no curada).
+
+    Forma mínima para poder buscar/cruzar igual que una curada: id, texto para
+    casar la intención, nodos requeridos (para el cruce de capacidades) y la
+    procedencia. El workflow JSON en sí se trae solo si el agente la elige.
+    """
+
+    template_id: str
+    name: str
+    category: str
+    text: str  # resumen/descripción para el match léxico
+    required_nodes: list[str] = field(default_factory=list)
+    source: str = "community"
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "template_id": self.template_id,
+            "name": self.name,
+            "category": self.category,
+            "text": self.text,
+            "required_nodes": list(self.required_nodes),
+            "source": self.source,
+        }
+
+
+class CommunityTemplateSearch:
+    """Search the community index for templates relevant to a query.
+
+    IMPORTANT LIMITATION: the public index (custom-node-list.json) contains NO
+    node-class ids and NO workflow ids.  Each entry only has author/title/reference/
+    files/install_type/description.  The endpoints node_list.json,
+    workflow_templates.json and templates.json all return HTTP 404.
+
+    Because the index does not declare a pack's required node classes, the
+    **only honest way** to estimate node coverage is to attribute the pod's
+    *real* installed node names to each pack, using token overlap between the
+    pack's ``title`` (from the JSON) and the node class names (from the pod's
+    ``/object_info``, passed in by the caller).
+
+    Example: pack title ``'ComfyUI-IPAdapter'`` + installed node
+    ``'IPAdapterApply'`` share the token ``'ipadapter'``, so
+    ``'IPAdapterApply'`` is attributed to that pack.
+
+    ``DiscoveredTemplate.required_nodes`` therefore contains exactly those
+    attributed nodes.  For a pack with no attributed nodes the list is empty --
+    that is the honest truth (we do not know its real node list), NOT a
+    fabricated empty set.
+
+    Ranking: node coverage DESC first, then lexical relevance to the intent DESC.
+    """
+
+    def __init__(self, downloader: CommunityIndexDownloader | None = None) -> None:
+        self._downloader = downloader
+
+    def _get_downloader(self) -> CommunityIndexDownloader:
+        if self._downloader is not None:
+            return self._downloader
+        return CommunityIndexDownloader()
+
+    @staticmethod
+    def _lexical_relevance(query: str, title: str, description: str) -> float:
+        """Overlap of query tokens with title+description tokens, normalised."""
+        query_tokens = tokenize(query)
+        if not query_tokens:
+            return 0.0
+        hay_tokens = tokenize(title + " " + description)
+        if not hay_tokens:
+            return 0.0
+        return len(query_tokens & hay_tokens) / len(query_tokens)
+
+    def search(
+        self,
+        query: str,
+        installed_nodes: set[str] | Iterable[str] | None = None,
+        *,
+        limit: int = 10,
+    ) -> list[SearchResult]:
+        """Search the community index for templates relevant to ``query``.
+
+        Never raises.  If the index is unavailable returns an empty list.
+        The ``output_kind`` field is NOT part of the public index and is
+        therefore ignored (no fabricated filter).
+        """
+        # Resolve installed nodes to a set for O(1) lookups. Un valor absurdo
+        # (no iterable) degrada a "sin info de pod", nunca lanza.
+        try:
+            nodes_set: set[str] = set(installed_nodes) if installed_nodes else set()
+        except TypeError:
+            nodes_set = set()
+
+        # Fetch the index (NEVER raises).
+        downloader = self._get_downloader()
+        index_result = downloader.fetch()
+        if not index_result.entries:
+            return []
+
+        # Score every entry.
+        results: list[SearchResult] = []
+        for entry in index_result.entries:
+            relevance = self._lexical_relevance(query, entry.title, entry.description)
+            matched = attribute_nodes(entry.title, nodes_set) if nodes_set else []
+            coverage = len(matched)
+            results.append(
+                SearchResult(
+                    template=DiscoveredTemplate(
+                        template_id=entry.entry_id,
+                        name=entry.title,
+                        category=entry.install_type,
+                        text=entry.title + ". " + entry.description,
+                        required_nodes=list(matched),
+                        source="community",
+                    ),
+                    relevance=relevance,
+                    coverage=coverage,
+                    matched_nodes=matched,
+                    installed_pack=coverage > 0,
+                )
+            )
+
+        # Honest contract: return entries with coverage>0 OR relevance>0,
+        # ordered by (coverage desc, relevance desc).  Capped at limit.
+        filtered = [r for r in results if r.coverage > 0 or r.relevance > 0]
+        filtered.sort(key=lambda r: (r.coverage, r.relevance), reverse=True)
+        return filtered[:limit]
+
+    def search_templates(
+        self,
+        query: str,
+        installed_nodes: set[str] | Iterable[str] | None = None,
+        *,
+        limit: int = 10,
+    ) -> list[DiscoveredTemplate]:
+        """Convenience wrapper returning just the DiscoveredTemplate list."""
+        return [
+            r.template
+            for r in self.search(query, installed_nodes=installed_nodes, limit=limit)
+        ]
+
+    def discover(
+        self,
+        query: str,
+        *,
+        output_kind: str,
+        limit: int,
+    ) -> list[DiscoveredTemplate]:
+        """Satisfy the ``DiscoveryProvider`` protocol.
+
+        ``output_kind`` is accepted but the public index has no output_kind
+        field, so it is intentionally ignored (no fabricated filter).
+        """
+        return self.search_templates(query, limit=limit)
