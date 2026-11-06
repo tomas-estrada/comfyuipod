@@ -140,12 +140,14 @@ class GpuLease:
         stale_seconds: float = DEFAULT_STALE_SECONDS,
         now: Callable[[], float] = time.time,
         pid: int | None = None,
+        recover_orphan: Callable[[LeaseGrant], bool] | None = None,
     ) -> None:
         self._lock_dir = Path(lock_dir)
         self._budget = budget
         self._stale = stale_seconds
         self._now = now
         self._pid = pid if pid is not None else os.getpid()
+        self._recover_orphan = recover_orphan
         self._lock_dir.mkdir(parents=True, exist_ok=True)
         self._lock_file = self._lock_dir / "heavy.lock"
         self._token_file = self._lock_dir / "token.seq"
@@ -219,16 +221,17 @@ class GpuLease:
         )
 
     def _is_recoverable(self, grant: LeaseGrant) -> bool:
-        """Un lease se recupera solo si su owner murió.
-
-        Un owner VIVO conserva la GPU aunque lleve rato: reutilizarla bajo sus
-        pies corromperia su render (A04: «un owner huérfano no permite reutilizar
-        GPU mientras su subprocess siga vivo»). Solo un proceso muerto, o un lease
-        rancio Y muerto, se recupera.
-        """
-        if _pid_alive(grant.pid):
+        """Require dead owner plus engine cleanup verification before recovery."""
+        if _pid_alive(grant.pid) or self._recover_orphan is None:
             return False
-        return True
+        try:
+            return bool(self._recover_orphan(grant))
+        except Exception:  # noqa: BLE001 - uncertainty must quarantine the lease
+            return False
+
+    def child_process_dir(self, grant: LeaseGrant) -> Path:
+        """Directory containing process-group markers for one fencing token."""
+        return self._lock_dir / "children" / str(grant.token)
 
     def _next_token(self) -> int:
         """Token de fencing monótono, persistente entre procesos."""
@@ -287,7 +290,8 @@ class GpuLease:
             if existing is not None:
                 if not self._is_recoverable(existing):
                     raise LeaseUnavailable(
-                        f"GPU tomada por owner={existing.owner} pid={existing.pid} (vivo)"
+                        f"GPU ocupada por owner={existing.owner} pid={existing.pid}; "
+                        "cleanup del engine no verificado"
                     )
                 # Owner muerto: recovery y creación del sucesor ocurren en la
                 # misma sección crítica; otro proceso no puede borrar el nuevo.
@@ -339,14 +343,17 @@ class GpuLease:
         grant: LeaseGrant,
         *,
         unload: Callable[[], bool] | None = None,
+        cleanup_verified: bool = True,
     ) -> dict[str, Any]:
-        """Libera el lease del `grant`, con fencing y unload comprobado.
+        """Libera el lease del `grant`, con fencing y cleanup/unload comprobados.
 
         - fencing: si el lock actual no es de este token, lanza `FencingError`
           (un owner antiguo no libera el lease de uno nuevo).
         - unload: si se da, se ejecuta y su resultado se verifica; si devuelve
           False o lanza, se devuelve `cleanup_failed` y se conserva el lock para
           impedir que otro motor use una GPU cuyo estado no se conoce.
+        - cleanup_verified=False conserva el lock y omite unload cuando queda un
+          process group registrado que aún podría estar usando CUDA.
         """
         if grant is None:
             return {"released": False, "reason": "no_grant"}
@@ -359,7 +366,14 @@ class GpuLease:
                     f"fencing: lock actual token={existing.token} != grant token={grant.token}"
                 )
 
-            cleanup_failed = False
+            cleanup_failed = not cleanup_verified
+            if cleanup_failed:
+                return {
+                    "released": False,
+                    "reason": "cleanup_failed",
+                    "cleanup_failed": True,
+                    "token": grant.token,
+                }
             if unload is not None:
                 try:
                     ok = unload()
@@ -380,6 +394,11 @@ class GpuLease:
 
             # Exclusión hasta finalizar unload y retirar el token actual.
             self._lock_file.unlink(missing_ok=True)
+            try:
+                self.child_process_dir(grant).rmdir()
+                (self._lock_dir / "children").rmdir()
+            except OSError:
+                pass
             return {
                 "released": True,
                 "reason": "released",
@@ -388,14 +407,19 @@ class GpuLease:
             }
 
     def force_break(self) -> bool:
-        """Recupera un lock SOLO si su owner murió. No rompe uno vivo."""
+        """Recover only after owner death and verified process/engine cleanup."""
         with self._coordinate():
             existing = self.current()
             if existing is None:
                 return False
-            if _pid_alive(existing.pid):
+            if not self._is_recoverable(existing):
                 return False
             self._lock_file.unlink(missing_ok=True)
+            try:
+                self.child_process_dir(existing).rmdir()
+                (self._lock_dir / "children").rmdir()
+            except OSError:
+                pass
             return True
 
 

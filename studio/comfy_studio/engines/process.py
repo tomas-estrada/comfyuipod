@@ -10,6 +10,13 @@ import time
 from threading import Event
 from typing import Any
 
+from comfy_studio.engines.process_registry import (
+    process_group_scope_active,
+    register_process_group,
+    stop_process_group,
+    unregister_process_group,
+)
+
 
 class ProcessCancelled(Exception):
     """Raised after a cancelled engine process tree has been stopped."""
@@ -28,7 +35,9 @@ def run_cancellable(
     signal, avoiding pipe deadlocks and keeping timeout semantics compatible
     with `subprocess.run`.
     """
-    if cancel_event is None:
+    # Fast path for non-leased callers. A leased run needs a session even without
+    # cancellation so an API crash can later identify and stop its child group.
+    if cancel_event is None and not process_group_scope_active():
         return subprocess.run(args, timeout=timeout, **kwargs)
 
     popen_kwargs = dict(kwargs)
@@ -45,36 +54,50 @@ def run_cancellable(
         )
     else:
         popen_kwargs["start_new_session"] = True
-    if cancel_event.is_set():
+    if cancel_event is not None and cancel_event.is_set():
         raise ProcessCancelled("engine process cancelled before start")
     proc = subprocess.Popen(args, **popen_kwargs)
+    marker = None
+    try:
+        marker = register_process_group(proc.pid) if os.name == "posix" else None
+    except Exception:
+        _terminate_tree(proc)
+        raise
     deadline = time.monotonic() + timeout if timeout is not None else None
-    while True:
-        if cancel_event.is_set():
-            _terminate_tree(proc)
-            proc.communicate()
-            raise ProcessCancelled("engine process cancelled")
-        wait_s = 0.1
-        if deadline is not None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
                 _terminate_tree(proc)
-                stdout, stderr = proc.communicate()
-                raise subprocess.TimeoutExpired(args, timeout, output=stdout, stderr=stderr)
-            wait_s = min(wait_s, remaining)
-        try:
-            stdout, stderr = proc.communicate(timeout=wait_s)
-            completed = subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
-            if check and completed.returncode:
-                raise subprocess.CalledProcessError(
-                    completed.returncode,
-                    args,
-                    output=completed.stdout,
-                    stderr=completed.stderr,
-                )
-            return completed
-        except subprocess.TimeoutExpired:
-            continue
+                proc.communicate()
+                raise ProcessCancelled("engine process cancelled")
+            wait_s = 0.1
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _terminate_tree(proc)
+                    stdout, stderr = proc.communicate()
+                    raise subprocess.TimeoutExpired(
+                        args, timeout, output=stdout, stderr=stderr
+                    )
+                wait_s = min(wait_s, remaining)
+            try:
+                stdout, stderr = proc.communicate(timeout=wait_s)
+                if os.name == "posix" and not stop_process_group(proc.pid):
+                    raise RuntimeError("engine child process group cleanup failed")
+                completed = subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+                if check and completed.returncode:
+                    raise subprocess.CalledProcessError(
+                        completed.returncode,
+                        args,
+                        output=completed.stdout,
+                        stderr=completed.stderr,
+                    )
+                return completed
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if marker is not None and stop_process_group(proc.pid):
+            unregister_process_group(marker)
 
 
 def _terminate_tree(proc: subprocess.Popen) -> None:
