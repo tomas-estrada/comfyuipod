@@ -29,6 +29,8 @@ from comfy_studio.orchestration import (
     build_server_collaborators,
     plan_production,
 )
+from comfy_studio.orchestration.gpu_lease import AdmissionBudget, GpuLease
+from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
 
 # --------------------------------------------------------------------------
 # Fakes que cumplen el contrato de cada pieza (sin GPU/red)
@@ -355,6 +357,21 @@ def test_assembler_builds_job_in_editor_timeline_shape():
 # --------------------------------------------------------------------------
 # build_server_collaborators: el grafo corre con colaboradores reales
 # --------------------------------------------------------------------------
+
+
+def test_server_collaborators_wrap_real_runner_with_gpu_lease(tmp_path):
+    lease = GpuLease(
+        lock_dir=tmp_path / ".gpu-lease",
+        budget=AdmissionBudget(vram_mb=90_000, ram_mb=120_000),
+    )
+
+    collab = build_server_collaborators(
+        engines={"comfyui": _AsyncEngine()},
+        gpu_lease=lease,
+        unload_gpu=lambda: True,
+    )
+
+    assert isinstance(collab.runner, LeasedEngineRunner)
 
 
 def test_server_collaborators_run_full_graph_to_done(tmp_path, monkeypatch):
