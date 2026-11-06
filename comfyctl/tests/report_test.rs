@@ -102,6 +102,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
                 total: 12,
                 failed: Vec::new(),
                 elapsed_s: 0,
+                ..Phase1Info::default()
             },
             phase2: Phase2Info {
                 state: "done".to_string(),
@@ -111,6 +112,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
                 current_file: None,
                 hf_pid: None,
                 hf_rss_mb: 0,
+                ..Phase2Info::default()
             },
         },
         phase_banner: "ComfyUI listo · Fase 2 completada".to_string(),
