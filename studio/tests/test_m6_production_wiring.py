@@ -277,7 +277,9 @@ def test_studio_profile_defaults_to_real_backend_through_production_api(
 
     # Exercise the normal human production HTTP route. Planning remains cheap:
     # it admits resources and binds a recipe without starting a GPU engine.
-    response = TestClient(app).post(
+    client = TestClient(app)
+    client.auth = ("admin", "changeme-test-pass-42")
+    response = client.post(
         "/studio/api/productions",
         json={"idea": "un plano de dron sobre Medellín"},
     )
