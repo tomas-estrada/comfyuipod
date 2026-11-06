@@ -131,43 +131,51 @@ class AtlasService:
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
+        from comfy_studio.atlas.geo import bbox_intersects, in_bbox
+
         store = self.store
         if q:
-            places = store.search_places_fts(q, limit=200)
             norm = normalize_text(q)
             exact = store.get_place_by_norm_name(norm, municipality)
+            alias_exact = store.get_places_by_alias_norm(norm, municipality)
+            places = store.search_places_fts(q, limit=200)
             seen: set[str] = set()
-            merged = [p for p in exact if not (p.place_id in seen or seen.add(p.place_id))]
-            for p in places:
+            # prioridad real: nombre exacto > alias exacto > rank FTS5
+            merged = []
+            for p in exact + alias_exact + places:
                 if p.place_id not in seen:
                     seen.add(p.place_id)
                     merged.append(p)
-            # filtro adicional por municipio/kind sobre los resultados textuales
+            # filtros sobre los resultados textuales (incluye bbox si se pide)
             if municipality:
                 merged = [p for p in merged if p.municipality == municipality]
             if environment:
                 merged = [p for p in merged if str(p.kind) == environment]
+            if bbox is not None:
+                kept = []
+                for p in merged:
+                    if p.lat is not None and p.lon is not None:
+                        if in_bbox(p.lat, p.lon, bbox):
+                            kept.append(p)
+                    elif p.bounds is not None:
+                        if bbox_intersects(p.bounds, bbox):
+                            kept.append(p)
+                    # sin geometría: no se afirma que esté dentro
+                merged = kept
         else:
             kind = environment
             merged = store.list_places(
                 municipality=municipality, kind=kind, bbox=bbox, limit=1000, offset=0
             )
-        out: list[dict[str, Any]] = []
-        scanned = 0
+        # aplica min_views antes de paginar para que offset/limit sean honestos
+        filtered: list = []
         for p in merged:
-            if scanned >= offset + limit + offset and len(out) >= limit:
-                break
-            scanned += 1
             views = self._usable_views(p.place_id)
-            cov = store.get_coverage(p.place_id)
             if min_views and len(views) < min_views:
                 continue
-            if scanned <= offset:
-                continue
-            out.append(self._place_summary(p, views=len(views), coverage=cov))
-            if len(out) >= limit:
-                break
-        return out
+            cov = store.get_coverage(p.place_id)
+            filtered.append(self._place_summary(p, views=len(views), coverage=cov))
+        return filtered[offset : offset + limit]
 
     def _place_summary(
         self, place, *, views: int, coverage: Coverage | None
@@ -209,11 +217,8 @@ class AtlasService:
                                for p in exact],
                 "hint": "Indica municipio o coordenadas para desambiguar",
             }
-        # alias exacto
-        alias_hits: list = []
-        for p in store.list_places(municipality=municipality, limit=1000):
-            if norm in [normalize_text(a) for a in p.aliases] or norm == normalize_text(p.name):
-                alias_hits.append(p)
+        # alias exacto (insensible a acentos vía normalize_text)
+        alias_hits = store.get_places_by_alias_norm(norm, municipality)
         if len(alias_hits) == 1:
             return {"status": "confirmed", "place": self.place_detail(alias_hits[0].place_id)}
         if len(alias_hits) > 1:
