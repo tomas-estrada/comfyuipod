@@ -16,6 +16,7 @@ traer el submotor (F6) antes de usarlas.
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,25 @@ _WIRED_OPS = frozenset({"tts", "stt"})
 _STUB_WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 16
 _STUB_MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 16
 _STUB_TXT = "[STUB] transcripción simulada"
+
+#: Pesos de STT en disco (misma ruta que declara preparedness para `audio`).
+_STT_WEIGHTS_REL = ("models", "whisper", "faster-whisper-large-v3")
+
+
+def stt_weights_available() -> bool:
+    """Hecho del sistema de archivos: el dir de faster-whisper existe con contenido."""
+    base = (os.environ.get("COMFY_DATA_DIR") or "").strip()
+    if not base:
+        return False
+    target = Path(base).joinpath(*_STT_WEIGHTS_REL)
+    if not os.path.exists(target):
+        return False
+    if os.path.isdir(target):
+        try:
+            return any(os.scandir(target))
+        except OSError:
+            return False
+    return True
 
 
 @dataclass(slots=True)
@@ -97,13 +117,30 @@ class AudioEngine:
         )
 
     def verify(self, submotor: str) -> EngineResult:
-        present = submotor in _WIRED_OPS or self.is_stub()
+        """Instalado no es listo: STT exige faster-whisper en disco."""
+        if submotor not in _WIRED_OPS and not self.is_stub():
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="verify",
+                payload={"op": submotor, "wired": False, "stub": False},
+                error=f"op '{submotor}' aún sin backend (F6)",
+            )
+        weights_ok = True
+        if submotor == "stt" and not self.is_stub():
+            # STT necesita faster-whisper en disco: instalado no es listo.
+            weights_ok = stt_weights_available()
+        ready = self.is_stub() or weights_ok
         return EngineResult(
-            ok=present,
+            ok=ready,
             engine=self.name,
             verb="verify",
-            payload={"op": submotor, "wired": submotor in _WIRED_OPS, "stub": self.is_stub()},
-            error=None if present else f"op '{submotor}' aún sin backend (F6)",
+            payload={"op": submotor, "wired": submotor in _WIRED_OPS,
+                     "weights_ok": weights_ok, "stub": self.is_stub()},
+            error=None if ready else (
+                "pesos faster-whisper ausentes "
+                "(COMFY_DATA_DIR/models/whisper/faster-whisper-large-v3)"
+            ),
         )
 
     def run(self, spec: EngineRunSpec) -> EngineResult:
