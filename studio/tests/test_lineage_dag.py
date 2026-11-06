@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from comfy_studio.orchestration.lineage import LineageGraph
+from comfy_studio.orchestration.lineage import LineageGraph, LineageNode, _hash_inputs
 
 
 def _studio_graph() -> LineageGraph:
@@ -122,6 +122,214 @@ def test_roundtrip_serialization() -> None:
     restored = LineageGraph.from_dict(g.to_dict())
     assert restored.topo_order() == g.topo_order()
     assert {n.node_id for n in restored.nodes()} == {n.node_id for n in g.nodes()}
+
+
+# --------------------------------------------------------------------------
+# W04 — `LineageGraph.descendants`, métodos vecinos y `_hash_inputs`
+# --------------------------------------------------------------------------
+
+
+def test_descendants_transitive_closure_and_excludes_self() -> None:
+    """Cierre transitivo completo; en un DAG el nodo consultado no aparece."""
+    g = _studio_graph()
+    assert g.descendants("brief") == {"asr", "geometry", "render", "comp", "final"}
+    assert g.descendants("lighting") == {"comp", "final"}
+    assert g.descendants("title") == {"titlecard", "final"}
+    assert g.descendants("geometry") == {"render", "comp", "final"}
+    # Hoja: nadie cuelga de ella.
+    assert g.descendants("final") == set()
+    # Determinista: repetir la consulta devuelve el mismo conjunto.
+    assert g.descendants("brief") == g.descendants("brief")
+
+
+def test_descendants_on_empty_graph_unknown_and_isolated_nodes() -> None:
+    """Grafo vacío, nodo inexistente y nodo aislado → conjunto vacío."""
+    assert LineageGraph().descendants("cualquiera") == set()
+    g = _studio_graph()
+    assert g.descendants("no-existe") == set()
+    g.add("aislado", "nota", inputs={})
+    assert g.descendants("aislado") == set()
+
+
+def test_descendants_diamond_returns_set_with_each_node_once() -> None:
+    """Diamante a -> {b, c} -> e: cada descendiente aparece una vez (es un set)."""
+    g = LineageGraph()
+    g.add("a", "x")
+    g.add("b", "x", depends_on=["a"])
+    g.add("c", "x", depends_on=["a"])
+    g.add("e", "x", depends_on=["b", "c"])
+    result = g.descendants("a")
+    assert isinstance(result, set)
+    assert result == {"b", "c", "e"}
+    assert g.descendants("b") == {"e"}
+
+
+def test_descendants_tolerates_cycle_including_queried_node() -> None:
+    """Comportamiento actual anclado (no se parchea): con un ciclo,
+    `descendants` no lanza ni cuelga, pero el nodo consultado SÍ aparece en
+    el resultado, aunque su docstring diga «sin incluirlo». `topo_order`
+    sigue siendo la puerta que rechaza grafos cíclicos (ver
+    test_cycle_is_detected)."""
+    g = LineageGraph()
+    g.add("a", "x", depends_on=["b"])
+    g.add("b", "x", depends_on=["a"])
+    assert g.descendants("a") == {"a", "b"}
+    assert g.descendants("b") == {"a", "b"}
+
+
+def test_hash_inputs_is_deterministic_and_order_independent() -> None:
+    """Mismo contenido → mismo hash, sin importar el orden de inserción de
+    las entradas ni el orden de los fingerprints de dependencias."""
+    base = _hash_inputs("render", {"seed": 7, "width": 1920}, ["bbb", "aaa"])
+    reordered = _hash_inputs("render", {"width": 1920, "seed": 7}, ["aaa", "bbb"])
+    assert base == reordered
+    assert base == _hash_inputs("render", {"seed": 7, "width": 1920}, ["bbb", "aaa"])
+
+
+def test_hash_inputs_changes_with_kind_inputs_and_deps() -> None:
+    """Sensibilidad: cambia con el tipo, con cualquier entrada y con las deps."""
+    base = _hash_inputs("render", {"seed": 7}, ["d1"])
+    assert _hash_inputs("title", {"seed": 7}, ["d1"]) != base  # kind
+    assert _hash_inputs("render", {"seed": 8}, ["d1"]) != base  # valor
+    assert _hash_inputs("render", {"seed": 7, "w": 1}, ["d1"]) != base  # alta
+    assert _hash_inputs("render", {"seed": 7}, ["d2"]) != base  # dep
+    assert _hash_inputs("render", {"seed": 7}, ["d1", "d2"]) != base  # nº deps
+
+
+def test_hash_inputs_is_16_hex_and_handles_unserializable_values() -> None:
+    """Formato: 16 hex minúsculas. `default=str` cubre valores no JSON de
+    forma estable (objeto con `__str__` determinista → mismo hash)."""
+
+    class Thing:
+        def __str__(self) -> str:
+            return "thing"
+
+    h = _hash_inputs("x", {"obj": Thing()}, [])
+    assert len(h) == 16
+    assert all(c in "0123456789abcdef" for c in h)
+    assert h == _hash_inputs("x", {"obj": Thing()}, [])
+
+
+def test_hash_inputs_golden_vector_anchors_the_algorithm() -> None:
+    """Vector fijo: si cambia el algoritmo, TODOS los fingerprints cambian y
+    `plan_recompute` marcaría stale un checkpoint entero. Cambiar este valor
+    debe ser una decisión consciente con su propia migración."""
+    assert _hash_inputs("render", {"seed": 7}, ["d1"]) == "b801b4c48ab81675"
+    assert (
+        _hash_inputs("brief", {"text": "dron costero atardecer"}, [])
+        == "1f8f4e2351ae3e53"
+    )
+
+
+def test_get_returns_none_for_unknown_node() -> None:
+    g = _studio_graph()
+    assert g.get("brief") is not None
+    assert g.get("no-existe") is None
+    assert LineageGraph().get("brief") is None
+
+
+def test_set_computed_without_prior_fingerprints_computes_them() -> None:
+    """Rama `fingerprint is None`: `set_computed` dispara `compute_fingerprints`
+    para no fijar un artifact con fingerprint desconocido."""
+    g = LineageGraph()
+    g.add("a", "brief", inputs={"t": 1})
+    g.set_computed("a", "/out/a.bin")
+    node = g.get("a")
+    assert node.artifact == "/out/a.bin"
+    assert node.fingerprint is not None
+
+
+def test_plan_recompute_marks_added_nodes_and_ignores_removed_ones() -> None:
+    """Nodo nuevo tras el baseline → stale (no estaba en previous); ids en
+    previous que ya no existen en el grafo → ignorados."""
+    g = LineageGraph()
+    g.add("a", "brief", inputs={"t": 1})
+    baseline = g.compute_fingerprints()
+    g.add("b", "render", inputs={}, depends_on=["a"])
+    assert g.plan_recompute(baseline) == {"b"}
+    # Alta de una entrada nueva en un nodo existente también lo marca stale.
+    g.update_inputs("a", extra=True)
+    assert g.plan_recompute(baseline) == {"a", "b"}
+    # Un id en previous que ya no está en el grafo no aparece en el plan.
+    ghost_baseline = dict(baseline)
+    ghost_baseline["borrado"] = "0" * 16
+    assert g.plan_recompute(ghost_baseline) == {"a", "b"}
+
+
+def test_invalidate_artifacts_skips_unknown_ids() -> None:
+    """Ids stale que no corresponden a ningún nodo se ignoran sin lanzar."""
+    g = _studio_graph()
+    g.compute_fingerprints()
+    g.set_computed("brief", "/out/brief.bin")
+    g.set_computed("asr", "/out/asr.bin")
+    g.invalidate_artifacts({"brief", "ghost"})
+    assert g.get("brief").artifact is None  # sí se borró
+    assert g.get("asr").artifact == "/out/asr.bin"  # conservado
+    assert g.get("ghost") is None
+
+
+def test_serialization_preserves_fingerprint_and_artifact() -> None:
+    """Roundtrip con artifact/fingerprint reales + `from_dict` sin clave."""
+    g = _studio_graph()
+    g.compute_fingerprints()
+    g.set_computed("brief", "/out/brief.bin")
+    restored = LineageGraph.from_dict(g.to_dict())
+    assert restored.get("brief").artifact == "/out/brief.bin"
+    assert restored.get("brief").fingerprint == g.get("brief").fingerprint
+    assert restored.get("asr").fingerprint is not None
+    # `from_dict` tolera datos sin clave "nodes" → grafo vacío.
+    empty = LineageGraph.from_dict({})
+    assert empty.nodes() == []
+    assert empty.topo_order() == []
+
+
+def test_lineage_node_from_dict_without_optional_fields_uses_defaults() -> None:
+    """Defaults de `LineageNode.from_dict`: solo node_id/kind son obligatorios."""
+    node = LineageNode.from_dict({"node_id": "a", "kind": "brief"})
+    assert node.inputs == {}
+    assert node.depends_on == []
+    assert node.fingerprint is None
+    assert node.artifact is None
+
+
+def test_add_replaces_node_with_same_id() -> None:
+    """Comportamiento actual: volver a añadir un id lo sobrescribe en silencio."""
+    g = LineageGraph()
+    g.add("a", "brief", inputs={"t": 1})
+    replaced = g.add("a", "render", inputs={"t": 2})
+    assert replaced.kind == "render"
+    assert len(g.nodes()) == 1
+    assert g.get("a").inputs == {"t": 2}
+
+
+def test_topo_order_is_deterministic_exact_sequence() -> None:
+    """`ready.sort()` hace el orden estable: el mismo grafo → la misma lista."""
+    assert _studio_graph().topo_order() == [
+        "brief",
+        "asr",
+        "geometry",
+        "lighting",
+        "render",
+        "comp",
+        "title",
+        "titlecard",
+        "final",
+    ]
+
+
+def test_dangling_dependency_is_ignored_without_crashing() -> None:
+    """Dependencia colgante (id que no existe como nodo): se ignora en el
+    fingerprint y en el orden topológico; el grafo sigue siendo utilizable."""
+    g = LineageGraph()
+    g.add("huerfano", "render", depends_on=["borrado"])
+    fps = g.compute_fingerprints()
+    assert set(fps) == {"huerfano"}
+    # Sin dep real que incorporar: el hash equivale a un nodo sin dependencias.
+    assert fps["huerfano"] == _hash_inputs("render", {}, [])
+    assert g.topo_order() == ["huerfano"]
+    # El id colgante no está en el grafo, pero los nodos que lo declaran
+    # siguen siendo sus dependientes (semántica de la arista invertida).
+    assert g.descendants("borrado") == {"huerfano"}
 
 
 # --------------------------------------------------------------------------

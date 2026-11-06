@@ -184,7 +184,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="raíz del atlas (default: $STUDIO_ATLAS_DIR o /opt/studio-atlas)",
     )
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--root", default=None, help=argparse.SUPPRESS)
+    # SUPPRESS para no pisar el --root global cuando va antes del subcomando.
+    common.add_argument("--root", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", required=True)
 
     def sub_cmd(name: str, help_text: str) -> argparse.ArgumentParser:

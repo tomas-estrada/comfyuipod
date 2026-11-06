@@ -4208,22 +4208,14 @@ def test_a_surviving_client_cache_keeps_its_subtree_but_not_the_asset(
     assert dest.read_bytes() == FAKE_CONTENT
 
 
-def test_a_live_neighbours_install_temp_is_reaped_once_it_is_stale(
+def test_a_live_neighbours_install_temp_is_never_reaped_by_age(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D1 (riesgo conocido): el directorio de destino sigue siendo compartido.
+    """A01: el mtime antiguo no convierte en huérfano el temp de un proceso vivo.
 
-    El subárbol de staging cerró la misma-nombre del lado de la descarga, pero
-    la instalación escribe su temporal en el directorio del destino y ahí la
-    pertenencia solo se puede preguntar por pid y por edad. Esta prueba fija el
-    comportamiento actual —**lo documenta, no lo bendice**— para que un refactor
-    futuro tenga un objetivo: el temporal de un vecino vivo que lleva inactivo
-    más de `STALE_PARTIAL_AGE_S` se barre, y el recién empezado se respeta.
-
-    La consecuencia está acotada y por eso se puede vivir con ella: el vecino
-    ve fallar su `rename`, reintenta y baja el activo otra vez. Ningún parcial
-    se publica, porque el barrido solo roza los `<dest>.partial-*` y el destino
-    no entra en él.
+    Una copia cross-device puede superar el umbral de limpieza sin terminar.
+    Otra adquisición debe dejar intactos ambos temps mientras su dueño siga
+    vivo; cuando el dueño termina, puede retirar sus temps.
     """
     stage = tmp_path / "stage"
     dest = tmp_path / "models" / "out.bin"
@@ -4258,14 +4250,16 @@ def test_a_live_neighbours_install_temp_is_reaped_once_it_is_stale(
         )
 
         assert report.entries[0].status == "downloaded", report.entries[0].error
-        assert not stale.exists(), (
-            "el temporal inactivo de un vecino vivo se barre: coste conocido de D1"
-        )
+        assert stale.is_file(), "la edad por sí sola no autoriza borrar al vecino vivo"
+        assert stale.read_bytes() == b"copia cross-device en vuelo"
         assert fresh.is_file(), "el recién empezado se respeta"
     finally:
         neighbour.terminate()
         neighbour.wait()
 
+    asset_acquire._drop_stale_partials(dest.parent, dest.name)
+    assert not stale.exists(), "el temp viejo se limpia cuando el dueño murió"
+    assert not fresh.exists(), "también se limpian los temps recientes del dueño muerto"
 
 # --- R81: preparar el directorio del destino no es instalar --------------------
 

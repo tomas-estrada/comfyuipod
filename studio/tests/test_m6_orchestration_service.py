@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import threading
+
 import pytest
 
+import comfy_studio.orchestration.service as service_module
 from comfy_studio.orchestration import (
+    Collaborators,
     ProductionCheckpointer,
     ProductionNotApprovedError,
     ProductionNotFoundError,
@@ -62,6 +67,133 @@ def test_approve_twice_is_idempotent_after_terminal_simulation(tmp_path):
     out2 = svc.approve_plan(pid)
     assert out2["phase"] == "simulated"
     assert out2["final_output_path"] is None
+
+
+def test_concurrent_approvals_claim_the_production_graph_once(tmp_path, monkeypatch):
+    """Concurrent retries see the in-flight approval instead of rerunning it."""
+    db = tmp_path / "concurrent-approval.sqlite3"
+    first = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    second = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    production_id = first.plan_production("luz de amanecer")["production_id"]
+
+    loaded = threading.Barrier(2)
+    original_load = ProductionCheckpointer.load
+    seen_initial_load = threading.local()
+
+    def synchronized_initial_load(checkpointer, requested_id):
+        state = original_load(checkpointer, requested_id)
+        if not getattr(seen_initial_load, "done", False):
+            seen_initial_load.done = True
+            loaded.wait(timeout=5)
+        return state
+
+    monkeypatch.setattr(ProductionCheckpointer, "load", synchronized_initial_load)
+    graph_started = threading.Event()
+    finish_graph = threading.Event()
+    runs = {"count": 0}
+
+    class BlockingGraph:
+        should_cancel = None
+        on_step = None
+
+        def run(self, state):
+            runs["count"] += 1
+            graph_started.set()
+            assert finish_graph.wait(timeout=5)
+            state.phase = "simulated"
+            state.metadata["simulated"] = True
+            state.record("simulated")
+            return state
+
+    monkeypatch.setattr(
+        service_module, "build_production_graph", lambda **_kwargs: BlockingGraph()
+    )
+    results = []
+    errors = []
+
+    def approve(service):
+        try:
+            results.append(service.approve_plan(production_id))
+        except Exception as exc:  # pragma: no cover - assertion reports details
+            errors.append(exc)
+
+    threads = [threading.Thread(target=approve, args=(svc,)) for svc in (first, second)]
+    for thread in threads:
+        thread.start()
+    assert graph_started.wait(timeout=5)
+    for _ in range(500):
+        if any(result.get("already_in_progress") for result in results):
+            break
+        threading.Event().wait(0.01)
+    assert any(result.get("already_in_progress") for result in results)
+    finish_graph.set()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert not errors, errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert runs["count"] == 1
+
+
+def test_compare_and_set_refuses_stale_plan_snapshot(tmp_path):
+    svc = _service(tmp_path)
+    production_id = svc.plan_production("brief inicial")["production_id"]
+
+    stale = svc.checkpointer.load(production_id)
+    assert stale is not None
+    stale_snapshot = json.dumps(stale.to_dict(), ensure_ascii=False)
+
+    # A plan edit lands after the approval request loaded its source snapshot.
+    svc.update_plan(production_id, idea="brief revisado")
+    stale.phase = "executing"
+    claimed = svc.checkpointer.claim_phase(
+        stale,
+        expected_phase="awaiting_approval",
+        expected_state_json=stale_snapshot,
+    )
+
+    assert claimed is False
+    persisted = svc.checkpointer.load(production_id)
+    assert persisted is not None
+    assert persisted.phase == "awaiting_approval"
+    assert persisted.idea == "brief revisado"
+
+
+def test_cancel_stops_an_in_flight_engine_layer(tmp_path):
+    """The cancel API signals the runner and the production ends as cancelled."""
+    started = threading.Event()
+    results = []
+    errors = []
+
+    class BlockingRunner:
+        def run_layer(self, engine, job, *, cost_cap=None, cancel_event=None):
+            started.set()
+            assert cancel_event is not None
+            assert cancel_event.wait(timeout=5)
+            return {"ok": False, "engine": engine, "error": "cancelled"}
+
+    svc = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "cancel.sqlite3"),
+        collaborators=Collaborators(runner=BlockingRunner()),
+    )
+    production_id = svc.plan_production("cancelar render activo")["production_id"]
+
+    def approve():
+        try:
+            results.append(svc.approve_plan(production_id))
+        except Exception as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    thread = threading.Thread(target=approve)
+    thread.start()
+    assert started.wait(timeout=5)
+    requested = svc.cancel_production(production_id)
+    assert requested["cancel_requested"] is True
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert not errors, errors
+    assert results[0]["phase"] == "cancelled"
 
 
 def test_get_plan_missing_raises(tmp_path):

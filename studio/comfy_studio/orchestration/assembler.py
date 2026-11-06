@@ -13,6 +13,7 @@ hay ninguno, deja el estado sin reel y lo registra (no inventa salida).
 
 from __future__ import annotations
 
+from threading import Event
 from typing import Any, Protocol
 
 from comfy_studio.orchestration.state import ProductionState, ShotStatus
@@ -29,7 +30,11 @@ class Assembler(Protocol):
     """
 
     def assemble(
-        self, production_id: str, clips: list[dict[str, Any]]
+        self,
+        production_id: str,
+        clips: list[dict[str, Any]],
+        *,
+        cancel_event: Event | None = None,
     ) -> dict[str, Any]:
         """Une los clips en un reel; devuelve {'ok': bool, 'output_path'?}."""
         ...
@@ -39,7 +44,11 @@ class StubAssembler:
     """Ensamblador determinista para CI/tests."""
 
     def assemble(
-        self, production_id: str, clips: list[dict[str, Any]]
+        self,
+        production_id: str,
+        clips: list[dict[str, Any]],
+        *,
+        cancel_event: Event | None = None,
     ) -> dict[str, Any]:
         return {
             "ok": True,
@@ -49,7 +58,10 @@ class StubAssembler:
 
 
 def assemble_reel(
-    state: ProductionState, assembler: Assembler | None = None
+    state: ProductionState,
+    assembler: Assembler | None = None,
+    *,
+    cancel_event: Event | None = None,
 ) -> ProductionState:
     """Ensambla los shots aceptados en el reel final (nodo `assemble`).
 
@@ -68,7 +80,10 @@ def assemble_reel(
         state.record("assemble", clips=0, output=None, note="sin shots aceptados")
         return state
 
-    result = asm.assemble(state.id, clips)
+    if cancel_event is not None and cancel_event.is_set():
+        return state
+
+    result = asm.assemble(state.id, clips, cancel_event=cancel_event)
     if not result.get("ok", False):
         attempts = int(state.metadata.get("assemble_attempts", 0)) + 1
         state.metadata["assemble_attempts"] = attempts

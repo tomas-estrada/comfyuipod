@@ -32,6 +32,7 @@ from comfy_studio.engines import (
     EngineTier,
 )
 from comfy_studio.engines.base import Engine
+from comfy_studio.engines.process import ProcessCancelled, run_cancellable
 
 # MP4 mínimo-ish para el modo stub (caja ftyp válida, suficiente para tests).
 _STUB_MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 16
@@ -170,6 +171,7 @@ class EditorEngine(Engine):
             verb="run",
             payload={
                 "output": str(res.output) if res.output else None,
+                "cancelled": res.exit_code == 130,
                 "duration_s": round(res.duration_s, 3),
                 "clips": len(timeline.clips),
                 "total_timeline_s": timeline.total_duration_s(),
@@ -291,14 +293,22 @@ class EditorEngine(Engine):
         ]
         start = time.monotonic()
         try:
-            res = subprocess.run(
+            res = run_cancellable(
                 cmd,
+                cancel_event=spec.cancel_event,
                 cwd=project,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout,
+            )
+        except ProcessCancelled:
+            return EditorResult(
+                exit_code=130,
+                output=None,
+                log_tail="remotion render cancelado",
+                duration_s=time.monotonic() - start,
             )
         except subprocess.TimeoutExpired:
             return EditorResult(

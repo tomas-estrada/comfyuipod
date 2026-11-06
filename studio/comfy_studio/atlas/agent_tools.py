@@ -287,11 +287,18 @@ async def handle_atlas_prepare_shot(args: AtlasPrepareShotArgs, context: Any) ->
         shot["ok"] = shot.get("status") == "ok"
         if shot.get("status") == "ok":
             # contexto estructurado para el planner (state.metadata["atlas"])
+            # Lleva procedencia del fondo para que el grafo final cite la
+            # fuente real aunque el catálogo cambie entre plan y ejecución
+            # (el adapter revalida hash y ruta al ejecutar; nunca confía).
             shot["atlas_context"] = {
                 "place_id": shot["place_id"],
                 "view_id": shot["view_id"],
                 "ref_id": shot["ref_id"],
                 "background_path": shot["background_path"],
+                "background_sha256": shot["reference"]["sha256"],
+                "license": shot["reference"]["license"],
+                "attribution": shot["reference"]["attribution"],
+                "capture_date": shot["reference"]["capture_date"],
                 "atlas_version": shot["atlas_version"],
                 "camera": shot["camera"],
                 "limitations": shot["limitations"],
