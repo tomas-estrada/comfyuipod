@@ -880,3 +880,41 @@ fn strict_gpu_query_failure_is_fatal_in_gpu_mode_but_s17_only_warns() {
         "S17 debe explicar que no se pudo consultar la GPU"
     );
 }
+
+#[test]
+fn strict_unknown_model_profile_warns_and_never_falls_over() {
+    // S9 era el unico check sin su rama negativa ejercitada: el test existente
+    // solo asseriona `model_profile_valid` en config, con perfiles validos, lo
+    // que jamas llega al `warn` de S9. Un perfil desconocido debe degradar a
+    // WARN (nunca FATAL, aun con STRICT_START activo) y explicar la recuperacion.
+    let mut vars = consumer_profile_vars();
+    vars.insert(
+        "MODEL_PROFILE".to_string(),
+        "perfil-inexistente".to_string(),
+    );
+    let cfg = RuntimeConfig::from_map(&vars, None);
+    assert!(!cfg.model_profile_valid);
+    assert_eq!(cfg.model_profile, ModelProfile::All, "fallback a 'all'");
+    assert!(cfg.strict_start, "este test asume STRICT_START activo");
+
+    // El resto de la snapshot esta sano, luego S9 debe ser el UNICO warn.
+    let rep = evaluate_strict_checks(&cfg, &base_healthy_snapshot());
+
+    let s9 = rep.checks.iter().find(|c| c.id == "S9");
+    assert!(
+        matches!(
+            s9,
+            Some(c) if c.status == "warn"
+                && c.detail.contains("perfil-inexistente")
+                && c.detail.contains("desconocido")
+                && c.remediation
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("Valores válidos")
+        ),
+        "S9 debia avisar con el perfil crudo y la lista de valores validos"
+    );
+
+    // Nunca fatal: con STRICT_START activo el resultado general queda en 'warn'.
+    assert_eq!(rep.result, "warn");
+}
