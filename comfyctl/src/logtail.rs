@@ -4,6 +4,13 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+/// Tope duro de bytes leídos hacia atrás por [`tail_lines`].
+///
+/// 8 MiB alcanzan para 2000 líneas (el máximo que acepta `?n=`) con ~4 KiB por
+/// línea, y es finito: un log con una línea gigante no puede convertir la petición
+/// de diagnóstico en una reserva de memoria desproporcionada.
+pub const MAX_TAIL_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Lista blanca estricta de nombres de log permitidos en `/logs/<name>` (§5.4 / O-04).
 pub const LOG_WHITELIST_NAMES: [&str; 10] = [
     "comfyui",
@@ -36,6 +43,14 @@ pub fn resolve_log_path(name: &str, log_dir: &Path) -> Option<PathBuf> {
 }
 
 /// Lee las últimas `n` líneas de un fichero buscando hacia atrás en bloques de 8 KiB (O(n), O-04).
+///
+/// La búsqueda hacia atrás se detiene en cuanto se han visto `n` líneas **o** cuando se
+/// alcanza [`MAX_TAIL_BYTES`]. Sin ese segundo tope, un fichero con pocos saltos de
+/// línea (una línea gigante: traceback JSON, volcado binario, log corrupto) se leía
+/// ENTERO en memoria para servir `/logs/<name>` o `/status/api`: cientos de MB
+/// reservados por el proceso que sirve el diagnóstico, justo cuando la máquina ya
+/// está en problemas. [`MAX_TAIL_BYTES`] es holgado para `n` líneas normales
+/// (`?n=` se acota a 2000 en `http::parse_query_n`) y sigue siendo finito.
 #[allow(clippy::naive_bytecount)]
 pub fn tail_lines(path: &Path, n: usize) -> Vec<String> {
     if n == 0 || !path.is_file() {
@@ -55,8 +70,9 @@ pub fn tail_lines(path: &Path, n: usize) -> Vec<String> {
     let mut pos = file_size;
     let mut chunks: Vec<Vec<u8>> = Vec::new();
     let mut newline_count: usize = 0;
+    let mut read_bytes: u64 = 0;
 
-    while pos > 0 && newline_count <= n {
+    while pos > 0 && newline_count <= n && read_bytes < MAX_TAIL_BYTES {
         let read_len = pos.min(block_size);
         pos = pos.saturating_sub(read_len);
         if file.seek(SeekFrom::Start(pos)).is_err() {
@@ -70,6 +86,7 @@ pub fn tail_lines(path: &Path, n: usize) -> Vec<String> {
             break;
         }
         newline_count = newline_count.saturating_add(buf.iter().filter(|&&b| b == b'\n').count());
+        read_bytes = read_bytes.saturating_add(read_len);
         chunks.push(buf);
     }
 
