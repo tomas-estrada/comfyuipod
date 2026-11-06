@@ -29,6 +29,7 @@ from comfy_studio.config import (
 )
 from comfy_studio.engines.comfyui import ComfyUIEngine
 from comfy_studio.engines.editor import EditorEngine
+from comfy_studio.engines.process_registry import cleanup_process_groups
 from comfy_studio.engines.qa import QaEngine
 from comfy_studio.engines.upscaler import UpscalerEngine
 from comfy_studio.hardware_detect import effective_profile
@@ -407,13 +408,11 @@ def create_app(
                 vram_mb=detected_profile.effective.vram_usable_mb,
                 ram_mb=detected_profile.effective.ram_usable_mb,
             )
-            def recover_orphan_gpu(grant) -> bool:
-                """Reclaim ComfyUI only after its queue and VRAM are verified idle.
-
-                Other engines may own subprocesses this callback cannot identify
-                or stop safely; those stale leases remain quarantined.
-                """
-                if grant.engine != "comfyui":
+            def recover_orphan_gpu(grant: Any) -> bool:
+                """Stop recorded child groups, then verify ComfyUI is idle and freed."""
+                if grant.engine not in {"comfyui", "upscaler", "qa"}:
+                    return False
+                if not cleanup_process_groups(gpu_lease.child_process_dir(grant)):
                     return False
 
                 async def _recover() -> bool:

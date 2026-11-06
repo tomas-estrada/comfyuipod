@@ -114,47 +114,48 @@ def test_live_owner_lease_is_not_recoverable(tmp_path: Path) -> None:
     assert lease.current() is not None
 
 
-def test_dead_owner_without_cleanup_verification_keeps_gpu_quarantined(tmp_path: Path) -> None:
-    """A dead API process is insufficient evidence that its engine released the GPU."""
+def test_dead_owner_lease_is_recovered(tmp_path: Path) -> None:
+    """Si el owner murió, su lease se recupera (no se deja la GPU bloqueada)."""
+    # Un pid casi seguro muerto: lanzamos y esperamos un proceso trivial.
     dead = subprocess.Popen([sys.executable, "-c", "pass"])
     dead.wait()
-    owner = _lease(tmp_path, pid=dead.pid)
-    grant = owner.acquire(owner="zombie", engine="comfyui", vram_mb=1000, ram_mb=1000)
-
-    contender = _lease(tmp_path, pid=os.getpid())
-    with pytest.raises(LeaseUnavailable, match="cleanup del engine no verificado"):
-        contender.acquire(owner="nuevo", engine="blender", vram_mb=1000, ram_mb=1000)
-    assert contender.current() == grant
-
-
-def test_dead_owner_recovers_only_after_engine_cleanup_verifies(tmp_path: Path) -> None:
-    """A verifier may release an orphan only after confirming engine cleanup."""
-    dead = subprocess.Popen([sys.executable, "-c", "pass"])
-    dead.wait()
-    owner = _lease(tmp_path, pid=dead.pid)
-    grant = owner.acquire(owner="zombie", engine="comfyui", vram_mb=1000, ram_mb=1000)
-
+    lease = _lease(tmp_path, pid=dead.pid)
+    # Sembramos un lock cuyo owner (dead.pid) ya no existe.
+    grant = lease.acquire(owner="zombie", engine="e", vram_mb=1000, ram_mb=1000)
+    # Otro proceso (vivo) debe poder recuperarlo.
     seen = []
-    contender = _lease(
+    live = _lease(
         tmp_path,
         pid=os.getpid(),
         recover_orphan=lambda orphan: seen.append(orphan) or orphan.token == grant.token,
     )
-    recovered = contender.acquire(owner="nuevo", engine="blender", vram_mb=1000, ram_mb=1000)
+    recovered = live.acquire(owner="nuevo", engine="e", vram_mb=1000, ram_mb=1000)
     assert seen == [grant]
     assert recovered is not None and recovered.owner == "nuevo"
     assert recovered.token > grant.token
 
 
-def test_failed_orphan_cleanup_keeps_gpu_quarantined(tmp_path: Path) -> None:
+def test_dead_owner_without_cleanup_verifier_stays_quarantined(tmp_path: Path) -> None:
     dead = subprocess.Popen([sys.executable, "-c", "pass"])
     dead.wait()
     owner = _lease(tmp_path, pid=dead.pid)
-    grant = owner.acquire(owner="zombie", engine="comfyui", vram_mb=1000, ram_mb=1000)
+    grant = owner.acquire(owner="orphan", engine="upscaler", vram_mb=1000, ram_mb=1000)
+    contender = _lease(tmp_path, pid=os.getpid())
 
+    with pytest.raises(LeaseUnavailable, match="cleanup del engine no verificado"):
+        contender.acquire(owner="next", engine="qa", vram_mb=1000, ram_mb=1000)
+    assert contender.current() == grant
+
+
+def test_dead_owner_with_failed_cleanup_verifier_stays_quarantined(tmp_path: Path) -> None:
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    owner = _lease(tmp_path, pid=dead.pid)
+    grant = owner.acquire(owner="orphan", engine="qa", vram_mb=1000, ram_mb=1000)
     contender = _lease(tmp_path, pid=os.getpid(), recover_orphan=lambda _grant: False)
-    with pytest.raises(LeaseUnavailable):
-        contender.acquire(owner="nuevo", engine="blender", vram_mb=1000, ram_mb=1000)
+
+    with pytest.raises(LeaseUnavailable, match="cleanup del engine no verificado"):
+        contender.acquire(owner="next", engine="comfyui", vram_mb=1000, ram_mb=1000)
     assert contender.current() == grant
 
 
@@ -249,8 +250,8 @@ def test_two_real_processes_contend_only_one_wins(
         "import sys, time\n"
         "from comfy_studio.orchestration.gpu_lease import (\n"
         "    GpuLease, AdmissionBudget, LeaseUnavailable)\n"
-        "lease = GpuLease(lock_dir=sys.argv[1], budget=AdmissionBudget(98304, 262144), "
-        "recover_orphan=lambda grant: True)\n"
+        "lease = GpuLease(lock_dir=sys.argv[1], budget=AdmissionBudget(98304, 262144),\n"
+        "    recover_orphan=lambda _grant: True)\n"
         "try:\n"
         "    g = lease.acquire(owner=sys.argv[2], engine='e', vram_mb=1000, ram_mb=1000)\n"
         "    print('ACQUIRED' if g else 'NONE')\n"
