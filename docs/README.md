@@ -1,12 +1,13 @@
 # Documentación de ComfyUIPod
 
-Este índice orienta la documentación del repositorio y señala cuál es la fuente de verdad para cada tema. Los informes de auditoría son fotografías de una revisión concreta; para el comportamiento actual, prevalecen el código de `main`, el `README.md` raíz y la guía de producción.
+Este índice orienta la documentación del repositorio y señala cuál es la fuente de verdad para cada tema. Para el comportamiento actual, contrasta el código de `main` y la CI con el README raíz, la política de recursos y el perfil de hardware; los planes y reportes de campañas son registros fechados, no estado vivo. `docs/ultra/status.json` es un snapshot histórico que todavía apunta a `f5c29dc`; el `main` actual es más reciente.
 
 ## Empieza aquí
 
 | Necesidad | Documento |
 |---|---|
 | Entender capacidades, perfiles de modelos, variables de entorno y uso general | [`README.md`](../README.md) |
+| Contribuir, orientarse en el hardware actual y ejecutar las comprobaciones | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
 | Desplegar y operar el servicio paso a paso, desde cualquier sistema cliente | [Guía Markdown](GUIA_PASO_A_PRODUCCION.md) · [PDF](GUIA_PASO_A_PRODUCCION.pdf) |
 | Entender componentes, límites de confianza, datos y flujos de ejecución | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | Arquitectura canónica en 5 fases (línea base aprobada, matriz de requisitos y contrato de variables/secretos) | [`ARCHITECTURE_CANONICAL.md`](ARCHITECTURE_CANONICAL.md) |
@@ -16,6 +17,7 @@ Este índice orienta la documentación del repositorio y señala cuál es la fue
 | Seguir el recorrido por carpetas y archivos principales | [`walkthrough.md`](walkthrough.md) |
 | Consultar decisiones técnicas y su justificación | [`decisiones.md`](decisiones.md) |
 | Saber qué se prepara, qué se descarga y qué hardware alquilar | [`POLITICA_ARQUITECTURA_RECURSOS.md`](POLITICA_ARQUITECTURA_RECURSOS.md) |
+| Ver la evidencia GPU acotada y sus límites | [Resultados W26](ultra/W26_GPU_RESULTS.md) |
 
 ## Por área
 
@@ -27,7 +29,7 @@ Este índice orienta la documentación del repositorio y señala cuál es la fue
 
 ## Guía de contribución y validación
 
-Las instrucciones para agentes y las verificaciones obligatorias están en [`AGENTS.md`](../AGENTS.md). Para cambios del servidor Studio, ejecuta como mínimo la suite Python, Ruff, validación de plantillas y del manifiesto; para Rust, ejecuta `cargo fmt`, Clippy y los tests con `--locked`. Consulta los comandos exactos en `AGENTS.md` y asegúrate de que el workflow de GitHub Actions del PR termine verde antes de integrar.
+La guía para nuevos colaboradores está en [`CONTRIBUTING.md`](../CONTRIBUTING.md); las convenciones y verificaciones obligatorias están en [`AGENTS.md`](../AGENTS.md). Ejecuta los checks pertinentes y confirma que la CI del commit actual termine verde antes de integrar. Una demo GPU de W26 ejercitó una sola receta en un digest anterior; no equivale a validar toda la plataforma.
 
 ## Compatibilidad de plataformas
 

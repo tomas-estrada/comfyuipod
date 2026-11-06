@@ -1,8 +1,6 @@
 # Canonical Architecture — ComfyUIPod (ComfyUI pod + Comfy Studio on Vast.ai)
 
-**Status:** approved baseline. **Locked assumptions:** single-tenant, ephemeral Vast.ai pod
-(RTX 5090 32 GB primary / RTX 4090 24 GB supported), loopback-only internal services,
-`MODEL_PROFILE=studio` as reference profile.
+**Status:** current architecture baseline. **Locked assumptions:** one user on an ephemeral Vast.ai pod; default target RTX PRO 6000 Blackwell (96 GB VRAM) with 128 GB host RAM, plus a 256 GB RAM variant; loopback-only internal services; `MODEL_PROFILE=studio` as reference workload. Hardware compatibility is not proof that every recipe is validated.
 
 This document is the canonical 5-phase architecture. It deliberately **cross-references**
 [`docs/decisiones.md`](decisiones.md) (verified research + audit-round decision log V1–V9) and
@@ -17,9 +15,9 @@ this file for *what the system is*.
 | Dimension | Requirement | Enforced by |
 |---|---|---|
 | Functional | Browser-only ComfyUI (drag `.json`/`.png`, run, no SSH); Basic Auth edge; `/home` portal; `/status` + `/report.md` observability; Comfy Studio (`/studio/`) with projects, assets, 17 templates, perception (keyframes + text∩face vector search), ASR/diarization, SSE agent with 44 tools, durable job recovery, HMAC-signed webhooks, EDL export + deterministic `ffmpeg` render (16:9 / 9:16), creative briefs, assisted montage from brief, review pins, `ad_studio` and an orchestration layer with SQLite checkpoints | `README.md` §1.3, `studio/comfy_studio/app.py` |
-| Non-functional | Boot-to-usable ≤ ~10 min worst case (Phase 1 ≤ 600 s, non-fatal); `/ws` exempt from rate limit (50 r/s; burst 300 on `/`, 120 on `/studio/api/`, 60 elsewhere); UI payloads ≤ 40 KB, zero external CDNs; WCAG AA | `config/nginx.conf`, `docs/decisiones.md` (MED-01) |
-| Hardware | RTX 5090 (sm_120, CUDA 12.8) primary, RTX 4090 (sm_89) same image; strict gates: driver ≥ 570, VRAM ≥ 20 GB fatal / < 22 GB warn, RAM ≥ 16 GB, disk per profile (210 GB unreal / 180 GB studio / 75 all / 45 general, realistic, anime / 10 minimal / 5 `SKIP_MODEL_DOWNLOAD=1`) | `comfyctl/src/config.rs` (S1–S16), `comfyctl/src/strict.rs` |
-| Hard constraints | Single Vast.ai instance, no orchestrator; cost $0.25–0.95/h (5090 interruptible→on-demand); one user; all services bind `127.0.0.1` except nginx `:8188`; secrets never printed/persisted/exposed (see contract table below) | `AGENTS.md` Security Rules 1–6 |
+| Non-functional | Boot-to-usable target ≤ ~10 min, excluding task-model acquisition; actual time depends on host, image pull and checks; `/ws` exempt from rate limit (50 r/s; burst 300 on `/`, 120 on `/studio/api/`, 60 elsewhere); UI payloads ≤ 40 KB, zero external CDNs; WCAG AA | `config/nginx.conf`, `docs/decisiones.md` (MED-01) |
+| Hardware | Default helper profile: one RTX PRO 6000 Blackwell (96 GB VRAM) and 128 GB host RAM; optional 256 GB host profile. Runtime strict floors (driver ≥ 570, VRAM ≥ 20 GB, RAM ≥ 16 GB) are generic admission checks, not the target profile. S5 startup gate is derived from the image (currently 11 GB with empty bootstrap); total disk is profile-derived (231 GB studio / 238 GB unreal in current calculation). | `studio/comfy_studio/hardware_profile.py`, `scripts/storage_requirement.py`, `comfyctl/src/strict.rs` |
+| Hard constraints | Single Vast.ai instance, no orchestrator; one user; all services bind `127.0.0.1` except nginx `:8188`; secrets never printed/persisted/exposed (see contract table below). Compare live GPU, disk and transfer prices per offer; historical hourly figures are not a budget. | `AGENTS.md` Security Rules 1–6 |
 | Compliance | ReActor/InsightFace weights are non-commercial licensed; perception/ASR run in `STUDIO_PERCEPTION_BACKEND=auto`: real backends when the boot probe finds the weights, otherwise deterministic simulations marked `simulated: true` (`docs/propuestas/IDEAS_M3_BACKLOG.md` M3-IDEA-001..005) | `README.md` §1.3 note |
 
 ---
@@ -34,7 +32,7 @@ graph TD
     NGX -->|/studio/ /studio/api/* /mcp| ST["Comfy Studio FastAPI :18190 (127.0.0.1)"]
     SUP["comfyctl supervise<br/>strict-check S1-S16, STRICT_START=1<br/>exit-code classification 137/134/139/1/143"] --> CUI
     SUP --> ST
-    DL["download-models.sh<br/>Phase 1 sync 2.79 GiB (timeout 600)<br/>Phase 2 bg 60.56 GiB<br/>Phase 3 studio 163.71 GB (.hf_stage_phase3)"] --> FS["/workspace/comfyui-data<br/>(persistent Vast.ai volume)"]
+    DL["download-models.sh<br/>bootstrap: 0 weights today<br/>task assets acquired on request<br/>explicit --phase1/2/3/all remain available"] --> FS["/workspace/comfyui-data<br/>(persistent Vast.ai volume)"]
     CUI --> FS
     ST --> FS
     ST -->|HTTP + WS| CUI
@@ -56,8 +54,7 @@ gallery/EDL + `ffmpeg` render.
 **Boot sequence:** `tini` → `scripts/start.sh` → `comfyctl strict-check` (on `STRICT_START=1`
 failure: keep nginx/portal alive `STRICT_FATAL_GRACE=600s` with red FATAL banner, exit 20 so the
 operator runs `comfy destroy`) → `comfyctl diag` (GPU / CUDA matmul / onnxruntime-gpu /
-h264_nvenc / libx264, each with hard timeout) → nginx up with `_starting.html` → Phase 1
-downloads → supervised ComfyUI start → Phase 2/3 background downloads (`setsid -f`).
+h264_nvenc / libx264, each with hard timeout) → nginx up with `_starting.html` → empty bootstrap (currently 0 model files) → supervised ComfyUI start. Task models are acquired on request; explicit bulk phase commands remain an operator option.
 See `docs/walkthrough.md` for the file-by-file map.
 
 ---
@@ -73,18 +70,14 @@ CRIT/ALTA/MED/BAJA IDs). Summary:
 | Edge/Ingress | Nginx `:8188`, Basic Auth, rate limit, `/ws` exempt, security headers, `client_max_body_size 0`; all else loopback-only | Caddy + TLS; Vast.ai proxy | Gains: boring, `nginx -t`-validated, topology-based security. Sacrifices TLS on direct ports + SSO — fine for single-user ephemeral pod. |
 | Data Store | Filesystem-first: `/opt/ComfyUI` (code) vs `/workspace/comfyui-data` (data, persistent volume); SQLite WAL (`studio.db`, `checkpoints.sqlite3`) + `sqlite-vec` `index.db` | Postgres + S3; HF Hub as store | Gains: fastest possible "DB" for 30 GB safetensors, atomic same-fs `rename()` staging, resumable downloads. Breaks at multi-writer / multi-pod scale. |
 | Messaging/API | ComfyUI native HTTP+WS (`/prompt`, `/ws`), FastAPI+SSE, MCP on same loopback port, signed webhooks | Redis/RabbitMQ broker | Gains: ComfyUI already owns the execution queue; no extra component to fail. Sacrifices backpressure/fan-out — irrelevant single-pod. |
-| Supervisor/Observability | Native Rust `comfyctl`: strict-check S1–S16, exit-code classification, `/run/comfyui-supervisor.json`, status server `:18189`, 17-pattern triage, redacted `/report.md` | Prometheus+Grafana; systemd | Gains: zero runtime deps, pod-specific triage knowledge. Sacrifices long-term metrics — by design, pod is ephemeral and `/report.md` is the debug artifact. |
+| Supervisor/Observability | Native Rust `comfyctl`: strict-check S1–S17, exit-code classification, `/run/comfyui-supervisor.json`, status server `:18189`, 17-pattern triage, redacted `/report.md` | Prometheus+Grafana; systemd | Gains: zero runtime deps, pod-specific triage knowledge. Sacrifices long-term metrics — by design, pod is ephemeral and `/report.md` is the debug artifact. |
 | Auth/Security | Edge-only Basic Auth + loopback binding + `SecretRedactor` on all public output + SSRF guard on webhooks + `PIP_CONSTRAINT`; `security_level=weak` Manager (safe: ComfyUI loopback-only) | mTLS / OAuth2 proxy; CORS header | Gains: defense-in-depth by network topology, no app-level auth to get wrong. Sacrifices per-route authz and audit trails — acceptable single-user. Rules codified in `AGENTS.md` Security Rules 1–6. |
 
 ---
 
 ## Phase 4: Bottlenecks, Security & Day-2 Operations
 
-- **SPOFs:** nginx is the only public door (started before Phase 1, pre-validated); one GPU —
-  CUDA OOM (exit 137) / native crash (134/139) kills in-flight prompts (supervisor restarts
-  ComfyUI; `STUDIO_RESUME_JOBS` reconciles at studio boot only); disk — Phase 3 stages 163.71 GB
-  on the same volume, guarded at boot by strict-check disk gates (`comfyctl/src/config.rs`
-  `default_min_disk_gb`); Vast.ai spot reclaim — durability only from the `/workspace` volume.
+- **SPOFs:** nginx is the only public door; one GPU can lose in-flight prompts on CUDA OOM/native crash; task-model acquisition requires a derived volume and network; Vast.ai spot reclaim durability requires a persistent `/workspace` volume. Boot does not pull the task catalog by default; S5 uses the image-derived gate and falls back to the documented table only on older images. `STUDIO_RESUME_JOBS` reconciles at studio boot only.
 - **Attack vectors & mitigations:** credential leakage → never printed + `SecretRedactor`
   (`studio/comfy_studio/config.py`) + comfyctl `redact.rs` on `/report.md`; SSRF via
   `STUDIO_WEBHOOK_URL` → `validate_webhook_url` rejects loopback/RFC1918/link-local/metadata
@@ -94,9 +87,7 @@ CRIT/ALTA/MED/BAJA IDs). Summary:
   logs via panel tabs + `/var/log/download-models.log`; triage via 17 patterns
   (`scripts/triage_patterns.json`); `/diag` self-test; `/report.md` ≤ 400 KB auto-redacted for
   agent-assisted debugging. No OTel — deliberate at this scale.
-- **Cost drivers:** GPU time dominates ($0.25–0.95/h ≈ $180–$685/mo if left 24/7) — the real
-  lever is failing fast (`STRICT_START` exit 20 + `comfy destroy`) and ephemeral usage; then
-  disk (180 GB provisioned); CI/registry minor (BuildKit `buildcache` tag, disk pruning).
+- **Cost controls:** live GPU/storage/transfer prices vary by offer. Reduce waste by checking the selected profile and derived disk before rent, acquiring only task assets needed, failing fast on an S5 fatal, and destroying ephemeral pods after rescuing data; do not use historical hourly estimates as current pricing.
 
 ---
 
@@ -104,10 +95,10 @@ CRIT/ALTA/MED/BAJA IDs). Summary:
 
 | Milestone | Scope | Exit criteria |
 |---|---|---|
-| **M1 — MVP** (merged) | Pinned cu128 image → GHCR with smoke test before `:latest`; nginx edge + Basic Auth; Phase 1/2 downloads; `comfyctl` supervise + strict-check; `/home`, `/status`, `/report.md` | CI green on `main`; `STRICT_START=1` boots to working ComfyUI ≤ 10 min; `AGENTS.md` validation suite passes |
-| **M2 — Studio core** (in flight, PRs #33/#34) | Agent loop + 44 tools, SSE, SQLite checkpoints + `STUDIO_RESUME_JOBS`, sqlite-vec indexes, HMAC webhooks, EDL + ffmpeg render, semantic shot acceptance → gallery | Every simulated response carries `simulated: true`; kill-and-restart recovery test; webhook signature verified E2E |
-| **M3 — Real backends ("Perfect Pod")** | Swap deterministic stubs for CLIP ViT-L/14, faster-whisper/whisperx, FunASR camp++, InsightFace (`IDEAS_M3_BACKLOG.md` M3-IDEA-001..004); opt-in Wan 2.2 Animate via `STUDIO_INCLUDE_ANIMATE=1` | VRAM budget validated on 24 GB (4090) and 32 GB; S13 degrades gracefully when M3 weights absent; quality eval separated from simulated outputs |
-| **M4 — Hardening / day-2** | TLS on direct ports or documented acceptance; per-route authz if ever shared; webhook retry policy; structural CI disk fix; optional OTel if multi-pod | Audit rounds re-run clean; cost report shows destroy-on-fatal exercised |
+| **M1 — MVP** (integrated) | Pinned cu128 image → GHCR with smoke test before `:latest`; nginx edge + Basic Auth; explicit model catalog; `comfyctl` supervise + strict-check; `/home`, `/status`, `/report.md` | Verify CI for the exact `main` commit and published image before deployment |
+| **M2 — Studio core** (integrated) | Agent loop, SSE, SQLite checkpoints, sqlite-vec indexes, HMAC webhooks, EDL + ffmpeg render, gallery | The code and CI tests cover these capabilities; production quality is still bounded by measured backends and GPU recipes |
+| **M3 — Real backends and GPU evidence** (partial) | Real ML backends, task assets and measured execution recipes; deterministic simulation remains an explicit fallback | W26 records one bounded SDXL GPU demo; repeat after later entrypoint/disk fixes and collect per-recipe baselines/holdouts before claiming broad validation |
+| **M4 — Hardening / day-2** (ongoing) | Security, current-image GPU retest, persistent data and operational cost controls | Update evidence on the exact digest; keep live prices/provider-dependent behaviors out of static claims |
 
 Validation gate for every milestone (from `AGENTS.md`): `ruff check studio panel scripts
 config/probes` · `pytest studio/tests -q` · `py_compile config/probes/*.py

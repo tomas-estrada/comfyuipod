@@ -1,16 +1,19 @@
 # ComfyUIPod Ultra — registro de progreso (pre-GPU)
 
-Registro persistente para que otra sesión reanude sin depender de un sandbox
-efímero. Fuente de verdad del plan: `upgrades-ultra-version/` (PR #64, merged).
+Registro histórico de progreso anterior a la demo W26; la tabla de paquetes de
+abajo no se ha reconciliado con cada cambio posterior. Para el estado actual,
+consulta [W26_GPU_RESULTS.md](W26_GPU_RESULTS.md), el código y la CI de `main`.
+`status.json` aún apunta a `f5c29dc`, no al `main` actual (`5850191`).
 
-Baseline revisada: `b54195f`, PR #62 integrada. Etapa: **Ultra pre-GPU**.
-Sin GPU rentada ni APIs facturadas en esta fase.
+Baseline histórica: `b54195f`, PR #62 integrada. El estado de entonces era
+**Ultra pre-GPU**; después se ejecutó una demo GPU W26 acotada. No implica que
+las tareas de validación restantes estén completas.
 
 ## DAG de ejecución (backlog.json)
 
 Camino crítico inicial: **W00 → W01 → W02 → {W03, W04} → W07**, luego fan-out
-(W05/W06/W08/W09/W10…). W25 = integración final. W26 = validación GPU (no se
-ejecuta ahora, `pending_separate_gpu_authorization`).
+(W05/W06/W08/W09/W10…). W25 fue la integración final de ese corte; W26 tiene una
+demo SDXL ejecutada, mientras D01–D05 completas y L4 siguen pendientes.
 
 ## Niveles de evidencia (acceptance.md)
 

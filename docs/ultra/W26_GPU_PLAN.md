@@ -1,8 +1,11 @@
 # W26 — Plan de validación GPU (alquiler, presupuesto, teardown)
 
-Estado: **NO EJECUTADO**. `pending_separate_gpu_authorization`. Este documento es
-el plan; no alquila nada ni ejecuta APIs facturadas. Solo se corre cuando el
-operador autorice presupuesto, precio/hora, duración, disco y credenciales (A29).
+Estado: **EJECUTADO PARCIALMENTE**. La demo W26 de una receta SDXL se completó por
+0.59 USD en la imagen `sha-f5c29dc`; consulta [los resultados](W26_GPU_RESULTS.md).
+Este documento conserva el plan original para las pruebas D01–D05 restantes; no
+es autorización vigente para otro alquiler ni para APIs facturadas. Toda nueva
+campaña requiere presupuesto, precio/hora, duración, disco y credenciales
+aprobados para ese trabajo.
 
 Anclado a: `upgrades-ultra-version/backlog.json` (W26), `acceptance.md` §A29 y
 las 5 demostraciones (D01–D05), y al helper `tools/mac/comfy`.
@@ -53,9 +56,10 @@ El mínimo de disco sale del cálculo, no de un número a mano:
 python scripts/storage_requirement.py --profile studio --json
 ```
 
-Hoy ese cálculo da `start_gate_gb = 63` (puerta de arranque) y
-`total_gb ≈ 248` (pico con modelos de tarea). El operador dimensiona el disco del
-pod con esos números, no con una estimación.
+En el estado actual, `studio` da `start_gate_gb = 11` (10 GiB redondeados) y
+`min_volume_gb = 231`. El perfil `unreal` o `studio` con 3D suma 238 GB; Animate
+requiere 250 GB y MiniMax 294 GB. Son cifras derivadas del checkout vigente; el
+script vuelve a calcularlas cuando cambian los manifiestos u opt-ins.
 
 ---
 
