@@ -121,7 +121,7 @@ def test_normal_studio_project_flow_publishes_cpu_video_artifact(
             return {"vbench": 1.0, "semantic": 1.0}
 
     class Assembler:
-        def assemble(self, _production_id, clips):
+        def assemble(self, _production_id, clips, *, cancel_event=None):
             final = tmp_path / "final.mp4"
             subprocess.run(
                 [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
