@@ -1,6 +1,6 @@
 # Capability evidence snapshot
 
-Snapshot: 2026-11-06 12:02 UTC. Repository state: `main` at `93b2af2cd5a480ef785ce04987cd79ed01fe0472`, 102 commits ahead of audit commit `2c0fbd37954f3f8f03f64c43b8882ae1079b4b29` (verified by comparing the GitHub refs).
+Snapshot: 2026-11-06 12:08 UTC. Repository state: `main` at `93b2af2cd5a480ef785ce04987cd79ed01fe0472`, 102 commits ahead of audit commit `2c0fbd37954f3f8f03f64c43b8882ae1079b4b29` (verified by comparing the GitHub refs).
 
 This records the highest evidence level actually demonstrated for each capability, not whether its full acceptance criteria are complete. Levels follow [`upgrades-ultra-version/acceptance.md`](../../upgrades-ultra-version/acceptance.md): L0 source/specification, L1 code/contracts/tests, L2 prepared engine and connected adapter with CPU integration, L3 target-GPU execution, L4 held-out reproduction and baselines. Partial evidence is identified explicitly. A green test with a fake collaborator does not establish L2.
 
