@@ -1212,13 +1212,16 @@
     async function loadTemplates() {
         try {
             const resp = await apiFetch("/studio/api/templates");
-            if (!resp.ok) return;
+            if (!resp.ok) {
+                setToast(`No se pudieron cargar las plantillas (HTTP ${resp.status}).`, "error");
+                return;
+            }
             const data = await resp.json();
             state.templates = Array.isArray(data.templates) ? data.templates : [];
             syncTemplateOptions(state.templates);
             renderTemplateDoc();
-        } catch (_err) {
-            // Ignorar error inicial
+        } catch (err) {
+            setToast(`No se pudieron cargar las plantillas: ${err.message}`, "error");
         }
     }
 
@@ -1284,13 +1287,17 @@
                 ? `?project_id=${encodeURIComponent(targetProjectId)}`
                 : "";
             const resp = await apiFetch(`/studio/api/jobs${query}`);
-            if (!resp.ok || state.activeProjectId !== targetProjectId) return;
+            if (!resp.ok) {
+                setToast(`No se pudieron cargar los jobs (HTTP ${resp.status}).`, "error");
+                return;
+            }
+            if (state.activeProjectId !== targetProjectId) return;
             const data = await resp.json();
             if (state.activeProjectId !== targetProjectId) return;
             state.jobs = Array.isArray(data.jobs) ? data.jobs : [];
             renderJobsList();
-        } catch (_err) {
-            // Ignorar error de red transitorio
+        } catch (err) {
+            setToast(`No se pudieron cargar los jobs: ${err.message}`, "error");
         }
     }
 
@@ -1469,7 +1476,11 @@
             const resp = await apiFetch(
                 `/studio/api/projects/${encodeURIComponent(targetProjectId)}/gallery?category=${encodeURIComponent(category)}`
             );
-            if (!resp.ok || state.activeProjectId !== targetProjectId) return;
+            if (!resp.ok) {
+                setToast(`No se pudo cargar la galería (HTTP ${resp.status}).`, "error");
+                return;
+            }
+            if (state.activeProjectId !== targetProjectId) return;
             const data = await resp.json();
             if (state.activeProjectId !== targetProjectId) return;
             state.galleryItems = Array.isArray(data.assets) ? data.assets : [];
@@ -1482,8 +1493,8 @@
                 state.selectedGalleryAssetId = state.galleryItems[0].id;
             }
             renderGallery();
-        } catch (_err) {
-            // Ignorar error transitorio
+        } catch (err) {
+            setToast(`No se pudo cargar la galería: ${err.message}`, "error");
         }
     }
 
