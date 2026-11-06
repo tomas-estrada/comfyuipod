@@ -189,3 +189,18 @@ fn redactor_from_config_covers_vast_api_token_and_webhook_secret() {
     assert!(!cleaned.contains("webhook-secret-value-789"), "{cleaned}");
     assert!(cleaned.contains("[REDACTED]"));
 }
+
+#[test]
+fn redactor_does_not_mangle_port_urls_when_line_contains_later_email() {
+    // rx_url_auth debe cubrir `user:pass@host`, pero NO debe confundir los dos
+    // puntos de un PUERTO (`host:8443`) con los de unas credenciales: antes del
+    // fix, el `.*` voraz tragaba hasta el último `@` de la línea y destruía el
+    // puerto, el path y el email benignos (falsa redacción de texto no secreto).
+    let redactor = SecretRedactor::new(None, None);
+    let input = "GET https://api.example.com:8443/v1/models notify user@example.com ok";
+    let out = redactor.redact(input);
+    assert_eq!(
+        out, input,
+        "rx_url_auth mangled a benign URL+email line: {out}"
+    );
+}
