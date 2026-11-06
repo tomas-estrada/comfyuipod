@@ -7,11 +7,11 @@ según capacidad y presupuesto de VRAM real; este módulo conecta ambas cosas si
 acoplar el planner al catálogo.
 
 `bind_recipes(state, vram_budget_mb)` recorre los shots ya planificados y, para
-cada capa de generación (`gen`) de un motor AV sin plantilla, selecciona la
-receta de mayor fidelidad que cabe en el presupuesto y fija su `template_id` y
-el motor real. Una capa que ya trae plantilla se respeta. Si ninguna receta cabe,
-la capa queda marcada con el motivo (no se inventa una plantilla): el shot lo
-tratará el feedback loop.
+cada capa de generación, selecciona una receta compatible con su capacidad,
+plantilla y presupuesto. Las plantillas explícitas se conservan, pero también
+deben tener una receta admitida para obtener estimación de lease. Si no existe
+una receta o ninguna cabe, la capa queda marcada como `recipe_unresolved`; la
+aprobación de una producción con capas sin resolver se rechaza.
 
 Puro cálculo determinista (reutiliza el selector CPU de W08). No ejecuta GPU.
 """
