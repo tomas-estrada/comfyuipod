@@ -249,7 +249,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 COPY studio/remotion/ /opt/remotion/
 WORKDIR /opt/remotion
-RUN npm install --no-audit --no-fund --loglevel=error \
+RUN npm ci --no-audit --no-fund --loglevel=error \
     && npx remotion browser ensure \
     && npm cache clean --force
 # Restaurar el WORKDIR a /opt/ComfyUI: el warm-up posterior ejecuta `python3 main.py`
