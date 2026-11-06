@@ -641,9 +641,10 @@ class ClipVisualIndex:
             "skipped_synthetic_count": skipped_synthetic,
             "shots": indexed_shots,
             "results": results_list,
-            # M3-IDEA-005: los embeddings son de un extractor determinista local,
-            # no de CLIP ViT-L/14 real (M3-IDEA-002 pendiente).
-            "simulated": True,
+            # M3-IDEA-005: en sim/auto los embeddings son del extractor
+            # determinista local; en real `embed_image_clip` delega en el
+            # worker (require_real_payload) y el flag refleja el modo real.
+            "simulated": not is_real_backend(),
             "simulation_notice": SIMULATED_ML_NOTICE,
         }
 
