@@ -7,9 +7,9 @@ import glob
 import os
 import signal
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 _ACTIVE_DIRECTORY: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
     "studio_engine_process_directory", default=None
