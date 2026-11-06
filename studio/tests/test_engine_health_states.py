@@ -1,7 +1,7 @@
-"""PR engines-health-states: los 7 niveles, probados en los 17 motores.
+﻿"""PR engines-health-states: los 7 niveles, probados en los 21 motores.
 
 Pines deterministas sobre un árbol sintético en tmp (sin GPU, sin red):
-un árbol completo deja a los 17 en `ready` (prueba que cada spec es
+un árbol completo deja a los 21 en `ready` (prueba que cada spec es
 satisfacible y documenta qué necesita cada motor); sin pesos el estado es
 `weights_required` y nunca `loaded`/validado; cada hueco reporta su prefijo.
 """
@@ -48,7 +48,7 @@ def _exe(path: Path) -> str:
 
 
 def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Árbol sintético completo: todo lo que los 17 specs piden existe."""
+    """Árbol sintético completo: todo lo que los 16 specs piden existe."""
     bin_dir = tmp_path / "bin"
     data = tmp_path / "data"
     app = tmp_path / "ComfyUI"
@@ -95,15 +95,15 @@ def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]
     return env
 
 
-def test_arbol_completo_deja_los_17_ready(
+def test_arbol_completo_deja_los_21_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     env = _full_env(tmp_path, monkeypatch)
     report = probe_all(env=env, module_finder=lambda m: True)
-    assert len(report.engines) == 17
+    assert len(report.engines) == 21
     not_ready = {n: p.state for n, p in report.engines.items() if p.state != "ready"}
     assert not_ready == {}, f"motores no listos con árbol completo: {not_ready}"
-    assert report.counts() == {"ready": 17, "weights_required": 0,
+    assert report.counts() == {"ready": 21, "weights_required": 0,
                                "not_installed": 0, "integration_missing": 0}
 
 

@@ -1,4 +1,4 @@
-"""PR engines-ffmpeg-contract: el roster entero cumple el contrato de 4 verbos."""
+﻿"""PR engines-ffmpeg-contract: el roster entero cumple el contrato de 4 verbos."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def test_roster_y_clases_en_sincronia() -> None:
     assert roster == set(ENGINE_CLASSES), (
         f"deriva roster<->clases: {roster ^ set(ENGINE_CLASSES)}"
     )
-    assert len(roster) == 17
+    assert len(roster) == 21
 
 
 def test_cada_motor_resuelve_y_declara_nombre_y_tier() -> None:

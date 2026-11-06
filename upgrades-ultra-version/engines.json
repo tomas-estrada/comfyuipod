@@ -160,7 +160,7 @@
       "capabilities": [
         "C02"
       ],
-      "code_revision": null,
+      "code_revision": "local-cpu-v1",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -324,7 +324,7 @@
       "capabilities": [
         "C07"
       ],
-      "code_revision": null,
+      "code_revision": "packaging-v1",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -1205,7 +1205,7 @@
       "capabilities": [
         "C20"
       ],
-      "code_revision": null,
+      "code_revision": "scene-opt-v1",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -1926,7 +1926,7 @@
       "capabilities": [
         "C18"
       ],
-      "code_revision": null,
+      "code_revision": "physics-proxy-v1",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },

@@ -159,8 +159,21 @@ class EditorEngine(Engine):
             )
 
         start = time.monotonic()
-        if self.is_stub() or self.backend is None:
+        if self.is_stub():
             res = self._run_stub(timeline)
+        elif self.backend is None:
+            # Sin backend vinculado no se finge un ensamblado: el stub existe
+            # para simular a propósito (STUDIO_STUB_EDITOR=1). Un MP4 mínimo
+            # con ok=True aquí sería un éxito simulado silencioso.
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=(
+                    "editor sin backend vinculado (unbound); vincula "
+                    "backend='remotion' o usa STUDIO_STUB_EDITOR=1 para simular"
+                ),
+            )
         else:
             res = self._render_backend(timeline, spec)
         res.duration_s = time.monotonic() - start
