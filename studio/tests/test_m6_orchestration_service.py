@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 
 import pytest
@@ -131,6 +132,30 @@ def test_concurrent_approvals_claim_the_production_graph_once(tmp_path, monkeypa
     assert not errors, errors
     assert all(not thread.is_alive() for thread in threads)
     assert runs["count"] == 1
+
+
+def test_compare_and_set_refuses_stale_plan_snapshot(tmp_path):
+    svc = _service(tmp_path)
+    production_id = svc.plan_production("brief inicial")["production_id"]
+
+    stale = svc.checkpointer.load(production_id)
+    assert stale is not None
+    stale_snapshot = json.dumps(stale.to_dict(), ensure_ascii=False)
+
+    # A plan edit lands after the approval request loaded its source snapshot.
+    svc.update_plan(production_id, idea="brief revisado")
+    stale.phase = "executing"
+    claimed = svc.checkpointer.claim_phase(
+        stale,
+        expected_phase="awaiting_approval",
+        expected_state_json=stale_snapshot,
+    )
+
+    assert claimed is False
+    persisted = svc.checkpointer.load(production_id)
+    assert persisted is not None
+    assert persisted.phase == "awaiting_approval"
+    assert persisted.idea == "brief revisado"
 
 
 def test_get_plan_missing_raises(tmp_path):
