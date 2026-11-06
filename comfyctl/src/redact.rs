@@ -56,10 +56,13 @@ impl SecretRedactor {
             )
             .ok(),
             rx_bearer: Regex::new(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{8,}").ok(),
-            // `.*` voraz: redacta las credenciales hasta el ÚLTIMO `@` de la línea,
-            // de modo que una contraseña que contenga `/` o `@` también queda cubierta
-            // y la parte de host posterior al último `@` sobrevive.
-            rx_url_auth: Regex::new(r"(https?://[^/\s:@]+:)(.*)(@)").ok(),
+            // Voraz hasta el ÚLTIMO `@` SIN cruzar espacios: así una contraseña que
+            // contenga `/` o `@` queda cubierta y el host posterior al último `@`
+            // sobrevive. Excluir el espacio es lo que impide confundir los dos
+            // puntos de un PUERTO (`host:8443/...`) con los de `user:pass`: si tras
+            // el puerto hay un espacio antes del `@`, no hay credenciales que ocultar
+            // y la línea benigna se deja intacta en lugar de destruirse.
+            rx_url_auth: Regex::new(r"(https?://[^/\s:@]+:)([^\s]*)(@)").ok(),
         }
     }
 
