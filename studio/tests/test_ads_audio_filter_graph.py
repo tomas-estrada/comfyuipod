@@ -28,7 +28,14 @@ def test_audio_filter_complex_contains_each_producer_before_consumer(
     required_filters: list[str],
 ) -> None:
     cmd = _ffmpeg_variant_cmd(
-        [_Segment(path=tmp_path / "video.mp4", kind="video", duration_s=2.0)],
+        [
+            _Segment(
+                path=tmp_path / "video.mp4",
+                kind="video",
+                duration_s=2.0,
+                asset_id="clip",
+            )
+        ],
         width=1280,
         height=720,
         fps=24,
@@ -54,7 +61,14 @@ def test_audio_filter_complex_contains_each_producer_before_consumer(
 
 def test_video_only_filter_graph_has_no_audio_stages(tmp_path: Path) -> None:
     cmd = _ffmpeg_variant_cmd(
-        [_Segment(path=tmp_path / "video.mp4", kind="video", duration_s=2.0)],
+        [
+            _Segment(
+                path=tmp_path / "video.mp4",
+                kind="video",
+                duration_s=2.0,
+                asset_id="clip",
+            )
+        ],
         width=1280,
         height=720,
         fps=24,
