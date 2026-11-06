@@ -55,3 +55,39 @@ fn tail_lines_500mb_under_50ms_and_whitelist_security() {
     assert!(resolve_log_path("etc-passwd", Path::new("/var/log")).is_none());
     assert!(resolve_log_path("../etc/shadow", Path::new("/var/log")).is_none());
 }
+
+#[test]
+fn tail_lines_acota_los_bytes_leidos_cuando_el_log_no_tiene_saltos() {
+    // Un log con una línea gigante (traceback JSON, volcado binario, log corrupto) no
+    // tiene saltos de línea que detengan la búsqueda hacia atrás: sin tope de bytes,
+    // `tail_lines` leía el fichero ENTERO para devolver una sola línea. Quien sirve
+    // `/logs/comfyui?n=2000` o `/status/api` reservaba entonces cientos de MB en el
+    // proceso de diagnóstico.
+    let tmp_dir = std::env::temp_dir().join("comfyctl_logtail_cap_test");
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let giant = tmp_dir.join("giant_comfyui.log");
+
+    // Fichero disperso de 32 MiB sin ningún salto de línea (se escribe solo el final).
+    let mut f = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&giant)
+        .unwrap_or_else(|_| std::process::abort());
+    let _ = f.seek(SeekFrom::Start(32 * 1024 * 1024));
+    let _ = f.write_all(&vec![b'x'; 64 * 1024]);
+    let _ = f.flush();
+    drop(f);
+
+    let lines = tail_lines(&giant, 5);
+    let cap = usize::try_from(comfyctl::logtail::MAX_TAIL_BYTES).unwrap_or(usize::MAX);
+    let total_bytes: usize = lines.iter().map(String::len).sum();
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    assert_eq!(lines.len(), 1, "sin saltos de línea solo hay una línea");
+    assert!(
+        total_bytes <= cap + (1024 * 1024),
+        "tail_lines devolvió {total_bytes} bytes: la lectura debe acotarse en MAX_TAIL_BYTES"
+    );
+}

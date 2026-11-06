@@ -22,6 +22,7 @@
                 <span id="health-server-badge" class="status-pill status-ok">Servidor: Conectando…</span>
                 <span id="health-comfyui-badge" class="status-pill status-neutral">ComfyUI: Verificando…</span>
                 <span id="health-llm-badge" class="status-pill status-neutral">Agente LLM: —</span>
+                <span id="health-engine-badge" class="status-pill status-neutral">Motores: Verificando…</span>
                 <span id="sse-status-badge" class="status-pill status-neutral">SSE: Iniciando…</span>
                 <span id="active-project-badge" class="status-pill status-accent">Proyecto: Ninguno</span>
             </div>
@@ -853,6 +854,9 @@
                     </div>
                     <div id="auth-status-card" class="project-summary-box" aria-live="polite">
                         <p>Verificando estado de <code>/studio/api/health</code> y <code>/studio/api/status</code>…</p>
+                    </div>
+                    <div id="engine-status-card" class="project-summary-box" aria-live="polite">
+                        <p>Verificando preparación real de motores y pesos…</p>
                     </div>
                     <div class="divider"></div>
                     <h3 class="section-subtitle">Accesos del Pod</h3>
