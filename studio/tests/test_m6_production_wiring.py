@@ -161,7 +161,7 @@ def test_normal_studio_project_flow_publishes_cpu_video_artifact(
     assert approved.status_code == 200, approved.text
     result = approved.json()
     assert result["phase"] == "done"
-    assert result["status"]["artifact_verified"] is True
+    assert result["status"]["artifact_ready"] is True
     assert len(result["output_asset_ids"]) == 2
 
     gallery = client.get(f"/studio/api/projects/{project_id}/assets?category=outputs")
@@ -237,6 +237,7 @@ def test_real_engines_flag_wires_live_collaborators(
     from types import SimpleNamespace
 
     from comfy_studio.app import create_app
+    from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
     from comfy_studio.orchestration.adapters import (
         EngineAssembler,
         EngineRunnerAdapter,
@@ -264,7 +265,8 @@ def test_real_engines_flag_wires_live_collaborators(
     app = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
     collab = app.state.production_service.collaborators
     # planner, runner, evaluator y assembler deben ser los adaptadores reales.
-    assert isinstance(collab.runner, EngineRunnerAdapter)
+    assert isinstance(collab.runner, LeasedEngineRunner)
+    assert isinstance(collab.runner._inner, EngineRunnerAdapter)  # noqa: SLF001
     assert isinstance(collab.evaluator, SemanticQaEvaluator)
     # la QA de contenido (visión) y la técnica viajan juntas
     assert collab.evaluator._vision is not None  # noqa: SLF001
