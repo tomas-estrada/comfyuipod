@@ -535,7 +535,7 @@ while True:
     // Esperar a que ComfyUI esté en estado 'running'
     let mut comfy_pid_1: u32 = 0;
     let wait_start = Instant::now();
-    while wait_start.elapsed() < Duration::from_secs(10) {
+    while wait_start.elapsed() < Duration::from_secs(30) {
         if let Some(st) = read_supervisor_state_file(&sup_json_path) {
             if st.state == "running" {
                 if let Some(pid) = st.pid {
@@ -555,7 +555,7 @@ while True:
     let _ = sys::send_signal(studio_pid_1, 9);
     let mut studio_pid_2: u32 = 0;
     let respawn_start = Instant::now();
-    while respawn_start.elapsed() < Duration::from_secs(10) {
+    while respawn_start.elapsed() < Duration::from_secs(30) {
         if let Some(pid) = read_pid_from_file(&studio_pid_file) {
             if pid != studio_pid_1 && sys::is_pid_alive(pid) {
                 studio_pid_2 = pid;
@@ -610,7 +610,7 @@ while True:
     let _ = sys::send_signal(studio_pid_2, 9);
     let mut studio_pid_3: u32 = 0;
     let exhausted_respawn_start = Instant::now();
-    while exhausted_respawn_start.elapsed() < Duration::from_secs(10) {
+    while exhausted_respawn_start.elapsed() < Duration::from_secs(30) {
         if let Some(pid) = read_pid_from_file(&studio_pid_file) {
             if pid != studio_pid_2 && pid != studio_pid_1 && sys::is_pid_alive(pid) {
                 studio_pid_3 = pid;
