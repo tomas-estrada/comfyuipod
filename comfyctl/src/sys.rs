@@ -123,6 +123,32 @@ pub fn disk_stats_gb(path: &Path) -> Result<(f64, f64, f64), String> {
     }
 }
 
+/// Devuelve el primer ancestro de `path` que existe (o el propio `path` si ya existe).
+///
+/// Medir el espacio libre de un directorio que aún no existe obliga a elegir otra
+/// ruta: `statvfs` sobre ella devuelve `ENOENT`. Elegir una ruta ajena y fija
+/// (`/workspace`, `/`) mide un sistema de ficheros que puede no tener nada que ver
+/// con el que acabará alojando los datos, y entonces S5 (puerta de disco) juzga la
+/// máquina equivocada: aborta un arranque que iba a caber, o da por bueno un volumen
+/// que está lleno. Subiendo hasta el primer ancestro real se mide siempre el
+/// filesystem que contendrá el dato.
+///
+/// Si no existe ningún ancestro (ruta relativa sin base real), se devuelve la propia
+/// ruta: el `statvfs` del llamador fallará y el resultado será 0 GB libres, es decir,
+/// comportamiento fail-closed en lugar de un número inventado.
+pub fn first_existing_ancestor(path: &Path) -> PathBuf {
+    let mut current = path.to_path_buf();
+    loop {
+        if current.exists() {
+            return current;
+        }
+        match current.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => current = parent.to_path_buf(),
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
 /// Escribe un fichero de forma atómica (`<path>.tmp` + `sync_all` + `rename`).
 pub fn atomic_write(path: &Path, contents: &[u8], mode: u32) -> Result<(), String> {
     if let Some(parent) = path.parent() {
