@@ -101,6 +101,22 @@ def _env_from_kind(kind: str) -> Environment:
         return Environment.OTHER
 
 
+#: umbral Hamming para colapsar phash cercanos (64 bits): a distancia <= 4 la
+#: probabilidad de coincidencia casual es < 1e-13; recompresiones y
+#: reescalados del mismo original caen en 0-4. El borde se fija con tests.
+PHASH_HAMMING_THRESHOLD = 4
+
+
+def phash_distance(a: str | None, b: str | None) -> int | None:
+    """Distancia Hamming entre dos phash hexadecimales; None si falta/inválido."""
+    if not a or not b:
+        return None
+    try:
+        return bin(int(a, 16) ^ int(b, 16)).count("1")
+    except ValueError:
+        return None
+
+
 def _phash(path: Path) -> str | None:
     """phash perceptual (8x8 average hash) si Pillow está disponible; None si no."""
     try:
@@ -550,6 +566,16 @@ class AcquisitionPipeline:
                 if store.acq_item_status(self.run_id, "commons", title) == "done":
                     stats["skipped_resume"] += 1
                     continue
+                sha1 = (info.get("sha1") or "").lower()
+                if sha1:
+                    dup = store.get_reference_by_sha1(sha1)
+                    if dup is not None:
+                        # el mismo original ya vive en el catálogo (otra pasada u
+                        # otro título): no duplicar bytes ni referencias.
+                        stats["rejected"] += 1
+                        store.acq_item(self.run_id, "commons", title, "duplicate_sha1",
+                                       dup.ref_id)
+                        continue
                 place_id = None
                 if info.get("lat") is not None and info.get("lon") is not None:
                     best = None
@@ -1151,22 +1177,35 @@ class AcquisitionPipeline:
         return marked
 
     def _dedupe_phash(self) -> int:
-        """Marca como no utilizables los duplicados perceptuales (mismo phash y lugar)."""
+        """Colapsa duplicados perceptuales dentro de cada lugar.
+
+        Greedy determinista: ordena por (quality, width, ref_id) y cada
+        referencia cae en el primer keeper a distancia Hamming <= umbral; solo
+        los keepers conservan usable=1. El borde del umbral se fija con tests.
+        """
         store = self.svc.store
         removed = 0
-        groups: dict[tuple[str | None, str], list] = {}
+        by_place: dict[str | None, list] = {}
         for r in store.all_references(usable_only=True):
             if r.phash:
-                groups.setdefault((r.place_id, r.phash), []).append(r)
+                by_place.setdefault(r.place_id, []).append(r)
         with store.batch():
-            for members in groups.values():
-                if len(members) < 2:
-                    continue
-                members.sort(key=lambda r: (r.quality, r.width or 0), reverse=True)
-                for dup in members[1:]:
-                    dup.usable = False
-                    dup.reject_reason = "duplicado perceptual (phash) de " + members[0].ref_id
-                    store.upsert_reference(dup)
+            for members in by_place.values():
+                members.sort(key=lambda r: (-r.quality, -(r.width or 0), r.ref_id))
+                keepers: list = []
+                for r in members:
+                    keeper = None
+                    for k in keepers:
+                        d = phash_distance(k.phash, r.phash)
+                        if d is not None and d <= PHASH_HAMMING_THRESHOLD:
+                            keeper = k
+                            break
+                    if keeper is None:
+                        keepers.append(r)
+                        continue
+                    r.usable = False
+                    r.reject_reason = "duplicado perceptual (phash) de " + keeper.ref_id
+                    store.upsert_reference(r)
                     removed += 1
         return removed
 
