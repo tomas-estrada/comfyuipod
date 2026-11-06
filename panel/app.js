@@ -179,7 +179,9 @@
         const serverBadge = document.getElementById("health-server-badge");
         const comfyBadge = document.getElementById("health-comfyui-badge");
         const llmBadge = document.getElementById("health-llm-badge");
+        const engineBadge = document.getElementById("health-engine-badge");
         const authCard = document.getElementById("auth-status-card");
+        const engineCard = document.getElementById("engine-status-card");
 
         try {
             const resp = await apiFetch("/studio/api/health");
@@ -197,14 +199,15 @@
             }
             if (comfyBadge) {
                 const comfyOk = health.comfyui === "ok";
-                comfyBadge.textContent = `ComfyUI: ${comfyOk ? "OK" : "Degradado"}`;
-                comfyBadge.className = `status-pill ${comfyOk ? "status-ok" : "status-warn"}`;
+                comfyBadge.textContent = `ComfyUI: ${comfyOk ? "alcanzable" : "degradado"}`;
+                comfyBadge.className = `status-pill ${comfyOk ? "status-accent" : "status-warn"}`;
             }
             if (llmBadge) {
                 const mode = health.stub_llm ? "stub" : "live";
                 llmBadge.textContent = `Agente: ${health.llm_model || "qwen3-vl-plus"} (${mode})`;
                 llmBadge.className = "status-pill status-accent";
             }
+            renderEnginePreparation(health.engines, engineBadge, engineCard);
             updateAuthBadge(
                 state.auth.password ? `Basic-Auth (${state.auth.username})` : "Sesión Loopback / Edge OK",
                 "status-ok"
@@ -227,6 +230,59 @@
                 authCard.innerHTML = `<p>Error al conectar con <code>/studio/api/health</code>: ${escapeHtml(err.message)}</p>`;
             }
         }
+    }
+
+    function renderEnginePreparation(engines, badge, card) {
+        const list = Array.isArray(engines && engines.engines) ? engines.engines : [];
+        if (badge) {
+            if (list.length === 0) {
+                badge.textContent = "Motores: no disponible";
+                badge.className = "status-pill status-neutral";
+            } else {
+                const ready = list.filter((engine) => engine.state === "ready").length;
+                const simulated = list.filter((engine) => engine.state === "stub").length;
+                const weightsMissing = list.filter((engine) => {
+                    const prep = engine.prep || {};
+                    return prep.weights_required === true && prep.weights_present === false;
+                }).length;
+                const details = [];
+                if (simulated) details.push(`${simulated} simulados`);
+                if (weightsMissing) details.push(`${weightsMissing} sin pesos`);
+                badge.textContent = `Motores: ${ready}/${list.length} listos${details.length ? ` · ${details.join(" · ")}` : ""}`;
+                badge.className = `status-pill ${ready === list.length && !simulated && !weightsMissing ? "status-ok" : "status-warn"}`;
+            }
+        }
+        if (!card) return;
+        if (list.length === 0) {
+            card.innerHTML = '<p class="empty-hint">Preparación de motores: no disponible.</p>';
+            return;
+        }
+        const rows = list.map((engine) => {
+            const prep = engine.prep || {};
+            const simulated = engine.state === "stub";
+            const weightsMissing = prep.weights_required === true && prep.weights_present === false;
+            const missing = Array.isArray(prep.missing) ? prep.missing : [];
+            let status = engine.state || "no disponible";
+            if (simulated) status = "simulado";
+            else if (weightsMissing) status = "sin pesos";
+            else if (prep.state) status = prep.state;
+            const missingText = missing.length ? ` · falta: ${missing.join(", ")}` : "";
+            const weightsText = prep.weights_required
+                ? prep.weights_present === false
+                    ? " · pesos ausentes"
+                    : " · pesos presentes"
+                : "";
+            return `
+                <div class="item-meta">
+                    <strong>${escapeHtml(engine.name || "motor")}</strong>:
+                    <code>${escapeHtml(status)}</code>${escapeHtml(weightsText)}${escapeHtml(missingText)}
+                </div>
+            `;
+        });
+        card.innerHTML = `
+            <p><strong>Preparación real de motores:</strong> alcanzable no significa listo; los pesos ausentes y los modos simulados se muestran explícitamente.</p>
+            ${rows.join("")}
+        `;
     }
 
     /* --- PROJECTS & ASSETS --- */
