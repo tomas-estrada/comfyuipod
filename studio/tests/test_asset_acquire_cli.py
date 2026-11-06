@@ -8,14 +8,20 @@ from comfy_studio import asset_acquire_cli
 from comfy_studio.asset_acquire import AcquiredEntry, AcquisitionReport
 
 
-def _write_manifest(path: Path, *, revision: str = "a" * 40, digest: str | None = None) -> None:
+def _write_manifest(
+    path: Path,
+    *,
+    revision: str = "a" * 40,
+    digest: str | None = None,
+    dest_path: str = "models/checkpoints/weights.bin",
+) -> None:
     payload = {
         "models": [
             {
                 "repo_id": "org/model",
                 "remote_path": "weights.bin",
                 "repo_type": "model",
-                "dest_path": "models/checkpoints/weights.bin",
+                "dest_path": dest_path,
                 "filename": "weights.bin",
                 "bytes": 4,
                 "revision": revision,
@@ -103,3 +109,50 @@ def test_cli_calls_shared_acquirer_with_manifest_need(tmp_path: Path, monkeypatc
     assert seen["need"].revision == "a" * 40
     assert seen["need"].sha256 == hashlib.sha256(b"data").hexdigest()
     assert seen["kwargs"]["max_attempts"] == 1
+
+
+
+def test_find_need_rejects_manifest_path_traversal(tmp_path: Path, monkeypatch) -> None:
+    data = tmp_path / "data"
+    manifest = tmp_path / "manifest.json"
+    _write_manifest(manifest, dest_path="models/../../outside/weights.bin")
+    monkeypatch.setenv("COMFY_DATA_DIR", str(data))
+    monkeypatch.setenv("STUDIO_CORE_MANIFEST", str(manifest))
+    monkeypatch.setenv("STUDIO_MANIFEST", "")
+
+    try:
+        asset_acquire_cli._find_need(
+            "org/model",
+            "weights.bin",
+            data / "models/../../outside/weights.bin",
+            "model",
+        )
+    except ValueError as exc:
+        assert "escapes allowed root" in str(exc)
+    else:
+        raise AssertionError("manifest path traversal must fail closed")
+
+
+def test_find_need_rejects_symlinked_destination_parent_outside_data_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    data = tmp_path / "data"
+    checkpoints = data / "models" / "checkpoints"
+    checkpoints.parent.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    checkpoints.symlink_to(outside, target_is_directory=True)
+    manifest = tmp_path / "manifest.json"
+    _write_manifest(manifest)
+    monkeypatch.setenv("COMFY_DATA_DIR", str(data))
+    monkeypatch.setenv("STUDIO_CORE_MANIFEST", str(manifest))
+    monkeypatch.setenv("STUDIO_MANIFEST", "")
+
+    try:
+        asset_acquire_cli._find_need(
+            "org/model", "weights.bin", checkpoints / "weights.bin", "model"
+        )
+    except ValueError as exc:
+        assert "escapes allowed root" in str(exc)
+    else:
+        raise AssertionError("symlinked parent outside COMFY_DATA_DIR must fail closed")
