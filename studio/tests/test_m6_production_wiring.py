@@ -222,20 +222,32 @@ def test_agent_cannot_approve_via_mcp(client: TestClient) -> None:
 
 
 # --------------------------------------------------------------------------
-# Cableado de motores reales (STUDIO_ORCH_REAL_ENGINES) — sin GPU
+# Cableado del backend de producción y simulación explícita — sin GPU
 # --------------------------------------------------------------------------
 
 
-def test_real_engines_flag_wires_live_collaborators(
-    monkeypatch, studio_config, stub_comfyui_transport
-) -> None:
-    """Con STUDIO_ORCH_REAL_ENGINES=1 el servicio se arma con colaboradores reales.
-
-    No toca GPU: los motores se instancian pero el test solo comprueba que el
-    cableado ocurrió (collaborators no vacío con adaptadores reales).
-    """
+def _verified_hardware_profile():
     from types import SimpleNamespace
 
+    detected = SimpleNamespace(
+        gpu_available=True,
+        vram_total_mb=96 * 1024,
+        ram_limit_bytes=256 * 1024**3,
+    )
+    return SimpleNamespace(
+        verified=True,
+        detected=detected,
+        effective=SimpleNamespace(
+            vram_usable_mb=90 * 1024,
+            ram_usable_mb=240 * 1024,
+        ),
+    )
+
+
+def test_studio_profile_defaults_to_real_backend_through_production_api(
+    monkeypatch, studio_config, stub_comfyui_transport
+) -> None:
+    """Studio deployment uses live adapters, recipe binding, and budgets by default."""
     from comfy_studio.app import create_app
     from comfy_studio.orchestration.adapters import (
         EngineAssembler,
@@ -244,46 +256,98 @@ def test_real_engines_flag_wires_live_collaborators(
     )
     from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
 
-    # This is a wiring fixture, not a claim that the CPU CI host has a GPU.
-    # Supply verified detected resources explicitly so the live-adapter path is
-    # exercised while production still fails closed on unverified hardware.
-    detected = SimpleNamespace(
-        gpu_available=True,
-        vram_total_mb=96 * 1024,
-        ram_limit_bytes=256 * 1024**3,
+    monkeypatch.setenv("MODEL_PROFILE", "studio")
+    monkeypatch.delenv("STUDIO_ORCH_REAL_ENGINES", raising=False)
+    monkeypatch.setenv("STUDIO_STUB_LLM", "1")
+    monkeypatch.setenv("STUDIO_STUB_COMFY", "1")
+    monkeypatch.setattr(
+        "comfy_studio.app.effective_profile", _verified_hardware_profile
     )
-    profile = SimpleNamespace(
-        verified=True,
-        detected=detected,
-        effective=SimpleNamespace(
-            vram_usable_mb=96 * 1024,
-            ram_usable_mb=256 * 1024,
-        ),
-    )
-    monkeypatch.setattr("comfy_studio.app.effective_profile", lambda: profile)
-    monkeypatch.setenv("STUDIO_ORCH_REAL_ENGINES", "1")
     app = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
+
     collab = app.state.production_service.collaborators
-    # planner, runner, evaluator y assembler deben ser los adaptadores reales.
+    assert app.state.orchestration_mode == "real"
     assert isinstance(collab.runner, LeasedEngineRunner)
     assert isinstance(collab.runner._inner, EngineRunnerAdapter)  # noqa: SLF001
     assert isinstance(collab.evaluator, SemanticQaEvaluator)
-    # la QA de contenido (visión) y la técnica viajan juntas
     assert collab.evaluator._vision is not None  # noqa: SLF001
     assert isinstance(collab.assembler, EngineAssembler)
     assert collab.planner is not None
     assert collab.reselect_template is not None
 
+    # Exercise the normal human production HTTP route. Planning remains cheap:
+    # it admits resources and binds a recipe without starting a GPU engine.
+    response = TestClient(app).post(
+        "/studio/api/productions",
+        json={"idea": "un plano de dron sobre Medellín"},
+    )
+    assert response.status_code == 201, response.text
+    plan = response.json()["plan"]
+    assert plan["metadata"]["execution_mode"] == "real"
+    assert plan["metadata"]["simulated"] is False
+    binding = plan["metadata"]["recipe_binding"]
+    assert binding["vram_budget_mb"] == 90 * 1024
+    assert binding["estimate_only"] is True
 
-def test_no_flag_keeps_stub_collaborators(
+
+def test_studio_profile_fails_closed_without_verified_hardware(
     monkeypatch, studio_config, stub_comfyui_transport
 ) -> None:
-    """Sin el flag, el servicio usa colaboradores None (stub) — CI por defecto."""
+    import pytest
+    from types import SimpleNamespace
+
     from comfy_studio.app import create_app
 
+    monkeypatch.setenv("MODEL_PROFILE", "studio")
     monkeypatch.delenv("STUDIO_ORCH_REAL_ENGINES", raising=False)
+    monkeypatch.setattr(
+        "comfy_studio.app.effective_profile",
+        lambda: SimpleNamespace(
+            verified=False,
+            detected=SimpleNamespace(
+                gpu_available=False,
+                vram_total_mb=None,
+                ram_limit_bytes=None,
+            ),
+            effective=SimpleNamespace(vram_usable_mb=0, ram_usable_mb=0),
+        ),
+    )
+    with pytest.raises(RuntimeError, match="orquestación real requerida"):
+        create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
+
+
+def test_real_backend_setup_error_does_not_fall_back_to_stubs(
+    monkeypatch, studio_config, stub_comfyui_transport
+) -> None:
+    import pytest
+
+    from comfy_studio.app import create_app
+
+    monkeypatch.setenv("MODEL_PROFILE", "studio")
+    monkeypatch.setenv("STUDIO_ORCH_REAL_ENGINES", "1")
+    monkeypatch.setattr(
+        "comfy_studio.app.effective_profile", _verified_hardware_profile
+    )
+
+    def fail_to_build(**_kwargs):
+        raise ValueError("adapter setup failed")
+
+    monkeypatch.setattr("comfy_studio.app.build_server_collaborators", fail_to_build)
+    with pytest.raises(RuntimeError, match="orquestación real requerida"):
+        create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
+
+
+def test_explicit_simulated_mode_keeps_stub_collaborators(
+    monkeypatch, studio_config, stub_comfyui_transport
+) -> None:
+    from comfy_studio.app import create_app
+
+    monkeypatch.setenv("MODEL_PROFILE", "studio")
+    monkeypatch.setenv("STUDIO_ORCH_REAL_ENGINES", "0")
     app = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
+
     collab = app.state.production_service.collaborators
+    assert app.state.orchestration_mode == "simulated"
     assert collab.runner is None
     assert collab.evaluator is None
     assert collab.assembler is None
