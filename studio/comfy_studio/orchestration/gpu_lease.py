@@ -235,9 +235,12 @@ class GpuLease:
         current = 0
         if self._token_file.exists():
             try:
-                current = int(self._token_file.read_text(encoding="utf-8").strip() or "0")
-            except (OSError, ValueError):
-                current = 0
+                raw = self._token_file.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise LeaseError("no se pudo leer la secuencia de fencing") from exc
+            if not raw or not raw.isascii() or not raw.isdigit():
+                raise LeaseError("secuencia de fencing ilegible; recuperación manual requerida")
+            current = int(raw)
         nxt = current + 1
         # tmp único por proceso: aunque hoy solo el dueño del lock llama aquí,
         # un nombre por-PID evita que dos escrituras colisionen en el replace.
@@ -342,8 +345,8 @@ class GpuLease:
         - fencing: si el lock actual no es de este token, lanza `FencingError`
           (un owner antiguo no libera el lease de uno nuevo).
         - unload: si se da, se ejecuta y su resultado se verifica; si devuelve
-          False o lanza, el resultado es `cleanup_failed` (el lock SÍ se libera
-          para no dejar la GPU bloqueada, pero se reporta el fallo).
+          False o lanza, se devuelve `cleanup_failed` y se conserva el lock para
+          impedir que otro motor use una GPU cuyo estado no se conoce.
         """
         if grant is None:
             return {"released": False, "reason": "no_grant"}
@@ -363,6 +366,17 @@ class GpuLease:
                     cleanup_failed = not bool(ok)
                 except Exception:  # noqa: BLE001 - un unload roto no debe dejar el lock tomado
                     cleanup_failed = True
+
+            if cleanup_failed:
+                # No admitir otro motor si no se confirmó el unload: el proceso
+                # puede seguir vivo con modelos asignados a VRAM. El mismo owner
+                # puede reintentar release; si muere, recovery puede continuar.
+                return {
+                    "released": False,
+                    "reason": "cleanup_failed",
+                    "cleanup_failed": True,
+                    "token": grant.token,
+                }
 
             # Exclusión hasta finalizar unload y retirar el token actual.
             self._lock_file.unlink(missing_ok=True)
