@@ -10,7 +10,12 @@ pub struct SecretRedactor {
     rx_sk: Option<Regex>,
     rx_studio_env: Option<Regex>,
     rx_bearer: Option<Regex>,
+    rx_authorization: Option<Regex>,
     rx_url_auth: Option<Regex>,
+    rx_aws_key_id: Option<Regex>,
+    rx_cloud_api_key: Option<Regex>,
+    rx_vcs_token: Option<Regex>,
+    rx_slack_token: Option<Regex>,
 }
 
 impl SecretRedactor {
@@ -58,10 +63,20 @@ impl SecretRedactor {
             // comillas para no romper el JSON de /status/api. Sin comillas se
             // conserva la corrida sin espacios de siempre.
             rx_studio_env: Regex::new(
-                r#"(?i)((?:STUDIO_LLM_(?:FALLBACK_)?KEY|STUDIO_API_TOKEN|STUDIO_WEBHOOK_SECRET|VAST_API_KEY|COMFY_PASS|STUDIO_AUTH_PASS|HF_TOKEN)\s*"?\s*[:=]\s*)("((?:[^"\\]|\\.)*)"|\S+)"#,
+                r#"(?i)((?:STUDIO_LLM_(?:FALLBACK_)?KEY|STUDIO_API_TOKEN|STUDIO_WEBHOOK_SECRET|VAST_API_KEY|COMFY_PASS|STUDIO_AUTH_PASS|HF_TOKEN|AWS_SECRET_ACCESS_KEY|AWS_SECRET_KEY|AWS_ACCESS_KEY_ID|GITHUB_TOKEN|SLACK_TOKEN|OPENAI_API_KEY|GOOGLE_API_KEY|ANTHROPIC_API_KEY)\s*"?\s*[:=]\s*)("((?:[^"\\]|\\.)*)"|\S+)"#,
             )
             .ok(),
             rx_bearer: Regex::new(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{8,}").ok(),
+            // `rx_bearer` solo cubría el esquema `Bearer`. Un log de petición
+            // (ComfyUI, Studio, vast.ai, proxies) escribe la cabecera completa con
+            // otros esquemas: `Basic <b64>`, `token <ghp_...>`, `ApiKey ...`,
+            // `Digest ...`. Se conserva el esquema y se enmascara el valor; el
+            // umbral de 8 caracteres es el mismo que usa `rx_bearer`, de modo que
+            // una cabecera incompleta (`Authorization: Basic realm`) no se destruye.
+            rx_authorization: Regex::new(
+                r"(?i)(authorization\s*[:=]\s*(?:basic|bearer|token|apikey|key|jwt|pat|digest)\s+)[A-Za-z0-9._\-+/=]{8,}",
+            )
+            .ok(),
             // Voraz hasta el ÚLTIMO `@` SIN cruzar espacios: así una contraseña que
             // contenga `/` o `@` queda cubierta y el host posterior al último `@`
             // sobrevive. Excluir el espacio es lo que impide confundir los dos
@@ -69,6 +84,13 @@ impl SecretRedactor {
             // el puerto hay un espacio antes del `@`, no hay credenciales que ocultar
             // y la línea benigna se deja intacta en lugar de destruirse.
             rx_url_auth: Regex::new(r"(https?://[^/\s:@]+:)([^\s]*)(@)").ok(),
+            // Claves de nube y de proveedores por su FORMA: no hacen falta literales
+            // (el proceso que las emite puede no ser el que las configuró) y los
+            // prefijos son lo bastante específicos para no comer texto benigno.
+            rx_aws_key_id: Regex::new(r"(?:AKIA|ASIA)[0-9A-Z]{16}").ok(),
+            rx_cloud_api_key: Regex::new(r"AIza[0-9A-Za-z_\-]{35,}").ok(),
+            rx_vcs_token: Regex::new(r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,254}").ok(),
+            rx_slack_token: Regex::new(r"xox[baprs]-[A-Za-z0-9\-]{10,248}").ok(),
         }
     }
 
@@ -133,8 +155,24 @@ impl SecretRedactor {
         if let Some(rx) = &self.rx_bearer {
             out = rx.replace_all(&out, "${1}[REDACTED]").into_owned();
         }
+        if let Some(rx) = &self.rx_authorization {
+            out = rx.replace_all(&out, "${1}[REDACTED]").into_owned();
+        }
         if let Some(rx) = &self.rx_url_auth {
             out = rx.replace_all(&out, "${1}[REDACTED]${3}").into_owned();
+        }
+        // Formas de clave sin esquema: se sustituyen enteras (no hay un separador
+        // nombre=valor que conservar).
+        for rx in [
+            &self.rx_aws_key_id,
+            &self.rx_cloud_api_key,
+            &self.rx_vcs_token,
+            &self.rx_slack_token,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            out = rx.replace_all(&out, "[REDACTED]").into_owned();
         }
         out
     }
