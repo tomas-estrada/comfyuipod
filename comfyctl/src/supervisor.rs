@@ -540,8 +540,8 @@ pub fn spawn_studio_server_if_enabled(cfg: &RuntimeConfig) -> Option<Child> {
 pub const STUDIO_MIN_RESPAWN_DELAY: Duration = Duration::from_secs(1);
 
 /// Política de relanzamiento de `studio-server`, simétrica a la de `ComfyUI` (`O-02`):
-/// mismo presupuesto de reinicios, mismo uptime sano que lo resetea, más un retardo
-/// mínimo entre intentos.
+/// presupuesto de reinicios, uptime sano que lo resetea, más un retardo mínimo entre
+/// intentos. El presupuesto es propio (`STUDIO_MAX_RESTARTS`) porque es otro proceso.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StudioRestartPolicy {
     /// Reinicios consecutivos fallidos antes de declarar `exhausted`.
@@ -553,11 +553,12 @@ pub struct StudioRestartPolicy {
 }
 
 impl StudioRestartPolicy {
-    /// Deriva la política de la configuración: reutiliza `COMFY_MAX_RESTARTS` y
-    /// `COMFY_HEALTHY_UPTIME` para que un solo concepto gobierne ambos procesos.
+    /// Deriva la política de la configuración: reutiliza `COMFY_HEALTHY_UPTIME` para
+    /// el reseteo y `STUDIO_MAX_RESTARTS` para el presupuesto, que es **propio** de
+    /// `studio-server` (no hereda `COMFY_MAX_RESTARTS`, que gobierna otro proceso).
     pub fn from_config(cfg: &RuntimeConfig) -> Self {
         Self {
-            max_consecutive_restarts: cfg.comfy_max_restarts,
+            max_consecutive_restarts: cfg.studio_max_restarts,
             healthy_uptime: Duration::from_secs(cfg.comfy_healthy_uptime_s),
             min_respawn_delay: STUDIO_MIN_RESPAWN_DELAY,
         }

@@ -727,6 +727,7 @@ fn studio_crash_loop_cfg(tmp_dir: &Path, max_restarts: &str) -> (RuntimeConfig, 
         tmp_dir.join("data").to_string_lossy().to_string(),
     );
     vars.insert("COMFY_MAX_RESTARTS".to_string(), max_restarts.to_string());
+    vars.insert("STUDIO_MAX_RESTARTS".to_string(), max_restarts.to_string());
     vars.insert("COMFY_HEALTHY_UPTIME".to_string(), "600".to_string());
     vars.insert(
         "STUDIO_SERVER_SCRIPT".to_string(),
@@ -762,6 +763,21 @@ fn studio_server_crash_loop_tiene_retardo_minimo_y_presupuesto() {
         policy.min_respawn_delay >= Duration::from_secs(1),
         "el retardo mínimo entre relanzamientos debe ser >= 1s: {:?}",
         policy.min_respawn_delay
+    );
+
+    // 1b. El presupuesto de studio-server es propio: `COMFY_MAX_RESTARTS=0` (ComfyUI
+    //     nunca se relanza) NO debe desactivar la supervisión de studio-server.
+    //     Regresión real: la primera versión heredaba `COMFY_MAX_RESTARTS` y el test
+    //     `supervisor_respawns_studio_server_...` (que fija 0) fallaba en CI.
+    let mut zero_vars = BTreeMap::new();
+    zero_vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    zero_vars.insert("COMFY_MAX_RESTARTS".to_string(), "0".to_string());
+    let cfg_only_comfy_zero = RuntimeConfig::from_map(&zero_vars, None);
+    assert_eq!(cfg_only_comfy_zero.comfy_max_restarts, 0);
+    assert_eq!(
+        StudioRestartPolicy::from_config(&cfg_only_comfy_zero).max_consecutive_restarts,
+        5,
+        "COMFY_MAX_RESTARTS=0 no debe propagarse al presupuesto de studio-server"
     );
 
     // 2. El retardo mínimo frena el bucle caliente: con un retardo largo (30 s, muy
