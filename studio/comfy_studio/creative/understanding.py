@@ -201,7 +201,7 @@ def build_understanding(
     scope_ids = {a["id"] for a in assets}
     tr_count = 0
     for aid, trs in by_asset.items():
-        if scope_ids and aid not in scope_ids:
+        if asset_ids and aid not in scope_ids:
             continue
         tr_count += 1
         latest = trs[0]
@@ -242,7 +242,7 @@ def build_understanding(
         try:
             shots = vector_store.list_clip_shots(project_id)
             for shot in shots:
-                if scope_ids and shot.get("source_asset_id") not in scope_ids:
+                if asset_ids and shot.get("source_asset_id") not in scope_ids:
                     continue
                 shot_count += 1
                 tags = shot.get("visual_tags") or []

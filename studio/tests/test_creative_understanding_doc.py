@@ -2,16 +2,19 @@
 
 Cubre `_sha256_file`, `_asset_facts_for_transcription` y `build_understanding`
 con un doble en memoria de `ProjectStore` y un probe fijo (mismo patrón que
-`test_creative_review.py`): sin ffmpeg, pesos, red ni LLM. Este paquete solo
-añade tests; no parchea producción.
+`test_creative_review.py`): sin ffmpeg, pesos, red ni LLM. Este PR añade tests
+y corrige el filtrado de evidencias cuando el alcance pedido no resuelve
+ningún asset.
+
+Regresión de alcance corregida por esta PR:
+- si `asset_ids` no casa ningún asset, `scope_ids` queda vacío y las
+  transcripciones y shots de otros assets no deben filtrarse al documento.
 
 Anclas del comportamiento VIGENTE (documentadas, no arregladas aquí):
 - las identidades faciales solo se consultan si hay `vector_store`, aunque el
   store las tenga;
 - `counts.identities` cuenta la lista cruda: una entrada no-dict infla el
   contador sin producir fact;
-- si `asset_ids` no casa ningún asset, `scope_ids` queda vacío y el guard
-  `if scope_ids and ...` deja pasar TODAS las transcripciones;
 - el fact de EDL usa `edls[0]` sin reordenar (el contrato de orden "más
   nueva primero" es del store real, ver `test_creative_delivery_provenance.py`).
 
@@ -767,20 +770,22 @@ def test_transcription_missing_segments_key_yields_zero_segment_claim() -> None:
     assert doc["counts"]["transcriptions"] == 1
 
 
-def test_empty_asset_scope_leaks_transcriptions_from_any_asset() -> None:
-    """ANCLA (comportamiento vigente): si `asset_ids` no casa ningún asset,
-    `scope_ids` queda vacío y el guard `if scope_ids and ...` no filtra: se
-    emiten hechos de transcripción de assets fuera del alcance pedido."""
+def test_empty_asset_scope_drops_transcriptions_and_shots() -> None:
+    """Un filtro explícito sin coincidencias no debe incluir datos ajenos."""
     store = FakeStore(
         transcriptions=(_tr("tr1", "a1", [_seg("s1", "leak")]),),
     )
-    doc = build_understanding(store, PROJECT_ID, asset_ids=["ghost"])
+    vec = FakeVectorStore(shots=(_shot("sh-a1", "a1"),))
+    doc = build_understanding(
+        store, PROJECT_ID, asset_ids=["ghost"], vector_store=vec
+    )
     assert doc["assets"] == []
     assert doc["scope"]["asset_ids"] == []
-    leaked = _facts_of_kind(doc, "transcription")
-    assert len(leaked) == 1
-    assert leaked[0]["asset_id"] == "a1"
-    assert doc["counts"]["transcriptions"] == 1
+    assert _facts_of_kind(doc, "transcription") == []
+    assert _facts_of_kind(doc, "transcript_segment") == []
+    assert _facts_of_kind(doc, "clip_shot") == []
+    assert doc["counts"]["transcriptions"] == 0
+    assert doc["counts"]["shots"] == 0
     assert "asset_ids pedidos no encontrados: ghost" in doc["limitations"]
 
 
