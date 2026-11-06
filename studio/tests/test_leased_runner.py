@@ -55,6 +55,23 @@ def test_heavy_layer_holds_lease_during_run_and_releases_after(tmp_path: Path) -
     assert lease.current() is None
 
 
+def test_recipe_vram_estimate_is_admitted_against_detected_budget(tmp_path: Path) -> None:
+    lease = GpuLease(
+        lock_dir=tmp_path / ".gpu-lease",
+        budget=AdmissionBudget(vram_mb=30_000, ram_mb=64_000),
+    )
+    inner = _RecordingRunner(lease)
+    runner = LeasedEngineRunner(inner, lease)
+
+    result = runner.run_layer("comfyui", {"kind": "gen", "lease_vram_mb": 35_000})
+
+    assert result["ok"] is False
+    assert result["lease"] == "error"
+    assert "VRAM pedida 35000 MB" in result["error"]
+    assert inner.calls == []
+    assert lease.current() is None
+
+
 def test_cpu_layer_does_not_take_the_lease(tmp_path: Path) -> None:
     lease = _lease(tmp_path)
     inner = _RecordingRunner(lease)

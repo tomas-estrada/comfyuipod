@@ -628,6 +628,21 @@ def test_object_info_interrupt_free_and_connection_error() -> None:
     assert parse_ws_event(b"\x00\x01\xff\xd8binary-jpeg-preview") is None
 
 
+def test_free_memory_accepts_comfyui_empty_success_response() -> None:
+    """ComfyUI's /free endpoint responds with an empty HTTP 200 body."""
+    import asyncio
+
+    transport = httpx.MockTransport(lambda _request: httpx.Response(200))
+    client = ComfyUIClient(
+        base_url="http://stub-comfyui.local:39172",
+        transport=transport,
+    )
+
+    result = asyncio.run(client.free_memory(unload_models=True, free_memory=True))
+
+    assert result == {"freed": True}
+
+
 @pytest.mark.anyio
 async def test_execute_prompt_job_history_succeeds_view_fails_marks_job_error_never_done(
     studio_data_dir: Path,

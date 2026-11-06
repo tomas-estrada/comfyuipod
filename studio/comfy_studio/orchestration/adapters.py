@@ -37,6 +37,8 @@ from typing import Any
 from comfy_studio.engines import EngineRunSpec
 from comfy_studio.orchestration.conductor import Collaborators
 from comfy_studio.orchestration.evaluator import make_template_reselector
+from comfy_studio.orchestration.gpu_lease import GpuLease
+from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
 from comfy_studio.orchestration.planner import replan_shot_focalized
 from comfy_studio.orchestration.state import ProductionState, Shot
 
@@ -280,8 +282,22 @@ class EngineRunnerAdapter:
             return job
         template_id = job.get("template_id") or self._default_template
         # params del template = todo lo de la capa salvo claves de control.
-        control_keys = {"kind", "shot", "template_id", "graph", "job_id", "project_id",
-                        "atlas", "background_image", "background_sha256", "atlas_resolved"}
+        control_keys = {
+            "kind",
+            "shot",
+            "template_id",
+            "graph",
+            "job_id",
+            "project_id",
+            "atlas",
+            "background_image",
+            "background_sha256",
+            "atlas_resolved",
+            "recipe_id",
+            "recipe_unresolved",
+            "lease_vram_mb",
+            "lease_ram_mb",
+        }
         params = {k: v for k, v in job.items() if k not in control_keys}
         # el fondo del atlas entra al grafo por la entrada de imagen declarada
         # (p. ej. wan_i2v -> image_input -> LoadImage). Si la plantilla no declara
@@ -490,6 +506,8 @@ def build_server_collaborators(
     template_registry: Any | None = None,
     atlas_service: Any | None = None,
     comfyui_input_dir: str | None = None,
+    gpu_lease: GpuLease | None = None,
+    unload_gpu: Any | None = None,
 ) -> Collaborators:
     """Arma el `Collaborators` real del servidor desde las piezas disponibles.
 
@@ -508,6 +526,8 @@ def build_server_collaborators(
         if engines
         else None
     )
+    if runner is not None and gpu_lease is not None:
+        runner = LeasedEngineRunner(runner, gpu_lease, unload=unload_gpu)
     # Evaluador combinado: QA técnica del motor + QA de CONTENIDO del LLM de
     # visión. Con llm_client el shot debe pasar AMBAS (vbench_min y
     # semantic_min); sin llm_client queda la QA técnica sola.

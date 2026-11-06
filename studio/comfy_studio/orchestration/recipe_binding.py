@@ -18,7 +18,7 @@ Puro cálculo determinista (reutiliza el selector CPU de W08). No ejecuta GPU.
 
 from __future__ import annotations
 
-from comfy_studio.av_recipes import select_recipe
+from comfy_studio.av_recipes import VRAM_SAFETY_FACTOR, select_recipe
 from comfy_studio.orchestration.state import ProductionState
 
 #: capas de generación por capacidad: qué pedir al selector según el kind/params.
@@ -79,6 +79,10 @@ def bind_recipes(
             layer.template_id = recipe.template_id
             layer.engine = recipe.engine
             layer.params["recipe_id"] = recipe.recipe_id
+            # Carry the same conservative estimate used at selection into the
+            # runtime lease admission. This is still an estimate, not a GPU
+            # measurement; the lease separately caps it to detected hardware.
+            layer.params["lease_vram_mb"] = int(recipe.est_vram_mb * VRAM_SAFETY_FACTOR)
             layer.params.setdefault("width", width)
             layer.params.setdefault("height", height)
             layer.params.setdefault("frames", frames)

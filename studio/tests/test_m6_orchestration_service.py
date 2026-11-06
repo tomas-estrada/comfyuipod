@@ -29,6 +29,28 @@ def test_plan_production_awaits_approval(tmp_path):
     assert again["plan"]["id"] == pid
 
 
+def test_plan_records_recipe_binding_against_resource_budget(tmp_path):
+    svc = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "budget.sqlite3"),
+        resource_vram_budget_mb=96 * 1024,
+    )
+
+    out = svc.plan_production("un dron sobre la costa")
+
+    binding = out["plan"]["metadata"]["recipe_binding"]
+    assert binding["vram_budget_mb"] == 96 * 1024
+    assert binding["estimate_only"] is True
+    assert binding["bound"] >= 1
+    gen_layers = [
+        layer
+        for sequence in out["plan"]["sequences"]
+        for shot in sequence["shots"]
+        for layer in shot["layers"]
+        if layer["kind"] == "gen"
+    ]
+    assert all(layer["params"].get("lease_vram_mb") for layer in gen_layers)
+
+
 def test_status_reports_progress(tmp_path):
     svc = _service(tmp_path)
     pid = svc.plan_production("gato astronauta")["production_id"]
