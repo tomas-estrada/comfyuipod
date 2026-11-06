@@ -1502,6 +1502,21 @@ def test_panel_chat_after_deleting_only_project_recovers_and_never_posts_to_dele
     assert "toast-success" in after_chat["toastClass"]
 
 
+def test_panel_surfaces_load_errors_for_templates_jobs_and_gallery() -> None:
+    """Los refrescos automáticos avisan cuando la API falla en vez de tragarse el error."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+
+    for function_name in ("loadTemplates", "refreshJobs", "refreshGallery"):
+        fn_start = app_js.index(f"async function {function_name}(")
+        next_fn = app_js.find("async function ", fn_start + 1)
+        fn_end = next_fn if next_fn != -1 else len(app_js)
+        fn_body = app_js[fn_start:fn_end]
+        assert "setToast" in fn_body, f"{function_name} debe avisar al usuario si falla la API"
+        assert "catch" in fn_body
+        assert "Ignorar error" not in fn_body
+        assert "Ignorar error transitorio" not in fn_body
+
+
 def test_panel_health_shows_engine_preparation_and_missing_weights() -> None:
     """El panel distingue alcanzable de preparado: pesos ausentes y stubs son visibles."""
     app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
