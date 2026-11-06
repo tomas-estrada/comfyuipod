@@ -103,29 +103,71 @@ def expand_placeholders(value: str, env: dict[str, str]) -> str:
 _expand = expand_placeholders
 
 
-def resolve_dest(dest: str, env: dict[str, str] | None = None) -> Path:
-    """Resuelve un `dest_path` del manifiesto a ruta absoluta.
+def _require_destination_within(root: Path, destination: Path, manifest_dest: str) -> None:
+    """Reject manifest-relative destinations that resolve outside their root.
 
-    Mismas reglas que `scripts/download-models.sh` (`case "${target_dir}"`):
-    `models/*` vive bajo `${COMFY_DATA_DIR}/models`, `custom_nodes/*` bajo
-    `${COMFY_APP_DIR}`, `${COMFY_DATA_DIR}/*` se expande, lo absoluto se respeta
-    y cualquier otra cosa cae bajo `${COMFY_DATA_DIR}`.
+    Checking the resolved path catches both parent traversal and existing
+    symlinked directories while preserving the manifest's lexical destination
+    for acquisition reporting and exact-destination comparison.
+    """
+    try:
+        resolved_root = root.resolve(strict=False)
+        resolved_destination = destination.resolve(strict=False)
+        resolved_destination.relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError(
+            f"manifest destination escapes allowed root: {manifest_dest!r}"
+        ) from exc
+
+
+def resolve_dest(dest: str, env: dict[str, str] | None = None) -> Path:
+    """Resolve a manifest destination and confine relative paths to their root.
+
+    models/* lives under COMFY_DATA_DIR/models and custom_nodes/* under
+    COMFY_APP_DIR. Other relative paths live under COMFY_DATA_DIR. Explicit
+    absolute destinations remain supported for trusted manifests.
     """
     environment = os.environ if env is None else env
-    raw = _expand(str(dest), environment)
-    # Un COMFY_DATA_DIR vacío produciría rutas relativas (y por tanto escrituras
-    # dentro del repo): cae siempre al default de la imagen.
+    declared = str(dest).replace("\\", "/")
+    raw = _expand(declared, environment)
+    # An empty COMFY_DATA_DIR would produce relative paths (and therefore writes
+    # inside the repo); always fall back to the image default.
     comfy_data = (environment.get("COMFY_DATA_DIR") or "").strip() or _DEFAULT_ENV["COMFY_DATA_DIR"]
     comfy_app = (environment.get("COMFY_APP_DIR") or "").strip() or _DEFAULT_ENV["COMFY_APP_DIR"]
+
+    data_prefixes = ("{COMFY_DATA_DIR}/", "${COMFY_DATA_DIR}/")
+    app_prefixes = ("{COMFY_APP_DIR}/", "${COMFY_APP_DIR}/")
+    for prefix in data_prefixes:
+        if declared.startswith(prefix):
+            root = Path(comfy_data)
+            candidate = root / _expand(declared[len(prefix):], environment)
+            _require_destination_within(root, candidate, declared)
+            return candidate
+    for prefix in app_prefixes:
+        if declared.startswith(prefix):
+            root = Path(comfy_app)
+            candidate = root / _expand(declared[len(prefix):], environment)
+            _require_destination_within(root, candidate, declared)
+            return candidate
+
+    # Absolute paths are an explicit manifest choice and keep their historical
+    # behavior. Relative paths are confined to their corresponding root.
     if raw.startswith("/"):
         return Path(raw)
     if raw == "models" or raw.startswith("models/"):
-        if raw == "models":
-            return Path(comfy_data) / "models"
-        return Path(comfy_data) / "models" / raw[len("models/") :]
-    if raw.startswith("custom_nodes/"):
-        return Path(comfy_app) / raw
-    return Path(comfy_data) / raw
+        root = Path(comfy_data)
+        candidate = root / raw
+        _require_destination_within(root, candidate, declared)
+        return candidate
+    if raw == "custom_nodes" or raw.startswith("custom_nodes/"):
+        root = Path(comfy_app)
+        candidate = root / raw
+        _require_destination_within(root, candidate, declared)
+        return candidate
+    root = Path(comfy_data)
+    candidate = root / raw
+    _require_destination_within(root, candidate, declared)
+    return candidate
 
 
 def manifest_path(env: dict[str, str] | None = None) -> Path | None:
