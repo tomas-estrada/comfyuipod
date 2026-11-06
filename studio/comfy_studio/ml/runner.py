@@ -3,7 +3,7 @@
 `run_worker(subcommand, payload, timeout_s)` lanza `worker.py` como proceso
 hijo con `subprocess.run(capture_output=True, timeout=...)`, nunca `shell=True`.
 Mapea códigos de salida a errores tipados; toda falla lleva el tail de stderr
-redactado. Los timeouts son configurables por `STUDIO_ML_TIMEOUT_S` con valores
+redactado. El timeout se pasa por el parámetro `timeout_s` (si es `> 0`) o
 por defecto por subcomando (30s probe, 120s embeddings/faces/diarize,
 300s asr_transcribe).
 """
@@ -54,14 +54,19 @@ def _default_timeout(subcommand: str, override: float | None) -> float:
     return ML_DEFAULT_TIMEOUTS.get(subcommand, 120.0)
 
 
-def _build_env() -> dict[str, str] | None:
-    """Entorno del hijo: allowlist estricta, sin secretos."""
+def _build_env() -> dict[str, str]:
+    """Entorno del hijo: allowlist estricta, sin secretos.
+
+    Siempre devuelve un dict explícito (posiblemente vacío). Nunca `None`:
+    con `env=None` `subprocess.run` heredaría el entorno completo del padre,
+    incluyendo posibles secretos fuera de la allowlist.
+    """
     env: dict[str, str] = {}
     for key in sorted(ML_ENV_ALLOWLIST):
         val = os.environ.get(key)
         if val is not None:
             env[key] = val
-    return env or None
+    return env
 
 
 def run_worker(
@@ -107,44 +112,70 @@ def run_worker(
             exit_code=None,
             stderr_tail=tail,
         )
+    except (FileNotFoundError, PermissionError) as exc:
+        return MlWorkerResponse(
+            ok=False,
+            subcommand=subcommand,
+            error=f"intérprete no encontrado o no ejecutable: {interpreter}: {exc}",
+            exit_code=None,
+            stderr_tail=redactor.redact(str(exc)),
+        )
     except Exception as exc:
         return MlWorkerResponse(
             ok=False,
             subcommand=subcommand,
-            error=f"{type(exc).__name__}: {exc}",
+            error=redactor.redact(f"{type(exc).__name__}: {exc}"),
             exit_code=None,
             stderr_tail=redactor.redact(str(exc)),
         )
 
+    # stdout vacío con rc==0 es un fallo tipado, nunca un éxito vacío.
+    if res.returncode == 0 and not (res.stdout or "").strip():
+        return MlWorkerResponse(
+            ok=False,
+            subcommand=subcommand,
+            error=f"salida del worker vacía (rc=0, subcomando {subcommand})",
+            exit_code=res.returncode,
+            stderr_tail=redactor.redact(res.stderr or ""),
+        )
+
     # Parsear stdout JSON
     try:
-        parsed = json.loads(res.stdout) if res.stdout.strip() else {}
+        parsed = json.loads(res.stdout) if (res.stdout or "").strip() else {}
     except Exception as exc:
         return MlWorkerResponse(
             ok=False,
             subcommand=subcommand,
             error=f"salida del worker no es JSON válido: {exc}",
             exit_code=res.returncode,
-            stderr_tail=redactor.redact(res.stderr),
+            stderr_tail=redactor.redact(res.stderr or ""),
         )
 
     if res.returncode != 0:
+        worker_error = parsed.get("error") if isinstance(parsed, dict) else None
+        worker_tail = parsed.get("stderr_tail") if isinstance(parsed, dict) else None
         return MlWorkerResponse(
             ok=False,
             subcommand=subcommand,
-            error=parsed.get("error")
-            or f"worker {subcommand} salió con rc={res.returncode}",
+            error=redactor.redact(
+                str(worker_error)
+                if worker_error
+                else f"worker {subcommand} salió con rc={res.returncode}"
+            ),
             exit_code=res.returncode,
-            stderr_tail=parsed.get("stderr_tail") or redactor.redact(res.stderr),
-            payload=parsed.get("payload"),
+            stderr_tail=redactor.redact(
+                worker_tail if worker_tail else (res.stderr or "")
+            ),
+            payload=parsed.get("payload") if isinstance(parsed, dict) else None,
         )
 
+    ok_tail = parsed.get("stderr_tail") if isinstance(parsed, dict) else None
     return MlWorkerResponse(
         ok=True,
         subcommand=subcommand,
-        payload=parsed.get("payload", {}),
+        payload=parsed.get("payload", {}) if isinstance(parsed, dict) else {},
         exit_code=res.returncode,
-        stderr_tail=parsed.get("stderr_tail"),
+        stderr_tail=redactor.redact(str(ok_tail)) if ok_tail else None,
     )
 
 

@@ -272,7 +272,7 @@ def main() -> int:
             {
                 "ok": False,
                 "subcommand": subcommand,
-                "error": f"subcomando desconocido: {subcommand}",
+                "error": _redact(f"subcomando desconocido: {subcommand}"),
                 "stderr_tail": None,
             }
         )
@@ -286,7 +286,7 @@ def main() -> int:
             {
                 "ok": False,
                 "subcommand": subcommand,
-                "error": f"stdin no es JSON válido: {exc}",
+                "error": _redact(f"stdin no es JSON válido: {exc}"),
                 "stderr_tail": None,
             }
         )
@@ -300,7 +300,7 @@ def main() -> int:
             {
                 "ok": False,
                 "subcommand": subcommand,
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": _redact(f"{type(exc).__name__}: {exc}"),
                 "stderr_tail": _redact(str(exc)),
             }
         )
