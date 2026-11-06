@@ -374,6 +374,37 @@ def test_server_collaborators_wrap_real_runner_with_gpu_lease(tmp_path):
     assert isinstance(collab.runner, LeasedEngineRunner)
 
 
+def test_server_qa_engine_also_runs_inside_gpu_lease(tmp_path):
+    lease = GpuLease(
+        lock_dir=tmp_path / ".gpu-lease",
+        budget=AdmissionBudget(vram_mb=90_000, ram_mb=120_000),
+    )
+
+    class _LeaseAwareQa:
+        lease_was_held = False
+
+        def run(self, spec):
+            self.lease_was_held = lease.current() is not None
+            return EngineResult(
+                ok=True,
+                engine="qa",
+                verb="run",
+                payload={"passed": True},
+            )
+
+    qa_engine = _LeaseAwareQa()
+    collab = build_server_collaborators(
+        qa_engine=qa_engine,
+        gpu_lease=lease,
+        unload_gpu=lambda: True,
+    )
+
+    collab.evaluator.evaluate(Shot(description="qa", id="shot", output_path="/tmp/qa.mp4"))
+
+    assert qa_engine.lease_was_held is True
+    assert lease.current() is None
+
+
 def test_server_collaborators_run_full_graph_to_done(tmp_path, monkeypatch):
     # El motor falso no escribe archivos reales: extraer keyframes del
     # output_path fallaría (fail-closed semántico). Se inyecta un extractor
