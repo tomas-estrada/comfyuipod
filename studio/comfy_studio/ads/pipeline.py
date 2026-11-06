@@ -357,6 +357,9 @@ def _ffmpeg_variant_cmd(
         audio_filters.append(f"[{next_idx}:a]aresample=44100[a_music]")
         next_idx += 1
 
+    # Las etapas de normalización producen las etiquetas que consumen `anull` o
+    # `amix`; deben formar parte del mismo filter_complex.
+    filters.extend(audio_filters)
     if len(audio_filters) == 2:
         filters.append("[a_voice][a_music]amix=inputs=2:duration=shortest:dropout_transition=0[aout]")
     elif len(audio_filters) == 1:
