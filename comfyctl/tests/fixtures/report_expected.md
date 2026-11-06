@@ -42,7 +42,7 @@ Starting server on 127.0.0.1:18188 (pass=[REDACTED])
 
 ## 7. Nginx
 - **Estado**: `running=true` · **Workers user**: `www-data`
-- **Recuento de códigos en últimas 500 peticiones**: `401=0` · `413=0` · `429=0` · `502=0` · `503=0`
+- **Recuento de códigos en últimas 500 peticiones**: `401=2` · `413=1` · `429=1` · `502=1` · `503=1`
 Sin errores en `/var/log/nginx/error.log`.
 
 ## 8. Drift del entorno

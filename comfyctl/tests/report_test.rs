@@ -1,4 +1,4 @@
-//! Snapshot test y verificación de cabeceras y redacción de `/report.md` (§8.3).
+//! Snapshot test y verificación de cabeceras, redacción y recuento nginx de `/report.md` (§8.3).
 
 use comfyctl::collect::drift::DriftSummary;
 use comfyctl::collect::gpu::GpuStatus;
@@ -27,6 +27,28 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
     let _ = fs::write(
         tmp_log_dir.join("comfyui.log"),
         "Starting server on 127.0.0.1:18188 (pass=secret-pass-123)\n",
+    );
+
+    // Access log con la forma real de nginx combined: sin estas líneas, la sección 7
+    // del informe (summarize_nginx_access) solo ejercitaba el camino vacío y un regex
+    // roto seguiría reportando `401=0 · ...` como si no hubiera incidentes.
+    // Guardas de falsos positivos: códigos 200/404, un `401` en la URL, un `401`
+    // en el campo de bytes y una línea corrupta sin formato.
+    let access_log = [
+        r#"127.0.0.1 - - [19/Oct/2026:12:00:00 +0000] "GET /status HTTP/1.1" 200 123 "-" "curl/8.5.0""#,
+        r#"127.0.0.1 - - [19/Oct/2026:12:00:01 +0000] "GET /studio/api/health HTTP/1.1" 401 5 "-" "python-requests/2.31.0""#,
+        r#"10.0.0.5 - - [19/Oct/2026:12:00:02 +0000] "POST /login HTTP/1.1" 401 19 "-" "Mozilla/5.0""#,
+        r#"10.0.0.5 - - [19/Oct/2026:12:00:03 +0000] "GET /upload HTTP/1.1" 413 157 "-" "Mozilla/5.0""#,
+        r#"10.0.0.5 - - [19/Oct/2026:12:00:04 +0000] "GET /api/jobs HTTP/1.1" 429 44 "-" "python-requests/2.31.0""#,
+        r#"10.0.0.5 - - [19/Oct/2026:12:00:05 +0000] "GET /queue HTTP/1.1" 502 1566 "-" "Mozilla/5.0""#,
+        r#"10.0.0.5 - - [19/Oct/2026:12:00:06 +0000] "POST /studio/api/assets HTTP/1.1" 503 21 "-" "Mozilla/5.0""#,
+        r#"10.0.0.5 - - [19/Oct/2026:12:00:07 +0000] "GET /missing HTTP/1.1" 404 123 "-" "Mozilla/5.0""#,
+        r#"10.0.0.5 - - [19/Oct/2026:12:00:08 +0000] "GET /p?code=401 HTTP/1.1" 200 401 "-" "Mozilla/5.0""#,
+        "linea-corrupta-sin-formato",
+    ];
+    let _ = fs::write(
+        tmp_log_dir.join("nginx").join("access.log"),
+        format!("{}\n", access_log.join("\n")),
     );
 
     let mut env_masked = BTreeMap::new();
@@ -177,6 +199,14 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
     ] {
         assert!(md.contains(hdr), "Falta cabecera contractual: {hdr}");
     }
+
+    // El recuento de la sección 7 sale del access.log anterior: 401×2, y una
+    // sola ocurrencia de 413/429/502/503. Los guardas de arriba (200, 404,
+    // `401` en la URL y en el campo de bytes, línea corrupta) no cuentan.
+    assert!(
+        md.contains("`401=2` · `413=1` · `429=1` · `502=1` · `503=1`"),
+        "recuento de códigos nginx incorrecto en la sección 7:\n{md}"
+    );
 
     let expected_snapshot = include_str!("fixtures/report_expected.md").replace("\r\n", "\n");
     assert_eq!(md, expected_snapshot);
