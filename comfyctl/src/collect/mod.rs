@@ -8,7 +8,9 @@ pub mod procfs;
 
 use crate::collect::gpu::{collect_gpu_status, GpuStatus};
 use crate::collect::models::{collect_weight_status, WeightStatus};
-use crate::collect::phases::{collect_phases_status, format_phase_banner, PhasesStatus};
+use crate::collect::phases::{
+    add_disk_truth, collect_phases_status, format_phase_banner, PhasesStatus,
+};
 use crate::collect::procfs::{
     build_masked_env, collect_comfyui_status, collect_memory_and_disk, collect_services_status,
     find_hf_download_process, get_container_uptime_s, get_hostname, load_image_meta,
@@ -60,7 +62,7 @@ pub fn build_status_api_payload(
     let hf_proc = find_hf_download_process();
     let dl_log_path = resolve_log_path("download", log_dir)
         .unwrap_or_else(|| log_dir.join("download-models.log"));
-    let phases = collect_phases_status(
+    let mut phases = collect_phases_status(
         &dl_log_path,
         cfg.skip_model_download,
         cfg.model_profile.as_str(),
@@ -70,6 +72,7 @@ pub fn build_status_api_payload(
     let services = collect_services_status(cfg);
     let strict = load_strict_report(&cfg.strict_json_path);
     let weights = collect_weight_status(&cfg.comfy_data_dir, cfg.model_profile.as_str());
+    add_disk_truth(&mut phases, &weights);
     let phase_banner = format_phase_banner(&comfyui, &phases, strict.as_ref());
 
     let mut log_buffers: BTreeMap<String, Vec<String>> = BTreeMap::new();

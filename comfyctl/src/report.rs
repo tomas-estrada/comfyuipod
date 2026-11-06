@@ -229,19 +229,31 @@ pub fn build_report_markdown(
     let hf_pid_disp = p2
         .hf_pid
         .map_or_else(|| "None".to_string(), |p| p.to_string());
+    let bytes_line = |done: u64, total: Option<u64>| match total {
+        Some(total) => format!("avance: `{done}` de `{total}` bytes"),
+        None => "avance: `no disponible`".to_string(),
+    };
     let _ = writeln!(
         out,
-        "- **Fase 1**: `{}` (`{}/{}` completados, `{}` fallidos)",
+        "- **Fase 1**: `{}` (`{}/{}` completados, `{}` fallidos) · {}",
         p1.state,
         p1.done,
         p1.total,
-        p1.failed.len()
+        p1.failed.len(),
+        bytes_line(p1.bytes_done, p1.bytes_total)
     );
     if !p1.failed.is_empty() {
         let _ = writeln!(
             out,
             "  - Ficheros Fase 1 con error: `{}`",
             p1.failed.join("`, `")
+        );
+    }
+    if !p1.missing.is_empty() {
+        let _ = writeln!(
+            out,
+            "  - Faltan en disco (Fase 1): `{}`",
+            p1.missing.join("`, `")
         );
     }
     if p1.state == STATE_NOT_REQUIRED {
@@ -259,11 +271,19 @@ pub fn build_report_markdown(
         p2.failed.len(),
         p2.hf_rss_mb
     );
+    let _ = writeln!(out, "  - {}", bytes_line(p2.bytes_done, p2.bytes_total));
     if !p2.failed.is_empty() {
         let _ = writeln!(
             out,
             "  - Ficheros Fase 2 con error: `{}`",
             p2.failed.join("`, `")
+        );
+    }
+    if !p2.missing.is_empty() {
+        let _ = writeln!(
+            out,
+            "  - Faltan en disco (Fase 2): `{}`",
+            p2.missing.join("`, `")
         );
     }
     if p2.state == STATE_NOT_REQUIRED {
@@ -601,6 +621,7 @@ mod tests {
                 total: 0,
                 failed: Vec::new(),
                 elapsed_s: 0,
+                ..Phase1Info::default()
             },
             phase2: Phase2Info {
                 state: STATE_NOT_REQUIRED.to_string(),
@@ -610,6 +631,7 @@ mod tests {
                 current_file: None,
                 hf_pid: None,
                 hf_rss_mb: 0,
+                ..Phase2Info::default()
             },
         }
     }

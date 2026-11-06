@@ -30,8 +30,9 @@ Sin caídas registradas en `/var/log/supervisor.log`.
 - **Disco (`/workspace/comfyui-data`)**: `30` GB usados / `150` GB totales (`120` GB libres)
 
 ## 5. Descargas (Fase 1 y Fase 2)
-- **Fase 1**: `done` (`12/12` completados, `0` fallidos)
+- **Fase 1**: `done` (`12/12` completados, `0` fallidos) · avance: `no disponible`
 - **Fase 2**: `done` (`6/6` completados, `0` fallidos) · Archivo actual: `ninguno` · Proceso `hf`: PID `None` (`0` MB RSS)
+  - avance: `no disponible`
 Sin líneas en `/var/log/download-models.log`.
 
 ## 6. Log de ComfyUI (últimas 120 líneas)

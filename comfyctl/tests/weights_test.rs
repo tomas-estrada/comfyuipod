@@ -1,12 +1,12 @@
-//! Estado de pesos del flujo pedido, leído de la verdad en disco (no del log de
-//! descarga) y mostrado en `/report.md` y en la página de estado.
+﻿//! Estado de pesos del flujo pedido, leÃ­do de la verdad en disco (no del log de
+//! descarga) y mostrado en `/report.md` y en la pÃ¡gina de estado.
 
 use comfyctl::collect::models::{collect_weight_status, WeightStatus};
 use comfyctl::report::build_report_markdown;
 
 #[test]
 fn peso_status_lista_faltantes_y_llegados_desde_disco() {
-    // Raíz de datos real en temp: dos ficheros de Fase 2 del perfil `anime`
+    // RaÃ­z de datos real en temp: dos ficheros de Fase 2 del perfil `anime`
     // presentes (con bytes reales) y el resto ausentes.
     let tmp = std::env::temp_dir().join("comfyctl_weights_test_disco");
     let _ = std::fs::remove_dir_all(&tmp);
@@ -35,13 +35,13 @@ fn peso_status_lista_faltantes_y_llegados_desde_disco() {
     assert_eq!(
         st.present.iter().map(|w| w.bytes).sum::<u64>(),
         2048 + 1024,
-        "los bytes deben salir de los tamaños reales en disco"
+        "los bytes deben salir de los tamaÃ±os reales en disco"
     );
-    // Un fichero presente NO aparece en la lista de faltantes; uno ausente sí.
+    // Un fichero presente NO aparece en la lista de faltantes; uno ausente sÃ­.
     assert!(!st.missing.iter().any(|m| m.contains("4x-AnimeSharp")));
     let missing: Vec<&str> = st.missing.iter().map(String::as_str).collect();
     assert!(missing.iter().any(|m| m.contains("checkpoints/")));
-    // Los faltantes nombran el fichero y la fase, para saber qué esperar.
+    // Los faltantes nombran el fichero y la fase, para saber quÃ© esperar.
     assert!(missing
         .iter()
         .all(|m| m.contains("phase2") || m.contains("phase1")));
@@ -49,7 +49,7 @@ fn peso_status_lista_faltantes_y_llegados_desde_disco() {
 
 #[test]
 fn peso_status_sin_raiz_legible_declara_no_disponible() {
-    // La ruta NO existe: no hay medición, y el diagnóstico no puede fingir datos.
+    // La ruta NO existe: no hay mediciÃ³n, y el diagnÃ³stico no puede fingir datos.
     let tmp = std::env::temp_dir().join("comfyctl_weights_test_sin_raiz");
     let _ = std::fs::remove_dir_all(&tmp);
     let st = collect_weight_status(&tmp, "all");
@@ -58,7 +58,7 @@ fn peso_status_sin_raiz_legible_declara_no_disponible() {
     assert_eq!(st.source, "no disponible");
     assert!(
         st.present.is_empty() && st.missing.is_empty(),
-        "sin medición no hay lista de presente/faltante: 0 datos inventados"
+        "sin mediciÃ³n no hay lista de presente/faltante: 0 datos inventados"
     );
 }
 
@@ -93,7 +93,7 @@ fn report_seccion_11_pesos_nombra_lo_que_falta() {
 
     assert!(
         md.contains("## 11. Pesos del flujo pedido"),
-        "sección nueva: {md}"
+        "secciÃ³n nueva: {md}"
     );
     let section11 = md
         .split("## 11. Pesos del flujo pedido")
@@ -211,6 +211,7 @@ fn example_api_payload(weights: &WeightStatus) -> comfyctl::collect::StatusApiPa
                     total: 0,
                     failed: Vec::new(),
                     elapsed_s: 0,
+                    ..Phase1Info::default()
                 },
                 phase2: comfyctl::collect::phases::Phase2Info {
                     state: "not_required".to_string(),
@@ -220,6 +221,7 @@ fn example_api_payload(weights: &WeightStatus) -> comfyctl::collect::StatusApiPa
                     current_file: None,
                     hf_pid: None,
                     hf_rss_mb: 0,
+                    ..comfyctl::collect::phases::Phase2Info::default()
                 },
             }
         },

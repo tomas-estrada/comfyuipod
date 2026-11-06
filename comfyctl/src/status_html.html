@@ -233,11 +233,15 @@
           `<p>Disco (${esc(d.disk.path)}): <code>${d.disk.free_gb} GB libres / ${d.disk.total_gb} GB total</code></p>`;
 
         const p1 = d.phases.phase1, p2 = d.phases.phase2;
-        const pct = p2.total > 0 ? Math.min(100, Math.round((p2.done / p2.total) * 100)) : 100;
+        // Sin denominador no hay porcentaje que mostrar: 0% es honesto, 100% no.
+        const pct = p2.total > 0 ? Math.min(100, Math.round((p2.done / p2.total) * 100)) : 0;
+        const p2Bytes = p2.bytes_total != null
+          ? `${p2.bytes_done} de ${p2.bytes_total} bytes`
+          : "no disponible";
         document.getElementById("dl-bar").style.width = `${pct}%`;
         document.getElementById("dl-body").innerHTML =
           `<p>Fase 1: <code>${esc(p1.state)}</code> (${p1.done}/${p1.total}) · Fase 2: <code>${esc(p2.state)}</code> (${p2.done}/${p2.total})</p>` +
-          `<p>Archivo en curso: <code>${esc(p2.current_file || "ninguno")}</code> · PID hf: <code>${esc(p2.hf_pid || "-")}</code> (${p2.hf_rss_mb} MB)</p>`;
+          `<p>Avance Fase 2: <code>${esc(p2Bytes)}</code> · Archivo en curso: <code>${esc(p2.current_file || "ninguno")}</code> · PID hf: <code>${esc(p2.hf_pid || "-")}</code> (${p2.hf_rss_mb} MB)</p>`;
 
         const w = d.weights || {};
         let wBody;
