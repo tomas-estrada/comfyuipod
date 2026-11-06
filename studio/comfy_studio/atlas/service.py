@@ -381,6 +381,54 @@ class AtlasService:
 
     # -- selección de vista / cámara ----------------------------------------------
 
+    #: bonus (resta al score) por calibración verificada: una cámara verificada
+    #: prepara mejor una toma que una sin calibrar.
+    _CALIB_BONUS: dict[str, float] = {
+        "verified": -20.0, "estimated": -10.0, "uncalibrated": 0.0,
+    }
+    #: bonus por fiabilidad de fecha: captura real > solo subida > desconocida.
+    _DATE_BONUS: dict[str, float] = {
+        "captured": -10.0, "uploaded_only": -5.0, "unknown": 0.0, "historical": 0.0,
+    }
+
+    @classmethod
+    def _score_candidate(
+        cls,
+        view: View,
+        ref: Any | None,
+        *,
+        dist_m: float | None,
+        heading_diff: float | None,
+        heading_unknown: bool,
+        fov_diff: float | None,
+        fov_unknown: bool,
+    ) -> float:
+        """Score multicriterio de una vista (menor = mejor fondo para la toma).
+
+        Suma distancia (m) + 2×dif_rumbo (°) + dif_FOV (°); la calidad pesa
+        hasta 150 (decide entre vistas del mismo punto); lo desconocido
+        penaliza neutro (mitad de la tolerancia) en vez de 0 ficticio;
+        calibración, fecha de captura y resolución dan bonus acotados.
+        """
+        score = max(0.0, dist_m or 0.0)
+        if heading_diff is not None:
+            score += 2.0 * heading_diff
+        elif heading_unknown:
+            score += 22.5
+        if fov_diff is not None:
+            score += 1.0 * fov_diff
+        elif fov_unknown:
+            score += 7.5
+        quality = ref.quality if ref is not None else 0.0
+        score += (1.0 - min(max(quality, 0.0), 1.0)) * 150.0
+        score += cls._CALIB_BONUS.get(str(view.calib_state), 0.0)
+        score += cls._DATE_BONUS.get(
+            str(ref.date_reliability) if ref is not None else "unknown", 0.0
+        )
+        width = ref.width if ref is not None and ref.width else 0
+        score -= (min(width, 2048) / 2048.0) * 10.0
+        return score
+
     def select_view(
         self,
         place_id: str,
@@ -399,7 +447,9 @@ class AtlasService:
         - Rumbo pedido con rumbo conocido en la vista y diferencia > tolerancia:
           NO se acepta; se devuelve status="unsupported_camera" con la limitación
           tipada y las vistas disponibles del mismo lugar.
-        - Si la vista más cercana no es compatible, se busca otra compatible.
+        - Entre las compatibles se elige por score multicriterio (menor = mejor):
+          distancia + rumbo + FOV + calidad + calibración + fiabilidad de fecha
+          + resolución; empate se rompe por view_id (determinista).
         - Desconocido sigue siendo desconocido: se devuelve como limitación
           (heading_unknown / fov_unknown), nunca como 0 ni como compatible.
         """
@@ -431,10 +481,17 @@ class AtlasService:
             d = abs((a - b) % 360.0)
             return min(d, 360.0 - d)
 
-        def evaluate(view: View) -> tuple[list[dict[str, Any]], float | None]:
-            """(limitaciones, distancia_m) para una vista dada la cámara pedida."""
+        def evaluate(view: View) -> tuple[list[dict[str, Any]], float | None,
+                                           float | None, float | None]:
+            """(limitaciones, distancia_m, dif_rumbo, dif_fov) para la cámara pedida.
+
+            `dif_rumbo`/`dif_fov` son None si no se pidió o si la vista no los
+            tiene registrados (entonces hay limitación tipada, no un 0).
+            """
             lims: list[dict[str, Any]] = []
             dist: float | None = None
+            hdiff: float | None = None
+            fdiff: float | None = None
             if (
                 lat is not None and lon is not None
                 and view.lat is not None and view.lon is not None
@@ -454,63 +511,65 @@ class AtlasService:
                         "detail": "La vista no tiene rumbo registrado; no se afirma compatibilidad",
                     })
                 else:
-                    diff = angular_diff(heading_deg, view.heading_deg)
-                    if diff > heading_tolerance_deg:
+                    hdiff = angular_diff(heading_deg, view.heading_deg)
+                    if hdiff > heading_tolerance_deg:
                         lims.append({
                             "code": "heading_mismatch",
                             "detail": f"Rumbo pedido {heading_deg:.0f}° vs vista "
-                                      f"{view.heading_deg:.0f}° (dif {diff:.0f}° > "
+                                      f"{view.heading_deg:.0f}° (dif {hdiff:.0f}° > "
                                       f"{heading_tolerance_deg:.0f}°)",
                             "requested_deg": heading_deg,
                             "view_deg": view.heading_deg,
-                            "diff_deg": round(diff, 1),
+                            "diff_deg": round(hdiff, 1),
                         })
             if fov_deg is not None:
                 if view.fov_deg is None:
                     lims.append({"code": "fov_unknown", "detail": "FOV no estimado en esta vista"})
-                elif abs(fov_deg - view.fov_deg) > 15.0:
-                    lims.append({
-                        "code": "fov_mismatch",
-                        "detail": f"FOV pedido {fov_deg:.0f}° vs vista {view.fov_deg:.0f}°",
-                    })
-            return lims, dist
+                else:
+                    fdiff = abs(fov_deg - view.fov_deg)
+                    if fdiff > 15.0:
+                        lims.append({
+                            "code": "fov_mismatch",
+                            "detail": f"FOV pedido {fov_deg:.0f}° vs vista {view.fov_deg:.0f}°",
+                        })
+            return lims, dist, hdiff, fdiff
 
         def hard_incompatible(lims: list[dict[str, Any]]) -> bool:
             return any(lim["code"] in ("heading_mismatch", "fov_mismatch") for lim in lims)
 
-        # elegir: primero la más cercana; si es incompatible, buscar otra compatible
-        chosen: View | None = None
-        chosen_lims: list[dict[str, Any]] = []
-        if lat is not None and lon is not None:
-            with_dist = [(v, haversine_m(lat, lon, v.lat, v.lon))
-                         for v in views if v.lat is not None and v.lon is not None]
-            with_dist.sort(key=lambda t: t[1])
-            candidates = [v for v, _ in with_dist] or views
-        else:
-            candidates = sorted(
-                views,
-                key=lambda v: (store.get_reference(v.ref_id).quality
-                               if store.get_reference(v.ref_id) else 0.0),
-                reverse=True,
+        def scored(view: View) -> tuple[float, View, list[dict[str, Any]]]:
+            lims, dist, hdiff, fdiff = evaluate(view)
+            ref = store.get_reference(view.ref_id)
+            return (
+                self._score_candidate(
+                    view, ref, dist_m=dist, heading_diff=hdiff,
+                    heading_unknown=(
+                        heading_deg is not None and view.heading_deg is None
+                    ),
+                    fov_diff=fdiff,
+                    fov_unknown=fov_deg is not None and view.fov_deg is None,
+                ),
+                view,
+                lims,
             )
-        for v in candidates:
-            lims, _ = evaluate(v)
-            if not hard_incompatible(lims):
-                chosen, chosen_lims = v, lims
-                break
-        if chosen is None:
-            # ninguna compatible: devolver la más cercana con sus limitaciones duras
-            v = candidates[0]
-            chosen, chosen_lims = v, evaluate(v)[0]
+
+        # ranking: la compatible con mejor score; si ninguna lo es, la mejor
+        # puntuada con sus limitaciones duras (unsupported_camera).
+        compatibles = [s for s in (scored(v) for v in views) if not hard_incompatible(s[2])]
+        if compatibles:
+            compatibles.sort(key=lambda t: (t[0], t[1].view_id))
+            _, chosen, chosen_lims = compatibles[0]
             return {
-                "status": "unsupported_camera",
+                "status": "ok",
                 "place_id": place_id,
                 "view": self._view_dict(chosen, store),
                 "limitations": chosen_lims,
                 "available_views": [self._view_dict(x, store) for x in views],
             }
+        fallback = sorted((scored(v) for v in views), key=lambda t: (t[0], t[1].view_id))
+        _, chosen, chosen_lims = fallback[0]
         return {
-            "status": "ok",
+            "status": "unsupported_camera",
             "place_id": place_id,
             "view": self._view_dict(chosen, store),
             "limitations": chosen_lims,
