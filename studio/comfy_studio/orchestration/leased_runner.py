@@ -25,6 +25,7 @@ from typing import Any
 
 from comfy_studio.orchestration.gpu_lease import (
     GpuLease,
+    LeaseAdmissionError,
     LeaseError,
     LeaseUnavailable,
 )
@@ -67,11 +68,17 @@ class LeasedEngineRunner:
 
         # Capa pesada: adquirir el heavy lease antes de tocar la GPU.
         try:
+            requested_vram = job.get("lease_vram_mb", self._vram)
+            requested_ram = job.get("lease_ram_mb", self._ram)
+            if isinstance(requested_vram, bool) or not isinstance(requested_vram, int):
+                raise LeaseAdmissionError("lease_vram_mb debe ser entero")
+            if isinstance(requested_ram, bool) or not isinstance(requested_ram, int):
+                raise LeaseAdmissionError("lease_ram_mb debe ser entero")
             grant = self._lease.acquire(
                 owner=self._owner,
                 engine=engine,
-                vram_mb=self._vram,
-                ram_mb=self._ram,
+                vram_mb=requested_vram,
+                ram_mb=requested_ram,
                 heavy=True,
             )
         except LeaseUnavailable as exc:
