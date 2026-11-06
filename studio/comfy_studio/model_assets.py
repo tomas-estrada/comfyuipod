@@ -151,15 +151,15 @@ def resolve_dest(dest: str, env: dict[str, str] | None = None) -> Path:
         if declared.startswith(prefix):
             root = Path(comfy_data)
             candidate = root / _expand(declared[len(prefix):], environment)
-            _require_destination_within(
-                root, candidate, declared, additional_roots=(Path(comfy_data),)
-            )
+            _require_destination_within(root, candidate, declared)
             return candidate
     for prefix in app_prefixes:
         if declared.startswith(prefix):
             root = Path(comfy_app)
             candidate = root / _expand(declared[len(prefix):], environment)
-            _require_destination_within(root, candidate, declared)
+            _require_destination_within(
+                root, candidate, declared, additional_roots=(Path(comfy_data),)
+            )
             return candidate
 
     # Absolute paths are an explicit manifest choice and keep their historical
