@@ -104,7 +104,7 @@ def test_normal_studio_project_flow_publishes_cpu_video_artifact(
             }
 
     class Runner:
-        def run_layer(self, engine, job, *, cost_cap=None):
+        def run_layer(self, engine, job, *, cost_cap=None, cancel_event=None):
             clip = tmp_path / "shot.mp4"
             subprocess.run(
                 [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",

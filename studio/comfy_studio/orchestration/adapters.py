@@ -517,7 +517,12 @@ class _LeasedQaEngine:
         )
 
     def run(self, spec: EngineRunSpec) -> dict[str, Any]:
-        return self._runner.run_layer("qa", spec.job, cost_cap=spec.cost_cap)
+        return self._runner.run_layer(
+            "qa",
+            spec.job,
+            cost_cap=spec.cost_cap,
+            cancel_event=spec.cancel_event,
+        )
 
 
 class _SingleEngineRunner:
@@ -527,9 +532,17 @@ class _SingleEngineRunner:
         self._engine = engine
 
     def run_layer(
-        self, _name: str, job: dict[str, Any], *, cost_cap: float | None = None
+        self,
+        _name: str,
+        job: dict[str, Any],
+        *,
+        cost_cap: float | None = None,
+        cancel_event: Event | None = None,
     ) -> dict[str, Any]:
-        raw = _run_engine_sync(self._engine, EngineRunSpec(job=job, cost_cap=cost_cap))
+        raw = _run_engine_sync(
+            self._engine,
+            EngineRunSpec(job=job, cost_cap=cost_cap, cancel_event=cancel_event),
+        )
         return _result_to_dict(raw)
 
 
