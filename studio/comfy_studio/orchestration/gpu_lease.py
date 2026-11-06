@@ -140,12 +140,14 @@ class GpuLease:
         stale_seconds: float = DEFAULT_STALE_SECONDS,
         now: Callable[[], float] = time.time,
         pid: int | None = None,
+        recover_orphan: Callable[[LeaseGrant], bool] | None = None,
     ) -> None:
         self._lock_dir = Path(lock_dir)
         self._budget = budget
         self._stale = stale_seconds
         self._now = now
         self._pid = pid if pid is not None else os.getpid()
+        self._recover_orphan = recover_orphan
         self._lock_dir.mkdir(parents=True, exist_ok=True)
         self._lock_file = self._lock_dir / "heavy.lock"
         self._token_file = self._lock_dir / "token.seq"
@@ -219,16 +221,19 @@ class GpuLease:
         )
 
     def _is_recoverable(self, grant: LeaseGrant) -> bool:
-        """Un lease se recupera solo si su owner murió.
+        """Recover only after owner death and verified engine cleanup.
 
-        Un owner VIVO conserva la GPU aunque lleve rato: reutilizarla bajo sus
-        pies corromperia su render (A04: «un owner huérfano no permite reutilizar
-        GPU mientras su subprocess siga vivo»). Solo un proceso muerto, o un lease
-        rancio Y muerto, se recupera.
+        The API owner can die while its engine or a child process keeps using the
+        GPU. PID death alone is not enough to safely hand the lease to another
+        engine. The callback must verify cleanup for this grant.
         """
-        if _pid_alive(grant.pid):
+        if _pid_alive(grant.pid) or self._recover_orphan is None:
             return False
-        return True
+        try:
+            return bool(self._recover_orphan(grant))
+        except Exception:
+            # Cleanup uncertainty quarantines the lock.
+            return False
 
     def _next_token(self) -> int:
         """Token de fencing monótono, persistente entre procesos."""
@@ -287,7 +292,8 @@ class GpuLease:
             if existing is not None:
                 if not self._is_recoverable(existing):
                     raise LeaseUnavailable(
-                        f"GPU tomada por owner={existing.owner} pid={existing.pid} (vivo)"
+                        f"GPU ocupada por owner={existing.owner} pid={existing.pid}; "
+                        "cleanup del engine no verificado"
                     )
                 # Owner muerto: recovery y creación del sucesor ocurren en la
                 # misma sección crítica; otro proceso no puede borrar el nuevo.
@@ -393,7 +399,7 @@ class GpuLease:
             existing = self.current()
             if existing is None:
                 return False
-            if _pid_alive(existing.pid):
+            if not self._is_recoverable(existing):
                 return False
             self._lock_file.unlink(missing_ok=True)
             return True

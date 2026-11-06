@@ -407,7 +407,42 @@ def create_app(
                 vram_mb=detected_profile.effective.vram_usable_mb,
                 ram_mb=detected_profile.effective.ram_usable_mb,
             )
-            gpu_lease = GpuLease(lock_dir=lock_dir_for(), budget=budget)
+            def recover_orphan_gpu(grant) -> bool:
+                """Reclaim ComfyUI only after its queue and VRAM are verified idle.
+
+                Other engines may own subprocesses this callback cannot identify
+                or stop safely; those stale leases remain quarantined.
+                """
+                if grant.engine != "comfyui":
+                    return False
+
+                async def _recover() -> bool:
+                    client = app.state.comfyui_client
+                    queue = await client.get_queue()
+                    if queue.queue_running or queue.queue_pending:
+                        return False
+                    freed = await client.free_memory(
+                        unload_models=True,
+                        free_memory=True,
+                    )
+                    if not isinstance(freed, dict) or freed.get("freed") is not True:
+                        return False
+                    queue = await client.get_queue()
+                    return not queue.queue_running and not queue.queue_pending
+
+                try:
+                    return asyncio.run(_recover())
+                except Exception as exc:
+                    logger.warning(
+                        "GPU lease recovery not verified (%s)", type(exc).__name__
+                    )
+                    return False
+
+            gpu_lease = GpuLease(
+                lock_dir=lock_dir_for(),
+                budget=budget,
+                recover_orphan=recover_orphan_gpu,
+            )
 
             def unload_gpu() -> bool:
                 result = asyncio.run(
