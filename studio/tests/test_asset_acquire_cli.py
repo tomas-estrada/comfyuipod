@@ -148,11 +148,26 @@ def test_find_need_rejects_symlinked_destination_parent_outside_data_root(
     monkeypatch.setenv("STUDIO_CORE_MANIFEST", str(manifest))
     monkeypatch.setenv("STUDIO_MANIFEST", "")
 
-    try:
-        asset_acquire_cli._find_need(
-            "org/model", "weights.bin", checkpoints / "weights.bin", "model"
-        )
-    except ValueError as exc:
-        assert "escapes allowed root" in str(exc)
-    else:
-        raise AssertionError("symlinked parent outside COMFY_DATA_DIR must fail closed")
+    acquire_called = False
+
+    def fake_acquire(needs, **kwargs):
+        nonlocal acquire_called
+        acquire_called = True
+        return AcquisitionReport(entries=[])
+
+    monkeypatch.setattr(asset_acquire_cli, "acquire", fake_acquire)
+    result = asset_acquire_cli.main(
+        [
+            "--repo",
+            "org/model",
+            "--remote",
+            "weights.bin",
+            "--dest",
+            str(checkpoints / "weights.bin"),
+            "--stage",
+            str(tmp_path / "stage"),
+        ]
+    )
+    assert result == 2
+    assert not acquire_called
+    assert not (outside / "weights.bin").exists()
