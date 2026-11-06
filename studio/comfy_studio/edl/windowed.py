@@ -373,6 +373,31 @@ def plan_generation_windows(
 
     La última ventana se recorta a los fotogramas restantes; nunca genera
     ventanas vacías ni pasa de `max_windows`.
+
+    Precisión sobre las cotas (medidas, no estimadas):
+
+    - Ninguna ventana sobrepasa el vídeo fuente por el lado del *marcador* de
+      fin: `end_sec` se recorta con `min(total_sec, ...)` y el bucle se
+      detiene con `start_sec < total_sec - 1e-6`.
+    - PERO `frames` sí puede exceder lo que queda de vídeo, porque tiene un
+      suelo de 5 fotogramas (`max(5, round(remaining * fps))`). Un total de
+      0.1 s a 16 fps deja solo 1.6 fotogramas y el plan pide 5; la longitud
+      renderizada (0.312 s) es entonces mayor que `total_sec`. Reservado como
+      CUP-EDL-01: `frames` no está acotado por los fotogramas restantes.
+    - Por lo mismo, `estimated_assembled_sec` NO está acotado por
+      `total_duration_sec`. `plan(10.0)` devuelve 10.001 s: al suelo de la
+      última ventana se suma que cada costura resta el solape redondeado a
+      milisegundos (0.5625 -> 0.562), +0.5 ms de residuo por costura. Es un
+      presupuesto orientativo, no una cota. Reservado como CUP-EDL-02.
+    - `max_windows` se rechaza justo al añadir la ventana número
+      `max_windows` (la comprobación va detrás del append), así que el
+      máximo de ventanas que se llega a planificar es `max_windows - 1`. Con
+      `max_windows=1` ninguna duración produce plan. Reservado como
+      CUP-EDL-03.
+
+    El número de ventanas resultante nunca puede alimentar
+    `assemble_windowed_video` por encima de su cupo (`MAX_WINDOW_CHUNKS`),
+    porque el planificador se queda uno por debajo por construcción.
     """
     total_sec = round(float(total_duration_sec), 3)
     if total_sec <= 0:

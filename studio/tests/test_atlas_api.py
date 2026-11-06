@@ -290,7 +290,7 @@ def test_executor_resuelve_fondo_atlas_real(
     res = adapter.run_layer("comfyui", {"kind": "gen", "shot": "s1", "atlas": atlas_ctx})
     assert res["ok"] is True
     job = captured[0]
-    assert job["background_image"].endswith("aa/ref_a.png")
+    assert Path(job["background_image"]).as_posix().endswith("aa/ref_a.png")
     assert Path(job["background_image"]).is_file()
     assert job["atlas_resolved"]["license"] == "CC BY-SA 4.0"
     # ref desconocida -> fallo tipado, no placeholder
