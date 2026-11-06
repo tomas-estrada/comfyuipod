@@ -339,6 +339,12 @@ class ProductionService:
             raise ProductionAlreadyTerminalError(
                 f"la producción ya es terminal ({state.phase})"
             )
+        binding = state.metadata.get("recipe_binding")
+        if isinstance(binding, dict) and int(binding.get("unresolved", 0) or 0) > 0:
+            raise ProductionNotApprovedError(
+                "el plan contiene capas de generación sin receta admitida; "
+                "edita el plan o aumenta el presupuesto de recursos antes de aprobar"
+            )
         # hidratar la puerta: primero la de RAM; si el pod reinició, desde el
         # estado persistido en el checkpoint (M6-SCR-002).
         gate = self._gates.get(production_id)
