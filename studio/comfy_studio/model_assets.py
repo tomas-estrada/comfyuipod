@@ -103,21 +103,31 @@ def expand_placeholders(value: str, env: dict[str, str]) -> str:
 _expand = expand_placeholders
 
 
-def _require_destination_within(root: Path, destination: Path, manifest_dest: str) -> None:
-    """Reject manifest-relative destinations that resolve outside their root.
+def _require_destination_within(
+    root: Path,
+    destination: Path,
+    manifest_dest: str,
+    *,
+    additional_roots: tuple[Path, ...] = (),
+) -> None:
+    """Reject destinations that resolve outside all approved storage roots.
 
-    Checking the resolved path catches both parent traversal and existing
-    symlinked directories while preserving the manifest's lexical destination
-    for acquisition reporting and exact-destination comparison.
+    Model assets can be declared under the app tree while a runtime symlink
+    stores them on the approved shared data volume (for example LatentSync's
+    checkpoints). Resolve symlinks and allow either approved root, while still
+    rejecting traversal or symlinks that escape both.
     """
     try:
-        resolved_root = root.resolve(strict=False)
         resolved_destination = destination.resolve(strict=False)
-        resolved_destination.relative_to(resolved_root)
-    except (OSError, RuntimeError, ValueError) as exc:
+        resolved_roots = tuple(
+            allowed_root.resolve(strict=False) for allowed_root in (root, *additional_roots)
+        )
+    except (OSError, RuntimeError) as exc:
         raise ValueError(
             f"manifest destination escapes allowed root: {manifest_dest!r}"
         ) from exc
+    if not any(resolved_destination.is_relative_to(allowed) for allowed in resolved_roots):
+        raise ValueError(f"manifest destination escapes allowed root: {manifest_dest!r}")
 
 
 def resolve_dest(dest: str, env: dict[str, str] | None = None) -> Path:
@@ -141,7 +151,9 @@ def resolve_dest(dest: str, env: dict[str, str] | None = None) -> Path:
         if declared.startswith(prefix):
             root = Path(comfy_data)
             candidate = root / _expand(declared[len(prefix):], environment)
-            _require_destination_within(root, candidate, declared)
+            _require_destination_within(
+                root, candidate, declared, additional_roots=(Path(comfy_data),)
+            )
             return candidate
     for prefix in app_prefixes:
         if declared.startswith(prefix):
@@ -162,7 +174,9 @@ def resolve_dest(dest: str, env: dict[str, str] | None = None) -> Path:
     if raw == "custom_nodes" or raw.startswith("custom_nodes/"):
         root = Path(comfy_app)
         candidate = root / raw
-        _require_destination_within(root, candidate, declared)
+        _require_destination_within(
+            root, candidate, declared, additional_roots=(Path(comfy_data),)
+        )
         return candidate
     root = Path(comfy_data)
     candidate = root / raw
