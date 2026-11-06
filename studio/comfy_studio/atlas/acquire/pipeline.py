@@ -54,7 +54,6 @@ from comfy_studio.atlas.acquire.seeds import MUNICIPALITY_BBOX, SEED_CATEGORIES,
 from comfy_studio.atlas.geo import ABURRA_BBOX, haversine_m, in_bbox, normalize_text
 from comfy_studio.atlas.imaging import image_dimensions, is_raster_mime, sniff_mime
 from comfy_studio.atlas.models import (
-    Coverage,
     DateReliability,
     Environment,
     Place,
@@ -644,7 +643,9 @@ class AcquisitionPipeline:
                     if stats["downloaded"] % 25 == 0:
                         print(f"  refs listas {stats['downloaded']}/{self.max_refs}", flush=True)
             self._dedupe_phash()
-            self._recompute_coverage()
+            # Auditar antes de medir: solo `fondo_urbano` cuenta como cobertura
+            # usable para fondos de plano (la medición honesta lo exige).
+            self.purge_library()
             self.svc.write_manifest()
             self._write_attribution()
             store.end_run(self.run_id, "commons", "done", stats)
@@ -1175,30 +1176,10 @@ class AcquisitionPipeline:
             self._recompute_coverage_inner(store)
 
     def _recompute_coverage_inner(self, store) -> None:  # type: ignore[no-untyped-def]
+        # Cobertura honesta y unificada: la misma medición en vivo del servicio
+        # (solo vistas usables, rumbos conocidos, licencias y fechas reales).
         for p in store.list_places(limit=100000):
-            views = store.views_for_place(p.place_id)
-            refs = store.references_for_place(p.place_id)
-            dates = sorted(r.capture_date for r in refs if r.capture_date)
-            store.upsert_coverage(Coverage(
-                place_id=p.place_id,
-                views_observed=len(views),
-                backed={
-                    "views": [
-                        {
-                            "view_id": v.view_id,
-                            "lat": v.lat,
-                            "lon": v.lon,
-                            "capture_date": self._view_capture_date(store, v),
-                        }
-                        for v in views
-                    ],
-                    "refs_usable": len(refs),
-                },
-                unobserved={"nota": "superficies sin referencia fotográfica georreferenciada"},
-                evidence_newest=dates[-1] if dates else None,
-                evidence_oldest=dates[0] if dates else None,
-                confidence_basis=f"{len(views)} vistas GPS verificadas, {len(refs)} referencias",
-            ))
+            self.svc.recompute_coverage(p.place_id)
 
     def _write_attribution(self) -> Path:
         store = self.svc.store
