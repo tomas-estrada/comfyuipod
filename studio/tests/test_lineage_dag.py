@@ -317,6 +317,21 @@ def test_topo_order_is_deterministic_exact_sequence() -> None:
     ]
 
 
+def test_dangling_dependency_is_ignored_without_crashing() -> None:
+    """Dependencia colgante (id que no existe como nodo): se ignora en el
+    fingerprint y en el orden topológico; el grafo sigue siendo utilizable."""
+    g = LineageGraph()
+    g.add("huerfano", "render", depends_on=["borrado"])
+    fps = g.compute_fingerprints()
+    assert set(fps) == {"huerfano"}
+    # Sin dep real que incorporar: el hash equivale a un nodo sin dependencias.
+    assert fps["huerfano"] == _hash_inputs("render", {}, [])
+    assert g.topo_order() == ["huerfano"]
+    # El id colgante no está en el grafo, pero los nodos que lo declaran
+    # siguen siendo sus dependientes (semántica de la arista invertida).
+    assert g.descendants("borrado") == {"huerfano"}
+
+
 # --------------------------------------------------------------------------
 # W04 — migración de esquema de ProductionState (checkpoints viejos reanudan)
 # --------------------------------------------------------------------------
