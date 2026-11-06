@@ -24,6 +24,11 @@ from __future__ import annotations
 from threading import Event
 from typing import Any
 
+from comfy_studio.engines.process_registry import (
+    cleanup_process_groups,
+    process_group_scope,
+    process_groups_clean,
+)
 from comfy_studio.orchestration.gpu_lease import (
     GpuLease,
     LeaseAdmissionError,
@@ -127,16 +132,28 @@ class LeasedEngineRunner:
                 "lease": "error",
             }
 
+        process_dir = self._lease.child_process_dir(grant)
+
+        def cleanup_verified() -> bool:
+            if process_groups_clean(process_dir):
+                return True
+            return cleanup_process_groups(process_dir) and process_groups_clean(process_dir)
+
         try:
-            result = self._inner.run_layer(
-                engine, job, cost_cap=cost_cap, cancel_event=cancel_event
-            )
+            with process_group_scope(process_dir):
+                result = self._inner.run_layer(
+                    engine, job, cost_cap=cost_cap, cancel_event=cancel_event
+                )
         except BaseException as engine_error:
             # El lease se libera también cuando falla/cancela el motor. Si la
             # liberación o el unload fallan, no ocultarlo bajo la excepción
             # original: el caller debe saber que la GPU puede seguir ocupada.
             try:
-                release = self._lease.release(grant, unload=self._unload)
+                release = self._lease.release(
+                    grant,
+                    unload=self._unload,
+                    cleanup_verified=cleanup_verified(),
+                )
                 cleanup_failed = bool(release.get("cleanup_failed"))
             except Exception:  # noqa: BLE001
                 raise LeaseCleanupError(
@@ -149,7 +166,11 @@ class LeasedEngineRunner:
             raise
 
         try:
-            release = self._lease.release(grant, unload=self._unload)
+            release = self._lease.release(
+                grant,
+                unload=self._unload,
+                cleanup_verified=cleanup_verified(),
+            )
         except Exception as cleanup_error:  # noqa: BLE001
             return _cleanup_failure(engine, result, cleanup_error)
         if release.get("cleanup_failed"):
