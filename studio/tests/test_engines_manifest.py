@@ -134,7 +134,7 @@ def test_lock_opencolorio_tiene_lock_fijado() -> None:
 
 
 def test_lock_remotion_tiene_lock_fijado() -> None:
-    """La versión declarada coincide con los paquetes instalados en la imagen."""
+    """El engine, el manifest, npm lockfile y el build usan el mismo pin."""
     mod = _load_module()
     manifest = mod.load_json(mod.DEFAULT_MANIFEST)
     by_id = {e["id"]: e for e in manifest["engines"]}
@@ -144,3 +144,17 @@ def test_lock_remotion_tiene_lock_fijado() -> None:
     package = json.loads((REPO_ROOT / "studio" / "remotion" / "package.json").read_text())
     assert package["dependencies"]["remotion"] == revision.removeprefix("v")
     assert package["dependencies"]["@remotion/cli"] == revision.removeprefix("v")
+
+    lock = json.loads(
+        (REPO_ROOT / "studio" / "remotion" / "package-lock.json").read_text()
+    )
+    assert lock["lockfileVersion"] == 3
+    assert lock["packages"][""]["dependencies"] == package["dependencies"]
+    assert lock["packages"][""]["devDependencies"] == package["devDependencies"]
+    for name, version in package["dependencies"].items():
+        assert lock["packages"][f"node_modules/{name}"]["version"] == version
+
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+    remotion_copy = dockerfile.index("COPY studio/remotion/ /opt/remotion/")
+    remotion_build = dockerfile.index("RUN npm ci --no-audit --no-fund", remotion_copy)
+    assert remotion_build > remotion_copy
