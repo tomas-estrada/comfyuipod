@@ -354,3 +354,97 @@ fn redactor_cubre_claves_de_nube_y_cabeceras_authorization() {
     let benign_auth = "Authorization: Basic realm";
     assert_eq!(redactor.redact(benign_auth), benign_auth);
 }
+
+#[test]
+fn redactor_es_idempotente_y_devuelve_vacio_sobre_entrada_vacia() {
+    // Varios caminos redactan el mismo texto mas de una vez (http -> /status/api,
+    // report, diag), asi que aplicar la redaccion dos veces debe dar exactamente
+    // lo mismo: ni los literales ni las regex pueden re-alimentarse con su propia
+    // salida ni con el marcador [REDACTED]. Tambien se fija el contrato de la
+    // entrada vacia: nunca panic ni marcadores inventados.
+    use comfyctl::config::RuntimeConfig;
+    use std::collections::BTreeMap;
+
+    let hf_tok = format!("{}{}", "hf_", "Abcdefghijklmnopqrst");
+    let sk_tok = format!("{}{}", "sk-", "your.secret.key.here.123456");
+    let mut vars = BTreeMap::new();
+    vars.insert(
+        "COMFY_PASS".to_string(),
+        "comfy-pass-largo-para-el-test-123".to_string(),
+    );
+    vars.insert("HF_TOKEN".to_string(), hf_tok.clone());
+    vars.insert("STUDIO_LLM_KEY".to_string(), sk_tok.clone());
+    vars.insert(
+        "STUDIO_API_TOKEN".to_string(),
+        "api-token-largo-para-el-test-9876".to_string(),
+    );
+    vars.insert(
+        "STUDIO_WEBHOOK_SECRET".to_string(),
+        "webhook-secreto-largo-para-test-456".to_string(),
+    );
+    vars.insert(
+        "VAST_API_KEY".to_string(),
+        "vast-api-key-largo-para-el-test-135".to_string(),
+    );
+    let cfg = RuntimeConfig::from_map(&vars, None);
+    let red = SecretRedactor::from_config(&cfg);
+
+    // Entrada vacia (y solo espacios): se devuelve tal cual, sin panic ni marca.
+    assert_eq!(red.redact(""), "");
+    assert_eq!(red.redact("   "), "   ");
+
+    // Formas de clave montadas con format!: el escaneo de secretos rechaza los
+    // literales con forma de token en el fuente (mismo idiom que arriba).
+    let aws_key = format!("{}IOSFODNN7EXAMPLE", "AKIA");
+    let gh_pat = format!("ghp_{}9012345678", "AbCdEfGhIjKlMnOpQrStUvWxYz0");
+    let slack_tok = format!("xox{}-1234567890-abcdefghijklmnop", "b");
+    // Tokens con forma de patron pero AJENOS a la configuracion: si se usaran
+    // los literales configurados, el bucle de literales los redactaria antes y
+    // rx_hf/rx_sk jamas verian su propia salida (la idempotancia de esas dos
+    // regex quedaria sin ejercer).
+    let hf_ajeno = format!("{}{}", "hf_", "Zyxwvutsrqponmlkjihgf");
+    let sk_ajeno = format!("{}{}", "sk-", "another.secret.token.value.777");
+    let con_formas = format!("tokens: {hf_ajeno} {sk_ajeno} {aws_key} {gh_pat} {slack_tok}");
+
+    let benign = "GET /studio/api/health HTTP/1.1 host=127.0.0.1:18190 ok";
+    let ya_redactado = "linea con [REDACTED] y otra marca [REDACTED] aqui";
+    let muestras = [
+        benign,
+        "COMFY_PASS=comfy-pass-largo-para-el-test-123 en claro",
+        "\"STUDIO_API_TOKEN\": \"api-token-largo-para-el-test-9876\"",
+        "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+        "fetch https://admin:clave-url-secreta@interno.example:8443/api ok",
+        con_formas.as_str(),
+        ya_redactado,
+    ];
+    for muestra in muestras {
+        let una = red.redact(muestra);
+        let dos = red.redact(&una);
+        assert_eq!(
+            una, dos,
+            "no idempotente con {muestra:?}:\n  1a vez: {una:?}\n  2a vez: {dos:?}"
+        );
+    }
+
+    // Sin falsos positivos y sin destruir un marcador ya presente en el texto.
+    assert_eq!(red.redact(benign), benign);
+    assert_eq!(red.redact(ya_redactado), ya_redactado);
+
+    // La idempotencia no puede ser vacia: los secretos DEBEN salir realmente
+    // redactados en la primera pasada, no solo "iguales dos veces".
+    for secreto in [
+        "comfy-pass-largo-para-el-test-123",
+        hf_tok.as_str(),
+        sk_tok.as_str(),
+        "api-token-largo-para-el-test-9876",
+        "webhook-secreto-largo-para-test-456",
+        "vast-api-key-largo-para-el-test-135",
+    ] {
+        let linea = format!("valor={secreto} fin");
+        let una = red.redact(&linea);
+        assert!(
+            una.contains("[REDACTED]") && !una.contains(secreto),
+            "secreto {secreto:?} sin redactar: {una:?}"
+        );
+    }
+}
