@@ -231,7 +231,8 @@ hf_fetch() {
             "${python_bin}" -m comfy_studio.asset_acquire_cli \
                 --repo "${repo_id}" --remote "${remote_path}" \
                 --dest "${dest_file}" --repo-type "${repo_type}" \
-                --stage "${STAGE_DIR}" --timeout "${HF_FETCH_TIMEOUT}" 2>&1)" || dl_rc=$?
+                --stage "${STAGE_DIR}" --timeout "${HF_FETCH_TIMEOUT}" \
+                --expected-bytes "${expected_bytes}" 2>&1)" || dl_rc=$?
 
         if [ "${dl_rc}" -eq 0 ]; then
             if [[ "${acquire_output}" == skipped:* ]]; then
