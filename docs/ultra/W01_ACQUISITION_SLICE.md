@@ -56,4 +56,4 @@ incomplete. No paid GPU or API validation was performed for this slice.
   caller byte count is rejected before download.
 - Current CPU checks: downloader `--selftest` passed; manifest fixture passed
   4/4; `py_compile` passed for probes, manifest and acquisition modules. Local
-  `pytest` is unavailable locally. The prior PR head passed workflow run `42174104222`; this refreshed documentation commit requires its own CI result. GitHub's latest observed `main` ref remains `93b2af2cd5a480ef785ce04987cd79ed01fe0472`.
+  `pytest` is unavailable locally. The refreshed docs head `23e029690cd3f39cce13d51b06ab4000a651316f` passed repository validation, Ruff, and 2,052 Python tests in workflow run `42204842901`; Rust integration failed on the mainline Studio watchdog respawn test, so the candidate image job was skipped. GitHub's latest observed `main` ref remains `93b2af2cd5a480ef785ce04987cd79ed01fe0472`.
