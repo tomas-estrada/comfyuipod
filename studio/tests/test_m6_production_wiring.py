@@ -12,6 +12,9 @@ Verifica SIN GPU (colaboradores stub por defecto) el cableado de la fase 17:
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -74,6 +77,104 @@ def test_stub_approval_does_not_claim_a_real_render(client: TestClient) -> None:
     assert body["output_asset_ids"] == []
     assert body["status"]["simulated"] is True
     assert body["status"]["artifact_ready"] is False
+
+
+def test_normal_studio_project_flow_publishes_cpu_video_artifact(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """Project → production API → FFmpeg artifact → gallery/download, CPU only."""
+    from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
+    from comfy_studio.orchestration.conductor import Collaborators
+    from comfy_studio.orchestration.service import ProductionService
+
+    ffmpeg = shutil.which("ffmpeg")
+    assert ffmpeg, "CI installs ffmpeg before running the Studio suite"
+
+    class Planner:
+        def plan(self, idea: str, *, context: dict | None = None) -> dict:
+            return {
+                "sequences": [{
+                    "title": "CPU fixture",
+                    "shots": [{
+                        "description": idea,
+                        "duration_s": 1.0,
+                        "layers": [{"kind": "gen", "engine": "ffmpeg_fixture", "params": {}}],
+                    }],
+                }]
+            }
+
+    class Runner:
+        def run_layer(self, engine, job, *, cost_cap=None):
+            clip = tmp_path / "shot.mp4"
+            subprocess.run(
+                [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                 "-f", "lavfi", "-i", "color=c=teal:s=320x180:r=24:d=1",
+                 "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(clip)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return {"ok": True, "output_path": str(clip)}
+
+    class Evaluator:
+        def evaluate(self, _shot):
+            return {"vbench": 1.0, "semantic": 1.0}
+
+    class Assembler:
+        def assemble(self, _production_id, clips):
+            final = tmp_path / "final.mp4"
+            subprocess.run(
+                [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                 "-i", clips[0]["path"], "-t", "1", "-c:v", "libx264",
+                 "-pix_fmt", "yuv420p", str(final)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return {"ok": True, "output_path": str(final)}
+
+    client.app.state.production_service = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "productions.sqlite3"),
+        collaborators=Collaborators(
+            planner=Planner(),
+            runner=Runner(),
+            evaluator=Evaluator(),
+            reselect_template=lambda _shot: False,
+            replan_shot=lambda _shot, _state: False,
+            assembler=Assembler(),
+        ),
+        store=client.app.state.store,
+    )
+    project = client.post("/studio/api/projects", json={"name": "CPU render"})
+    assert project.status_code == 201
+    project_id = project.json()["id"]
+
+    planned = client.post(
+        "/studio/api/productions",
+        json={"idea": "una escena de prueba", "project_id": project_id},
+    )
+    assert planned.status_code == 201
+    production_id = planned.json()["production_id"]
+    assert planned.json()["phase"] == "awaiting_approval"
+
+    approved = client.post(f"/studio/api/productions/{production_id}/approve")
+    assert approved.status_code == 200, approved.text
+    result = approved.json()
+    assert result["phase"] == "done"
+    assert result["status"]["artifact_verified"] is True
+    assert len(result["output_asset_ids"]) == 2
+
+    gallery = client.get(f"/studio/api/projects/{project_id}/assets?category=outputs")
+    assert gallery.status_code == 200
+    assets = gallery.json()["assets"]
+    assert len(assets) == 2
+    assert {a["metadata"].get("is_final_reel", False) for a in assets} == {False, True}
+    reel = next(a for a in assets if a["metadata"].get("is_final_reel"))
+    downloaded = client.get(
+        f"/studio/api/projects/{project_id}/assets/{reel['id']}/file"
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.content[4:8] == b"ftyp"
 
 
 def test_approve_unknown_production_is_404(client: TestClient) -> None:
@@ -140,6 +241,25 @@ def test_real_engines_flag_wires_live_collaborators(
         SemanticQaEvaluator,
     )
 
+    from types import SimpleNamespace
+
+    # This is a wiring fixture, not a claim that the CPU CI host has a GPU.
+    # Supply verified detected resources explicitly so the live-adapter path is
+    # exercised while production still fails closed on unverified hardware.
+    detected = SimpleNamespace(
+        gpu_available=True,
+        vram_total_mb=96 * 1024,
+        ram_limit_bytes=256 * 1024**3,
+    )
+    profile = SimpleNamespace(
+        verified=True,
+        detected=detected,
+        effective=SimpleNamespace(
+            vram_usable_mb=96 * 1024,
+            ram_usable_mb=256 * 1024,
+        ),
+    )
+    monkeypatch.setattr("comfy_studio.app.effective_profile", lambda: profile)
     monkeypatch.setenv("STUDIO_ORCH_REAL_ENGINES", "1")
     app = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
     collab = app.state.production_service.collaborators
