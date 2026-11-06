@@ -51,6 +51,23 @@ def test_plan_records_recipe_binding_against_resource_budget(tmp_path):
     assert all(layer["params"].get("lease_vram_mb") for layer in gen_layers)
 
 
+def test_approval_rejects_plan_with_unadmitted_generation_layers(tmp_path):
+    svc = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "too-small-budget.sqlite3"),
+        resource_vram_budget_mb=1,
+    )
+    planned = svc.plan_production("un dron sobre la costa")
+    pid = planned["production_id"]
+
+    assert planned["plan"]["metadata"]["recipe_binding"]["unresolved"] > 0
+    with pytest.raises(ProductionNotApprovedError, match="sin receta admitida"):
+        svc.approve_plan(pid)
+
+    current = svc.get_plan(pid)["plan"]
+    assert current["phase"] == "awaiting_approval"
+    assert current["storyboard_approved"] is False
+
+
 def test_status_reports_progress(tmp_path):
     svc = _service(tmp_path)
     pid = svc.plan_production("gato astronauta")["production_id"]
