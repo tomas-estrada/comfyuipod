@@ -448,3 +448,57 @@ fn redactor_es_idempotente_y_devuelve_vacio_sobre_entrada_vacia() {
         );
     }
 }
+
+#[test]
+fn redactor_redacts_url_credentials_without_http_scheme() {
+    // rx_url_auth solo aceptaba `http://`/`https://`: una clave en un esquema
+    // distinto (`ftp://`, `postgres://`) o en la forma sin esquema
+    // (`user:pass@host`, típica de proxies y `.netrc`) salía entera en claro.
+    let redactor = SecretRedactor::new(None, None);
+
+    // Esquema no-http: se conservan esquema, usuario y host; solo cae la clave.
+    let ftp = redactor.redact("mirror ftp://deploy:s3cr3t@files.example.com/pub ok");
+    assert!(!ftp.contains("s3cr3t"), "{ftp}");
+    assert!(
+        ftp.contains("ftp://deploy:[REDACTED]@files.example.com/pub"),
+        "{ftp}"
+    );
+    let pg = redactor.redact("connect postgres://app:clave-db@db.internal:5432/appdb");
+    assert!(!pg.contains("clave-db"), "{pg}");
+    assert!(
+        pg.contains("postgres://app:[REDACTED]@db.internal:5432/appdb"),
+        "{pg}"
+    );
+
+    // Sin esquema: el par usuario:clave no lleva `://` y debe redactarse igual,
+    // conservando el host y el puerto posteriores al `@`.
+    let bare = redactor.redact("proxy auth proxy-user:pass123@10.0.0.5:8080");
+    assert!(!bare.contains("pass123"), "{bare}");
+    assert!(
+        bare.contains("proxy-user:[REDACTED]@10.0.0.5:8080"),
+        "{bare}"
+    );
+    // También al inicio de la línea (rama `^` del delimitador).
+    assert_eq!(
+        redactor.redact("user:secreto2@host.example"),
+        "user:[REDACTED]@host.example"
+    );
+    // ...y entre comillas, como un valor de JSON.
+    let json = redactor.redact(r#"{"url":"user:secreto3@host.example"}"#);
+    assert!(!json.contains("secreto3"), "{json}");
+    assert!(
+        json.contains(r#""url":"user:[REDACTED]@host.example""#),
+        "{json}"
+    );
+
+    // Falsos positivos que deben sobrevivir intactos:
+    // - `mailto:`/`sip:` acaban en `usuario@dominio` pero no son credenciales.
+    let mail = "escribe a juan.perez@example.com o mailto:juan.perez@example.com";
+    assert_eq!(redactor.redact(mail), mail);
+    let sip = "sip:soporte@empresa.example call";
+    assert_eq!(redactor.redact(sip), sip);
+    // - un PUERTO en el mismo token que un email: el patrón sin esquema no
+    //   debe morder `db.example.com:5432/...` aunque un `@` aparezca después.
+    let port = "db.example.com:5432/proxy?to=usuario@example.com ok";
+    assert_eq!(redactor.redact(port), port);
+}
