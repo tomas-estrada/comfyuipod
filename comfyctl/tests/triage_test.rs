@@ -158,3 +158,80 @@ fn triage_17x17_matrix_and_o08_regressions() {
         "OutOfMemoryError sí debe capturarse en errors_recent"
     );
 }
+
+fn triage_raw(id: &str, severity: &str) -> comfyctl::triage::TriagePatternRaw {
+    comfyctl::triage::TriagePatternRaw {
+        id: id.to_string(),
+        sources: vec!["comfyui".to_string()],
+        pattern: format!("hit_{id}"),
+        severity: severity.to_string(),
+        cause: format!("causa de {id}"),
+        first_command: format!("comando de {id}"),
+    }
+}
+
+#[test]
+fn triage_orders_hits_by_severity_regardless_of_pattern_order() {
+    // Los patrones se insertan deliberadamente en orden INVERSO al de severidad:
+    // si desaparece `triage_hits.sort_by_key(...)` la salida reflejaria el orden
+    // de insercion (baja primero) y esta prueba fallaria. No sirve para esto
+    // scripts/triage_patterns.json: ya viene agrupado por severidad, asi que una
+    // prueba sobre ese fichero pasaria incluso sin el ordenamiento.
+    // "critica" no es una severidad conocida y documenta el fallback `_ => 3`,
+    // que deja al final cualquier valor inesperado.
+    let engine = TriageEngine::from_raw_patterns(vec![
+        triage_raw("p-baja", "baja"),
+        triage_raw("p-otra", "critica"),
+        triage_raw("p-media", "media"),
+        triage_raw("p-alta", "alta"),
+    ]);
+    let mut buffers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    buffers.insert(
+        "comfyui".to_string(),
+        [
+            "hit_p-baja en el log",
+            "hit_p-otra en el log",
+            "hit_p-media en el log",
+            "hit_p-alta en el log",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect(),
+    );
+    let (hits, _) = engine.evaluate(&buffers, false);
+    let order: Vec<&str> = hits.iter().map(|h| h.pattern_id.as_str()).collect();
+    assert_eq!(
+        order,
+        ["p-alta", "p-media", "p-baja", "p-otra"],
+        "los hits deben salir ordenados por severidad, no por orden de insercion: {hits:?}"
+    );
+}
+
+#[test]
+fn triage_caps_hits_at_ten_and_keeps_the_earliest_of_each_severity() {
+    // 15 patrones `media` disparados a la vez: sin `triage_hits.truncate(10)`
+    // saldrian los 15. Al ser toda la misma severidad el ordenamiento es estable,
+    // asi que sobreviven los 10 primeros por orden de insercion.
+    let engine = TriageEngine::from_raw_patterns(
+        (1..=15)
+            .map(|n| triage_raw(&format!("p{n:02}"), "media"))
+            .collect(),
+    );
+    let mut buffers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    buffers.insert(
+        "comfyui".to_string(),
+        (1..=15).map(|n| format!("hit_p{n:02} en el log")).collect(),
+    );
+    let (hits, _) = engine.evaluate(&buffers, false);
+    let ids: Vec<&str> = hits.iter().map(|h| h.pattern_id.as_str()).collect();
+    assert_eq!(ids.len(), 10, "el techo de hits es 10: {ids:?}");
+    assert_eq!(
+        ids.first(),
+        Some(&"p01"),
+        "sobreviven los primeros: {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"p11"),
+        "los hits 11..15 deben caer al techo: {ids:?}"
+    );
+}
