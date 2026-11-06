@@ -646,7 +646,10 @@ impl StudioWatchdog {
             }
         } else if !self.restart_pending {
             // An absent child is a new failed launch only after the respawn delay.
-            if self.last_spawn.is_some_and(|last| last.elapsed() < self.policy.min_respawn_delay) {
+            if self
+                .last_spawn
+                .is_some_and(|last| last.elapsed() < self.policy.min_respawn_delay)
+            {
                 return false;
             }
             self.on_failure();
