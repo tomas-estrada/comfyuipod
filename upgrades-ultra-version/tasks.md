@@ -15,7 +15,7 @@ El goal no necesita convertirse en un único contexto gigante. El conductor mant
 
 ## Cómo interpretar backlog.json
 
-Hay 27 paquetes W00–W26. W00–W25 pertenecen al desarrollo pre-GPU; W26 solo especifica validación futura. Las dependencias son del plan del proyecto, no órdenes de despachar todos los ítems a la vez.
+Hay 27 paquetes W00–W26. W00–W25 registran el desarrollo integrado; W26 ya tiene una demo GPU SDXL limitada, documentada en `docs/ultra/W26_GPU_RESULTS.md`. D01–D05 completas, holdouts y una repetición en el `main` actual siguen pendientes. Las dependencias son del plan del proyecto, no órdenes de despachar todos los ítems a la vez.
 
 Un paquete grande puede necesitar varias PRs secuenciales. Antes de despacharlo, dividirlo en trabajo independiente/afirmable de 30–90 minutos activos. Si dos pasos dependen de la salida del anterior, mantenerlos en el mismo ítem o en rondas sucesivas. Nunca usar ocho workers sobre el mismo contrato central.
 
@@ -25,7 +25,7 @@ Orden de rondas orientativo, subordinado al DAG real:
 - Ingesta/evaluación, generación base, atlas y activos geométricos según dependencias.
 - Referencias, cámara, física, movimiento, audio, capas y luz.
 - Cara, memoria/4D y acabado; después UI y director integrado.
-- Investigador y demostraciones finales; release pre-GPU.
+- Investigador y demostraciones finales; release candidato con estado de evidencia explícito. W26 ya ejecutó una demo SDXL; faltan D01–D05, holdouts y repetición en una imagen del `main` actual.
 
 W24 se construye temprano para que los equipos no inventen sus propios criterios después de implementar. El conductor integra cambios de Docker/locks/shared registries de forma serial aunque las recetas por engine se desarrollen en paralelo.
 
@@ -89,7 +89,6 @@ El worker implementa, prueba y entrega PR revisable. Conductor integra, verifica
 
 ## Release y etapa GPU
 
-No detenerse en PR abierta. W25 exige main/CI/imagen/digest/smoke offline, matrices completas y protocolo de W26 preparado. Si cualquiera falta, BLOCKED_PRE_GPU con acción concreta.
+No detenerse en PR abierta. Verifica el `main`, CI, imagen/digest y smoke actuales; no uses el cierre W25 ni `status.json` como estado vivo. W26 ejecutó una sola receta en un digest anterior y dejó una validación L3 parcial.
 
-W26 permanece pending_separate_gpu_authorization. No despacharlo, alquilar ni ejecutar APIs facturadas ahora. Una futura autorización deberá fijar el presupuesto y reglas de teardown. El desarrollo actual debe dejar los tests y controles listos para ese momento.
-
+No repitas alquiler ni ejecutes APIs facturadas sin autorización específica vigente. Antes de declarar cerrados los hallazgos W26, repite el arranque y la adquisición de modelos en una imagen actual; después completa D01–D05, mediciones por perfil, baselines y holdouts según el presupuesto que se autorice.

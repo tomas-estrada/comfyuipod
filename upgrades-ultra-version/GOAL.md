@@ -4,4 +4,4 @@ Trabaja autónomamente por dependencias hasta completar las 34 capacidades y los
 
 Puedes crear ramas, PRs, probar, corregir, integrar en main y publicar imágenes candidatas respetando los permisos y protecciones existentes. Conserva checkpoints y límites de intentos; no preguntes por decisiones ordinarias.
 
-Objetivo: una sola imagen/pod, RTX PRO 6000 Blackwell 96 GB, perfiles RAM128/256, motores preparados en build, pesos bajo demanda y atlas offline incluido. No alquiles GPU ni uses APIs facturadas todavía. Termina con main, CI, imagen/digest y pruebas preparados para la validación GPU final, declarando con precisión cualquier bloqueo.
+Objetivo: una sola imagen/pod, perfil RTX PRO 6000 Blackwell 96 GB, RAM host 128/256, motores preparados en build, pesos bajo demanda y atlas offline incluido. W26 ya midió una demo SDXL por USD 0.59 en un digest anterior; el estado es L3 parcial, no validación final. No hagas otra acción facturable sin autorización específica vigente. Primero verifica los fixes W26 sobre una imagen del `main` actual; después cierra las recetas, perfiles, baselines y holdouts pendientes, declarando con precisión cualquier bloqueo.

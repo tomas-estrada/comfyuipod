@@ -1,6 +1,6 @@
 # ComfyUIPod Ultra — inicio para el agente
 
-Esta carpeta es la extensión persistente del goal. Contiene investigación, decisiones, razonamiento, contratos, prioridades y aceptación para implementar Ultra en este mismo repositorio. No es una implementación ya terminada ni un catálogo de modelos para descargar.
+Esta carpeta es la extensión persistente del goal. Contiene investigación, decisiones, contratos, prioridades y aceptación para desarrollar Ultra en este repositorio. No es por sí sola una implementación terminada ni un catálogo de modelos para descargar. Para recibir código y onboarding, empieza por el [README raíz](../README.md) y [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Goal corto
 
@@ -10,9 +10,9 @@ Usar el texto de [GOAL.md](GOAL.md). Tiene aproximadamente 1.200 caracteres. [MI
 
 1. Leer el AGENTS.md vigente, este README y [MISSION.md](MISSION.md).
 2. Revisar [requirements.md](requirements.md), [tasks.md](tasks.md), el mapa de [backlog.json](backlog.json) y los P0 en [research.md](research.md).
-3. Comenzar W00 y los arreglos de integridad/recursos. Definir aceptación antes de editar/delegar.
+3. Antes de proponer trabajo, comparar el backlog con `main` y sus pruebas; W00–W25 ya tienen entregas integradas y no se deben reabrir sin evidencia de regresión.
 4. Para cada lote, consultar únicamente sus C/P/engines y los checks A indicados; el conductor conserva las reglas globales. No releer toda la biblioteca en cada worker.
-5. Continuar por dependencias hasta W25. W26 está preparado como etapa GPU futura y no se ejecuta todavía.
+5. El reporte W26 registra una demo GPU SDXL acotada. D01–D05 completas, baselines/holdouts y una repetición sobre una imagen del `main` actual aún están pendientes.
 
 ## Mapa para leer por necesidad
 
@@ -39,7 +39,7 @@ La misión contiene 34 objetivos funcionales, 14 programas y 30 opciones adicion
 ## Reglas de lectura y ejecución
 
 - GOAL/MISSION y anexos actuales prevalecen sobre premisas antiguas del marco histórico.
-- Un usuario, una imagen/pod Linux, RTX PRO 6000 Blackwell96GB y perfiles host RAM128/256 separados.
+- Un usuario, una imagen/pod Linux, perfil RTX PRO 6000 Blackwell 96 GB y perfiles host RAM128/256 separados; la compatibilidad de una GPU no equivale a validación de todas las recetas.
 - Motores preparados en build; pesos/LoRA/VAE/encoders bajo demanda. Atlas base físicamente dentro de la misma imagen GHCR.
 - Disco derivado de componentes/uso reales; 180/200GB no es cap ni mínimo universal.
 - Una autoridad de producción y lease global de GPU; extender la API/orquestación existente.
@@ -48,8 +48,8 @@ La misión contiene 34 objetivos funcionales, 14 programas y 30 opciones adicion
 - Investigación gratuita y permisos por componente; no servicios comerciales obligatorios.
 - Cada función conecta planner→API/tool→engine→artifact→QA/UI. Un wrapper o un mock no la completa.
 - PRs, merge y publicación de candidatas autorizados dentro de permisos/protecciones existentes.
-- No alquilar GPU ni usar APIs facturadas para probar el estudio en esta fase. El runner utiliza únicamente la cuota/herramientas de desarrollo ya autorizadas.
-- La entrega actual se llama Ultra pre-GPU. “Ultra validada” requiere ejecución/medidas posteriores, no una CI con stubs.
+- W26 ya ejecutó una demo aprobada de USD 0.59 en el digest `sha-f5c29dc`. Esa autorización no se extiende a nuevas campañas: antes de cualquier otro gasto o API facturada, se necesita autorización específica vigente.
+- El resultado es **GPU L3 parcial**, no “Ultra validada”: una receta SDXL fue medida; las demás recetas, D01–D05, baselines y holdouts siguen pendientes.
 
 ## Seguimiento y reanudación
 
@@ -67,5 +67,4 @@ python3 upgrades-ultra-version/validate_spec.py
 
 En Windows, si Python se invoca mediante el launcher, usar `py upgrades-ultra-version/validate_spec.py`. Este validador comprueba IDs/referencias/DAG y contenido del plan; no certifica implementación ni resultados GPU.
 
-Investigación preparada el 2026-11-05 UTC. No se han ejecutado modelos GPU ni descargado sus pesos para escribir estos documentos.
-
+Paquete de investigación preparado el 2026-11-05 UTC. La demo W26 es un evento posterior y separado; el registro y el snapshot de esta carpeta no sustituyen la evidencia del [reporte W26](../docs/ultra/W26_GPU_RESULTS.md). `docs/ultra/status.json` todavía apunta a `f5c29dc` y no refleja el `main` actual (`5850191`).

@@ -41,6 +41,8 @@
         pendingChatByProject: {},
         sseSource: null,
         sseConnected: false,
+        sseRefreshPending: false,
+        sseRefreshInFlight: false,
         auth: loadSavedAuth(),
     };
 
@@ -1162,7 +1164,7 @@
 
     async function sendChatMessage(messageText) {
         const cleanMsg = String(messageText || "").trim();
-        if (!cleanMsg) return;
+        if (!cleanMsg) return false;
 
         let projectId = state.chatDomProjectId || state.activeProjectId;
         const capturedKeyframeIds = Array.from(state.selectedKeyframeIds);
@@ -1199,7 +1201,7 @@
             projectId = await ensureActiveProject();
             if (!projectId) {
                 setToast("Crea un proyecto antes de enviar un mensaje al agente.", "error");
-                return;
+                return false;
             }
         }
 
@@ -1328,7 +1330,8 @@
                         statusEl.textContent = `Error en chat (HTTP ${resp.status}).`;
                     }
                 }
-                return;
+                setToast(`Error en chat (HTTP ${resp.status}). El mensaje no se ha enviado.`, "error");
+                return false;
             }
 
             if (!useStream) {
@@ -1446,7 +1449,7 @@
                 if (state.activeProjectId && state.chatDomProjectId !== state.activeProjectId) {
                     await refreshChatHistory(state.activeProjectId);
                 }
-                return;
+                return true;
             }
 
             const preserveOriginDom = isOriginConversationDisplayed();
@@ -1455,13 +1458,15 @@
                 preserveChatDom: preserveOriginDom,
                 expectedDomEpoch: preserveOriginDom ? turnDomEpoch : null,
             });
+            return true;
         } catch (err) {
             if (isOriginConversationDisplayed()) {
                 if (tokenContainer) {
                     tokenContainer.textContent = `Error de red en chat: ${err.message}`;
                 }
-                setToast(`Error en chat: ${err.message}`, "error");
+                setToast(`Error en chat: ${err.message}. El mensaje no se ha enviado.`, "error");
             }
+            return false;
         } finally {
             const remaining = Math.max(0, getPendingChatCount(projectId) - 1);
             if (remaining === 0) {
@@ -1501,13 +1506,16 @@
     async function loadTemplates() {
         try {
             const resp = await apiFetch("/studio/api/templates");
-            if (!resp.ok) return;
+            if (!resp.ok) {
+                setToast(`No se pudieron cargar las plantillas (HTTP ${resp.status}).`, "error");
+                return;
+            }
             const data = await resp.json();
             state.templates = Array.isArray(data.templates) ? data.templates : [];
             syncTemplateOptions(state.templates);
             renderTemplateDoc();
-        } catch (_err) {
-            // Ignorar error inicial
+        } catch (err) {
+            setToast(`No se pudieron cargar las plantillas: ${err.message}`, "error");
         }
     }
 
@@ -1573,13 +1581,17 @@
                 ? `?project_id=${encodeURIComponent(targetProjectId)}`
                 : "";
             const resp = await apiFetch(`/studio/api/jobs${query}`);
-            if (!resp.ok || state.activeProjectId !== targetProjectId) return;
+            if (!resp.ok) {
+                setToast(`No se pudieron cargar los jobs (HTTP ${resp.status}).`, "error");
+                return;
+            }
+            if (state.activeProjectId !== targetProjectId) return;
             const data = await resp.json();
             if (state.activeProjectId !== targetProjectId) return;
             state.jobs = Array.isArray(data.jobs) ? data.jobs : [];
             renderJobsList();
-        } catch (_err) {
-            // Ignorar error de red transitorio
+        } catch (err) {
+            setToast(`No se pudieron cargar los jobs: ${err.message}`, "error");
         }
     }
 
@@ -1758,7 +1770,11 @@
             const resp = await apiFetch(
                 `/studio/api/projects/${encodeURIComponent(targetProjectId)}/gallery?category=${encodeURIComponent(category)}`
             );
-            if (!resp.ok || state.activeProjectId !== targetProjectId) return;
+            if (!resp.ok) {
+                setToast(`No se pudo cargar la galería (HTTP ${resp.status}).`, "error");
+                return;
+            }
+            if (state.activeProjectId !== targetProjectId) return;
             const data = await resp.json();
             if (state.activeProjectId !== targetProjectId) return;
             state.galleryItems = Array.isArray(data.assets) ? data.assets : [];
@@ -1771,8 +1787,8 @@
                 state.selectedGalleryAssetId = state.galleryItems[0].id;
             }
             renderGallery();
-        } catch (_err) {
-            // Ignorar error transitorio
+        } catch (err) {
+            setToast(`No se pudo cargar la galería: ${err.message}`, "error");
         }
     }
 
@@ -2903,6 +2919,21 @@
     }
 
     /* --- SSE PROGRESS STREAM --- */
+    function scheduleSseRefresh(task) {
+        state.sseRefreshPending = true;
+        if (document.hidden || state.sseRefreshInFlight) {
+            return;
+        }
+        state.sseRefreshPending = false;
+        state.sseRefreshInFlight = true;
+        Promise.resolve(task()).finally(() => {
+            state.sseRefreshInFlight = false;
+            if (state.sseRefreshPending && !document.hidden) {
+                scheduleSseRefresh(task);
+            }
+        });
+    }
+
     function connectProgressSse() {
         if (typeof EventSource === "undefined") return;
         if (state.sseSource) {
@@ -2945,7 +2976,7 @@
                     if (banner) {
                         banner.innerHTML = `Progreso en vivo — Job <code>${escapeHtml(data.job_id || "")}</code>: ${escapeHtml(data.value || 0)} / ${escapeHtml(data.max || 1)} (nodo <code>${escapeHtml(data.node || "exec")}</code>)`;
                     }
-                    refreshJobs();
+                    scheduleSseRefresh(refreshJobs);
                 } catch (_e) {
                     // Ignorar
                 }
@@ -2958,9 +2989,9 @@
                     if (banner) {
                         banner.innerHTML = `Actualización de Job <code>${escapeHtml(data.job_id || "")}</code>: estado <strong>${escapeHtml(data.status || "updated")}</strong>`;
                     }
-                    refreshJobs();
+                    scheduleSseRefresh(refreshJobs);
                     if (data.status === "done") {
-                        refreshGallery();
+                        scheduleSseRefresh(refreshGallery);
                     }
                 } catch (_e) {
                     // Ignorar
@@ -2968,7 +2999,7 @@
             });
 
             es.addEventListener("edl", function () {
-                refreshEdl();
+                scheduleSseRefresh(refreshEdl);
             });
 
             es.addEventListener("montage", function (evt) {
@@ -2976,12 +3007,12 @@
                     const data = JSON.parse(evt.data);
                     if (data.project_id && data.project_id !== state.activeProjectId) return;
                     if (data.status === "built") {
-                        refreshGallery();
+                        scheduleSseRefresh(refreshGallery);
                     }
                 } catch (_e) {
                     // Ignorar
                 }
-                refreshEdl();
+                scheduleSseRefresh(refreshEdl);
             });
 
             es.onerror = function () {
@@ -3073,12 +3104,12 @@
         const sub = document.getElementById("atlas-place-subtitle");
         const detail = document.getElementById("atlas-place-detail");
         if (!detail) return;
-        detail.innerHTML = "<p>Cargando lugar…</p>";
+        detail.textContent = "Cargando lugar…";
         let d;
         try {
             d = await apiFetch("/studio/api/atlas/places/" + encodeURIComponent(placeId));
         } catch (err) {
-            detail.innerHTML = "<p>No se pudo cargar el lugar.</p>";
+            detail.textContent = "No se pudo cargar el lugar.";
             return;
         }
         if (title) title.textContent = `${d.name} (${d.municipality})`;
@@ -3086,9 +3117,9 @@
             sub.textContent = `${d.kind} — ${d.views_usable} vistas, ${d.references_usable} referencias` +
                 (d.coverage && d.coverage.evidence_newest ? ` — evidencia más reciente: ${d.coverage.evidence_newest}` : "");
         }
-        detail.innerHTML = "";
+        detail.textContent = "";
         if (!d.views || d.views.length === 0) {
-            detail.innerHTML = "<p>Este lugar aún no tiene vistas fotográficas utilizables.</p>";
+            detail.textContent = "Este lugar aún no tiene vistas fotográficas utilizables.";
             return;
         }
         const grid = document.createElement("div");
@@ -3458,8 +3489,10 @@
                 if (!input) return;
                 const text = input.value.trim();
                 if (!text) return;
-                input.value = "";
-                await sendChatMessage(text);
+                const sent = await sendChatMessage(text);
+                if (sent) {
+                    input.value = "";
+                }
             });
         }
 
@@ -3687,6 +3720,12 @@
         if (refreshHealthBtn) {
             refreshHealthBtn.addEventListener("click", refreshHealthAndStatus);
         }
+
+        document.addEventListener("visibilitychange", () => {
+            if (!document.hidden && state.sseRefreshPending && !state.sseRefreshInFlight) {
+                scheduleSseRefresh(refreshJobs);
+            }
+        });
     }
 
     async function initStudioPanel() {

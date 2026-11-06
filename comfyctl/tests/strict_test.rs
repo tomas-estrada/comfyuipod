@@ -972,3 +972,53 @@ fn strict_ram_probe_failure_warns_without_remediation_and_is_never_fatal() {
         );
     }
 }
+
+#[test]
+fn strict_workspace_and_install_failures_are_fatal_with_remediation() {
+    // Brazo de fallo de S6 (workspace no escribible) y S8 (instalacion de
+    // ComfyUI incompleta). Ambos usan `status_for(ok, true)`, asi que con
+    // STRICT_START activo son FATAL y cada uno arrastra su propia remediation.
+    // Hasta ahora solo se habian ejercitado en su brazo ok (test del runner CI).
+    let cfg = RuntimeConfig::from_map(&consumer_profile_vars(), None);
+    assert!(cfg.strict_start, "este test asume STRICT_START activo");
+
+    let mut snap = base_healthy_snapshot();
+    snap.workspace_writable = false;
+    snap.comfy_install_ok = false;
+    snap.comfy_install_detail = "falta extra_model_paths.yaml".to_string();
+
+    let rep = evaluate_strict_checks(&cfg, &snap);
+
+    let s6 = rep.checks.iter().find(|c| c.id == "S6");
+    assert!(
+        matches!(
+            s6,
+            Some(c) if c.status == "fatal"
+                && c.detail.contains("No se puede escribir")
+                && c.remediation
+                    .as_deref()
+                    .is_some_and(|r| r.contains("solo lectura"))
+        ),
+        "S6 debia fallar en fatal con la remediation de volumen montado en solo lectura: {s6:?}"
+    );
+
+    let s8 = rep.checks.iter().find(|c| c.id == "S8");
+    assert!(
+        matches!(
+            s8,
+            Some(c) if c.status == "fatal"
+                && c.detail.contains("falta extra_model_paths.yaml")
+                && c.remediation
+                    .as_deref()
+                    .is_some_and(|r| r.contains("/opt/ComfyUI"))
+        ),
+        "S8 debia fallar en fatal con la remediation de imagen Docker: {s8:?}"
+    );
+
+    // Dos prerrequisitos caidos = arranque bloqueado.
+    assert_eq!(
+        rep.result, "fatal",
+        "el resultado general debia ser fatal: {:?}",
+        rep.checks
+    );
+}

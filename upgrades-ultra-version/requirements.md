@@ -6,7 +6,7 @@ Laboratorio audiovisual personal de investigación, orientado a entregar reels/S
 
 Todas las C01–C34 son objetivos obligatorios. P01–P14 son programas de implementación/experimentación que las conectan. N01–N30 son alternativas técnicas: cada una debe recibir una decisión, pero instalar las treinta no demuestra profundidad. `engines.json` también incluye herramientas base y servicios propios; sus contadores no son una lista de modelos que deban descargarse.
 
-Esta fase termina en candidato pre-GPU: rutas reales, código integrado, pruebas CPU pertinentes, motores preparados en imagen y campaña GPU lista. No termina en evidencia propia de calidad neuronal. Pesos gated, hardware no medido y servicios ausentes se muestran con estados correctos; si bloquean un requisito obligatorio, no puede darse por satisfecho.
+El plan original definía un candidato pre-GPU. Desde entonces W26 ejecutó una demo SDXL acotada (USD 0.59), así que el estado real es GPU L3 parcial, no validación integral. La misión vigente es cerrar rutas y pruebas pendientes y ampliar la evidencia por receta; pesos gated, hardware no medido y servicios ausentes deben mostrarse con estados correctos, sin declarar cubiertos los requisitos bloqueados.
 
 ## Contrato del producto
 

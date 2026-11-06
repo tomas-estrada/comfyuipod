@@ -102,6 +102,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
                 total: 12,
                 failed: Vec::new(),
                 elapsed_s: 0,
+                ..Phase1Info::default()
             },
             phase2: Phase2Info {
                 state: "done".to_string(),
@@ -111,6 +112,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
                 current_file: None,
                 hf_pid: None,
                 hf_rss_mb: 0,
+                ..Phase2Info::default()
             },
         },
         phase_banner: "ComfyUI listo · Fase 2 completada".to_string(),
@@ -129,6 +131,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
         errors_recent: Vec::new(),
         triage: Vec::new(),
         env_masked,
+        weights: comfyctl::collect::models::WeightStatus::default(),
         strict: Some(StrictReport {
             checked_at: "2026-10-19T11:58:00Z".to_string(),
             strict_start: true,
@@ -170,6 +173,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
         "## 8. Drift del entorno",
         "## 9. Modelos",
         "## 10. Arranque estricto",
+        "## 11. Pesos del flujo pedido",
     ] {
         assert!(md.contains(hdr), "Falta cabecera contractual: {hdr}");
     }

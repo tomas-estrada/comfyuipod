@@ -1506,6 +1506,74 @@ def test_panel_chat_after_deleting_only_project_recovers_and_never_posts_to_dele
     assert "toast-success" in after_chat["toastClass"]
 
 
+def test_panel_sse_refreshes_do_not_stack_or_run_in_hidden_tab() -> None:
+    """Los refrescos SSE no se acumulan y se pausan cuando la pestaña está oculta."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "sseRefreshPending" in app_js
+    assert "sseRefreshInFlight" in app_js
+    assert "document.hidden" in app_js
+    assert "visibilitychange" in app_js
+
+    progress_start = app_js.index('es.addEventListener("progress"')
+    progress_end = app_js.index('es.addEventListener("job"', progress_start)
+    progress_body = app_js[progress_start:progress_end]
+    assert "scheduleSseRefresh" in progress_body
+    assert "refreshJobs();" not in progress_body
+
+
+def test_panel_escapes_server_text_in_atlas_and_montage_views() -> None:
+    """Los datos del servidor se escapan antes de insertarse como HTML."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+
+    atlas_start = app_js.index("async function showAtlasPlace(")
+    atlas_end = app_js.index("async function selectAtlasView(", atlas_start)
+    atlas_body = app_js[atlas_start:atlas_end]
+    assert "textContent" in atlas_body
+    assert "detail.textContent" in atlas_body
+    assert "detail.innerHTML" not in atlas_body
+
+    montage_start = app_js.index("function renderMontagePlan()")
+    montage_end = app_js.index("function renderEdlView()", montage_start)
+    montage_body = app_js[montage_start:montage_end]
+    assert "escapeHtml(data.brief" in montage_body
+    assert "escapeHtml(terms)" in montage_body
+    assert "escapeHtml(persons)" in montage_body
+
+
+def test_panel_chat_keeps_draft_when_submission_fails() -> None:
+    """El texto del chat no se descarta antes de saber si el envío tuvo éxito."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+    submit_start = app_js.index('chatForm.addEventListener("submit"')
+    submit_end = app_js.index('// Limpiar historial de chat', submit_start)
+    submit_body = app_js[submit_start:submit_end]
+
+    clear_index = submit_body.index('input.value = ""')
+    send_index = submit_body.index("await sendChatMessage(text)")
+    assert clear_index > send_index, "el input solo se limpia después de un envío exitoso"
+
+    send_start = app_js.index("async function sendChatMessage(")
+    send_end = app_js.index("function parseSseFrame(", send_start)
+    send_body = app_js[send_start:send_end]
+    assert "return false" in send_body
+    assert "return true" in send_body
+
+
+def test_panel_surfaces_load_errors_for_templates_jobs_and_gallery() -> None:
+    """Los refrescos automáticos avisan cuando la API falla en vez de tragarse el error."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+
+    for function_name in ("loadTemplates", "refreshJobs", "refreshGallery"):
+        fn_start = app_js.index(f"async function {function_name}(")
+        next_fn = app_js.find("async function ", fn_start + 1)
+        fn_end = next_fn if next_fn != -1 else len(app_js)
+        fn_body = app_js[fn_start:fn_end]
+        assert "setToast" in fn_body, f"{function_name} debe avisar al usuario si falla la API"
+        assert "catch" in fn_body
+        assert "Ignorar error" not in fn_body
+        assert "Ignorar error transitorio" not in fn_body
+
+
 def test_panel_health_shows_engine_preparation_and_missing_weights() -> None:
     """El panel distingue alcanzable de preparado: pesos ausentes y stubs son visibles."""
     app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")

@@ -259,7 +259,7 @@ class PrepReport:
 
 
 def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
-    """Declaración de preparación de los 16 motores del roster.
+    """Declaración de preparación de los 17 motores del roster.
 
     Refleja lo que la imagen hornea realmente (`Dockerfile`) y lo que
     `download-models.sh` trae como activo de tarea. Un motor puede estar
@@ -373,6 +373,13 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
             note="paquete sam3 horneado; pesos HF-gated y inferencia pendiente",
         ),
         EnginePrepSpec(
+            name="llm_server",
+            binaries=("{STUDIO_LLM_SERVER_BIN}", "llama-server"),
+            weight_paths=("{STUDIO_LLM_SERVER_MODEL}",),
+            weights_required=True,
+            note="llama-server v0.9.0 horneado; modelo .gguf en runtime",
+        ),
+        EnginePrepSpec(
             name="ad_studio",
             note="compuesto: reutiliza ffmpeg, EDL, audio, music_gen y qa",
         ),
@@ -385,6 +392,7 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
         EnginePrepSpec(
             name="atlas-offline",
             modules=("comfy_studio.atlas.packaging",),
+            config_env=("STUDIO_ATLAS_ROOT",),
             note="empaquetado/verificación del bundle del atlas; módulo packaging",
         ),
         EnginePrepSpec(

@@ -1,6 +1,6 @@
 # Registro de Plantillas de Comfy Studio (`templates-registry`)
 
-Este documento describe las **17 plantillas curadas** (hitos M2 + ampliaciones) incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de rendimiento en una **RTX 5090 (32 GB GDDR7)**, el validador estructural y los endpoints HTTP expuestos por `studio-server` (`127.0.0.1:18190`).
+Este documento describe las **17 plantillas curadas** incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de cada grafo, el validador estructural y los endpoints HTTP de `studio-server` (`127.0.0.1:18190`). Los valores de grafo no son benchmarks de velocidad ni de VRAM.
 
 ---
 
@@ -13,12 +13,14 @@ Este documento describe las **17 plantillas curadas** (hitos M2 + ampliaciones) 
 > efecto es peor que no tenerlo. Lo que sí se mide y se reutiliza es el pico real
 > de VRAM por render (`render_recipes`).
 
-## 1. Filosofía y Decisiones de Rendimiento (RTX 5090 32 GB)
+## 1. Filosofía y Decisiones de Rendimiento
+
+El perfil de hardware por defecto es RTX PRO 6000 Blackwell (96 GB VRAM, 128 GB RAM host); existe un perfil RAM de 256 GB. La campaña W26 midió una sola ejecución SDXL en una RTX PRO 6000 Blackwell Max-Q con 503 GB de RAM host. No hay mediciones GPU equivalentes para las demás plantillas; sus necesidades de memoria siguen siendo estimaciones hasta que se registren mediciones por receta y perfil.
 
 El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`prompt` graph JSON) listos para producción sin exponer el grafo de nodos a la interfaz de usuario ni al agente conversacional:
 
 1. **Wan 2.2 Fun VACE 14B (`fp8_scaled`) en `480p` + `offload: true`**:
-   - Los módulos `wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors` y `wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors` ocupan `32.2 GiB` en disco frente a los `64.6 GiB` de la variante `bf16` (que desbordaría los 32 GB de VRAM de la RTX 5090).
+   - Los módulos `wan2.2_fun_vace_high_noise_14B_fp8_scaled.safetensors` y `wan2.2_fun_vace_low_noise_14B_fp8_scaled.safetensors` ocupan `32.2 GiB` en disco frente a `64.6 GiB` de la variante `bf16`. Son tamaños de pesos y una elección de precisión del grafo, no una medición de VRAM; la viabilidad se comprueba por receta y perfil.
    - Se fija resolución base **`832x480` (`480p` 16:9)**, **`81` fotogramas** (~5 s a 16 fps) y **`offload: true`** para mantener margen térmico y de memoria al encadenar ambos expertos MoE (`high_noise` + `low_noise`).
 2. **Wan 2.2 14B MoE + LoRA LightX2V 4-step (`steps=4`, `cfg=1.0`)**:
    - Las plantillas de generación de vídeo (`wan_flf2v`, `wan_i2v`, `wan_t2v`) emplean los modelos **Wan 2.2 14B `fp8_scaled`** combinados con los LoRAs de destilación **LightX2V 4-step** (`high_noise` pasos `0→2`, `low_noise` pasos `2→4`, `cfg=1.0`, `euler` + `simple`), mientras que las plantillas de edición `vace_inpaint` y `vace_restyle` ejecutan los expertos dedicados **Wan 2.2 Fun VACE 14B `fp8_scaled`** en `2+2` pasos (`uni_pc` + `simple`).
@@ -118,7 +120,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 - **Archivo**: [`studio/comfy_studio/templates/data/minimax_r2v.json`](../studio/comfy_studio/templates/data/minimax_r2v.json)
 - **Uso**: Generación **local** (sin API) de vídeo 768p/24 fps con **audio estéreo nativo** — voz, efectos y música modelados en la misma pasada del difusor — condicionada por una imagen de referencia que fija la identidad del sujeto (`<Picture 1>` en el prompt). Alternativa local al motor `heavy_video` usando los pesos abiertos de MiniMax H3.
-- **Modelos requeridos** (grupo opt-in `minimax_h3_opt_in`, `STUDIO_INCLUDE_MINIMAX=1`, +42.03 GB):
+- **Modelos requeridos** (grupo opt-in `minimax_h3_opt_in`, `STUDIO_INCLUDE_MINIMAX=1`, +63.00 GB en 6 archivos según `config/models-studio.json`):
   - `minimax_h3_ref2va_pruned_int8_convrot.safetensors` (DiT 19.5 GiB, `models/diffusion_models/`)
   - `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` (text encoder 14.6 GiB, `models/text_encoders/`)
   - `minimax_h3_video_vae_int8_convrot.safetensors` + `minimax_h3_audio_vae_fp32.safetensors` (`models/vae/`)
@@ -129,7 +131,7 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
   - `image_asset_id` / `image_input` (*string*): foto de referencia del sujeto (identidad).
   - `frames` (*integer*, `124`): retícula 17k+5 a 24 fps (124-362 ≈ 5-15 s).
   - `steps` (*integer*, `4` con el LoRA turbo), `ref_image_size` (`'match'` rápido / `'max'` máxima identidad).
-- **Defaults de rendimiento**: `1344x768` (768p 16:9), `frames=124`, `steps=4`, `res_multistep`, audio estéreo 32 kHz. El pruned-int8 con offload dinámico corre en 32 GB VRAM (RTX 5090 Blackwell).
+- **Defaults del grafo**: `1344x768` (768p 16:9), `frames=124`, `steps=4`, `res_multistep`, audio estéreo 32 kHz. No hay medición GPU documentada para esta plantilla; no se afirma que el modelo corra en 32 GB VRAM.
 - **Variante Singularity V2** (finetune comunitario de WarmBloodAban/AIGC-Singularity, Apache-2.0): `diffusion_model` = `Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors` (mismo grupo opt-in, mismo slot, ~19.5 GiB). Aporta más dinamismo en escenas rápidas/de acción, mejor adherencia al prompt y estilo visual reforzado.
 - **Protocolo A/B** (base vs Singularity V2): ambos int8 pruned, baja resolución (`864x480` = 0.4 MP), `steps=20`, `lora_strength=0.0` (sin turbo), **mismo seed y prompt** con escenas de acción — automatizable con la herramienta `ab_compare_models`, que etiqueta ambos renders (`ab_label`/`ab_seed`/`ab_steps`) y los deja listos para `vision_check`.
 - **Licencia**: MiniMax H3 Community License (uso no comercial); Singularity V2 es Apache-2.0.

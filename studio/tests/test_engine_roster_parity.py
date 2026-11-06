@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 
 from comfy_studio.engines.preparedness import build_default_prep_specs
-from comfy_studio.engines.registry import build_default_registry
+from comfy_studio.engines.registry import build_default_registry, resolve_engine_class
 
 REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "upgrades-ultra-version" / "engines.json"
@@ -37,6 +37,13 @@ def test_registry_and_prep_specs_same_names() -> None:
         f"Paridad roster/prep-specs rota: "
         f"roster={sorted(reg_names)} specs={sorted(spec_names)}"
     )
+
+
+def test_roster_names_all_resolve() -> None:
+    """Cada nombre del roster resuelve a una clase real importable."""
+    for name in build_default_registry().names():
+        cls = resolve_engine_class(name)
+        assert cls.name == name
 
 
 def test_new_engines_in_manifest() -> None:
@@ -78,4 +85,4 @@ def test_manifest_extra_ids_are_reported_not_fatal() -> None:
     assert len(extras) == expected
     # No fail-hard; reportar.
     print(f"[roster_parity] engines.json declara {len(extras)} ids fuera del roster")
-    assert len(roster_names) == 20
+    assert len(roster_names) == 21

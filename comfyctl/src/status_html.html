@@ -134,6 +134,10 @@
         <div class="progress-bar"><div class="progress-fill" id="dl-bar"></div></div>
       </div>
       <div class="card">
+        <h2>Pesos de Modelos (disco)</h2>
+        <div id="weights-body">Cargando...</div>
+      </div>
+      <div class="card">
         <h2>Servicios y Entorno (Enmascarado)</h2>
         <div id="svc-body">Cargando...</div>
       </div>
@@ -229,11 +233,32 @@
           `<p>Disco (${esc(d.disk.path)}): <code>${d.disk.free_gb} GB libres / ${d.disk.total_gb} GB total</code></p>`;
 
         const p1 = d.phases.phase1, p2 = d.phases.phase2;
-        const pct = p2.total > 0 ? Math.min(100, Math.round((p2.done / p2.total) * 100)) : 100;
+        // Sin denominador no hay porcentaje que mostrar: 0% es honesto, 100% no.
+        const pct = p2.total > 0 ? Math.min(100, Math.round((p2.done / p2.total) * 100)) : 0;
+        const p2Bytes = p2.bytes_total != null
+          ? `${p2.bytes_done} de ${p2.bytes_total} bytes`
+          : "no disponible";
         document.getElementById("dl-bar").style.width = `${pct}%`;
         document.getElementById("dl-body").innerHTML =
           `<p>Fase 1: <code>${esc(p1.state)}</code> (${p1.done}/${p1.total}) · Fase 2: <code>${esc(p2.state)}</code> (${p2.done}/${p2.total})</p>` +
-          `<p>Archivo en curso: <code>${esc(p2.current_file || "ninguno")}</code> · PID hf: <code>${esc(p2.hf_pid || "-")}</code> (${p2.hf_rss_mb} MB)</p>`;
+          `<p>Avance Fase 2: <code>${esc(p2Bytes)}</code> · Archivo en curso: <code>${esc(p2.current_file || "ninguno")}</code> · PID hf: <code>${esc(p2.hf_pid || "-")}</code> (${p2.hf_rss_mb} MB)</p>`;
+
+        const w = d.weights || {};
+        let wBody;
+        if (w.source !== "disco") {
+          wBody = `<p><span class="badge b-warn">no disponible</span> No se pudo leer la raíz de modelos.</p>`;
+        } else {
+          const missingRows = (w.missing || []).slice(0, 12).map(m => `<li><code>${esc(m)}</code></li>`).join("");
+          wBody =
+            `<p>Esperados: <code>${w.expected || 0}</code> · Llegaron: <code class="b-ok">${(w.present || []).length}</code> · ` +
+            `Faltan: <code class="b-err ${(w.missing || []).length ? '' : 'b-ok'}">${(w.missing || []).length}</code></p>` +
+            ((w.missing || []).length
+              ? `<p style="font-size:13px;">Faltan en disco:<ul style="margin-top:4px;">${missingRows}</ul>${
+                  w.missing.length > 12 ? `<em>… y ${w.missing.length - 12} más</em>` : ""
+                }</p>`
+              : `<p><span class="badge b-ok">Todos los pesos esperados están en disco</span></p>`);
+        }
+        document.getElementById("weights-body").innerHTML = wBody;
 
         const envRows = Object.entries(d.env_masked || {}).map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" · ");
         document.getElementById("svc-body").innerHTML =

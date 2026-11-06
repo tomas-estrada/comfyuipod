@@ -4,8 +4,14 @@
 //! El arranque real del pod ejecuta `download-models.sh --bootstrap`, cuyo banner es
 //! `ARRANQUE` y no `FASE 1`/`FASE 2`: sin reconocerlo, `/status/api` y `/report.md`
 //! publicarían `pending` para siempre tras un arranque que no descarga nada (F20).
+//!
+//! Avance en bytes: sale del banner «INICIANDO FASE n (X GiB)» (plan medido por el
+//! script) y de las líneas «OK: <ruta> (Y G)» (tamaño real del fichero bajado). Si
+//! el log no declara tamaños, `bytes_total`/`bytes_done` quedan en «no disponible».
+//! Lo que falta en disco se cruza con el catálogo del perfil (`add_disk_truth`).
 
 use crate::collect::models::phase2_expected_count;
+use crate::collect::models::WeightStatus;
 use crate::collect::procfs::ComfyUiStatus;
 use crate::strict::StrictReport;
 use chrono::NaiveDateTime;
@@ -14,29 +20,43 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct Phase1Info {
     pub state: String,
     pub done: u32,
     pub total: u32,
     /// Nombres de fichero con `ERROR: Falló la descarga de <nombre>` (S-03: array, como en status-server.py).
     pub failed: Vec<String>,
+    /// Ficheros del catálogo del perfil de esta fase que NO están en disco
+    /// (verdad medida, no el log de descarga). Vacío = nada faltante o sin medir.
+    pub missing: Vec<String>,
+    /// Bytes ya completados, medidos en las líneas `OK: <ruta> (<tam>)` del log.
+    pub bytes_done: u64,
+    /// Bytes del plan que declara el banner `INICIANDO FASE n (X GiB)`; `None`
+    /// cuando el log no lo declara: se publica `no disponible`, nunca un 0 fijo.
+    pub bytes_total: Option<u64>,
     pub elapsed_s: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct Phase2Info {
     pub state: String,
     pub done: u32,
     pub total: u32,
     /// Nombres de fichero con `ERROR: Falló la descarga de <nombre>` (S-03: array, como en status-server.py).
     pub failed: Vec<String>,
+    /// Ficheros del catálogo del perfil de esta fase que NO están en disco.
+    pub missing: Vec<String>,
+    /// Bytes ya completados según las líneas `OK: <ruta> (<tam>)` del log.
+    pub bytes_done: u64,
+    /// Bytes del plan del banner de Fase 2; `None` = `no disponible`.
+    pub bytes_total: Option<u64>,
     pub current_file: Option<String>,
     pub hf_pid: Option<u32>,
     pub hf_rss_mb: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct PhasesStatus {
     pub phase1: Phase1Info,
     pub phase2: Phase2Info,
@@ -46,6 +66,66 @@ pub struct PhasesStatus {
 /// trabajo de descarga: ni Fase 1 ni Fase 2 son pendientes, así que `pending` mentiría.
 /// Se distingue de `skipped` (que reserva `SKIP_MODEL_DOWNLOAD=1` y el perfil `minimal`).
 pub const STATE_NOT_REQUIRED: &str = "not_required";
+
+/// Unidades de tamaño del log de `download-models.sh`: `du -h` (binarias) y el
+/// banner con `KiB`/`MiB`/`GiB`. Sin marca, la letra suelta se toma binaria.
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+fn unit_to_bytes(unit: &str, value: f64) -> u64 {
+    let mult: f64 = match unit {
+        "B" => 1.0,
+        "K" | "KiB" | "kB" => 1024.0,
+        "M" | "MiB" | "MB" => 1024.0 * 1024.0,
+        "G" | "GiB" | "GB" => 1024.0 * 1024.0 * 1024.0,
+        _ => return 0,
+    };
+    (value * mult) as u64
+}
+
+/// `OK: <ruta> (4.0K)` -> bytes; `Some(bytes)` solo si la línea declara tamaño.
+fn parse_ok_line_bytes(line: &str) -> Option<u64> {
+    let paren = line.rfind('(')?;
+    let inner = line.get(paren + 1..)?.trim_end_matches(')').trim();
+    let num_end = inner
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(inner.len());
+    let value: f64 = inner.get(..num_end)?.parse().ok()?;
+    let unit = inner.get(num_end..)?.trim();
+    Some(unit_to_bytes(unit, value))
+}
+
+/// `INICIANDO FASE 1 (2.79 GiB): ...` -> bytes del plan; `None` sin declaración.
+fn parse_phase_plan_bytes(line: &str, phase: u8) -> Option<u64> {
+    let needle = format!("INICIANDO FASE {phase} (");
+    let at = line.find(&needle)?;
+    let rest = line.get(at + needle.len()..)?;
+    let paren = rest.find(')')?;
+    let inner = rest.get(..paren)?.trim();
+    let num_end = inner
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(inner.len());
+    let value: f64 = inner.get(..num_end)?.parse().ok()?;
+    let unit = inner.get(num_end..)?.trim();
+    Some(unit_to_bytes(unit, value))
+}
+
+/// Cruza el progreso del log con la verdad del disco: qué pesos de cada fase
+/// faltan, según el catálogo del perfil, se publican en la fase correspondiente.
+/// Un log que dice `done` con pesos ausentes se contradice con la realidad, y el
+/// informe muestra la contradicción en vez de repetir el estado del log.
+pub fn add_disk_truth(phases: &mut PhasesStatus, weights: &WeightStatus) {
+    phases.phase1.missing = weights
+        .missing
+        .iter()
+        .filter(|m| m.contains("(phase1)"))
+        .cloned()
+        .collect();
+    phases.phase2.missing = weights
+        .missing
+        .iter()
+        .filter(|m| m.contains("(phase2)"))
+        .cloned()
+        .collect();
+}
 
 pub fn collect_phases_status(
     download_log_path: &Path,
@@ -92,19 +172,13 @@ pub fn parse_phases_from_lines(
         return PhasesStatus {
             phase1: Phase1Info {
                 state: "skipped".to_string(),
-                done: 0,
                 total: 12,
-                failed: Vec::new(),
-                elapsed_s: 0,
+                ..Phase1Info::default()
             },
             phase2: Phase2Info {
                 state: "skipped".to_string(),
-                done: 0,
                 total: expected_p2_total,
-                failed: Vec::new(),
-                current_file: None,
-                hf_pid: None,
-                hf_rss_mb: 0,
+                ..Phase2Info::default()
             },
         };
     }
@@ -115,6 +189,8 @@ pub fn parse_phases_from_lines(
     let mut p1_failed: Vec<String> = Vec::new();
     let mut p1_start_ts: Option<i64> = None;
     let mut p1_elapsed_s: u64 = 0;
+    let mut p1_bytes_done: u64 = 0;
+    let mut p1_bytes_total: Option<u64> = None;
 
     let mut p2_state = if model_profile == "minimal" {
         "skipped".to_string()
@@ -124,6 +200,8 @@ pub fn parse_phases_from_lines(
     let mut p2_done: u32 = 0;
     let mut p2_total: u32 = expected_p2_total;
     let mut p2_failed: Vec<String> = Vec::new();
+    let mut p2_bytes_done: u64 = 0;
+    let mut p2_bytes_total: Option<u64> = None;
     let mut current_file: Option<String> = None;
     let mut last_ts: Option<i64> = None;
 
@@ -197,11 +275,14 @@ pub fn parse_phases_from_lines(
             p1_done = 0;
             p1_failed = Vec::new();
             p1_start_ts = last_ts;
+            // El tamaño del plan que el banner declara (2.79 GiB en el formato real).
+            p1_bytes_total = parse_phase_plan_bytes(line, 1);
         } else if upper.contains("INICIANDO FASE 2") {
             current_section = "phase2";
             p2_state = "running".to_string();
             p2_done = 0;
             p2_failed = Vec::new();
+            p2_bytes_total = parse_phase_plan_bytes(line, 2);
         } else if upper.contains("OMITIENDO FASE 2") {
             p2_state = "skipped".to_string();
             p2_total = 0;
@@ -281,8 +362,12 @@ pub fn parse_phases_from_lines(
                 }
                 if current_section == "phase1" && p1_state == "running" {
                     p1_done = p1_done.saturating_add(1);
+                    p1_bytes_done =
+                        p1_bytes_done.saturating_add(parse_ok_line_bytes(line).unwrap_or(0));
                 } else if current_section == "phase2" && p2_state == "running" {
                     p2_done = p2_done.saturating_add(1);
+                    p2_bytes_done =
+                        p2_bytes_done.saturating_add(parse_ok_line_bytes(line).unwrap_or(0));
                 }
                 continue;
             }
@@ -343,6 +428,9 @@ pub fn parse_phases_from_lines(
             done: p1_done,
             total: p1_total,
             failed: p1_failed,
+            missing: Vec::new(),
+            bytes_done: p1_bytes_done,
+            bytes_total: p1_bytes_total,
             elapsed_s: p1_elapsed_s,
         },
         phase2: Phase2Info {
@@ -350,6 +438,9 @@ pub fn parse_phases_from_lines(
             done: p2_done,
             total: p2_total,
             failed: p2_failed,
+            missing: Vec::new(),
+            bytes_done: p2_bytes_done,
+            bytes_total: p2_bytes_total,
             current_file,
             hf_pid,
             hf_rss_mb,

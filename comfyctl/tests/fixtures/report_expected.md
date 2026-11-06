@@ -30,8 +30,9 @@ Sin caídas registradas en `/var/log/supervisor.log`.
 - **Disco (`/workspace/comfyui-data`)**: `30` GB usados / `150` GB totales (`120` GB libres)
 
 ## 5. Descargas (Fase 1 y Fase 2)
-- **Fase 1**: `done` (`12/12` completados, `0` fallidos)
+- **Fase 1**: `done` (`12/12` completados, `0` fallidos) · avance: `no disponible`
 - **Fase 2**: `done` (`6/6` completados, `0` fallidos) · Archivo actual: `ninguno` · Proceso `hf`: PID `None` (`0` MB RSS)
+  - avance: `no disponible`
 Sin líneas en `/var/log/download-models.log`.
 
 ## 6. Log de ComfyUI (últimas 120 líneas)
@@ -66,3 +67,6 @@ Sin errores en `/var/log/nginx/error.log`.
 ## 10. Arranque estricto
 - **Resultado**: `ok` · **Modo estricto**: `true` · **Evaluado**: `2026-10-19T11:58:00Z`
 - `[OK]` **driver_cuda128** (Driver NVIDIA >= 570 (CUDA 12.8)): Driver NVIDIA 570.124.06 compatible con CUDA 12.8
+## 11. Pesos del flujo pedido
+- Estado de pesos: `no disponible` (no se pudo leer la raíz de modelos).
+

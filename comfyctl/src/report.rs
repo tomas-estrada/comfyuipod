@@ -229,19 +229,31 @@ pub fn build_report_markdown(
     let hf_pid_disp = p2
         .hf_pid
         .map_or_else(|| "None".to_string(), |p| p.to_string());
+    let bytes_line = |done: u64, total: Option<u64>| match total {
+        Some(total) => format!("avance: `{done}` de `{total}` bytes"),
+        None => "avance: `no disponible`".to_string(),
+    };
     let _ = writeln!(
         out,
-        "- **Fase 1**: `{}` (`{}/{}` completados, `{}` fallidos)",
+        "- **Fase 1**: `{}` (`{}/{}` completados, `{}` fallidos) · {}",
         p1.state,
         p1.done,
         p1.total,
-        p1.failed.len()
+        p1.failed.len(),
+        bytes_line(p1.bytes_done, p1.bytes_total)
     );
     if !p1.failed.is_empty() {
         let _ = writeln!(
             out,
             "  - Ficheros Fase 1 con error: `{}`",
             p1.failed.join("`, `")
+        );
+    }
+    if !p1.missing.is_empty() {
+        let _ = writeln!(
+            out,
+            "  - Faltan en disco (Fase 1): `{}`",
+            p1.missing.join("`, `")
         );
     }
     if p1.state == STATE_NOT_REQUIRED {
@@ -259,11 +271,19 @@ pub fn build_report_markdown(
         p2.failed.len(),
         p2.hf_rss_mb
     );
+    let _ = writeln!(out, "  - {}", bytes_line(p2.bytes_done, p2.bytes_total));
     if !p2.failed.is_empty() {
         let _ = writeln!(
             out,
             "  - Ficheros Fase 2 con error: `{}`",
             p2.failed.join("`, `")
+        );
+    }
+    if !p2.missing.is_empty() {
+        let _ = writeln!(
+            out,
+            "  - Faltan en disco (Fase 2): `{}`",
+            p2.missing.join("`, `")
         );
     }
     if p2.state == STATE_NOT_REQUIRED {
@@ -457,6 +477,44 @@ pub fn build_report_markdown(
         let _ = writeln!(out, "- Sin informe `/run/comfyui-strict.json` disponible.");
     }
 
+    // 11. Pesos del flujo pedido (verdad en disco, no en el log de descarga)
+    let _ = writeln!(out, "## 11. Pesos del flujo pedido");
+    let w = &api.weights;
+    if w.source != crate::collect::models::WEIGHT_SOURCE_DISK {
+        let _ = writeln!(
+            out,
+            "- Estado de pesos: `no disponible` (no se pudo leer la raíz de modelos)."
+        );
+    } else {
+        let arrived_bytes: u64 = w.present.iter().map(|e| e.bytes).sum();
+        let _ = writeln!(
+            out,
+            "- **Esperados** (`{active_prof}`): `{}` · **Llegaron**: `{}` (`{arrived_bytes}` bytes) · **Faltan**: `{}`",
+            w.expected,
+            w.present.len(),
+            w.missing.len()
+        );
+        if w.missing.is_empty() {
+            let _ = writeln!(out, "- Todos los pesos esperados están en disco.");
+        } else {
+            let _ = writeln!(out, "### Faltan en disco");
+            for m in &w.missing {
+                let _ = writeln!(out, "- `{m}`");
+            }
+        }
+        if !w.present.is_empty() {
+            let _ = writeln!(out, "### Han llegado");
+            for p in w.present.iter().take(40) {
+                let mb = p.bytes / (1024 * 1024);
+                let _ = writeln!(out, "- `{}` (`{mb}` MB)", p.path);
+            }
+            if w.present.len() > 40 {
+                let _ = writeln!(out, "- … y {} más.", w.present.len() - 40);
+            }
+        }
+    }
+    let _ = writeln!(out);
+
     let mut report_str = redactor.redact(&out);
     if report_str.len() > 400_000 {
         let mut cut = 395_000;
@@ -550,6 +608,7 @@ mod tests {
             errors_recent: Vec::new(),
             triage: Vec::new(),
             env_masked: BTreeMap::new(),
+            weights: crate::collect::models::WeightStatus::default(),
             strict: None,
         }
     }
@@ -562,6 +621,7 @@ mod tests {
                 total: 0,
                 failed: Vec::new(),
                 elapsed_s: 0,
+                ..Phase1Info::default()
             },
             phase2: Phase2Info {
                 state: STATE_NOT_REQUIRED.to_string(),
@@ -571,6 +631,7 @@ mod tests {
                 current_file: None,
                 hf_pid: None,
                 hf_rss_mb: 0,
+                ..Phase2Info::default()
             },
         }
     }

@@ -121,7 +121,46 @@ class AtlasOfflineEngine(Engine):
             error="atlas-offline no requiere instalación de submotores",
         )
 
+    def _stub_run(self, spec: EngineRunSpec) -> EngineResult:
+        try:
+            root = _atlas_root()
+            if root is None:
+                return EngineResult(
+                    ok=False,
+                    engine=self.name,
+                    verb="run",
+                    error=(
+                        "atlas-offline sin raíz configurada; "
+                        "definir STUDIO_ATLAS_ROOT al directorio del bundle"
+                    ),
+                    simulated=True,
+                )
+            report = verify_bundle(root, require_files=True)
+            ok = report.get("ok", False)
+            return EngineResult(
+                ok=ok,
+                engine=self.name,
+                verb="run",
+                payload={"report": report},
+                error=None if ok else "; ".join(report.get("errors", [])[:10]),
+                simulated=True,
+                stderr_tail=(
+                    f"STUDIO_STUB_{self.name.upper().replace('-', '_')}:"
+                    " verify_bundle simulado"
+                ),
+            )
+        except Exception as exc:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"verify_bundle lanzó (stub): {type(exc).__name__}: {exc}",
+                simulated=True,
+            )
+
     def run(self, spec: EngineRunSpec) -> EngineResult:
+        if self.is_stub():
+            return self._stub_run(spec)
         job = spec.job if isinstance(spec.job, dict) else {}
         op = str(job.get("op", ""))
         if op not in _OPS:
