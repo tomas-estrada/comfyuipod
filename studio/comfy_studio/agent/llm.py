@@ -257,6 +257,30 @@ class OpenAICompatibleLLMClient:
             headers["Authorization"] = f"Bearer {api_key}"
         return headers
 
+    def _redact_outgoing_messages(self, messages: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Redacta los mensajes salientes antes de invocar al modelo."""
+        redacted: list[dict[str, Any]] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                redacted.append(self._redactor.redact_value(msg))  # type: ignore[arg-type]
+                continue
+            new_msg: dict[str, Any] = {}
+            for key, value in msg.items():
+                if key == "content" and isinstance(value, list):
+                    parts: list[Any] = []
+                    for part in value:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            parts.append(dict(part))
+                        else:
+                            parts.append(self._redactor.redact_value(part))
+                    new_msg[key] = parts
+                elif isinstance(value, str):
+                    new_msg[key] = self._redactor.redact(value)
+                else:
+                    new_msg[key] = self._redactor.redact_value(value)
+            redacted.append(new_msg)
+        return redacted
+
     async def complete(
         self,
         messages: Sequence[dict[str, Any]],
@@ -266,6 +290,7 @@ class OpenAICompatibleLLMClient:
     ) -> LLMResponse:
         """Ejecuta una llamada chat/completions con fallback automático al proveedor secundario."""
         validate_no_auth_urls_in_messages(messages)
+        messages = self._redact_outgoing_messages(messages)
 
         if self._stub_client is not None and self._transport is None:
             return self._complete_with_stub(messages, tools=tools)
@@ -721,6 +746,7 @@ class OpenAICompatibleLLMClient:
     ) -> LLMResponse:
         """Completa un turno con streaming incremental real (`stream=True` / SSE)."""
         validate_no_auth_urls_in_messages(messages)
+        messages = self._redact_outgoing_messages(messages)
 
         if self._stub_client is not None and self._transport is None:
             return await self._stream_complete_with_stub(
