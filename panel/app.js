@@ -873,7 +873,7 @@
 
     async function sendChatMessage(messageText) {
         const cleanMsg = String(messageText || "").trim();
-        if (!cleanMsg) return;
+        if (!cleanMsg) return false;
 
         let projectId = state.chatDomProjectId || state.activeProjectId;
         const capturedKeyframeIds = Array.from(state.selectedKeyframeIds);
@@ -910,7 +910,7 @@
             projectId = await ensureActiveProject();
             if (!projectId) {
                 setToast("Crea un proyecto antes de enviar un mensaje al agente.", "error");
-                return;
+                return false;
             }
         }
 
@@ -1039,7 +1039,8 @@
                         statusEl.textContent = `Error en chat (HTTP ${resp.status}).`;
                     }
                 }
-                return;
+                setToast(`Error en chat (HTTP ${resp.status}). El mensaje no se ha enviado.`, "error");
+                return false;
             }
 
             if (!useStream) {
@@ -1157,7 +1158,7 @@
                 if (state.activeProjectId && state.chatDomProjectId !== state.activeProjectId) {
                     await refreshChatHistory(state.activeProjectId);
                 }
-                return;
+                return true;
             }
 
             const preserveOriginDom = isOriginConversationDisplayed();
@@ -1166,13 +1167,15 @@
                 preserveChatDom: preserveOriginDom,
                 expectedDomEpoch: preserveOriginDom ? turnDomEpoch : null,
             });
+            return true;
         } catch (err) {
             if (isOriginConversationDisplayed()) {
                 if (tokenContainer) {
                     tokenContainer.textContent = `Error de red en chat: ${err.message}`;
                 }
-                setToast(`Error en chat: ${err.message}`, "error");
+                setToast(`Error en chat: ${err.message}. El mensaje no se ha enviado.`, "error");
             }
+            return false;
         } finally {
             const remaining = Math.max(0, getPendingChatCount(projectId) - 1);
             if (remaining === 0) {
@@ -3157,8 +3160,10 @@
                 if (!input) return;
                 const text = input.value.trim();
                 if (!text) return;
-                input.value = "";
-                await sendChatMessage(text);
+                const sent = await sendChatMessage(text);
+                if (sent) {
+                    input.value = "";
+                }
             });
         }
 
