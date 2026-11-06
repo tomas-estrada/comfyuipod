@@ -1502,6 +1502,22 @@ def test_panel_chat_after_deleting_only_project_recovers_and_never_posts_to_dele
     assert "toast-success" in after_chat["toastClass"]
 
 
+def test_panel_sse_refreshes_do_not_stack_or_run_in_hidden_tab() -> None:
+    """Los refrescos SSE no se acumulan y se pausan cuando la pestaña está oculta."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "sseRefreshPending" in app_js
+    assert "sseRefreshInFlight" in app_js
+    assert "document.hidden" in app_js
+    assert "visibilitychange" in app_js
+
+    progress_start = app_js.index('es.addEventListener("progress"')
+    progress_end = app_js.index('es.addEventListener("job"', progress_start)
+    progress_body = app_js[progress_start:progress_end]
+    assert "scheduleSseRefresh" in progress_body
+    assert "refreshJobs();" not in progress_body
+
+
 def test_panel_escapes_server_text_in_atlas_and_montage_views() -> None:
     """Los datos del servidor se escapan antes de insertarse como HTML."""
     app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")

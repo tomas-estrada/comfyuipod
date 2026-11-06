@@ -121,11 +121,42 @@ def test_dead_owner_lease_is_recovered(tmp_path: Path) -> None:
     dead.wait()
     lease = _lease(tmp_path, pid=dead.pid)
     # Sembramos un lock cuyo owner (dead.pid) ya no existe.
-    lease.acquire(owner="zombie", engine="e", vram_mb=1000, ram_mb=1000)
+    grant = lease.acquire(owner="zombie", engine="e", vram_mb=1000, ram_mb=1000)
     # Otro proceso (vivo) debe poder recuperarlo.
-    live = _lease(tmp_path, pid=os.getpid())
+    seen = []
+    live = _lease(
+        tmp_path,
+        pid=os.getpid(),
+        recover_orphan=lambda orphan: seen.append(orphan) or orphan.token == grant.token,
+    )
     recovered = live.acquire(owner="nuevo", engine="e", vram_mb=1000, ram_mb=1000)
+    assert seen == [grant]
     assert recovered is not None and recovered.owner == "nuevo"
+    assert recovered.token > grant.token
+
+
+def test_dead_owner_without_cleanup_verifier_stays_quarantined(tmp_path: Path) -> None:
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    owner = _lease(tmp_path, pid=dead.pid)
+    grant = owner.acquire(owner="orphan", engine="upscaler", vram_mb=1000, ram_mb=1000)
+    contender = _lease(tmp_path, pid=os.getpid())
+
+    with pytest.raises(LeaseUnavailable, match="cleanup del engine no verificado"):
+        contender.acquire(owner="next", engine="qa", vram_mb=1000, ram_mb=1000)
+    assert contender.current() == grant
+
+
+def test_dead_owner_with_failed_cleanup_verifier_stays_quarantined(tmp_path: Path) -> None:
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    owner = _lease(tmp_path, pid=dead.pid)
+    grant = owner.acquire(owner="orphan", engine="qa", vram_mb=1000, ram_mb=1000)
+    contender = _lease(tmp_path, pid=os.getpid(), recover_orphan=lambda _grant: False)
+
+    with pytest.raises(LeaseUnavailable, match="cleanup del engine no verificado"):
+        contender.acquire(owner="next", engine="comfyui", vram_mb=1000, ram_mb=1000)
+    assert contender.current() == grant
 
 
 # --------------------------------------------------------------------------
@@ -219,7 +250,8 @@ def test_two_real_processes_contend_only_one_wins(
         "import sys, time\n"
         "from comfy_studio.orchestration.gpu_lease import (\n"
         "    GpuLease, AdmissionBudget, LeaseUnavailable)\n"
-        "lease = GpuLease(lock_dir=sys.argv[1], budget=AdmissionBudget(98304, 262144))\n"
+        "lease = GpuLease(lock_dir=sys.argv[1], budget=AdmissionBudget(98304, 262144),\n"
+        "    recover_orphan=lambda _grant: True)\n"
         "try:\n"
         "    g = lease.acquire(owner=sys.argv[2], engine='e', vram_mb=1000, ram_mb=1000)\n"
         "    print('ACQUIRED' if g else 'NONE')\n"
