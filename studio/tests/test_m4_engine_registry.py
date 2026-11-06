@@ -28,7 +28,7 @@ def test_comfyui_is_resident_and_wired() -> None:
     assert comfy.tier == EngineTier.RESIDENT
     assert comfy.wired is True
     residents = [e.name for e in reg.resident()]
-    assert residents == ["comfyui", "reference-local"]
+    assert residents == ["comfyui"]
 
 
 def test_editor_wired_with_remotion() -> None:

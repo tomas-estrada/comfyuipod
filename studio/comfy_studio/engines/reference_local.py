@@ -38,7 +38,7 @@ class ReferenceLocalEngine(Engine):
     """Análisis local de referencias (resident)."""
 
     name = "reference-local"
-    tier = EngineTier.RESIDENT
+    tier = EngineTier.WARM
 
     # -- contrato ------------------------------------------------------------
 
@@ -162,13 +162,18 @@ class ReferenceLocalEngine(Engine):
         beats_raw = job.get("beats") or []
         titles_raw = job.get("titles") or []
         camera_moves_raw = job.get("camera_moves") or []
-        cuts = [
-            Cut(
-                start_s=float(c.get("start_s", 0.0)),
-                end_s=float(c.get("end_s", 0.0)),
+        cuts = []
+        for c in cuts_raw:
+            if not isinstance(c, dict):
+                raise ValueError(
+                    f"cada corte debe ser dict, no {type(c).__name__}: {c!r}"
+                )
+            cuts.append(
+                Cut(
+                    start_s=float(c.get("start_s", 0.0)),
+                    end_s=float(c.get("end_s", 0.0)),
+                )
             )
-            for c in cuts_raw
-        ]
         beats = [float(b) for b in beats_raw]
         titles = [dict(t) for t in titles_raw]
         camera_moves = [str(m) for m in camera_moves_raw]

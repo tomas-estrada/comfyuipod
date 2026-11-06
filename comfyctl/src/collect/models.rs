@@ -1,8 +1,31 @@
 //! `collect::models` — Catálogo de los 26 modelos esperados por fase/perfil (O-06 / O-11)
 //! e inventario en disco de `/workspace/comfyui-data/models`.
 
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+
+/// Estado de pesos medido en disco (la verdad), no en el log de descargas.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct WeightStatus {
+    /// `disco` cuando la raíz de modelos se pudo leer; `no disponible` si no.
+    pub source: String,
+    /// Ficheros del perfil que ya llegaron, con tamaño real en disco.
+    pub present: Vec<WeightEntry>,
+    /// Ficheros esperados que faltan, con fase (`<subdir>/<fichero> (<fase>)`).
+    pub missing: Vec<String>,
+    /// Nº de ficheros que el catálogo espera para el perfil (0 = sin catálogo).
+    pub expected: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct WeightEntry {
+    pub path: String,
+    pub bytes: u64,
+}
+
+pub const WEIGHT_SOURCE_DISK: &str = "disco";
+pub const NOT_AVAILABLE: &str = "no disponible";
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExpectedModel {
@@ -215,6 +238,63 @@ fn walk_dir_files(dir: &Path) -> (usize, u64) {
     (count, total_bytes)
 }
 
+fn valid_profile_name(profile: &str) -> &str {
+    match profile {
+        "all" | "general" | "realistic" | "anime" | "minimal" | "studio" => profile,
+        // M3-D: 'unreal' extiende 'studio' (mismo inventario Fase 1/2 + opt-in 3D)
+        "unreal" => "studio",
+        _ => "all",
+    }
+}
+
+/// Estado de pesos para el perfil, leído del disco (`stat` por fichero), no del
+/// log de descarga. Es la respuesta honesta a «Value not in list»: qué falta y
+/// qué ya llegó. Sin raíz legible, `source` es `no disponible` y no se declara
+/// ninguna lista: nada inventado.
+pub fn collect_weight_status(comfy_data_dir: &Path, profile: &str) -> WeightStatus {
+    let models_root = comfy_data_dir.join("models");
+    let valid_profile = valid_profile_name(profile);
+
+    let mut st = WeightStatus {
+        source: if models_root.is_dir() {
+            WEIGHT_SOURCE_DISK.to_string()
+        } else {
+            NOT_AVAILABLE.to_string()
+        },
+        ..WeightStatus::default()
+    };
+
+    if st.source != WEIGHT_SOURCE_DISK {
+        return st;
+    }
+
+    for item in &EXPECTED_MODELS {
+        if item.profiles.contains(&valid_profile) {
+            let fpath = models_root.join(item.subdir).join(item.filename);
+            match fpath.metadata() {
+                Ok(meta) if meta.is_file() && meta.len() > 0 => st.present.push(WeightEntry {
+                    path: format!("{}/{}", item.subdir, item.filename),
+                    bytes: meta.len(),
+                }),
+                _ => {
+                    st.missing.push(format!(
+                        "{}/{} ({})",
+                        item.subdir, item.filename, item.phase
+                    ));
+                }
+            }
+        }
+    }
+    st.expected = u32::try_from(
+        EXPECTED_MODELS
+            .iter()
+            .filter(|item| item.profiles.contains(&valid_profile))
+            .count(),
+    )
+    .unwrap_or(0);
+    st
+}
+
 #[allow(clippy::cast_precision_loss)]
 pub fn collect_model_inventory(comfy_data_dir: &Path, profile: &str) -> (Vec<String>, Vec<String>) {
     let models_root = comfy_data_dir.join("models");
@@ -235,12 +315,7 @@ pub fn collect_model_inventory(comfy_data_dir: &Path, profile: &str) -> (Vec<Str
         }
     }
 
-    let valid_profile = match profile {
-        "all" | "general" | "realistic" | "anime" | "minimal" | "studio" => profile,
-        // M3-D: 'unreal' extiende 'studio' (mismo inventario Fase 1/2 + opt-in 3D)
-        "unreal" => "studio",
-        _ => "all",
-    };
+    let valid_profile = valid_profile_name(profile);
 
     let mut missing_models = Vec::new();
     for item in EXPECTED_MODELS {

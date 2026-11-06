@@ -141,7 +141,10 @@ class SceneOptimizerEngine(Engine):
                     error=f"obstáculo inválido: {exc}",
                 )
         if self.is_stub():
-            return self._stub_run(plan, subject_pos, subject_radius, obstacles)
+            return self._stub_run(
+                plan, subject_pos, subject_radius, obstacles,
+                float(job.get("min_distance", 0.5)),
+            )
 
         try:
             report = check_composition(
@@ -196,16 +199,8 @@ class SceneOptimizerEngine(Engine):
         keyframes = [
             CameraKeyframe(
                 t=float(kf["t"]),
-                position=(
-                    float(kf["position"][0]),
-                    float(kf["position"][1]),
-                    float(kf["position"][2]),
-                ),
-                target=(
-                    float(kf["target"][0]),
-                    float(kf["target"][1]),
-                    float(kf["target"][2]),
-                ),
+                position=SceneOptimizerEngine._parse_vec3(kf["position"]),
+                target=SceneOptimizerEngine._parse_vec3(kf["target"]),
             )
             for kf in raw_kfs
         ]
@@ -224,6 +219,7 @@ class SceneOptimizerEngine(Engine):
         subject_pos: Vec3,
         subject_radius: float,
         obstacles: list[tuple[Vec3, float]],
+        min_distance: float,
     ) -> EngineResult:
         try:
             plan.validate()
@@ -231,6 +227,7 @@ class SceneOptimizerEngine(Engine):
                 plan,
                 subject_position=subject_pos,
                 subject_radius=subject_radius,
+                min_distance=min_distance,
                 obstacles=obstacles or None,
             )
         except CameraError as exc:

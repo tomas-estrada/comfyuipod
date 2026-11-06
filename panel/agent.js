@@ -791,6 +791,16 @@
             ev.preventDefault();
             const message = input.value.trim();
             if (!message) return;
+            // sendMessage() descarta el envío sin sesión o con un turno pendiente:
+            // comprobarlo antes de vaciar el compositor para no perder el borrador.
+            if (!state.projectId) {
+                toast("Selecciona o crea una sesión antes de enviar.", true);
+                return;
+            }
+            if (state.sending) {
+                toast("Espera a que termine el turno actual.", true);
+                return;
+            }
             input.value = "";
             sendMessage(message);
         });

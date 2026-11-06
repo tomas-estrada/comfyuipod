@@ -457,6 +457,44 @@ pub fn build_report_markdown(
         let _ = writeln!(out, "- Sin informe `/run/comfyui-strict.json` disponible.");
     }
 
+    // 11. Pesos del flujo pedido (verdad en disco, no en el log de descarga)
+    let _ = writeln!(out, "## 11. Pesos del flujo pedido");
+    let w = &api.weights;
+    if w.source != crate::collect::models::WEIGHT_SOURCE_DISK {
+        let _ = writeln!(
+            out,
+            "- Estado de pesos: `no disponible` (no se pudo leer la raíz de modelos)."
+        );
+    } else {
+        let arrived_bytes: u64 = w.present.iter().map(|e| e.bytes).sum();
+        let _ = writeln!(
+            out,
+            "- **Esperados** (`{active_prof}`): `{}` · **Llegaron**: `{}` (`{arrived_bytes}` bytes) · **Faltan**: `{}`",
+            w.expected,
+            w.present.len(),
+            w.missing.len()
+        );
+        if w.missing.is_empty() {
+            let _ = writeln!(out, "- Todos los pesos esperados están en disco.");
+        } else {
+            let _ = writeln!(out, "### Faltan en disco");
+            for m in &w.missing {
+                let _ = writeln!(out, "- `{m}`");
+            }
+        }
+        if !w.present.is_empty() {
+            let _ = writeln!(out, "### Han llegado");
+            for p in w.present.iter().take(40) {
+                let mb = p.bytes / (1024 * 1024);
+                let _ = writeln!(out, "- `{}` (`{mb}` MB)", p.path);
+            }
+            if w.present.len() > 40 {
+                let _ = writeln!(out, "- … y {} más.", w.present.len() - 40);
+            }
+        }
+    }
+    let _ = writeln!(out);
+
     let mut report_str = redactor.redact(&out);
     if report_str.len() > 400_000 {
         let mut cut = 395_000;
@@ -550,6 +588,7 @@ mod tests {
             errors_recent: Vec::new(),
             triage: Vec::new(),
             env_masked: BTreeMap::new(),
+            weights: crate::collect::models::WeightStatus::default(),
             strict: None,
         }
     }

@@ -82,6 +82,10 @@ def test_stub_mode_produces_simulated() -> None:
         res = _engine().run(_spec(**job))
         assert res.ok
         assert res.simulated is True
+        assert "frame_count" in res.payload
+        assert res.payload["frame_count"] > 0
+        assert "spec_hash" in res.payload
+        assert len(res.payload["spec_hash"]) == 16
     finally:
         del os.environ["STUDIO_STUB_CHRONO"]
 
