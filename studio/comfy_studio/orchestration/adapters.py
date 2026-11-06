@@ -490,6 +490,34 @@ class EngineAssembler:
         return {"ok": True, "output_path": output, "clips": len(clips)}
 
 
+class _LeasedQaEngine:
+    """Run QA through the same GPU arbitration as generation engines."""
+
+    def __init__(self, engine: Any, lease: GpuLease, unload: Any | None) -> None:
+        self._runner = LeasedEngineRunner(
+            _SingleEngineRunner(engine),
+            lease,
+            owner="orchestration-qa",
+            unload=unload,
+        )
+
+    def run(self, spec: EngineRunSpec) -> dict[str, Any]:
+        return self._runner.run_layer("qa", spec.job, cost_cap=spec.cost_cap)
+
+
+class _SingleEngineRunner:
+    """Adapt one sync/async engine to the LeasedEngineRunner contract."""
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
+
+    def run_layer(
+        self, _name: str, job: dict[str, Any], *, cost_cap: float | None = None
+    ) -> dict[str, Any]:
+        raw = _run_engine_sync(self._engine, EngineRunSpec(job=job, cost_cap=cost_cap))
+        return _result_to_dict(raw)
+
+
 # ---------------------------------------------------------------------------
 # Armado del Collaborators del servidor
 # ---------------------------------------------------------------------------
@@ -531,11 +559,9 @@ def build_server_collaborators(
     # Evaluador combinado: QA técnica del motor + QA de CONTENIDO del LLM de
     # visión. Con llm_client el shot debe pasar AMBAS (vbench_min y
     # semantic_min); sin llm_client queda la QA técnica sola.
-    evaluator = (
-        SemanticQaEvaluator(qa_engine, llm_client)
-        if qa_engine is not None
-        else None
-    )
+    if qa_engine is not None and gpu_lease is not None:
+        qa_engine = _LeasedQaEngine(qa_engine, gpu_lease, unload_gpu)
+    evaluator = SemanticQaEvaluator(qa_engine, llm_client) if qa_engine is not None else None
     assembler = (
         EngineAssembler(editor_engine, compositor_engine=compositor_engine)
         if editor_engine is not None
