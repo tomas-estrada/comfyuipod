@@ -1127,6 +1127,40 @@ class ListEnginesArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class LocalLlmChatArgs(BaseModel):
+    """Argumentos para la herramienta `local_llm_chat`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(
+        default="",
+        description=(
+            "Prompt de texto para el LLM local (alternativa a `messages`). "
+            "Se envía como role 'user'."
+        ),
+    )
+    messages: list[dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Conversación como lista de {role, content} (role: system|user|assistant). "
+            "Si está presente, se ignora `prompt`."
+        ),
+    )
+    model: str = Field(
+        default="",
+        description="Modelo .gguf cargado (opcional; con vacío lo decide el servidor).",
+    )
+    max_tokens: int = Field(
+        default=256, ge=1, le=8192, description="Máximo de tokens generados (1..8192)."
+    )
+    temperature: float = Field(
+        default=0.7, ge=0.0, le=2.0, description="Temperatura de muestreo (0.0..2.0)."
+    )
+    timeout_s: float = Field(
+        default=120.0, gt=0.0, description="Timeout de la completion en segundos."
+    )
+
+
 class InstallEngineArgs(BaseModel):
     """Argumentos para la herramienta `install_engine`."""
 
@@ -2897,6 +2931,45 @@ async def _handle_list_engines(
     }
 
 
+async def _handle_local_llm_chat(
+    args: LocalLlmChatArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..engines import EngineRunSpec
+    from ..engines.llm_server import LlmServerEngine
+
+    def _do_chat() -> dict[str, Any]:
+        engine = LlmServerEngine()
+        result = engine.run(
+            EngineRunSpec(
+                job={
+                    "prompt": args.prompt,
+                    "messages": args.messages,
+                    "model": args.model,
+                    "max_tokens": args.max_tokens,
+                    "temperature": args.temperature,
+                    "timeout_s": args.timeout_s,
+                }
+            )
+        )
+        note_engine_run("llm_server", result.ok)
+        if not result.ok:
+            raise ToolExecutionError(
+                f"llm_server falló: {result.error or 'error desconocido'}"
+            )
+        payload = result.payload or {}
+        return {
+            "status": "ok",
+            "project_id": context.project_id,
+            "text": payload.get("text", ""),
+            "model": payload.get("model", ""),
+            "duration_s": payload.get("duration_s", 0.0),
+            "simulated": bool(result.simulated),
+        }
+
+    return await run_in_threadpool(_do_chat)
+
+
 def _is_dynamic_enabled() -> bool:
     from ..engines import is_dynamic_enabled
 
@@ -4299,6 +4372,18 @@ def create_default_tool_belt() -> ToolBelt:
             args_model=ListEnginesArgs,
             handler=_handle_list_engines,
             parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="local_llm_chat",
+            description=(
+                "Completa un prompt o conversación con el LLM local OpenAI-compatible "
+                "(llama-server en loopback, sin nube). Falla tipado si el binario o el "
+                "modelo .gguf no están disponibles."
+            ),
+            args_model=LocalLlmChatArgs,
+            handler=_handle_local_llm_chat,
         )
     )
     belt.register(
