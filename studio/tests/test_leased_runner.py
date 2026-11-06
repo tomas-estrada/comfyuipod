@@ -84,6 +84,22 @@ def test_cpu_layer_does_not_take_the_lease(tmp_path: Path) -> None:
     assert "lease" not in result  # no gestionó lease para CPU
 
 
+def test_cpu_layer_obeys_ram_budget_without_taking_gpu_lease(tmp_path: Path) -> None:
+    lease = GpuLease(
+        lock_dir=tmp_path / ".gpu-lease",
+        budget=AdmissionBudget(vram_mb=30_000, ram_mb=16_000),
+    )
+    inner = _RecordingRunner(lease)
+    runner = LeasedEngineRunner(inner, lease)
+
+    result = runner.run_layer("editor", {"kind": "assemble", "lease_ram_mb": 20_000})
+
+    assert result["ok"] is False
+    assert result["lease"] == "error"
+    assert inner.calls == []
+    assert lease.current() is None
+
+
 def test_lease_released_even_if_inner_raises(tmp_path: Path) -> None:
     lease = _lease(tmp_path)
 
