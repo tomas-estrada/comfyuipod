@@ -1120,3 +1120,120 @@ fn strict_cuda_fatal_in_gpu_mode_and_perception_checks_warn_never_fatal() {
         "S13 debia seguir ok cuando solo el indice esta desactualizado: {s13_ok:?}"
     );
 }
+
+#[test]
+fn strict_vram_warn_band_between_min_and_recommended() {
+    // S3: la banda WARN de VRAM (>= 20000 minimo, < 22000 recomendado; §6.2 /
+    // R-06) nunca se habia ejercitado: los tests usaban 12000/0 (fatal), 32768+
+    // (ok) o lo omitian en modo CPU. El aviso informa sin remediation, y el
+    // umbral recomendado exacto ya no avisa.
+    // El perfil declarado (20 GB VRAM / 16 GB RAM) lo cubre la fixture, para que
+    // S17 no avise y el resultado global dependa solo de la banda de S3.
+    let mut vars = BTreeMap::new();
+    vars.insert("STRICT_HW_PROFILE".to_string(), "test-20-16".to_string());
+    vars.insert("STRICT_HW_VRAM_GB".to_string(), "20".to_string());
+    vars.insert("STRICT_HW_RAM_GB".to_string(), "16".to_string());
+    let cfg = RuntimeConfig::from_map(&vars, None);
+    assert!(cfg.strict_require_gpu, "este test asume modo GPU");
+    assert_eq!(cfg.strict_min_vram_mb, 20000);
+    assert_eq!(cfg.strict_warn_vram_mb, 22000);
+
+    // 1. Dentro de la banda: warn con el detalle de "minimo pero no recomendado"
+    //    y SIN remediation; el resultado global solo puede ser warn.
+    let mut snap = base_healthy_snapshot();
+    snap.vram_total_mb = 21_000; // >= 20000 y < 22000
+    let rep = evaluate_strict_checks(&cfg, &snap);
+    let s3 = rep.checks.iter().find(|c| c.id == "S3");
+    assert!(
+        matches!(
+            s3,
+            Some(c) if c.status == "warn"
+                && c.detail.contains("21000 MB VRAM detectados (>= 20000 MB mínimo, pero < 22000 MB recomendados)")
+                && c.remediation.is_none()
+        ),
+        "S3 en la banda WARN debia avisar con su detalle y sin remediation: {s3:?}"
+    );
+    assert_eq!(
+        rep.result, "warn",
+        "con S3 en banda WARN solo deben haber avisos: {:?}",
+        rep.checks
+    );
+
+    // 2. En el umbral recomendado exacto deja de avisar y vuelve al detalle normal.
+    let mut snap_ok = snap.clone();
+    snap_ok.vram_total_mb = 22_000;
+    let rep_ok = evaluate_strict_checks(&cfg, &snap_ok);
+    let s3_ok = rep_ok.checks.iter().find(|c| c.id == "S3");
+    assert!(
+        matches!(
+            s3_ok,
+            Some(c) if c.status == "ok"
+                && c.detail.contains("22000 MB VRAM detectados (mínimo requerido: 20000 MB)")
+                && c.remediation.is_none()
+        ),
+        "S3 en el umbral recomendado debia ser ok: {s3_ok:?}"
+    );
+    assert_eq!(
+        rep_ok.result, "ok",
+        "sin bandas ni fallos: {:?}",
+        rep_ok.checks
+    );
+
+    // 3. Justo por debajo del minimo: fatal con su remediation de alquiler/ajuste
+    //    (el test de umbrales solo asertaba el status con 12000 MB).
+    let mut snap_fatal = snap.clone();
+    snap_fatal.vram_total_mb = 19_999;
+    let rep_fatal = evaluate_strict_checks(&cfg, &snap_fatal);
+    let s3_fatal = rep_fatal.checks.iter().find(|c| c.id == "S3");
+    assert!(
+        matches!(
+            s3_fatal,
+            Some(c) if c.status == "fatal"
+                && c.remediation
+                    .as_deref()
+                    .is_some_and(|r| r.contains("VRAM insuficiente para los checkpoints"))
+        ),
+        "S3 por debajo del minimo debia ser fatal con remediation: {s3_fatal:?}"
+    );
+    assert_eq!(
+        rep_fatal.result, "fatal",
+        "el fatal manda: {:?}",
+        rep_fatal.checks
+    );
+}
+
+#[test]
+fn strict_cpu_mode_omits_gpu_checks_without_remediation() {
+    // Con --cpu (runner CI, sin GPU) S10 y S17 se omiten con status ok, el
+    // detalle "Omitido en modo CPU" y SIN remediation, para que el portal no
+    // ofrezca alquilar GPU cuando el operador pidio modo CPU. El test del
+    // runner CI solo asertaba status == ok; el detalle y la ausencia de
+    // remediation jamas se comprobaban, y los hechos de GPU deben ignorarse.
+    let mut vars = BTreeMap::new();
+    vars.insert("COMFYUI_EXTRA_ARGS".to_string(), "--cpu".to_string());
+    let cfg = RuntimeConfig::from_map(&vars, None);
+    assert!(!cfg.strict_require_gpu, "este test asume modo CPU");
+
+    let mut snap = base_healthy_snapshot();
+    snap.gpu_query_ok = false; // en modo CPU estos hechos no deben ni mirarse
+    snap.cuda_torch_ok = false;
+    let rep = evaluate_strict_checks(&cfg, &snap);
+
+    for id in ["S10", "S17"] {
+        let c = rep.checks.iter().find(|x| x.id == id);
+        assert!(
+            matches!(
+                c,
+                Some(c) if c.status == "ok"
+                    && c.detail == "Omitido en modo CPU"
+                    && c.remediation.is_none()
+            ),
+            "{id} debia omitirse en modo CPU sin remediation: {c:?}"
+        );
+    }
+    assert_eq!(
+        rep.result, "ok",
+        "un fallo de GPU no debe ni avisar en modo CPU: {:?}",
+        rep.checks
+    );
+}
