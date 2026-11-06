@@ -4,7 +4,7 @@
 - `studio/comfy_studio/` — Python FastAPI service (`comfy_studio`), package layout:
   - `app.py` / `server.py` / `webutil.py` — app assembly, single-worker CLI entry, shared HTTP/upload/auth helpers
   - `routers/` — 14 route modules under `/studio/api/*` (core, projects, assets, jobs, templates, chat, perception, media_ops, brief, ads, review_pins, montage, productions)
-  - `agent/` — LLM agent loop, OpenAI-compatible client, 42-tool belt, roles, budgets, memory
+  - `agent/` — LLM agent loop, OpenAI-compatible client, 54-tool belt, roles, budgets, memory
   - `templates/` — 17 curated workflow templates + structural/semantic validator
   - `engines/` — 16 engines behind a uniform list/install/verify/run contract, install gate
   - `orchestration/` — production graph, planner, executor, evaluator, SQLite checkpointer
