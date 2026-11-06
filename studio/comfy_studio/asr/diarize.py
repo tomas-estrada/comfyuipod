@@ -24,6 +24,42 @@ from .whisperx import (
 
 CAMPPLUS_MODEL_REL = "models/funasr/campplus/campplus_cn_common.bin"
 
+# Desconocido tipado cuando no hay diarización: nunca se inventa un hablante.
+UNKNOWN_SPEAKER = "unknown"
+
+
+def parse_diarization_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normaliza la salida de FunASR `cam++` a turnos y resumen por hablante.
+
+    Función pura (sin audio/GPU/red): mapea `turns[{speaker,start,end}]` y
+    recalcula `speakers` + `by_speaker{total_sec,turns}`. Sin turnos devuelve
+    listas vacías (el “unknown” se aplica al fusionar, no aquí). Lanza
+    `ValueError` tipado si `end <= start`.
+    """
+    raw_turns = payload.get("turns") or []
+    turns: list[dict[str, Any]] = []
+    by_speaker: dict[str, Any] = {}
+    for idx, raw in enumerate(raw_turns):
+        if not isinstance(raw, dict):
+            raise ValueError(f"turno {idx}: no es un objeto")
+        speaker = str(raw.get("speaker") or UNKNOWN_SPEAKER)
+        start = float(raw.get("start", 0.0))
+        end = float(raw.get("end", start))
+        if not (end > start):
+            raise ValueError(f"turno {idx}: end ({end}) debe ser > start ({start})")
+        turns.append(
+            {"speaker": speaker, "start": round(start, 3), "end": round(end, 3)}
+        )
+        bucket = by_speaker.setdefault(speaker, {"total_sec": 0.0, "turns": 0})
+        bucket["total_sec"] = round(bucket["total_sec"] + (end - start), 3)
+        bucket["turns"] += 1
+    speakers = sorted(by_speaker)
+    return {
+        "speakers": speakers,
+        "turns": turns,
+        "by_speaker": {spk: by_speaker[spk] for spk in speakers},
+    }
+
 
 def _assign_speakers_from_spans(
     speech_spans: list[dict[str, Any]],
@@ -162,7 +198,7 @@ def _find_best_speaker_for_interval(
     turns: list[dict[str, Any]],
 ) -> str:
     if not turns:
-        return "SPEAKER_00"
+        return UNKNOWN_SPEAKER
 
     best_speaker: str | None = None
     best_overlap = 0.0
@@ -186,7 +222,7 @@ def _find_best_speaker_for_interval(
             abs(mid - float(t.get("end", 0.0))),
         ),
     )
-    return str(nearest.get("speaker") or "SPEAKER_00")
+    return str(nearest.get("speaker") or UNKNOWN_SPEAKER)
 
 
 def merge_diarization_with_transcription(

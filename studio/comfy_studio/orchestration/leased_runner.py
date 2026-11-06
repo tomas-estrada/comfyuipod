@@ -21,6 +21,7 @@ CPU (A04); la generación real es del runner envuelto.
 
 from __future__ import annotations
 
+from threading import Event
 from typing import Any
 
 from comfy_studio.orchestration.gpu_lease import (
@@ -59,11 +60,18 @@ class LeasedEngineRunner:
         self._unload = unload
 
     def run_layer(
-        self, engine: str, job: dict[str, Any], *, cost_cap: float | None = None
+        self,
+        engine: str,
+        job: dict[str, Any],
+        *,
+        cost_cap: float | None = None,
+        cancel_event: Event | None = None,
     ) -> dict[str, Any]:
         if not _is_heavy(engine):
             # Capa de CPU: no toma el lock de GPU. Se ejecuta directo.
-            return self._inner.run_layer(engine, job, cost_cap=cost_cap)
+            return self._inner.run_layer(
+                engine, job, cost_cap=cost_cap, cancel_event=cancel_event
+            )
 
         # Capa pesada: adquirir el heavy lease antes de tocar la GPU.
         try:
@@ -89,26 +97,63 @@ class LeasedEngineRunner:
                 "lease": "error",
             }
 
-        result: dict[str, Any] | None = None
         try:
-            result = self._inner.run_layer(engine, job, cost_cap=cost_cap)
-        finally:
-            # El lease se libera SIEMPRE, incluso si la ejecución lanzó: no dejar
-            # la GPU bloqueada. El unload (si se dio) se ejecuta y verifica aquí.
-            # Si el runner envuelto lanzó, `result` es None y la excepción se
-            # propaga tras liberar — pero la GPU queda libre pase lo que pase.
+            result = self._inner.run_layer(
+                engine, job, cost_cap=cost_cap, cancel_event=cancel_event
+            )
+        except BaseException as engine_error:
+            # El lease se libera también cuando falla/cancela el motor. Si la
+            # liberación o el unload fallan, no ocultarlo bajo la excepción
+            # original: el caller debe saber que la GPU puede seguir ocupada.
             try:
                 release = self._lease.release(grant, unload=self._unload)
-                if isinstance(result, dict):
-                    result.setdefault("lease", "released")
-                    if release.get("cleanup_failed"):
-                        result["lease_cleanup_failed"] = True
-            except LeaseError:
-                # Un fencing error al liberar no debe enmascarar el resultado del
-                # render; se anota pero no se lanza.
-                if isinstance(result, dict):
-                    result["lease"] = "release_fencing_error"
+                cleanup_failed = bool(release.get("cleanup_failed"))
+            except Exception:  # noqa: BLE001
+                raise LeaseCleanupError(
+                    f"{engine} failed and GPU lease cleanup also failed"
+                ) from engine_error
+            if cleanup_failed:
+                raise LeaseCleanupError(
+                    f"{engine} failed and GPU unload reported cleanup_failed"
+                ) from engine_error
+            raise
+
+        try:
+            release = self._lease.release(grant, unload=self._unload)
+        except Exception as cleanup_error:  # noqa: BLE001
+            return _cleanup_failure(engine, result, cleanup_error)
+        if release.get("cleanup_failed"):
+            return _cleanup_failure(engine, result)
+        result.setdefault("lease", "released")
         return result
 
 
-__all__ = ["CPU_ENGINES", "LeasedEngineRunner"]
+class LeaseCleanupError(RuntimeError):
+    """Motor falló y el lease no se pudo liberar/limpiar con certeza."""
+
+
+def _cleanup_failure(
+    engine: str, result: Any, error: Exception | None = None
+) -> dict[str, Any]:
+    """Fail closed when engine work succeeded but GPU cleanup is uncertain."""
+    if isinstance(result, dict):
+        result["ok"] = False
+        result["lease"] = "cleanup_failed"
+        result["lease_cleanup_failed"] = True
+        result["error"] = f"{engine} finished but GPU lease cleanup failed"
+        if error is not None:
+            result["cleanup_error_type"] = type(error).__name__
+        return result
+    failure = {
+        "ok": False,
+        "engine": engine,
+        "lease": "cleanup_failed",
+        "lease_cleanup_failed": True,
+        "error": f"{engine} finished but GPU lease cleanup failed",
+    }
+    if error is not None:
+        failure["cleanup_error_type"] = type(error).__name__
+    return failure
+
+
+__all__ = ["CPU_ENGINES", "LeaseCleanupError", "LeasedEngineRunner"]

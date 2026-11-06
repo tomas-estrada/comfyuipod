@@ -265,3 +265,42 @@ def build_default_registry() -> EngineRegistry:
         )
     )
     return reg
+
+
+#: Roster -> clase de motor (`modulo:Clase`). Todo nombre del roster resuelve
+#: a una clase con los 4 verbos; toda clase con `name` está en el roster.
+#: La resolución es perezosa (import bajo demanda, sin efectos laterales).
+ENGINE_CLASSES: dict[str, str] = {
+    "ad_studio": "comfy_studio.engines.ad_studio:AdStudioEngine",
+    "audio": "comfy_studio.engines.audio:AudioEngine",
+    "blender": "comfy_studio.engines.blender:BlenderEngine",
+    "capture3d": "comfy_studio.engines.capture3d:Capture3dEngine",
+    "comfyui": "comfy_studio.engines.comfyui:ComfyUIEngine",
+    "compositor": "comfy_studio.engines.compositor:CompositorEngine",
+    "editor": "comfy_studio.engines.editor:EditorEngine",
+    "ffmpeg": "comfy_studio.engines.ffmpeg:FfmpegEngine",
+    "heavy_video": "comfy_studio.engines.heavy_video:HeavyVideoEngine",
+    "indextts": "comfy_studio.engines.indextts:IndexttsEngine",
+    "lipsync": "comfy_studio.engines.lipsync:LipsyncEngine",
+    "music_gen": "comfy_studio.engines.music_gen:MusicGenEngine",
+    "qa": "comfy_studio.engines.qa:QaEngine",
+    "roto": "comfy_studio.engines.roto:RotoEngine",
+    "upscaler": "comfy_studio.engines.upscaler:UpscalerEngine",
+    "voice_clone": "comfy_studio.engines.voice_clone:VoiceCloneEngine",
+}
+
+
+def resolve_engine_class(name: str) -> type:
+    """Importa y devuelve la clase del motor (sin instanciarla)."""
+    import importlib
+
+    try:
+        module_name, class_name = ENGINE_CLASSES[name].split(":")
+    except KeyError:
+        raise KeyError(f"motor sin clase registrada: {name!r}") from None
+    module = importlib.import_module(module_name)
+    try:
+        cls = getattr(module, class_name)
+    except AttributeError:
+        raise KeyError(f"clase ausente {class_name!r} en {module_name}") from None
+    return cls

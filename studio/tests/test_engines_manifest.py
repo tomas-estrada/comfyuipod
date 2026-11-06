@@ -7,6 +7,7 @@ incoherencias reales (fatales) de bloqueos de release esperados (locks sin fijar
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -133,8 +134,13 @@ def test_lock_opencolorio_tiene_lock_fijado() -> None:
 
 
 def test_lock_remotion_tiene_lock_fijado() -> None:
-    """El engine remotion tiene su code_revision fijado a la release oficial."""
+    """La versión declarada coincide con los paquetes instalados en la imagen."""
     mod = _load_module()
     manifest = mod.load_json(mod.DEFAULT_MANIFEST)
     by_id = {e["id"]: e for e in manifest["engines"]}
-    assert by_id["remotion"]["code_revision"] == "v4.0.541"
+    revision = by_id["remotion"]["code_revision"]
+    assert revision == "v4.0.541"
+
+    package = json.loads((REPO_ROOT / "studio" / "remotion" / "package.json").read_text())
+    assert package["dependencies"]["remotion"] == revision.removeprefix("v")
+    assert package["dependencies"]["@remotion/cli"] == revision.removeprefix("v")

@@ -99,7 +99,7 @@ def test_execute_waits_for_dependencies():
 
 def test_execute_failing_runner_triggers_replanning():
     class FailRunner:
-        def run_layer(self, engine, job, *, cost_cap=None):
+        def run_layer(self, engine, job, *, cost_cap=None, cancel_event=None):
             return {"ok": False, "error": "boom"}
 
     shot = Shot(description="x", layers=[Layer(kind="gen", engine="comfyui")])
@@ -131,7 +131,7 @@ def test_graph_with_unsatisfiable_dep_reaches_done_not_max_steps():
     # primer shot; el segundo (dependiente) queda inalcanzable; el grafo TERMINA
     # (ensambla lo que haya, phase=done) en vez de girar hasta max_steps.
     class AlwaysFail:
-        def run_layer(self, engine, job, *, cost_cap=None):
+        def run_layer(self, engine, job, *, cost_cap=None, cancel_event=None):
             return {"ok": False, "error": "nope"}
 
     a = Shot(
@@ -240,7 +240,7 @@ def test_full_graph_with_replan_reaches_done():
         def __init__(self):
             self.n = 0
 
-        def evaluate(self, shot):
+        def evaluate(self, shot, *, cancel_event=None):
             self.n += 1
             return {"vbench": 0.2 if self.n == 1 else 0.9}
 
@@ -282,7 +282,7 @@ def test_assembler_failure_gives_up_to_failed_not_infinite_loop():
     # M6-SCR-004: un ensamblador que siempre falla no debe girar hasta max_steps;
     # tras agotar reintentos marca phase=failed y el router termina.
     class FailAsm:
-        def assemble(self, production_id, clips):
+        def assemble(self, production_id, clips, *, cancel_event=None):
             return {"ok": False, "error": "ffmpeg murió"}
 
     s1 = Shot(description="a", output_path="/tmp/a.mp4")
@@ -338,7 +338,7 @@ def test_replan_shot_focalized_preserves_sequences_and_deps():
 
 def test_evaluate_and_replan_global_triggers_focal_replanner():
     class AlwaysFailEvaluator(StubShotEvaluator):
-        def evaluate(self, shot):
+        def evaluate(self, shot, *, cancel_event=None):
             return {"vbench": 0.1}
 
     shot = Shot(

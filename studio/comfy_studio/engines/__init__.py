@@ -101,6 +101,9 @@ class EngineRunSpec:
     job: dict[str, Any]
     timeout_s: float | None = None
     cost_cap: float | None = None  # tope de coste/gasto GPU para este run
+    # Runtime-only cancellation signal shared with the supervising production.
+    # It is deliberately not placed in `job`, which is serialized and exposed.
+    cancel_event: Any | None = None
 
 
 # ---------------------------------------------------------------------------

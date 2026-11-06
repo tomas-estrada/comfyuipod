@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import Event
 
 from comfy_studio.orchestration.assembler import Assembler, assemble_reel
 from comfy_studio.orchestration.evaluator import (
@@ -84,13 +85,17 @@ def build_production_graph(
     checkpointer=None,
     collaborators: Collaborators | None = None,
     max_steps: int = 200,
+    cancel_event: Event | None = None,
 ) -> ProductionGraph:
     """Construye el grafo de producción con las 4 fases reales enlazadas."""
     col = collaborators or Collaborators()
     graph = ProductionGraph(checkpointer=checkpointer, max_steps=max_steps)
 
     graph.add_node(PLAN, lambda s: plan_production(s, col.planner))
-    graph.add_node(EXECUTE, lambda s: execute_next_shot(s, col.runner))
+    graph.add_node(
+        EXECUTE,
+        lambda s: execute_next_shot(s, col.runner, cancel_event=cancel_event),
+    )
     graph.add_node(
         EVALUATE,
         lambda s: evaluate_and_replan(
@@ -98,9 +103,13 @@ def build_production_graph(
             col.evaluator,
             reselect_template=col.reselect_template,
             replan_shot=col.replan_shot,
+            cancel_event=cancel_event,
         ),
     )
-    graph.add_node(ASSEMBLE, lambda s: assemble_reel(s, col.assembler))
+    graph.add_node(
+        ASSEMBLE,
+        lambda s: assemble_reel(s, col.assembler, cancel_event=cancel_event),
+    )
     graph.set_entry(PLAN)
     graph.set_router(_route)
     return graph

@@ -110,6 +110,37 @@ class ProductionCheckpointer:
                 (state.id, state.phase, payload, state.updated_at),
             )
 
+    def claim_phase(
+        self,
+        state: ProductionState,
+        *,
+        expected_phase: str,
+        expected_state_json: str,
+    ) -> bool:
+        """Persist a phase transition only if its exact source snapshot is current.
+
+        The compare-and-set runs in one SQLite write transaction. It is used for
+        approval so concurrent HTTP retries cannot both launch the production
+        graph, and a concurrent plan edit cannot be overwritten by a stale
+        approval snapshot.
+        """
+        state.updated_at = time.time()
+        payload = json.dumps(state.to_dict(), ensure_ascii=False)
+        with self._connection() as conn:
+            cur = conn.execute(
+                "UPDATE production_checkpoint SET phase = ?, state_json = ?, "
+                "updated_at = ? WHERE production_id = ? AND phase = ? AND state_json = ?",
+                (
+                    state.phase,
+                    payload,
+                    state.updated_at,
+                    state.id,
+                    expected_phase,
+                    expected_state_json,
+                ),
+            )
+            return cur.rowcount == 1
+
     def load(self, production_id: str) -> ProductionState | None:
         """Reanuda el estado de una producción, o None si no existe."""
         with self._connection() as conn:

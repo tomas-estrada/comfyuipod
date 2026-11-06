@@ -23,7 +23,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from comfy_studio.comfyui_client import ComfyUIClient, ComfyUIError
+from comfy_studio.comfyui_client import (
+    ComfyUICancelledError,
+    ComfyUIClient,
+    ComfyUIError,
+)
 from comfy_studio.engines import (
     EngineResult,
     EngineRunSpec,
@@ -47,6 +51,14 @@ class ComfyUIEngine:
         """Node types instalados (submotores disponibles para build_graph)."""
         try:
             info = await self._client.get_object_info()
+        except ComfyUICancelledError as exc:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                payload={"cancelled": True},
+                error=str(exc),
+            )
         except ComfyUIError as exc:
             return EngineResult(
                 ok=False, engine=self.name, verb="list", error=f"object_info falló: {exc}"
@@ -163,7 +175,10 @@ class ComfyUIEngine:
         project_id = spec.job.get("project_id")
         try:
             result = await self._client.execute_prompt_job(
-                graph, job_id=job_id, project_id=project_id
+                graph,
+                job_id=job_id,
+                project_id=project_id,
+                cancel_event=spec.cancel_event,
             )
         except ComfyUIError as exc:
             return EngineResult(
