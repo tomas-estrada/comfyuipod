@@ -1502,6 +1502,25 @@ def test_panel_chat_after_deleting_only_project_recovers_and_never_posts_to_dele
     assert "toast-success" in after_chat["toastClass"]
 
 
+def test_panel_escapes_server_text_in_atlas_and_montage_views() -> None:
+    """Los datos del servidor se escapan antes de insertarse como HTML."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+
+    atlas_start = app_js.index("async function showAtlasPlace(")
+    atlas_end = app_js.index("async function selectAtlasView(", atlas_start)
+    atlas_body = app_js[atlas_start:atlas_end]
+    assert "textContent" in atlas_body
+    assert "detail.textContent" in atlas_body
+    assert "detail.innerHTML" not in atlas_body
+
+    montage_start = app_js.index("function renderMontagePlan()")
+    montage_end = app_js.index("function renderEdlView()", montage_start)
+    montage_body = app_js[montage_start:montage_end]
+    assert "escapeHtml(data.brief" in montage_body
+    assert "escapeHtml(terms)" in montage_body
+    assert "escapeHtml(persons)" in montage_body
+
+
 def test_panel_chat_keeps_draft_when_submission_fails() -> None:
     """El texto del chat no se descarta antes de saber si el envío tuvo éxito."""
     app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")

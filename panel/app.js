@@ -2797,12 +2797,12 @@
         const sub = document.getElementById("atlas-place-subtitle");
         const detail = document.getElementById("atlas-place-detail");
         if (!detail) return;
-        detail.innerHTML = "<p>Cargando lugar…</p>";
+        detail.textContent = "Cargando lugar…";
         let d;
         try {
             d = await apiFetch("/studio/api/atlas/places/" + encodeURIComponent(placeId));
         } catch (err) {
-            detail.innerHTML = "<p>No se pudo cargar el lugar.</p>";
+            detail.textContent = "No se pudo cargar el lugar.";
             return;
         }
         if (title) title.textContent = `${d.name} (${d.municipality})`;
@@ -2810,9 +2810,9 @@
             sub.textContent = `${d.kind} — ${d.views_usable} vistas, ${d.references_usable} referencias` +
                 (d.coverage && d.coverage.evidence_newest ? ` — evidencia más reciente: ${d.coverage.evidence_newest}` : "");
         }
-        detail.innerHTML = "";
+        detail.textContent = "";
         if (!d.views || d.views.length === 0) {
-            detail.innerHTML = "<p>Este lugar aún no tiene vistas fotográficas utilizables.</p>";
+            detail.textContent = "Este lugar aún no tiene vistas fotográficas utilizables.";
             return;
         }
         const grid = document.createElement("div");
