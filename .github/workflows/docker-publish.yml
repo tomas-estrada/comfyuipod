@@ -37,7 +37,7 @@ jobs:
     # del rollout); fijamos 24.04 para determinismo run a run. Todos los jobs verificados
     # compatibles con 26.04, así que tras 2026-11-19 se puede volver a ubuntu-latest.
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
