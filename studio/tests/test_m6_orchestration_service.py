@@ -34,6 +34,47 @@ def test_plan_production_awaits_approval(tmp_path):
     assert again["plan"]["id"] == pid
 
 
+def test_plan_records_recipe_binding_against_resource_budget(tmp_path):
+    svc = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "budget.sqlite3"),
+        resource_vram_budget_mb=96 * 1024,
+    )
+
+    out = svc.plan_production("un dron sobre la costa")
+
+    binding = out["plan"]["metadata"]["recipe_binding"]
+    assert binding["vram_budget_mb"] == 96 * 1024
+    assert binding["estimate_only"] is True
+    # Planner may already have selected an explicit atlas template. That layer
+    # is admitted and estimated without counting as a newly bound template.
+    assert binding["bound"] + binding["skipped_has_template"] >= 1
+    gen_layers = [
+        layer
+        for sequence in out["plan"]["sequences"]
+        for shot in sequence["shots"]
+        for layer in shot["layers"]
+        if layer["kind"] == "gen"
+    ]
+    assert all(layer["params"].get("lease_vram_mb") for layer in gen_layers)
+
+
+def test_approval_rejects_plan_with_unadmitted_generation_layers(tmp_path):
+    svc = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "too-small-budget.sqlite3"),
+        resource_vram_budget_mb=1,
+    )
+    planned = svc.plan_production("un dron sobre la costa")
+    pid = planned["production_id"]
+
+    assert planned["plan"]["metadata"]["recipe_binding"]["unresolved"] > 0
+    with pytest.raises(ProductionNotApprovedError, match="sin receta admitida"):
+        svc.approve_plan(pid)
+
+    current = svc.get_plan(pid)["plan"]
+    assert current["phase"] == "awaiting_approval"
+    assert current["storyboard_approved"] is False
+
+
 def test_status_reports_progress(tmp_path):
     svc = _service(tmp_path)
     pid = svc.plan_production("gato astronauta")["production_id"]

@@ -382,6 +382,7 @@ jobs:
           done
 
       - name: Instalar ffmpeg/ffprobe para los tests de percepción M3 (VAL-PERC-001/002/003/006)
+        timeout-minutes: 8
         # La imagen ubuntu-24.04 de GitHub Actions NO trae ffmpeg preinstalado (no aparece en
         # los apt packages de Ubuntu2404-Readme). Los tests de M3 sintetizan vídeo real con
         # ffmpeg y extraen firmas RGB de imágenes vía ffmpeg (perception/keyframes.py resuelve
@@ -390,8 +391,8 @@ jobs:
         # libx264/aac/lavfi y ffprobe, suficiente para síntesis, muxing y probe de los tests).
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg
           command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1

@@ -29,6 +29,7 @@ from comfy_studio.engines.storyboard_gate import StoryboardGate, StoryboardState
 from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
 from comfy_studio.orchestration.conductor import Collaborators, build_production_graph
 from comfy_studio.orchestration.planner import plan_production as _plan
+from comfy_studio.orchestration.recipe_binding import bind_recipes
 from comfy_studio.orchestration.state import ProductionState, ShotStatus
 from comfy_studio.progress import ProgressBroker
 
@@ -68,9 +69,11 @@ class ProductionService:
         store: Any | None = None,
         broker: ProgressBroker | None = None,
         atlas_service: Any | None = None,
+        resource_vram_budget_mb: int | None = None,
     ) -> None:
         self.checkpointer = checkpointer or ProductionCheckpointer()
         self.collaborators = collaborators or Collaborators()
+        self.resource_vram_budget_mb = resource_vram_budget_mb
         self._fully_wired = all(
             getattr(self.collaborators, name) is not None
             for name in (
@@ -159,6 +162,16 @@ class ProductionService:
         state.metadata["execution_mode"] = "real" if self._fully_wired else "simulated"
         state.metadata["simulated"] = not self._fully_wired
         _plan(state, self.collaborators.planner)
+        if self.resource_vram_budget_mb is not None:
+            binding = bind_recipes(
+                state,
+                vram_budget_mb=self.resource_vram_budget_mb,
+            )
+            state.metadata["recipe_binding"] = {
+                **binding,
+                "vram_budget_mb": self.resource_vram_budget_mb,
+                "estimate_only": True,
+            }
         # el plan es el "borrador barato": se somete a la puerta.
         gate = StoryboardGate()
         gate.submit_draft(draft_path=f"plan:{state.id}")
@@ -332,6 +345,12 @@ class ProductionService:
                 }
             raise ProductionAlreadyTerminalError(
                 f"la producción ya es terminal ({state.phase})"
+            )
+        binding = state.metadata.get("recipe_binding")
+        if isinstance(binding, dict) and int(binding.get("unresolved", 0) or 0) > 0:
+            raise ProductionNotApprovedError(
+                "el plan contiene capas de generación sin receta admitida; "
+                "edita el plan o aumenta el presupuesto de recursos antes de aprobar"
             )
         # hidratar la puerta: primero la de RAM; si el pod reinició, desde el
         # estado persistido en el checkpoint (M6-SCR-002).
