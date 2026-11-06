@@ -39,7 +39,7 @@ This records the highest evidence level actually demonstrated for each capabilit
 | C29 | Matting de video | L0 | W15 acceptance is not complete. |
 | C30 | Restauración y acabado temporal | L0 | W08/W20 acceptance is not complete. |
 | C31 | Montaje y efectos programables | L0 | W20 acceptance is not complete. |
-| C32 | Entregables reproducibles | L0 on `main`; L1 in open PR #129 | PR #129’s CPU fixture exercises project creation → normal Studio production endpoints → FFmpeg clip/reel → gallery/download. It uses test collaborators and is not an L2 engine integration or full 4K/editable-delivery acceptance. |
+| C32 | Entregables reproducibles | L1 partial on `main`; stronger L1 flow in open PR #129 | Main has production-output gallery registration code and CPU unit coverage. PR #129 adds project creation → normal Studio production endpoints → FFmpeg clip/reel → gallery/download. The flow uses test collaborators and is not an L2 engine integration or full 4K/editable-delivery acceptance. |
 | C33 | Investigador Pareto de recetas | L0 | W23/W24 acceptance is not complete. |
 | C34 | Aprendizaje de adaptadores | L0 | W23 acceptance is not complete. |
 
