@@ -531,6 +531,7 @@ class StudioAgent:
             broker=self._broker,
             config=self._config,
             delegate_runner=_delegate_runner if self._allow_delegation else None,
+            call_budget=budget,
         )
 
         all_tool_calls: list[dict[str, Any]] = []
