@@ -220,4 +220,48 @@ def build_default_registry() -> EngineRegistry:
             ),
         )
     )
+    reg.register(
+        EngineEntry(
+            "reference-local",
+            EngineTier.RESIDENT,
+            wired=True,
+            note=(
+                "Análisis local de referencias: cortes/beats/OCR/cámara -> receta editable "
+                "(inspiration.py; CPU)"
+            ),
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "atlas-offline",
+            EngineTier.WARM,
+            wired=True,
+            note=(
+                "Bundle del atlas del Aburrá: catálogo + archivos + licencias + OSM "
+                "(atlas/packaging.py; CPU)"
+            ),
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "scene-optimizer",
+            EngineTier.WARM,
+            wired=True,
+            note=(
+                "Validación de composición y plan de cámara: colisiones, FOV, encuadre "
+                "(cinematography.py; CPU)"
+            ),
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "chrono",
+            EngineTier.WARM,
+            wired=True,
+            note=(
+                "Proxy cinemático CPU de física/articulaciones: simulación determinista "
+                "(physics.py; no es el solver Chrono/Blender real)"
+            ),
+        )
+    )
     return reg
