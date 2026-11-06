@@ -1,6 +1,6 @@
 # Capability evidence snapshot
 
-Snapshot: 2026-11-06 UTC. Repository state: `main` at `b58e64cbdebbf14749015c848ea099fc0a7ad26f`, 78 commits ahead of audit commit `2c0fbd37954f3f8f03f64c43b8882ae1079b4b29`.
+Snapshot: 2026-11-06 UTC. Repository state: `main` at `25450f026abfe6a843355a2babab0902d591e2be`, 82 commits ahead of audit commit `2c0fbd37954f3f8f03f64c43b8882ae1079b4b29` (verified by GitHub compare against `main`).
 
 This records the highest evidence level actually demonstrated for each capability, not whether its full acceptance criteria are complete. Levels follow [`upgrades-ultra-version/acceptance.md`](../../upgrades-ultra-version/acceptance.md): L0 source/specification, L1 code/contracts/tests, L2 prepared engine and connected adapter with CPU integration, L3 target-GPU execution, L4 held-out reproduction and baselines. Partial evidence is identified explicitly. A green test with a fake collaborator does not establish L2.
 
@@ -52,7 +52,7 @@ This records the highest evidence level actually demonstrated for each capabilit
 - The Dockerfile entrypoint is `/usr/bin/tini -- /start.sh`; `start.sh` proceeds to `comfyctl supervise`. The launch payload and container startup chain have CPU regression coverage and image smoke coverage. The historical W26 finding records a manual start in that campaign; no new Vast instance was launched to verify hosted behavior in this run.
 - PR #133 (`fcf14d1`) aligns the baked Remotion packages with engine lock version `4.0.541`; the merged manifest declares both `remotion` and `@remotion/cli` at that version.
 - PR #134 (`00ae327`) validates Atlas camera constraints against the exact requested view. PR #136 (`5850191`) introduced this evidence ledger.
-- The current main image workflow for commit `b58e64cbdebbf14749015c848ea099fc0a7ad26f` is run [42173994090](https://github.com/tomas-estrada/comfyuipod/actions/runs/42173994090), queued at snapshot time. No final main image digest is recorded until that workflow succeeds.
+- Main is verified at `25450f026abfe6a843355a2babab0902d591e2be` (82 commits ahead of the audit). The connected workflow lookup returned no PR-triggered run or combined status for that main SHA, so a current-main image result and OCI digest are not established here. PR #177's prior head `601ea0f85a80ab91ee9df70322529f2b412196e5` passed workflow run [42174104222](https://github.com/tomas-estrada/comfyuipod/actions/runs/42174104222), including candidate image build, full-stack, Atlas, and Studio-profile smoke tests. Its Buildx cache artifact digest is not an OCI image digest.
 - Historical PR candidate digests above are smoke-test artifacts and are not the published main image digest.
 - PR #123 closes the concurrent approval/idempotency slice but explicitly leaves recovery of an orphaned `executing` checkpoint after process restart as an A05 durability gap.
 - No paid GPU or API validation was performed for this snapshot. GPU performance/quality claims remain pending separate authorization.
