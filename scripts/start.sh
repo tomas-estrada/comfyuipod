@@ -125,15 +125,17 @@ fi
 #     (no el root overlay/tmpfs) y, si no llega, se avisa en claro; con
 #     COMFY_REQUIRE_PERSISTENT_VOLUME=1 se aborta para no perder datos en
 #     silencio. En Vast.ai /workspace ya es un montaje propio y no hay espera.
+#     Sondeo cada 1s (antes 5s) con el mismo presupuesto total por defecto
+#     (60s = TRIES*SLEEP_S) para detectar el montaje antes sin reducir la espera.
 # ------------------------------------------------------------------------------
-COMFY_VOLUME_WAIT_TRIES="${COMFY_VOLUME_WAIT_TRIES:-12}"
-COMFY_VOLUME_WAIT_SLEEP_S="${COMFY_VOLUME_WAIT_SLEEP_S:-5}"
+COMFY_VOLUME_WAIT_TRIES="${COMFY_VOLUME_WAIT_TRIES:-60}"
+COMFY_VOLUME_WAIT_SLEEP_S="${COMFY_VOLUME_WAIT_SLEEP_S:-1}"
 if ! [[ "${COMFY_VOLUME_WAIT_TRIES}" =~ ^[0-9]+$ ]]; then
-    echo "[WARN] COMFY_VOLUME_WAIT_TRIES='${COMFY_VOLUME_WAIT_TRIES}' no es un entero válido; usando 12."
-    COMFY_VOLUME_WAIT_TRIES="12"
+    echo "[WARN] COMFY_VOLUME_WAIT_TRIES='${COMFY_VOLUME_WAIT_TRIES}' no es un entero válido; usando 60."
+    COMFY_VOLUME_WAIT_TRIES="60"
 fi
 if ! [[ "${COMFY_VOLUME_WAIT_SLEEP_S}" =~ ^[0-9]+$ ]]; then
-    COMFY_VOLUME_WAIT_SLEEP_S="5"
+    COMFY_VOLUME_WAIT_SLEEP_S="1"
 fi
 
 # Punto de montaje (campo 2 de /proc/mounts) que contiene $1, eligiendo el
