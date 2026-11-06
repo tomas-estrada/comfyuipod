@@ -9,6 +9,7 @@ import pytest
 
 import comfy_studio.orchestration.service as service_module
 from comfy_studio.orchestration import (
+    Collaborators,
     ProductionCheckpointer,
     ProductionNotApprovedError,
     ProductionNotFoundError,
@@ -156,6 +157,43 @@ def test_compare_and_set_refuses_stale_plan_snapshot(tmp_path):
     assert persisted is not None
     assert persisted.phase == "awaiting_approval"
     assert persisted.idea == "brief revisado"
+
+
+def test_cancel_stops_an_in_flight_engine_layer(tmp_path):
+    """The cancel API signals the runner and the production ends as cancelled."""
+    started = threading.Event()
+    results = []
+    errors = []
+
+    class BlockingRunner:
+        def run_layer(self, engine, job, *, cost_cap=None, cancel_event=None):
+            started.set()
+            assert cancel_event is not None
+            assert cancel_event.wait(timeout=5)
+            return {"ok": False, "engine": engine, "error": "cancelled"}
+
+    svc = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "cancel.sqlite3"),
+        collaborators=Collaborators(runner=BlockingRunner()),
+    )
+    production_id = svc.plan_production("cancelar render activo")["production_id"]
+
+    def approve():
+        try:
+            results.append(svc.approve_plan(production_id))
+        except Exception as exc:  # pragma: no cover - surfaced below
+            errors.append(exc)
+
+    thread = threading.Thread(target=approve)
+    thread.start()
+    assert started.wait(timeout=5)
+    requested = svc.cancel_production(production_id)
+    assert requested["cancel_requested"] is True
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert not errors, errors
+    assert results[0]["phase"] == "cancelled"
 
 
 def test_get_plan_missing_raises(tmp_path):

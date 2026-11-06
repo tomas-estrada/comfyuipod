@@ -118,6 +118,10 @@ class ComfyUIExecutionError(ComfyUIError):
     """Error de validación de grafo (400 / node_errors) o fallo de ejecución en nodo."""
 
 
+class ComfyUICancelledError(ComfyUIExecutionError):
+    """El prompt fue cancelado explícitamente por su propietario."""
+
+
 class PromptSubmission(BaseModel):
     """Respuesta de POST /prompt."""
 
@@ -609,6 +613,7 @@ class ComfyUIClient:
                 ):
                     return
         redacted_msg = self._redact(error.message)
+        status = "cancelled" if isinstance(error, ComfyUICancelledError) else "error"
         error.message = redacted_msg
         error.args = (redacted_msg,)
         if error.prompt_id is None and eff_prompt_id is not None:
@@ -616,11 +621,12 @@ class ComfyUIClient:
         if job_id and self._store is not None:
             self._store.update_job(
                 job_id,
-                status="error",
+                status=status,
                 prompt_id=eff_prompt_id,
                 error=redacted_msg,
                 result={
                     "error": redacted_msg,
+                    "status": status,
                     "status_code": error.status_code,
                     "node_errors": self._redactor.redact_value(error.node_errors),
                 },
@@ -632,7 +638,7 @@ class ComfyUIClient:
                     "job_id": job_id,
                     "project_id": project_id,
                     "prompt_id": eff_prompt_id,
-                    "status": "error",
+                    "status": status,
                     "error": redacted_msg,
                 },
             )
@@ -1017,6 +1023,7 @@ class ComfyUIClient:
         job_id: str | None = None,
         project_id: str | None = None,
         finalize_job: bool = True,
+        cancel_event: Any | None = None,
     ) -> PromptResult:
         """Sondea /queue y /history/{prompt_id} hasta que el prompt complete o falle."""
         interval = poll_interval if poll_interval is not None else self.poll_interval
@@ -1027,6 +1034,13 @@ class ComfyUIClient:
 
         try:
             while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    await self.cancel_prompt(prompt_id)
+                    raise ComfyUICancelledError(
+                        f"El prompt {prompt_id} fue cancelado",
+                        prompt_id=prompt_id,
+                        details={"cancelled": True},
+                    )
                 tick += 1
                 history_ok = True
                 try:
@@ -1395,11 +1409,28 @@ class ComfyUIClient:
             overwrite=bool(body.get("overwrite", overwrite)),
         )
 
-    async def interrupt(self) -> dict[str, Any]:
-        """Envía POST /interrupt para detener la ejecución activa."""
-        resp = await self._request("POST", "/interrupt")
+    async def interrupt(self, prompt_id: str | None = None) -> dict[str, Any]:
+        """Envía POST /interrupt; prompt_id limita el corte al prompt propio."""
+        resp = await self._request(
+            "POST",
+            "/interrupt",
+            json_body={"prompt_id": prompt_id} if prompt_id else {},
+        )
         data = resp.json()
         return data if isinstance(data, dict) else {"interrupted": True}
+
+    async def cancel_prompt(self, prompt_id: str) -> dict[str, Any]:
+        """Cancela un prompt específico, pendiente o en ejecución.
+
+        La imagen fija ComfyUI en `config/nodes.lock`; esa revisión expone la
+        ruta de cancelación por job, que atomiza la decisión running/pending.
+        """
+        prompt_id = str(prompt_id).strip()
+        if not prompt_id or "/" in prompt_id or "\\" in prompt_id:
+            raise ValueError("prompt_id inválido para cancelación")
+        resp = await self._request("POST", f"/api/jobs/{prompt_id}/cancel", json_body={})
+        data = resp.json()
+        return data if isinstance(data, dict) else {"cancelled": True}
 
     async def free_memory(
         self,
@@ -1684,6 +1715,7 @@ class ComfyUIClient:
         poll_interval: float | None = None,
         timeout: float | None = None,
         persist_outputs: bool = True,
+        cancel_event: Any | None = None,
     ) -> PromptResult:
         """Ciclo de alto nivel: submit -> poll -> descarga /view -> registro en proyecto."""
         # Exclusión mutua del trabajo GPU pesado: un solo render a la vez. Se
@@ -1735,6 +1767,11 @@ class ComfyUIClient:
             )
             sample_task.add_done_callback(_discard_sampler_error)
             try:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ComfyUICancelledError(
+                        "El render fue cancelado antes de enviarse",
+                        details={"cancelled": True},
+                    )
                 submission = await self.submit_prompt(
                     prompt,
                     job_id=job_id,
@@ -1747,8 +1784,9 @@ class ComfyUIClient:
                     job_id=job_id,
                     project_id=project_id,
                     finalize_job=False,
+                    cancel_event=cancel_event,
                 )
-            except BaseException:
+            except BaseException as exc:
                 # El muestreador se para con el cerrojo todavía cogido: si no,
                 # la tarea quedaría girando en `while not stop.is_set()` para
                 # siempre. NO se espera a que acabe: un fallo o una cancelación
@@ -1757,6 +1795,18 @@ class ComfyUIClient:
                 # render con el muestreador colgado retenía el cerrojo 5 s.
                 stop_sampling.set()
                 sample_task.cancel()
+                if isinstance(exc, ComfyUICancelledError):
+                    # This cancellation was requested for our own prompt, so
+                    # it is safe to unload while the GPU gate is still held.
+                    # Mark before the idle check so this job does not block its
+                    # own cleanup; other queued work still prevents /free.
+                    self._fail_job(
+                        exc,
+                        job_id=job_id,
+                        project_id=project_id,
+                        prompt_id=exc.prompt_id,
+                    )
+                    await self._release_gpu_when_idle(exclude_job_id=job_id)
                 raise
             # Render correcto: se pide el paro y se espera al muestreador SIN
             # soltar el cerrojo. Su última muestra (ver

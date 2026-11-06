@@ -335,6 +335,13 @@ def create_stub_comfyui_app(state: ComfyUIStubState | None = None) -> FastAPI:
         stub_state.pending_prompts.clear()
         return {"interrupted": True}
 
+    @app.post("/api/jobs/{job_id}/cancel")
+    async def cancel_prompt(job_id: str) -> dict[str, Any]:
+        """Mirror the pinned ComfyUI per-job cancellation route."""
+        cancelled = stub_state.pending_prompts.pop(job_id, None) is not None
+        stub_state.interrupted = stub_state.interrupted or cancelled
+        return {"cancelled": cancelled}
+
     @app.post("/free")
     async def free_memory(payload: dict[str, Any] | None = None) -> dict[str, Any]:
         stub_state.freed_count += 1

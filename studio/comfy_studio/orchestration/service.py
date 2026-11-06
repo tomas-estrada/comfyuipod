@@ -22,6 +22,7 @@ se cablean en el server (como el resto). Los colaboradores reales se inyectan v�
 from __future__ import annotations
 
 import json
+from threading import Event
 from typing import Any
 
 from comfy_studio.engines.storyboard_gate import StoryboardGate, StoryboardState
@@ -90,6 +91,7 @@ class ProductionService:
         # `cancel_production`; este set es la vía que sí llega al lazo vía
         # `graph.should_cancel`.
         self._cancel_requested: set[str] = set()
+        self._cancel_events: dict[str, Event] = {}
         # Atlas georreferenciado: registra producciones que usaron el atlas
         # (lugar/vista/ref/cámara quedan en el catálogo, recuperables).
         self._atlas = atlas_service
@@ -293,6 +295,9 @@ class ProductionService:
             state.metadata["cancel_requested"] = True
             state.record("cancel_requested", stage=state.phase)
             self._cancel_requested.add(production_id)
+            active_event = self._cancel_events.get(production_id)
+            if active_event is not None:
+                active_event.set()
             event = "production_cancel_requested"
         self.checkpointer.save(state)
         self._publish(
@@ -389,9 +394,14 @@ class ProductionService:
             )
 
         # correr el lazo caro (ejecución + evaluación + replan + ensamblaje).
+        cancel_event = Event()
+        self._cancel_events[production_id] = cancel_event
+        if production_id in self._cancel_requested:
+            cancel_event.set()
         graph = build_production_graph(
             checkpointer=self.checkpointer,
             collaborators=self.collaborators,
+            cancel_event=cancel_event,
         )
         if self.broker is not None:
             # progreso en vivo por SSE: un evento por paso persistido del grafo.
@@ -400,7 +410,7 @@ class ProductionService:
             )
         # cancelación cooperativa en proceso: `cancel_production` durante la
         # ejecución sólo persiste el flag; el hook es lo que detiene el lazo.
-        graph.should_cancel = lambda: production_id in self._cancel_requested
+        graph.should_cancel = cancel_event.is_set
         self._publish(
             "production_approved",
             {
@@ -413,6 +423,7 @@ class ProductionService:
             final = graph.run(state)
         finally:
             self._cancel_requested.discard(production_id)
+            self._cancel_events.pop(production_id, None)
         self._finalize_artifact_status(final)
         registered = self._register_outputs_in_gallery(final)
         self.checkpointer.save(final)
