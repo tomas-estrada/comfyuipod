@@ -110,6 +110,8 @@ def test_verify_bundle_valid_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         res = AtlasOfflineEngine().verify("")
         assert res.ok, f"verify falló: {res.error}"
         assert res.simulated is False
+        assert "bundle_ok" in res.payload
+        assert "checks" in res.payload
     finally:
         monkeypatch.delenv("STUDIO_ATLAS_ROOT", raising=False)
 
@@ -122,6 +124,8 @@ def test_run_verify_bundle_op_valid(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         res = AtlasOfflineEngine().run(_spec(op="verify_bundle"))
         assert res.ok, f"run falló: {res.error}"
         assert res.simulated is False
+        assert "report" in res.payload
+        assert res.payload["report"].get("ok") is True
     finally:
         monkeypatch.delenv("STUDIO_ATLAS_ROOT", raising=False)
 

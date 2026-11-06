@@ -1,7 +1,7 @@
-﻿"""PR engines-health-states: los 7 niveles, probados en los 16 motores.
+﻿"""PR engines-health-states: los 7 niveles, probados en los 20 motores.
 
 Pines deterministas sobre un árbol sintético en tmp (sin GPU, sin red):
-un árbol completo deja a los 16 en `ready` (prueba que cada spec es
+un árbol completo deja a los 20 en `ready` (prueba que cada spec es
 satisfacible y documenta qué necesita cada motor); sin pesos el estado es
 `weights_required` y nunca `loaded`/validado; cada hueco reporta su prefijo.
 """
@@ -48,7 +48,7 @@ def _exe(path: Path) -> str:
 
 
 def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    """Árbol sintético completo: todo lo que los 16 specs piden existe."""
+    """Árbol sintético completo: todo lo que los 20 specs piden existe."""
     bin_dir = tmp_path / "bin"
     data = tmp_path / "data"
     app = tmp_path / "ComfyUI"
@@ -74,10 +74,12 @@ def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]
         "STUDIO_HEAVY_VIDEO_BASE_URL": "http://127.0.0.1:9",
         "STUDIO_HEAVY_VIDEO_MODEL": "fake-model",
         "STUDIO_HEAVY_VIDEO_KEY": "x" * 8,
+        "STUDIO_ATLAS_ROOT": str(tmp_path / "atlas"),
     }
     for name in ("blender", "node", "npx", "ns-train", "ffmpeg"):
         _exe(bin_dir / name)
     Path(env["STUDIO_REMOTION_PROJECT"]).mkdir(parents=True, exist_ok=True)
+    Path(env["STUDIO_ATLAS_ROOT"]).mkdir(parents=True, exist_ok=True)
     (data / "venvs" / "indextts").mkdir(parents=True, exist_ok=True)
     for wrel in ("models/whisper/faster-whisper-large-v3",
                  "models/rvc", "models/indextts", "models/musicgen",
@@ -90,7 +92,7 @@ def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]
     return env
 
 
-def test_arbol_completo_deja_los_16_ready(
+def test_arbol_completo_deja_todos_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     env = _full_env(tmp_path, monkeypatch)
