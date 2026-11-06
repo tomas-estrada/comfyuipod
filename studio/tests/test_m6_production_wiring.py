@@ -293,8 +293,9 @@ def test_studio_profile_defaults_to_real_backend_through_production_api(
 def test_studio_profile_fails_closed_without_verified_hardware(
     monkeypatch, studio_config, stub_comfyui_transport
 ) -> None:
-    import pytest
     from types import SimpleNamespace
+
+    import pytest
 
     from comfy_studio.app import create_app
 
