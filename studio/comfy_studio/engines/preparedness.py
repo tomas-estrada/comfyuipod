@@ -125,9 +125,17 @@ def note_engine_run(name: str, ok: bool) -> None:
 
 
 def _expand(value: str, env: Mapping[str, str]) -> str:
+    """Expande `{VAR}` con el entorno (más defaults de imagen) y `~`.
+
+    Cualquier `{VAR}` presente en el mapeo se sustituye; lo ausente queda
+    literal (y por tanto no existe en disco). Así lo documenta `EnginePrepSpec`.
+    """
     out = value
     for key, default in _DEFAULT_ENV.items():
         out = out.replace("{" + key + "}", env.get(key, default))
+    for key, val in env.items():
+        if key and isinstance(val, str):
+            out = out.replace("{" + key + "}", val)
     return os.path.expanduser(out)
 
 
