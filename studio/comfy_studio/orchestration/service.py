@@ -21,6 +21,7 @@ se cablean en el server (como el resto). Los colaboradores reales se inyectan v�
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from comfy_studio.engines.storyboard_gate import StoryboardGate, StoryboardState
@@ -307,6 +308,7 @@ class ProductionService:
     def approve_plan(self, production_id: str) -> dict[str, Any]:
         """El humano aprueba; corre el lazo caro y devuelve el resultado."""
         state = self._load(production_id)
+        expected_state_json = json.dumps(state.to_dict(), ensure_ascii=False)
         # una producción cancelada por el humano no se puede aprobar (fail-closed);
         # el resto de fases terminales (done/failed) mantienen el approve idempotente.
         if state.phase == "cancelled":
@@ -350,10 +352,41 @@ class ProductionService:
         state.storyboard_approved = True
         state.phase = "executing"
         state.record("approved")
-        # persistir la transición ANTES de correr el lazo: si no, un cancel que
-        # llegue antes del primer checkpoint del grafo leería `awaiting_approval`
-        # y tomaría la vía terminal mientras el lazo arranca igualmente (M7-AGT-001).
-        self.checkpointer.save(state)
+        # Compare-and-set ANTES del lazo: solo una petición puede reclamar el
+        # snapshot awaiting_approval. Los reintentos concurrentes se convierten
+        # en una respuesta idempotente de ejecución en curso.
+        if not self.checkpointer.claim_phase(
+            state,
+            expected_phase="awaiting_approval",
+            expected_state_json=expected_state_json,
+        ):
+            latest = self._load(production_id)
+            if latest.phase == "executing":
+                return {
+                    "production_id": production_id,
+                    "phase": latest.phase,
+                    "already_in_progress": True,
+                    "status": self._status_dict(latest),
+                }
+            if latest.phase in ("done", "simulated"):
+                return {
+                    "production_id": production_id,
+                    "phase": latest.phase,
+                    "final_output_path": latest.final_output_path,
+                    "output_asset_ids": latest.metadata.get("output_asset_ids") or [],
+                    "status": self._status_dict(latest),
+                }
+            if latest.phase == "cancelled":
+                raise ProductionNotApprovedError(
+                    "la producción fue cancelada; no se puede aprobar"
+                )
+            if latest.phase == "awaiting_approval":
+                raise ProductionNotApprovedError(
+                    "el plan cambió durante la aprobación; vuelve a intentarlo"
+                )
+            raise ProductionAlreadyTerminalError(
+                f"la producción ya está en fase {latest.phase}"
+            )
 
         # correr el lazo caro (ejecución + evaluación + replan + ensamblaje).
         graph = build_production_graph(

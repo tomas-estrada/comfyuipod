@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
+import comfy_studio.orchestration.service as service_module
 from comfy_studio.orchestration import (
     ProductionCheckpointer,
     ProductionNotApprovedError,
@@ -62,6 +65,72 @@ def test_approve_twice_is_idempotent_after_terminal_simulation(tmp_path):
     out2 = svc.approve_plan(pid)
     assert out2["phase"] == "simulated"
     assert out2["final_output_path"] is None
+
+
+def test_concurrent_approvals_claim_the_production_graph_once(tmp_path, monkeypatch):
+    """Concurrent retries see the in-flight approval instead of rerunning it."""
+    db = tmp_path / "concurrent-approval.sqlite3"
+    first = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    second = ProductionService(checkpointer=ProductionCheckpointer(db_path=db))
+    production_id = first.plan_production("luz de amanecer")["production_id"]
+
+    loaded = threading.Barrier(2)
+    original_load = ProductionCheckpointer.load
+    seen_initial_load = threading.local()
+
+    def synchronized_initial_load(checkpointer, requested_id):
+        state = original_load(checkpointer, requested_id)
+        if not getattr(seen_initial_load, "done", False):
+            seen_initial_load.done = True
+            loaded.wait(timeout=5)
+        return state
+
+    monkeypatch.setattr(ProductionCheckpointer, "load", synchronized_initial_load)
+    graph_started = threading.Event()
+    finish_graph = threading.Event()
+    runs = {"count": 0}
+
+    class BlockingGraph:
+        should_cancel = None
+        on_step = None
+
+        def run(self, state):
+            runs["count"] += 1
+            graph_started.set()
+            assert finish_graph.wait(timeout=5)
+            state.phase = "simulated"
+            state.metadata["simulated"] = True
+            state.record("simulated")
+            return state
+
+    monkeypatch.setattr(
+        service_module, "build_production_graph", lambda **_kwargs: BlockingGraph()
+    )
+    results = []
+    errors = []
+
+    def approve(service):
+        try:
+            results.append(service.approve_plan(production_id))
+        except Exception as exc:  # pragma: no cover - assertion reports details
+            errors.append(exc)
+
+    threads = [threading.Thread(target=approve, args=(svc,)) for svc in (first, second)]
+    for thread in threads:
+        thread.start()
+    assert graph_started.wait(timeout=5)
+    for _ in range(500):
+        if any(result.get("already_in_progress") for result in results):
+            break
+        threading.Event().wait(0.01)
+    assert any(result.get("already_in_progress") for result in results)
+    finish_graph.set()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert not errors, errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert runs["count"] == 1
 
 
 def test_get_plan_missing_raises(tmp_path):
