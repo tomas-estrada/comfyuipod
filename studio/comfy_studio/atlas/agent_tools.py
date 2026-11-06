@@ -80,6 +80,7 @@ class AtlasPrepareShotArgs(BaseModel):
     lat: float | None = None
     lon: float | None = None
     heading: float | None = None
+    fov: float | None = None
     prompt: str = Field(default="", description="prompt del usuario para este plano")
 
 
@@ -279,6 +280,7 @@ async def handle_atlas_prepare_shot(args: AtlasPrepareShotArgs, context: Any) ->
             lat=args.lat,
             lon=args.lon,
             heading_deg=args.heading,
+            fov_deg=args.fov,
             prompt=args.prompt,
             verify_file=True,
         )
