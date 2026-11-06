@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from comfy_studio import asset_acquire_cli
+from comfy_studio import asset_acquire_cli, model_assets
 from comfy_studio.asset_acquire import AcquiredEntry, AcquisitionReport
 
 
@@ -131,6 +131,29 @@ def test_find_need_rejects_manifest_path_traversal(tmp_path: Path, monkeypatch) 
         assert "escapes allowed root" in str(exc)
     else:
         raise AssertionError("manifest path traversal must fail closed")
+
+
+def test_resolve_dest_allows_shared_data_symlink_for_custom_node_assets(
+    tmp_path: Path,
+) -> None:
+    app = tmp_path / "app"
+    data = tmp_path / "data"
+    checkpoints = app / "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints"
+    shared_checkpoints = data / "models/latentsync_checkpoints"
+    checkpoints.parent.mkdir(parents=True)
+    shared_checkpoints.mkdir(parents=True)
+    checkpoints.symlink_to(shared_checkpoints, target_is_directory=True)
+
+    destination = "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/latentsync_unet.pt"
+    resolved = model_assets.resolve_dest(
+        destination,
+        {"COMFY_APP_DIR": str(app), "COMFY_DATA_DIR": str(data)},
+    )
+
+    # The lexical path stays stable for acquisition, but its resolved target is
+    # inside the authorized shared data volume rather than the app tree.
+    assert resolved == app / destination
+    assert resolved.resolve().is_relative_to(data.resolve())
 
 
 def test_find_need_rejects_symlinked_destination_parent_outside_data_root(
