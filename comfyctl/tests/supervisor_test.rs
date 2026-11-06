@@ -726,7 +726,8 @@ fn studio_crash_loop_cfg(tmp_dir: &Path, max_restarts: &str) -> (RuntimeConfig, 
         "STUDIO_DATA_DIR".to_string(),
         tmp_dir.join("data").to_string_lossy().to_string(),
     );
-    vars.insert("COMFY_MAX_RESTARTS".to_string(), max_restarts.to_string());
+    vars.insert("COMFY_MAX_RESTARTS".to_string(), "0".to_string());
+    vars.insert("STUDIO_MAX_RESTARTS".to_string(), max_restarts.to_string());
     vars.insert("COMFY_HEALTHY_UPTIME".to_string(), "600".to_string());
     vars.insert(
         "STUDIO_SERVER_SCRIPT".to_string(),
