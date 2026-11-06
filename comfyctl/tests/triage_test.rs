@@ -310,3 +310,34 @@ fn triage_recent_errors_are_newest_first_and_default_to_reciente_without_timesta
         "el ultimo debe ser el mas antiguo: {recent:?}"
     );
 }
+
+#[test]
+fn triage_recent_errors_cap_keeps_the_twenty_newest_and_drops_the_oldest() {
+    // `errors_recent` corta en 20: al recorrer el buffer con `.rev()` el corte
+    // se lleva los 20 mas recientes y se queda fuera a los mas antiguos, no al
+    // reves. Nunca se habia ejercitado el techo.
+    let engine = TriageEngine::load(Some(Path::new("../scripts/triage_patterns.json")));
+    let mut buffers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    buffers.insert(
+        "comfyui".to_string(),
+        (1..=25)
+            .map(|i| format!("2026-10-19 10:00:{i:02} ERROR: fallo e{i:02}"))
+            .collect(),
+    );
+
+    let (_, recent) = engine.evaluate(&buffers, false);
+
+    assert_eq!(recent.len(), 20, "el techo es de 20 errores: {recent:?}");
+    assert!(
+        recent.first().is_some_and(|e| e.line.contains("e25")),
+        "debe conservarse el error mas reciente (e25): {recent:?}"
+    );
+    assert!(
+        recent.last().is_some_and(|e| e.line.contains("e06")),
+        "el ultimo conservado debe ser e06, con e01..e05 fuera: {recent:?}"
+    );
+    assert!(
+        !recent.iter().any(|e| e.line.contains("e05")),
+        "los cinco mas antiguos deben caer al techo: {recent:?}"
+    );
+}
