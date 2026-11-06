@@ -185,7 +185,7 @@ class _FakeProvider:
     def __init__(self, items):
         self._items = items
 
-    def discover(self, query, *, output_kind, limit):
+    def discover(self, query, *, output_kind, limit, installed_nodes=None):
         return self._items
 
 
@@ -212,7 +212,9 @@ def test_discovery_merges_when_dynamic_on(monkeypatch: pytest.MonkeyPatch) -> No
             )
         ]
     )
-    sel = TemplateSelector(discovery_provider=prov)
+    # Use a high min_curated so the discoverer is consulted even when
+    # several curated templates match the intent.
+    sel = TemplateSelector(discovery_provider=prov, min_curated=100)
     cands = sel.select(ShotIntent(intent="texto a video"), top_k=50)
     ids = [c.template_id for c in cands]
     assert "community_t2v" in ids

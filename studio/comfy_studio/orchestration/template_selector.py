@@ -46,6 +46,7 @@ class DiscoveredTemplate:
     text: str  # resumen/descripción para el match léxico
     required_nodes: list[str] = field(default_factory=list)
     source: str = "community"
+    provenance: str = ""  # 'curated' | 'community:cache' | 'community:network' | ''
 
 
 class DiscoveryProvider(Protocol):
@@ -57,7 +58,14 @@ class DiscoveryProvider(Protocol):
     No lanza: devuelve [] si no puede buscar.
     """
 
-    def discover(self, query: str, *, output_kind: str, limit: int) -> list[DiscoveredTemplate]:
+    def discover(
+        self,
+        query: str,
+        *,
+        output_kind: str,
+        limit: int,
+        installed_nodes: set[str] | None = None,
+    ) -> list[DiscoveredTemplate]:
         ...
 
 
@@ -73,6 +81,7 @@ class TemplateCandidate:
     required_nodes: list[str] = field(default_factory=list)
     missing_nodes: list[str] = field(default_factory=list)
     reason: str = ""
+    provenance: str = ""  # 'curated' | 'community:cache' | 'community:network' | ''
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -84,6 +93,7 @@ class TemplateCandidate:
             "required_nodes": list(self.required_nodes),
             "missing_nodes": list(self.missing_nodes),
             "reason": self.reason,
+            "provenance": self.provenance,
         }
 
 
@@ -183,9 +193,21 @@ class TemplateSelector:
         registry: TemplateRegistry | None = None,
         *,
         discovery_provider: DiscoveryProvider | None = None,
+        min_curated: int = 3,
     ) -> None:
+        """Inicializar el selector.
+
+        Args:
+            registry: Registro de plantillas curadas. Si es None, se usa el
+                registro por defecto.
+            discovery_provider: Proveedor de descubrimiento dinámico (fuente
+                comunitaria). Si es None, no se consulta la comunidad.
+            min_curated: Número mínimo de resultados curados viables por debajo
+                del cual se consulta el índice comunitario. Por defecto 3.
+        """
         self._registry = registry or get_default_registry()
         self._discovery = discovery_provider
+        self.min_curated = min_curated
 
     # -- paso 1+2+3: buscar, cruzar, rankear --------------------------------
 
@@ -230,16 +252,29 @@ class TemplateSelector:
                     required_nodes=required,
                     missing_nodes=missing,
                     reason=reason,
+                    provenance="curated",
                 )
             )
 
-        # Capa (b): descubrimiento dinámico. Solo con STUDIO_DYNAMIC=1 y un proveedor
-        # inyectado; las plantillas comunitarias pasan por el MISMO cruce de capacidades
-        # que las curadas (nada entra sin verificar nodos). Nunca rompe la búsqueda local.
-        if self.discovery_enabled() and self._discovery is not None:
+        # Count viable curated results BEFORE consulting the discoverer.
+        viable_curated_count = sum(1 for c in candidates if c.viable)
+
+        # Capa (b): descubrimiento dinámico. Solo con STUDIO_DYNAMIC=1 y un
+        # proveedor inyectado, y SOLO cuando los resultados curados viables
+        # son insuficientes. Las plantillas comunitarias pasan por el MISMO
+        # cruce de capacidades que las curadas (nada entra sin verificar nodos).
+        # Nunca rompe la búsqueda local.
+        if (
+            viable_curated_count < self.min_curated
+            and self.discovery_enabled()
+            and self._discovery is not None
+        ):
             try:
                 found = self._discovery.discover(
-                    intent.prompt_text(), output_kind=intent.output_kind, limit=top_k
+                    intent.prompt_text(),
+                    output_kind=intent.output_kind,
+                    limit=top_k,
+                    installed_nodes=available_nodes,
                 )
             except Exception:
                 found = []
@@ -261,13 +296,15 @@ class TemplateSelector:
                     if available_nodes is not None
                     else []
                 )
+                weights_ok_community = True  # community packs have no weight flag
+                viable_community = weights_ok_community and not dmissing
                 candidates.append(
                     TemplateCandidate(
                         template_id=dt.template_id,
                         name=dt.name,
                         category=dt.category or dt.source,
                         score=dscore,
-                        viable=not dmissing,
+                        viable=viable_community,
                         required_nodes=list(dt.required_nodes),
                         missing_nodes=dmissing,
                         reason=(
@@ -275,12 +312,18 @@ class TemplateSelector:
                             if not dmissing
                             else f"faltan nodos: {', '.join(dmissing)}"
                         ),
+                        provenance=dt.provenance or "community",
                     )
                 )
 
-        # Viables primero, luego por score; los no viables al final (el agente puede
-        # decidir instalar el submotor que falta si STUDIO_DYNAMIC lo permite).
-        candidates.sort(key=lambda c: (c.viable, c.score), reverse=True)
+        # Viables primero, luego por score; en empate, curated gana a community.
+        # Los no viables al final (el agente puede decidir instalar el submotor
+        # que falta si STUDIO_DYNAMIC lo permite).
+        def _sort_key(c: TemplateCandidate) -> tuple:
+            provenance_rank = 1 if c.provenance == "curated" else 0
+            return (c.viable, c.score, provenance_rank)
+
+        candidates.sort(key=_sort_key, reverse=True)
         return candidates[:top_k]
 
     def best(
