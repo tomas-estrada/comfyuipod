@@ -502,7 +502,15 @@ class EngineAssembler:
         if not output:
             payload = result.get("payload") or {}
             output = payload.get("output") or payload.get("output_path")
-        return {"ok": True, "output_path": output, "clips": len(clips)}
+        # T3: el estado real/simulado viaja con el exito. Sin esto, un reel del
+        # stub del editor (o de un backend sin decidir) era un `ok:True`
+        # indistinguible de un render real para el grafo.
+        return {
+            "ok": True,
+            "output_path": output,
+            "clips": len(clips),
+            "simulated": bool(result.get("simulated", False)),
+        }
 
 
 class _LeasedQaEngine:
