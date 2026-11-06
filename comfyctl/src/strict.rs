@@ -89,14 +89,12 @@ impl SystemSnapshot {
     pub fn collect_live(cfg: &RuntimeConfig) -> Self {
         let (gpu_query_ok, gpu_name, driver_version, vram_total_mb) = probe_nvidia_smi();
         let (ram_probe_ok, ram_total_mb) = probe_mem_total_mb();
-        let disk_path = if cfg.comfy_data_dir.exists() {
-            cfg.comfy_data_dir.as_path()
-        } else if Path::new("/workspace").exists() {
-            Path::new("/workspace")
-        } else {
-            Path::new("/")
-        };
-        let disk_free_gb = sys::disk_stats_gb(disk_path).map_or(0.0, |(_, _, free)| free);
+        // S5 mide el filesystem que alojará `COMFY_DATA_DIR`: si el directorio aún
+        // no existe (primer arranque), se sube hasta su primer ancestro real en lugar
+        // de caer en `/workspace` o `/`, que pueden ser otro filesystem.
+        let disk_path = sys::first_existing_ancestor(&cfg.comfy_data_dir);
+        // Fail-closed: si `statvfs` falla, 0 GB libres => S5 fatal.
+        let disk_free_gb = sys::disk_stats_gb(&disk_path).map_or(0.0, |(_, _, free)| free);
         let workspace_writable = probe_dir_writable(&cfg.comfy_data_dir);
         let (nginx_config_ok, nginx_detail) = probe_nginx_t();
         let (htpasswd_ok, htpasswd_missing, htpasswd_detail) = probe_htpasswd(&cfg.htpasswd_path);
