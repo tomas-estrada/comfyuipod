@@ -309,6 +309,7 @@ class AtlasService:
         self,
         place_id: str,
         *,
+        exact_view_id: str | None = None,
         lat: float | None = None,
         lon: float | None = None,
         heading_deg: float | None = None,
@@ -331,6 +332,16 @@ class AtlasService:
         if place is None:
             raise KeyError(f"lugar desconocido: {place_id}")
         views = self._usable_views(place_id)
+        if exact_view_id is not None:
+            requested_view = store.get_view(exact_view_id)
+            if requested_view is None or requested_view.place_id != place_id:
+                return {
+                    "status": "view_not_found",
+                    "place_id": place_id,
+                    "view_id": exact_view_id,
+                    "available_views": [self._view_dict(x, store) for x in views],
+                }
+            views = [view for view in views if view.view_id == exact_view_id]
         if not views:
             return {
                 "status": "no_views",
@@ -441,6 +452,7 @@ class AtlasService:
         lat: float | None = None,
         lon: float | None = None,
         heading_deg: float | None = None,
+        fov_deg: float | None = None,
         prompt: str = "",
         verify_file: bool = True,
         project_id: str | None = None,
@@ -498,14 +510,22 @@ class AtlasService:
                 })
         pid = resolved_place["place_id"]
         if view_id:
-            view = store.get_view(view_id)
-            if view is None or view.place_id != pid:
-                return {"status": "view_not_found", "view_id": view_id, "place_id": pid}
-            sel = self.select_view(pid, lat=lat, lon=lon, heading_deg=heading_deg)
-            chosen = view
+            sel = self.select_view(
+                pid,
+                exact_view_id=view_id,
+                lat=lat,
+                lon=lon,
+                heading_deg=heading_deg,
+                fov_deg=fov_deg,
+            )
+            if sel["status"] != "ok":
+                return {**sel, "place_id": pid}
+            chosen = store.get_view(sel["view"]["view_id"])
             limitations.extend(sel.get("limitations", []))
         else:
-            sel = self.select_view(pid, lat=lat, lon=lon, heading_deg=heading_deg)
+            sel = self.select_view(
+                pid, lat=lat, lon=lon, heading_deg=heading_deg, fov_deg=fov_deg
+            )
             if sel["status"] != "ok":
                 return {"status": sel["status"], "place_id": pid,
                         "limitation": sel.get("limitation"),

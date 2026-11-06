@@ -86,6 +86,7 @@ def cmd_prepare_shot(args: argparse.Namespace) -> int:
             lat=args.lat,
             lon=args.lon,
             heading_deg=args.heading,
+            fov_deg=args.fov,
             prompt=args.prompt or "",
             verify_file=not args.no_verify,
         )
@@ -224,6 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lat", type=float)
     p.add_argument("--lon", type=float)
     p.add_argument("--heading", type=float, dest="heading")
+    p.add_argument("--fov", type=float)
     p.add_argument("--prompt", default="")
     p.add_argument("--no-verify", action="store_true")
     p.set_defaults(func=cmd_prepare_shot)
