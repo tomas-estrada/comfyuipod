@@ -31,7 +31,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -148,6 +149,54 @@ class GpuLease:
         self._lock_dir.mkdir(parents=True, exist_ok=True)
         self._lock_file = self._lock_dir / "heavy.lock"
         self._token_file = self._lock_dir / "token.seq"
+        self._coordination_file = self._lock_dir / "coordination.lock"
+
+    @contextmanager
+    def _coordinate(self) -> Iterator[None]:
+        """Serialize lease inspection, stale recovery, acquisition, and release.
+
+        `O_EXCL` alone serializes creation, but not stale-lock removal: two
+        processes could both read a dead owner and the second unlink the first
+        process's newly acquired lock. An OS advisory lock closes that gap and
+        is released automatically if its owner crashes.
+        """
+        fd = os.open(
+            self._coordination_file,
+            os.O_CREAT | os.O_RDWR,
+            0o600,
+        )
+        locked = False
+        try:
+            if os.name == "nt":
+                import msvcrt  # noqa: PLC0415
+
+                if os.fstat(fd).st_size == 0:
+                    os.write(fd, b"\0")
+                os.lseek(fd, 0, os.SEEK_SET)
+                # LK_LOCK waits/retries for the byte-range lock and is released
+                # by the OS if this process exits unexpectedly.
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                locked = True
+            else:
+                import fcntl  # noqa: PLC0415
+
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                locked = True
+            yield
+        finally:
+            try:
+                if locked:
+                    if os.name == "nt":
+                        import msvcrt  # noqa: PLC0415
+
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl  # noqa: PLC0415
+
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
     # -- introspección ----------------------------------------------------
 
@@ -157,7 +206,7 @@ class GpuLease:
             return None
         try:
             data = json.loads(self._lock_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, KeyError, TypeError):
             return None
         return LeaseGrant(
             owner=data["owner"],
@@ -186,9 +235,12 @@ class GpuLease:
         current = 0
         if self._token_file.exists():
             try:
-                current = int(self._token_file.read_text(encoding="utf-8").strip() or "0")
-            except (OSError, ValueError):
-                current = 0
+                raw = self._token_file.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise LeaseError("no se pudo leer la secuencia de fencing") from exc
+            if not raw or not raw.isascii() or not raw.isdigit():
+                raise LeaseError("secuencia de fencing ilegible; recuperación manual requerida")
+            current = int(raw)
         nxt = current + 1
         # tmp único por proceso: aunque hoy solo el dueño del lock llama aquí,
         # un nombre por-PID evita que dos escrituras colisionen en el replace.
@@ -230,49 +282,57 @@ class GpuLease:
             # Stage CPU: no compite por la GPU. No se crea lock ni se carga CUDA.
             return None
 
-        existing = self.current()
-        if existing is not None:
-            if not self._is_recoverable(existing):
-                raise LeaseUnavailable(
-                    f"GPU tomada por owner={existing.owner} pid={existing.pid} (vivo)"
+        with self._coordinate():
+            existing = self.current()
+            if existing is not None:
+                if not self._is_recoverable(existing):
+                    raise LeaseUnavailable(
+                        f"GPU tomada por owner={existing.owner} pid={existing.pid} (vivo)"
+                    )
+                # Owner muerto: recovery y creación del sucesor ocurren en la
+                # misma sección crítica; otro proceso no puede borrar el nuevo.
+                self._lock_file.unlink(missing_ok=True)
+            elif self._lock_file.exists():
+                # Un proceso muerto entre O_EXCL y la escritura deja un archivo
+                # vacío. Bajo el coordinador ya no hay escritor vivo en vuelo.
+                if self._lock_file.stat().st_size == 0:
+                    self._lock_file.unlink(missing_ok=True)
+                else:
+                    raise LeaseUnavailable(
+                        "payload del lease ilegible; recuperación manual requerida"
+                    )
+
+            # La sección crítica coordina además el token persistente. Se
+            # conserva O_EXCL como protección frente a procesos de versiones
+            # antiguas que no conozcan coordination.lock.
+            try:
+                fd = os.open(
+                    str(self._lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY
                 )
-            # Owner muerto: se recupera el lock para reasignarlo.
-            self._lock_file.unlink(missing_ok=True)
+            except FileExistsError:
+                raise LeaseUnavailable("GPU tomada en carrera por otro proceso") from None
 
-        # EL LOCK SE GANA PRIMERO. `O_EXCL` es el único punto de serialización
-        # entre procesos: exactamente uno crea el fichero. Generar el token o
-        # escribir el payload ANTES del lock abría una carrera (dos procesos
-        # avanzaban en paralelo y `_next_token` chocaba con FileNotFoundError al
-        # renombrar su tmp). Por eso: primero `O_EXCL`; solo el ganador sigue.
-        try:
-            fd = os.open(str(self._lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            raise LeaseUnavailable("GPU tomada en carrera por otro proceso") from None
-
-        # A partir de aquí este proceso es el ÚNICO dueño del lock: puede generar
-        # el token y escribir el payload sin competir con nadie.
-        try:
-            token = self._next_token()
-            grant = LeaseGrant(
-                owner=owner,
-                token=token,
-                pid=self._pid,
-                engine=engine,
-                vram_mb=vram_mb,
-                ram_mb=ram_mb,
-                acquired_at=self._now(),
-            )
-            payload = json.dumps(grant.to_public_dict(), ensure_ascii=False)
-            os.write(fd, payload.encode("utf-8"))
-            os.fsync(fd)
-        except BaseException:
-            # Si algo falla tras ganar el lock, no dejarlo tomado a medias.
-            os.close(fd)
-            self._lock_file.unlink(missing_ok=True)
-            raise
-        else:
-            os.close(fd)
-        return grant
+            try:
+                token = self._next_token()
+                grant = LeaseGrant(
+                    owner=owner,
+                    token=token,
+                    pid=self._pid,
+                    engine=engine,
+                    vram_mb=vram_mb,
+                    ram_mb=ram_mb,
+                    acquired_at=self._now(),
+                )
+                payload = json.dumps(grant.to_public_dict(), ensure_ascii=False)
+                os.write(fd, payload.encode("utf-8"))
+                os.fsync(fd)
+            except BaseException:
+                os.close(fd)
+                self._lock_file.unlink(missing_ok=True)
+                raise
+            else:
+                os.close(fd)
+            return grant
 
     def release(
         self,
@@ -285,46 +345,58 @@ class GpuLease:
         - fencing: si el lock actual no es de este token, lanza `FencingError`
           (un owner antiguo no libera el lease de uno nuevo).
         - unload: si se da, se ejecuta y su resultado se verifica; si devuelve
-          False o lanza, el resultado es `cleanup_failed` (el lock SÍ se libera
-          para no dejar la GPU bloqueada, pero se reporta el fallo).
+          False o lanza, se devuelve `cleanup_failed` y se conserva el lock para
+          impedir que otro motor use una GPU cuyo estado no se conoce.
         """
         if grant is None:
             return {"released": False, "reason": "no_grant"}
-        existing = self.current()
-        if existing is None:
-            return {"released": True, "reason": "already_free", "cleanup_failed": False}
-        if existing.token != grant.token:
-            raise FencingError(
-                f"fencing: lock actual token={existing.token} != grant token={grant.token}"
-            )
+        with self._coordinate():
+            existing = self.current()
+            if existing is None:
+                return {"released": True, "reason": "already_free", "cleanup_failed": False}
+            if existing.token != grant.token:
+                raise FencingError(
+                    f"fencing: lock actual token={existing.token} != grant token={grant.token}"
+                )
 
-        cleanup_failed = False
-        if unload is not None:
-            try:
-                ok = unload()
-                cleanup_failed = not bool(ok)
-            except Exception:  # noqa: BLE001 - un unload roto no debe dejar el lock tomado
-                cleanup_failed = True
+            cleanup_failed = False
+            if unload is not None:
+                try:
+                    ok = unload()
+                    cleanup_failed = not bool(ok)
+                except Exception:  # noqa: BLE001 - un unload roto no debe dejar el lock tomado
+                    cleanup_failed = True
 
-        # El lock se libera SIEMPRE (incluso si el unload falló): dejar la GPU
-        # bloqueada por un unload roto es peor. Se reporta cleanup_failed.
-        self._lock_file.unlink(missing_ok=True)
-        return {
-            "released": True,
-            "reason": "released",
-            "cleanup_failed": cleanup_failed,
-            "token": grant.token,
-        }
+            if cleanup_failed:
+                # No admitir otro motor si no se confirmó el unload: el proceso
+                # puede seguir vivo con modelos asignados a VRAM. El mismo owner
+                # puede reintentar release; si muere, recovery puede continuar.
+                return {
+                    "released": False,
+                    "reason": "cleanup_failed",
+                    "cleanup_failed": True,
+                    "token": grant.token,
+                }
+
+            # Exclusión hasta finalizar unload y retirar el token actual.
+            self._lock_file.unlink(missing_ok=True)
+            return {
+                "released": True,
+                "reason": "released",
+                "cleanup_failed": cleanup_failed,
+                "token": grant.token,
+            }
 
     def force_break(self) -> bool:
         """Recupera un lock SOLO si su owner murió. No rompe uno vivo."""
-        existing = self.current()
-        if existing is None:
-            return False
-        if _pid_alive(existing.pid):
-            return False
-        self._lock_file.unlink(missing_ok=True)
-        return True
+        with self._coordinate():
+            existing = self.current()
+            if existing is None:
+                return False
+            if _pid_alive(existing.pid):
+                return False
+            self._lock_file.unlink(missing_ok=True)
+            return True
 
 
 def lock_dir_for(env: dict[str, str] | None = None) -> Path:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -45,7 +45,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS places_rtree USING rtree(
     id, min_lat, max_lat, min_lon, max_lon
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS places_fts USING fts5(
-    name, aliases, municipality
+    name, aliases, municipality, tokenize='unicode61 remove_diacritics 2'
 );
 
 CREATE TABLE IF NOT EXISTS atlas_refs (
@@ -95,7 +95,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS refs_rtree USING rtree(
     id, min_lat, max_lat, min_lon, max_lon
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS refs_fts USING fts5(
-    title, author, description
+    title, author, description, tokenize='unicode61 remove_diacritics 2'
 );
 
 CREATE TABLE IF NOT EXISTS views (
@@ -225,6 +225,31 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         if "content_class" not in cols:
             conn.execute(
                 "ALTER TABLE atlas_refs ADD COLUMN content_class TEXT NOT NULL DEFAULT 'pendiente'"
+            )
+        # migración v3 -> v4: FTS5 insensible a acentos (unicode61 remove_diacritics 2)
+        # + búsqueda por prefijo. Las tablas virtuales existentes conservan el
+        # tokenizador viejo, así que se reconstruyen desde las tablas base.
+        if int(row[0]) < 4:
+            conn.execute("DROP TABLE IF EXISTS places_fts")
+            conn.execute(
+                "CREATE VIRTUAL TABLE places_fts USING fts5("
+                "name, aliases, municipality, "
+                "tokenize='unicode61 remove_diacritics 2')"
+            )
+            conn.execute(
+                "INSERT INTO places_fts(rowid, name, aliases, municipality) "
+                "SELECT id, name, aliases, municipality FROM places"
+            )
+            conn.execute("DROP TABLE IF EXISTS refs_fts")
+            conn.execute(
+                "CREATE VIRTUAL TABLE refs_fts USING fts5("
+                "title, author, description, "
+                "tokenize='unicode61 remove_diacritics 2')"
+            )
+            conn.execute(
+                "INSERT INTO refs_fts(rowid, title, author, description) "
+                "SELECT id, title, COALESCE(author,''), COALESCE(description,'') "
+                "FROM atlas_refs"
             )
         conn.execute(
             "UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)

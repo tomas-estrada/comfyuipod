@@ -283,6 +283,35 @@ def test_prepare_shot_explicito_y_auto(atlas_root: Path) -> None:
     assert any(lim["code"] == "using_active_selection" for lim in shot2["limitations"])
 
 
+def test_prepare_shot_validates_camera_against_requested_view(atlas_root: Path) -> None:
+    svc = AtlasService(atlas_root)
+    view_a = svc.store.get_view("view_ref_a")
+    view_b = svc.store.get_view("view_ref_b")
+    assert view_a is not None and view_b is not None
+    view_a.heading_deg = 0.0
+    view_a.fov_deg = 50.0
+    view_b.heading_deg = 180.0
+    view_b.fov_deg = 50.0
+    svc.store.upsert_view(view_a)
+    svc.store.upsert_view(view_b)
+
+    # Another view fits this camera, but the explicitly requested view does not.
+    selected = svc.select_view(
+        "plc_puente_4sur", heading_deg=180.0, fov_deg=50.0
+    )
+    assert selected["status"] == "ok"
+    assert selected["view"]["view_id"] == "view_ref_b"
+    prepared = svc.prepare_shot(
+        place_id="plc_puente_4sur",
+        view_id="view_ref_a",
+        heading_deg=180.0,
+        fov_deg=50.0,
+    )
+    assert prepared["status"] == "unsupported_camera"
+    assert prepared["view"]["view_id"] == "view_ref_a"
+    assert {item["code"] for item in prepared["limitations"]} >= {"heading_mismatch"}
+
+
 def test_prepare_shot_ambiguo_no_sustituye(atlas_root: Path) -> None:
     svc = AtlasService(atlas_root)
     out = svc.prepare_shot(place="Parque de Envigado")

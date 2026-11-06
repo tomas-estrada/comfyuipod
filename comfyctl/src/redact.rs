@@ -51,15 +51,24 @@ impl SecretRedactor {
             literals,
             rx_hf: Regex::new(r"hf_[A-Za-z0-9]{12,}").ok(),
             rx_sk: Regex::new(r"sk-[A-Za-z0-9._\-]{12,}").ok(),
+            // El separador admite la forma JSON con comillas
+            // (`"STUDIO_LLM_KEY": "..."`), no solo el `KEY=value` de entorno.
+            // Si el valor viene entre comillas se toma ENTERO hasta la de cierre
+            // (admite espacios y escapes `\"`); ese caso se re-emite entre
+            // comillas para no romper el JSON de /status/api. Sin comillas se
+            // conserva la corrida sin espacios de siempre.
             rx_studio_env: Regex::new(
-                r"(?i)((?:STUDIO_LLM_(?:FALLBACK_)?KEY|STUDIO_API_TOKEN|STUDIO_WEBHOOK_SECRET|VAST_API_KEY|COMFY_PASS|STUDIO_AUTH_PASS|HF_TOKEN)\s*[:=]\s*)(\S+)",
+                r#"(?i)((?:STUDIO_LLM_(?:FALLBACK_)?KEY|STUDIO_API_TOKEN|STUDIO_WEBHOOK_SECRET|VAST_API_KEY|COMFY_PASS|STUDIO_AUTH_PASS|HF_TOKEN)\s*"?\s*[:=]\s*)("((?:[^"\\]|\\.)*)"|\S+)"#,
             )
             .ok(),
             rx_bearer: Regex::new(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{8,}").ok(),
-            // `.*` voraz: redacta las credenciales hasta el ÚLTIMO `@` de la línea,
-            // de modo que una contraseña que contenga `/` o `@` también queda cubierta
-            // y la parte de host posterior al último `@` sobrevive.
-            rx_url_auth: Regex::new(r"(https?://[^/\s:@]+:)(.*)(@)").ok(),
+            // Voraz hasta el ÚLTIMO `@` SIN cruzar espacios: así una contraseña que
+            // contenga `/` o `@` queda cubierta y el host posterior al último `@`
+            // sobrevive. Excluir el espacio es lo que impide confundir los dos
+            // puntos de un PUERTO (`host:8443/...`) con los de `user:pass`: si tras
+            // el puerto hay un espacio antes del `@`, no hay credenciales que ocultar
+            // y la línea benigna se deja intacta en lugar de destruirse.
+            rx_url_auth: Regex::new(r"(https?://[^/\s:@]+:)([^\s]*)(@)").ok(),
         }
     }
 
@@ -108,7 +117,18 @@ impl SecretRedactor {
             out = rx.replace_all(&out, "[REDACTED]").into_owned();
         }
         if let Some(rx) = &self.rx_studio_env {
-            out = rx.replace_all(&out, "${1}[REDACTED]").into_owned();
+            // Rama entre comillas (grupo 3 participó): se re-emite el par de
+            // comillas para no romper el JSON de /status/api. Rama sin comillas:
+            // se emite el valor desnudo, como siempre.
+            out = rx
+                .replace_all(&out, |caps: &regex::Captures<'_>| {
+                    if caps.get(3).is_some() {
+                        format!("{}\"[REDACTED]\"", &caps[1])
+                    } else {
+                        format!("{}[REDACTED]", &caps[1])
+                    }
+                })
+                .into_owned();
         }
         if let Some(rx) = &self.rx_bearer {
             out = rx.replace_all(&out, "${1}[REDACTED]").into_owned();

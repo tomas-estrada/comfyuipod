@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -148,10 +149,21 @@ def probe_capabilities(
     pasa por `redactor` antes de salir.
     """
     redactor = redactor or SecretRedactor()
-    interp = interpreter or os.environ.get("STUDIO_ML_PYTHON_BIN") or "python3"
-    dd = Path(data_dir) if data_dir else Path(os.environ.get(_COMFY_DATA_DIR_ENV, ""))
+    # Intérprete por defecto: el del proceso actual (`sys.executable`), igual que
+    # `runner.run_worker`, para no depender de que exista un `python3` en PATH.
+    interp = (
+        interpreter or os.environ.get("STUDIO_ML_PYTHON_BIN") or sys.executable
+    )
+    raw_dd = data_dir if data_dir else os.environ.get(_COMFY_DATA_DIR_ENV, "")
+    dd: Path | None = Path(raw_dd) if str(raw_dd).strip() else None
 
     caps = MlCapabilities(interpreter_path=interp)
+    # Shape completo siempre: aunque el intérprete falte, el consumidor ve las
+    # 4 backends con `False` explícito en vez de dicts vacíos.
+    for backend in ("clip", "insightface", "asr", "diarize"):
+        caps.backends[backend] = False
+        caps.imports_ok[backend] = False
+        caps.weights_ok[backend] = False
 
     # 1. Intérprete ejecutable
     interp_bin = shutil.which(interp) if not os.path.isabs(interp) else interp
@@ -201,7 +213,9 @@ def run_worker_probe(
     Útil para validar el worker aislado (CI smoke, `--dry-run`).
     """
     redactor = redactor or SecretRedactor()
-    interp = interpreter or os.environ.get("STUDIO_ML_PYTHON_BIN") or "python3"
+    interp = (
+        interpreter or os.environ.get("STUDIO_ML_PYTHON_BIN") or sys.executable
+    )
     worker_path = str(Path(__file__).resolve().parent / WORKER_ENTRY)
     env = _build_probe_env()
 

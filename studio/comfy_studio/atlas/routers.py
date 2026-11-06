@@ -121,10 +121,9 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/studio/api/atlas/places/{place_id}/coverage")
     async def atlas_place_coverage(request: Request, place_id: str) -> dict[str, Any]:
         svc = _atlas(request)
-        cov = svc.store.get_coverage(place_id)
-        if cov is None:
-            raise HTTPException(status_code=404, detail="Lugar sin cobertura registrada")
-        return cov.to_dict()
+        if svc.store.get_place(place_id) is None:
+            raise HTTPException(status_code=404, detail="Lugar no encontrado")
+        return svc.coverage_for(place_id).to_dict()
 
     @app.get("/studio/api/atlas/places/{place_id}/views")
     async def atlas_place_views(request: Request, place_id: str) -> dict[str, Any]:

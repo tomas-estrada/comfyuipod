@@ -111,13 +111,16 @@ def apply_hybrid_refinements(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Refina los cortes con señal acústica real y límites de escena (M2, `M3-IDEA-033`).
 
-    - Recorta cada corte a la intersección con un tramo de habla medido (si hay señal).
+    - Recorta cada corte a la intersección con un tramo de habla medido (si hay señal),
+      paso que nunca alarga el corte.
     - Alinea el borde de cada corte con un cambio de escena cuando está a menos de
-      `HYBRID_SCENE_SNAP_SEC`.
+      `HYBRID_SCENE_SNAP_SEC`. A diferencia del paso acústico, este puede desplazar el
+      borde hacia afuera y alargar algo el corte ya refinado.
     - Descarta cortes que quedan por debajo de 0.2 s tras el ajuste.
 
     Devuelve los cortes refinados y un informe de qué cambió, para que el EDL documente
-    por qué difiere de la propuesta puramente textual.
+    por qué difiere de la propuesta puramente textual. Si ningún corte sobrevive, se
+    devuelven los cortes originales intactos y el informe no incluye la clave `refined`.
     """
     spans = list(acoustic.get("spans") or []) if acoustic.get("available") else []
     boundaries = sorted(float(b) for b in (scene_boundaries or []))
