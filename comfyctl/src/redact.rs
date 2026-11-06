@@ -12,6 +12,7 @@ pub struct SecretRedactor {
     rx_bearer: Option<Regex>,
     rx_authorization: Option<Regex>,
     rx_url_auth: Option<Regex>,
+    rx_url_auth_schemeless: Option<Regex>,
     rx_aws_key_id: Option<Regex>,
     rx_cloud_api_key: Option<Regex>,
     rx_vcs_token: Option<Regex>,
@@ -82,8 +83,23 @@ impl SecretRedactor {
             // sobrevive. Excluir el espacio es lo que impide confundir los dos
             // puntos de un PUERTO (`host:8443/...`) con los de `user:pass`: si tras
             // el puerto hay un espacio antes del `@`, no hay credenciales que ocultar
-            // y la línea benigna se deja intacta en lugar de destruirse.
-            rx_url_auth: Regex::new(r"(https?://[^/\s:@]+:)([^\s]*)(@)").ok(),
+            // y la línea benigna se deja intacta en lugar de destruirse. El esquema
+            // es genérico (`ftp://`, `postgres://`, `mongodb://`...): anclarse a
+            // `https?` dejaba la clave en claro en todo log que no usara http.
+            rx_url_auth: Regex::new(r"([A-Za-z][A-Za-z0-9+.-]*://[^/\s:@]+:)([^\s]*)(@)").ok(),
+            // Credenciales SIN esquema (`user:pass@host`, la forma de proxies y
+            // `.netrc`). El regex no soporta look-around, así que el delimitador
+            // de inicio de token viaja en la propia coincidencia (grupo 1):
+            // exigir que el usuario empiece tras espacio/comilla/`=`/inicio es lo
+            // que impide confundir un PUERTO (`host:8443/...`) con un par
+            // usuario:clave, y el password no puede cruzar `/ ? # & =`
+            // (estructura de URL) por la misma razón. Los esquemas sin `//` que
+            // acaban en `usuario@dominio` (`mailto:`, `sip:`...) se descartan en
+            // el reemplazo: sin look-ahead el patrón no puede distinguirlos.
+            rx_url_auth_schemeless: Regex::new(
+                r#"(^|[\s"'(\[\{=,])([A-Za-z0-9._~%+-]+):([^\s/@?#&=]+)@"#,
+            )
+            .ok(),
             // Claves de nube y de proveedores por su FORMA: no hacen falta literales
             // (el proceso que las emite puede no ser el que las configuró) y los
             // prefijos son lo bastante específicos para no comer texto benigno.
@@ -160,6 +176,31 @@ impl SecretRedactor {
         }
         if let Some(rx) = &self.rx_url_auth {
             out = rx.replace_all(&out, "${1}[REDACTED]${3}").into_owned();
+        }
+        if let Some(rx) = &self.rx_url_auth_schemeless {
+            out = rx
+                .replace_all(&out, |caps: &regex::Captures<'_>| {
+                    // Esquemas sin `//` que terminan en `usuario@dominio` no son
+                    // credenciales: se re-emite la coincidencia tal cual (grupo 1
+                    // incluido, aunque sea el inicio de línea vacío).
+                    let user = &caps[2];
+                    if matches!(
+                        user,
+                        "mailto"
+                            | "tel"
+                            | "sip"
+                            | "sips"
+                            | "xmpp"
+                            | "callto"
+                            | "ldap"
+                            | "news"
+                            | "urn"
+                    ) {
+                        return format!("{}{}:{}@", &caps[1], &caps[2], &caps[3]);
+                    }
+                    format!("{}{}:[REDACTED]@", &caps[1], &caps[2])
+                })
+                .into_owned();
         }
         // Formas de clave sin esquema: se sustituyen enteras (no hay un separador
         // nombre=valor que conservar).
