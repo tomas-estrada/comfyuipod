@@ -309,6 +309,7 @@ fn sleep_interruptible(seconds: u64) -> bool {
 fn sleep_interruptible_with_studio(
     cfg: &RuntimeConfig,
     studio_child: &mut Option<Child>,
+    studio_watchdog: &mut StudioWatchdog,
     seconds: u64,
 ) -> bool {
     let ticks = seconds.saturating_mul(5);
@@ -316,7 +317,7 @@ fn sleep_interruptible_with_studio(
         if sys::is_shutdown_requested() {
             return true;
         }
-        supervise_studio_server_tick(cfg, studio_child);
+        supervise_studio_server_tick(cfg, studio_child, studio_watchdog);
         thread::sleep(Duration::from_millis(200));
     }
     sys::is_shutdown_requested()
@@ -528,42 +529,159 @@ pub fn spawn_studio_server_if_enabled(cfg: &RuntimeConfig) -> Option<Child> {
     }
 }
 
+/// Retardo mínimo entre dos relanzamientos de `studio-server`.
+///
+/// El lazo de supervisión llama al tick cada 200 ms. Sin un retardo mínimo, un
+/// `studio-server` que muere al arrancar (dependencia rota, puerto ocupado) se
+/// relanzaba **en cada tick**: ~5 procesos nuevos por segundo, 5 líneas de WARN por
+/// segundo en `supervisor.log` y una máquina quemando CPU en un bucle que nunca
+/// puede prosperar. `ComfyUI` ya tiene su `COMFY_RESTART_DELAY`; `studio-server` no
+/// tenía nada equivalente.
+pub const STUDIO_MIN_RESPAWN_DELAY: Duration = Duration::from_secs(1);
+
+/// Política de relanzamiento de `studio-server`, simétrica a la de `ComfyUI` (`O-02`):
+/// mismo presupuesto de reinicios, mismo uptime sano que lo resetea, más un retardo
+/// mínimo entre intentos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StudioRestartPolicy {
+    /// Reinicios consecutivos fallidos antes de declarar `exhausted`.
+    pub max_consecutive_restarts: u32,
+    /// Uptime continuo que resetea el contador de fallos.
+    pub healthy_uptime: Duration,
+    /// Retardo mínimo entre dos relanzamientos.
+    pub min_respawn_delay: Duration,
+}
+
+impl StudioRestartPolicy {
+    /// Deriva la política de la configuración: reutiliza `COMFY_MAX_RESTARTS` y
+    /// `COMFY_HEALTHY_UPTIME` para que un solo concepto gobierne ambos procesos.
+    pub fn from_config(cfg: &RuntimeConfig) -> Self {
+        Self {
+            max_consecutive_restarts: cfg.comfy_max_restarts,
+            healthy_uptime: Duration::from_secs(cfg.comfy_healthy_uptime_s),
+            min_respawn_delay: STUDIO_MIN_RESPAWN_DELAY,
+        }
+    }
+}
+
+/// Estado del watchdog de `studio-server`: cuántos fallos consecutivos lleva, cuándo
+/// fue el último relanzamiento y desde cuándo lleva vivo el hijo actual.
+#[derive(Debug, Clone)]
+pub struct StudioWatchdog {
+    policy: StudioRestartPolicy,
+    consecutive_failures: u32,
+    last_spawn: Option<Instant>,
+    alive_since: Option<Instant>,
+    exhausted: bool,
+}
+
+impl StudioWatchdog {
+    pub fn new(policy: StudioRestartPolicy) -> Self {
+        Self {
+            policy,
+            consecutive_failures: 0,
+            last_spawn: None,
+            alive_since: None,
+            exhausted: false,
+        }
+    }
+
+    /// `true` si el presupuesto de reinicios está agotado (ya no se relanza más).
+    pub fn is_exhausted(&self) -> bool {
+        self.exhausted
+    }
+
+    /// Fallos consecutivos observados hasta ahora.
+    pub fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
+
+    fn on_failure(&mut self) {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        self.alive_since = None;
+    }
+
+    /// Observa el hijo actual y, si procede, lo relanza. Devuelve `true` si tras el
+    /// tick hay un `studio-server` vivo (relanzado o que ya lo estaba).
+    pub fn tick(&mut self, cfg: &RuntimeConfig, studio_child_opt: &mut Option<Child>) -> bool {
+        if !should_start_studio_server(cfg) || sys::is_shutdown_requested() {
+            return false;
+        }
+
+        if let Some(ref mut sc) = studio_child_opt {
+            match sc.try_wait() {
+                Ok(None) => {
+                    // Vive: acumular uptime y resetear el presupuesto si ya es estable.
+                    let since = self.alive_since.get_or_insert_with(Instant::now);
+                    if self.consecutive_failures > 0
+                        && since.elapsed() >= self.policy.healthy_uptime
+                    {
+                        self.consecutive_failures = 0;
+                        log_sup(&format!(
+                            "studio-server llevaba {}s estable; presupuesto de reinicios reseteado.",
+                            self.policy.healthy_uptime.as_secs()
+                        ));
+                    }
+                    return true;
+                }
+                Ok(Some(status)) => {
+                    let old_pid = sc.id();
+                    let rc = extract_exit_code(status);
+                    log_sup(&format!(
+                        "WARN: studio-server (PID {old_pid}) terminó inesperadamente (rc={rc}). Reiniciando studio-server en 127.0.0.1:{}...",
+                        cfg.studio_server_port
+                    ));
+                    self.on_failure();
+                }
+                Err(e) => {
+                    log_sup(&format!(
+                        "WARN: Error en try_wait sobre studio-server: {e}. Reiniciando..."
+                    ));
+                    self.on_failure();
+                }
+            }
+        } else {
+            self.on_failure();
+        }
+
+        if self.exhausted {
+            return false;
+        }
+
+        // Retardo mínimo entre relanzamientos: un bucle de fallos se convierte en un
+        // reintento por segundo, no en cinco.
+        if let Some(last) = self.last_spawn {
+            if last.elapsed() < self.policy.min_respawn_delay {
+                return false;
+            }
+        }
+
+        if self.consecutive_failures > self.policy.max_consecutive_restarts {
+            self.exhausted = true;
+            log_sup(&format!(
+                "CRITICAL: studio-server agotó {} reinicios consecutivos fallidos; se deja de relanzar (ComfyUI sigue supervisado). Revisa /var/log/studio-server.log.",
+                self.policy.max_consecutive_restarts
+            ));
+            return false;
+        }
+
+        self.last_spawn = Some(Instant::now());
+        self.alive_since = None;
+        *studio_child_opt = spawn_studio_server_if_enabled(cfg);
+        studio_child_opt.is_some()
+    }
+}
+
 /// Supervisa de forma continua `studio-server` cuando `MODEL_PROFILE=studio`:
-/// si el proceso hijo ha terminado o aún no estaba activo, lo relanza inmediatamente.
-/// Devuelve `true` si se realizó un respawn exitoso en este tick.
+/// si el proceso hijo ha terminado o aún no estaba activo, lo relanza con retardo
+/// mínimo y dentro de un presupuesto de reinicios (`StudioWatchdog`).
+/// Devuelve `true` si tras el tick hay un `studio-server` vivo.
 pub fn supervise_studio_server_tick(
     cfg: &RuntimeConfig,
     studio_child_opt: &mut Option<Child>,
+    studio_watchdog: &mut StudioWatchdog,
 ) -> bool {
-    if !should_start_studio_server(cfg) || sys::is_shutdown_requested() {
-        return false;
-    }
-    let needs_respawn = match studio_child_opt {
-        Some(ref mut sc) => match sc.try_wait() {
-            Ok(Some(status)) => {
-                let old_pid = sc.id();
-                let rc = extract_exit_code(status);
-                log_sup(&format!(
-                    "WARN: studio-server (PID {old_pid}) terminó inesperadamente (rc={rc}). Reiniciando studio-server en 127.0.0.1:{}...",
-                    cfg.studio_server_port
-                ));
-                true
-            }
-            Ok(None) => false,
-            Err(e) => {
-                log_sup(&format!(
-                    "WARN: Error en try_wait sobre studio-server: {e}. Reiniciando..."
-                ));
-                true
-            }
-        },
-        None => true,
-    };
-    if needs_respawn {
-        *studio_child_opt = spawn_studio_server_if_enabled(cfg);
-        return studio_child_opt.is_some();
-    }
-    false
+    studio_watchdog.tick(cfg, studio_child_opt)
 }
 
 /// Detiene limpiamente el proceso `studio-server` si estaba activo.
@@ -595,9 +713,12 @@ pub fn run_supervision_loop(
     let mut last_log_truncate = Instant::now();
     truncate_logs_if_needed(cfg.log_max_mb);
     let mut idle_watcher = crate::idle::IdleWatcher::new(cfg);
+    // `studio-server` se relanza con retardo mínimo y presupuesto de reinicios
+    // (simétrico a `O-02` para ComfyUI), no en cada tick del lazo.
+    let mut studio_watchdog = StudioWatchdog::new(StudioRestartPolicy::from_config(cfg));
     while !sys::is_shutdown_requested() {
         truncate_logs_periodic(cfg.log_max_mb, &mut last_log_truncate);
-        supervise_studio_server_tick(cfg, studio_child);
+        supervise_studio_server_tick(cfg, studio_child, &mut studio_watchdog);
         idle_watcher.tick(cfg);
 
         let started_at = sys::now_unix_secs();
@@ -681,7 +802,7 @@ pub fn run_supervision_loop(
                 return Ok(());
             }
 
-            supervise_studio_server_tick(cfg, studio_child);
+            supervise_studio_server_tick(cfg, studio_child, &mut studio_watchdog);
             truncate_logs_periodic(cfg.log_max_mb, &mut last_log_truncate);
             idle_watcher.tick(cfg);
 
@@ -745,7 +866,7 @@ pub fn run_supervision_loop(
                 sup_state.max
             ));
             while !sys::is_shutdown_requested() {
-                supervise_studio_server_tick(cfg, studio_child);
+                supervise_studio_server_tick(cfg, studio_child, &mut studio_watchdog);
                 truncate_logs_periodic(cfg.log_max_mb, &mut last_log_truncate);
                 idle_watcher.tick(cfg);
                 thread::sleep(Duration::from_millis(200));
@@ -757,7 +878,12 @@ pub fn run_supervision_loop(
             "Reiniciando ComfyUI en {}s (reinicio {}/{})...",
             cfg.comfy_restart_delay_s, sup_state.restarts, sup_state.max
         ));
-        if sleep_interruptible_with_studio(cfg, studio_child, cfg.comfy_restart_delay_s) {
+        if sleep_interruptible_with_studio(
+            cfg,
+            studio_child,
+            &mut studio_watchdog,
+            cfg.comfy_restart_delay_s,
+        ) {
             break;
         }
     }
