@@ -480,9 +480,11 @@ COPY scripts/storage_requirement.py /usr/local/bin/storage_requirement.py
 COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
 COPY scripts/start.sh /start.sh
-COPY studio/ /opt/studio/
-COPY panel/ /etc/comfyui/panel/
 
+# Capa cara/estable (warmup + validaciones de imagen) antes de copiar studio/panel:
+# cambios en studio/ o panel/ no invalidan el warmup de ComfyUI (600s máx), nginx -t
+# ni el horneado de image.json/storage-requirement. Solo la capa de instalación de
+# studio se reconstruye cuando cambia su código. Ahorro esperado, sin medir.
 RUN sed -i 's/\r$//' \
         /usr/local/bin/download-models.sh \
         /start.sh \
@@ -490,22 +492,13 @@ RUN sed -i 's/\r$//' \
         /etc/comfyui/manager-config.ini \
         /etc/comfyui/_starting.html \
         /etc/comfyui/portal/index.html \
-        /etc/comfyui/panel/index.html \
-        /etc/comfyui/panel/style.css \
-        /etc/comfyui/panel/app.js \
         /etc/comfyui/probes/*.py \
         /etc/comfyui/models-studio.json \
         /etc/comfyui/triage_patterns.json \
         /etc/nginx/nginx.conf && \
-    find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json" \) -exec sed -i 's/\r$//' {} + && \
     chmod +x /usr/local/bin/download-models.sh /start.sh && \
     /usr/local/bin/comfyctl version && \
     python3 -m py_compile /etc/comfyui/probes/*.py && \
-    python3 -m venv /opt/venvs/studio && \
-    /opt/venvs/studio/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    /opt/venvs/studio/bin/pip install --no-cache-dir /opt/studio && \
-    /opt/venvs/studio/bin/python -m compileall -q /opt/venvs/studio/lib && \
-    /opt/venvs/studio/bin/python -m comfy_studio.templates && \
     IMAGE_TAG="${IMAGE_TAG}" BUILD_DATE="${BUILD_DATE}" python3 -c "import json, os, subprocess, torch; sha = subprocess.check_output(['git', '-C', '/opt/ComfyUI', 'rev-parse', 'HEAD'], text=True).strip(); json.dump({'tag': os.environ.get('IMAGE_TAG', 'dev'), 'built_at': os.environ.get('BUILD_DATE', 'unknown'), 'comfyui_sha': sha, 'pytorch': torch.__version__, 'cuda': str(torch.version.cuda), 'ubuntu': '24.04'}, open('/etc/comfyui/image.json', 'w', encoding='utf-8'), indent=2); pats = json.load(open('/etc/comfyui/triage_patterns.json', encoding='utf-8')); assert len(pats) >= 17; ms = json.load(open('/etc/comfyui/models-studio.json', encoding='utf-8')); mods = ms.get('models') or []; meta = ms.get('meta') or {}; default_n = meta.get('default_entries', -1); optin_n = meta.get('opt_in_entries', -1); assert default_n >= 0 and optin_n >= 0, 'models-studio.json sin meta de conteos'; assert len(mods) == default_n + optin_n, 'Conteo de models-studio.json inconsistente con su meta (entradas=%d, default=%d, opt_in=%d)' % (len(mods), default_n, optin_n); assert sum(m['bytes'] for m in mods if not m.get('opt_in')) == meta.get('default_bytes'), 'meta.default_bytes no cuadra con las entradas'; assert sum(m['bytes'] for m in mods if m.get('opt_in')) == meta.get('opt_in_bytes'), 'meta.opt_in_bytes no cuadra con las entradas'" && \
     python3 /usr/local/bin/storage_requirement.py --manifest /etc/comfyui/models-studio.json --all-profiles --out /etc/comfyui/storage-requirement.json && \
     python3 -c "import json; d=json.load(open('/etc/comfyui/storage-requirement.json')); assert set(d['profiles']) >= {'all','general','realistic','anime','minimal','studio','unreal'}, d; assert all(p['start_gate_gb'] > 0 and p['min_volume_gb'] > 0 for p in d['profiles'].values()), d; print('[OK] requisito de almacenamiento derivado y horneado:', {k: (v['start_gate_gb'], v['min_volume_gb']) for k, v in sorted(d['profiles'].items())})" && \
@@ -528,6 +521,21 @@ RUN sed -i 's/\r$//' \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/__manager/config.ini && \
     cp /etc/comfyui/manager-config.ini /workspace/comfyui-data/user/default/ComfyUI-Manager/config.ini && \
     pip3 freeze > /etc/comfyui/requirements.lock
+
+COPY studio/ /opt/studio/
+COPY panel/ /etc/comfyui/panel/
+
+# Código de aplicación (studio/panel): capa separada para no rehacer el warmup.
+RUN find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json" \) -exec sed -i 's/\r$//' {} + && \
+    sed -i 's/\r$//' \
+        /etc/comfyui/panel/index.html \
+        /etc/comfyui/panel/style.css \
+        /etc/comfyui/panel/app.js && \
+    python3 -m venv /opt/venvs/studio && \
+    /opt/venvs/studio/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    /opt/venvs/studio/bin/pip install --no-cache-dir /opt/studio && \
+    /opt/venvs/studio/bin/python -m compileall -q /opt/venvs/studio/lib && \
+    /opt/venvs/studio/bin/python -m comfy_studio.templates
 
 # Atlas audiovisual georreferenciado del Valle de Aburrá: los BYTES REALES del
 # bundle (catálogo SQLite, fotos, licencias, OSM) dentro de la imagen en una ruta
