@@ -1,8 +1,9 @@
 # W01 slice — Launch payload and manifest-backed acquisition
 
-Status: partial W01 implementation candidate, pending PR/CI. This slice does
-not claim all A01 requirements are complete. Base reviewed: `main` at
-`8393fe1ae1d97942db54250a92afc632e07f4d1a`; audit baseline:
+Status: integrated partial W01/A01 implementation. PR #122 is merged; follow-up
+PRs #141 and #170 harden concurrent install cleanup and expected-size checks.
+This slice does not claim all A01 requirements are complete. Current review base:
+`main` at `93b2af2cd5a480ef785ce04987cd79ed01fe0472` (102 commits past the audit; snapshot 2026-11-06 10:42 UTC); audit baseline:
 `2c0fbd37954f3f8f03f64c43b8882ae1079b4b29`.
 
 ## Changes in this slice
@@ -38,7 +39,23 @@ not claim all A01 requirements are complete. Base reviewed: `main` at
 This is code/CPU evidence (L1 for the changed paths), not an actual Vast
 container launch or GPU campaign. The local environment lacks `pytest`, `ruff`,
 Cargo, and nginx, so the repository-wide AGENTS checks have not run locally.
-CI must run them on the PR. W26's manual-start finding remains unclosed at the
-runtime level until a future authorized launch confirms the Vast payload boots
-without an interactive `/start.sh` command. No paid GPU or API validation was
-performed for this slice.
+PR CI is the Linux test authority. W26's manual-start finding is addressed in
+the container contract (`ENTRYPOINT ["/usr/bin/tini", "--", "/start.sh"]`),
+the Vast helper's `--args ''` payload, and image smoke coverage, but hosted Vast
+startup remains unverified because no new instance was launched. PR #170 also
+adds an expected-byte cross-check between the shell caller and manifest. A01's
+full concurrent-process, cancellation/resumption, and recovery matrix remains
+incomplete. No paid GPU or API validation was performed for this slice.
+
+## Integrated state recheck (2026-11-06)
+
+- PR #122 merged as `d9bcd1bc3c45cbb895eac51825cbca0513bd93bf`.
+- PR #141 merged as `09fa8538fd313ca089e47018b10ef2e1ca02744c`; an old-mtime
+  partial owned by a live PID now survives cleanup.
+- PR #170 merged as `f0ff78794757f24f45f7fd634ce07fdc7b13440d`; a mismatched
+  caller byte count is rejected before download.
+- Current CPU checks: downloader `--selftest` passed; manifest fixture passed
+  4/4; `py_compile` passed for probes, manifest and acquisition modules. Local
+  `pytest` is unavailable locally. The refreshed docs head `23e029690cd3f39cce13d51b06ab4000a651316f` passed repository validation, Ruff, and 2,052 Python tests in workflow run `42204842901`; Rust integration failed on the mainline Studio watchdog respawn test, so the candidate image job was skipped. GitHub's latest observed `main` ref remains `93b2af2cd5a480ef785ce04987cd79ed01fe0472`.
+
+- Current-main push run `42192468798` passed repository validation (including download-plan/model-manifest checks) but failed the unrelated Studio watchdog Rust integration test and skipped the image candidate; the container startup path therefore has no fresh main-image smoke result.
