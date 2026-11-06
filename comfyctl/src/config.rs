@@ -102,6 +102,8 @@ pub struct RuntimeConfig {
     pub comfy_data_dir: PathBuf,
     pub comfy_extra_args: String,
     pub comfy_max_restarts: u32,
+    /// `STUDIO_MAX_RESTARTS`: presupuesto independiente para el watchdog Studio.
+    pub studio_max_restarts: u32,
     pub comfy_restart_delay_s: u64,
     pub comfy_healthy_uptime_s: u64,
     /// `COMFY_IDLE_TIMEOUT_S`: segundos de inactividad antes de alertar/detener (0 = off).
@@ -362,6 +364,7 @@ impl RuntimeConfig {
             comfy_data_dir,
             comfy_extra_args,
             comfy_max_restarts: get_u32("COMFY_MAX_RESTARTS", 5),
+            studio_max_restarts: get_u32("STUDIO_MAX_RESTARTS", 5),
             comfy_restart_delay_s: get_u64("COMFY_RESTART_DELAY", 5),
             comfy_healthy_uptime_s: get_u64("COMFY_HEALTHY_UPTIME", 600),
             comfy_idle_timeout_s: get_u64("COMFY_IDLE_TIMEOUT_S", 3600),
