@@ -410,6 +410,7 @@ jobs:
           # binarios externos (blender) ni de red (LLM/ComfyUI) en CI.
           STUDIO_STUB_LLM: "1"
           STUDIO_STUB_COMFY: "1"
+          STUDIO_ORCH_REAL_ENGINES: "0"
           STUDIO_STUB_BLENDER: "1"
         run: |
           set -euo pipefail
@@ -443,6 +444,7 @@ jobs:
         env:
           STUDIO_STUB_LLM: "1"
           STUDIO_STUB_COMFY: "1"
+          STUDIO_ORCH_REAL_ENGINES: "0"
           STUDIO_STUB_BLENDER: "1"
           STUDIO_DATA_DIR: /tmp/studio-smoke-data
         run: |
@@ -1224,6 +1226,7 @@ jobs:
 
           studio_cid="$(timeout 300 docker run -d --name smoke-studio -p 18188:8188 \
             -e MODEL_PROFILE=studio \
+            -e STUDIO_ORCH_REAL_ENGINES=0 \
             -e SKIP_MODEL_DOWNLOAD=1 \
             -e STRICT_MIN_RAM_MB=4096 \
             -e STRICT_MIN_DISK_GB=1 \
@@ -1441,6 +1444,7 @@ jobs:
           echo "=== Paso 15b: COMFY_TLS=1 + STUDIO_API_TOKEN autogenerado ==="
           studio_cid="$(timeout 300 docker run -d --name smoke-studio-tls -p 18188:8188 \
             -e MODEL_PROFILE=studio \
+            -e STUDIO_ORCH_REAL_ENGINES=0 \
             -e SKIP_MODEL_DOWNLOAD=1 \
             -e STRICT_MIN_RAM_MB=4096 \
             -e STRICT_MIN_DISK_GB=1 \
