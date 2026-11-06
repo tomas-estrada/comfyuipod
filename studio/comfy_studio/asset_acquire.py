@@ -47,19 +47,12 @@ instalado y verificado no se baje en cada pasada (R76, R77); la marca registra
 el hash que el manifiesto declara y, sin hash, el tamaño declarado, así que una
 revisión que solo cambia los bytes no reutiliza el activo anterior (R96, D3).
 
-ATENCIÓN, la misma-nombre que **queda** (D1): el subárbol de staging cierra el
-lado de la descarga —lo que otra adquisición tiene en vuelo es un hermano y la
-limpieza no lo recorre—, pero el directorio de destino es compartido y ahí la
-pertenencia solo se puede preguntar por pid y por edad. Dos adquisiciones
-concurrentes del mismo `dest_path` escriben allí su
-`<dest>.partial-<pid>-<seq>`, y el barrido de huérfanos se lleva el de un
-vecino **vivo** si lleva inactivo más de `STALE_PARTIAL_AGE_S` —una copia
-cross-device de 20 GB lo supera de sobra—. La consecuencia es una descarga
-repetida y un fallo espurio en el vecino; nunca un parcial publicado, porque el
-barrido solo roza los `<dest>.partial-*` y el destino no se toca. Queda pinchado
-en `test_a_live_neighbours_install_temp_is_reaped_once_it_is_stale`, que lo
-documenta sin bendecirlo: el arreglo estructural es un subárbol de instalación
-por adquisición, y está fuera de este módulo.
+El directorio de destino es compartido, pero cada temporal de instalación lleva
+el pid y la secuencia de su dueño. El barrido conserva siempre temporales de
+procesos vivos, aunque el mtime sea antiguo: una copia cross-device lenta o
+bloqueada no es huérfana por superar un umbral de edad. Cuando el proceso dueño
+ya no existe, el temporal se puede retirar; para parciales sin pid se aplica
+`STALE_PARTIAL_AGE_S`.
 
 Variables de entorno que este módulo lee:
 
@@ -406,7 +399,10 @@ def _partial_is_in_flight(partial: Path) -> bool:
         return False
     except OSError:
         return True
-    return age < STALE_PARTIAL_AGE_S
+    # A live owner's copy can run longer than the stale threshold. mtime is
+    # not a liveness signal: a slow or blocked cross-filesystem copy may leave
+    # it unchanged while the process still owns the install temp.
+    return True
 
 
 def _drop_stale_partials(directory: Path, dest_name: str) -> None:
@@ -419,16 +415,11 @@ def _drop_stale_partials(directory: Path, dest_name: str) -> None:
     (`wan2.2_vae.partial-backup`, `wan2.2_vae.partial-1234`) y recorría además
     cada activo del árbol de modelos una vez por necesidad (R24).
 
-    D1, la misma-nombre que queda: el directorio de destino es compartido, así
-    que la pertenencia aquí solo se puede preguntar por pid y por edad. Dos
-    adquisiciones concurrentes del mismo destino escriben cada una su
-    `<dest>.partial-<pid>-<seq>`, y un vecino **vivo** cuyo temporal lleva
-    inactivo más de `STALE_PARTIAL_AGE_S` se barre: su `rename` falla, la
-    adquisición se reintenta y el activo se baja otra vez. El coste es ancho de
-    banda y un fallo espurio, nunca un parcial publicado —el destino no entra en
-    el barrido, que se restringe a los `partial-*`—. Está documentado en el
-    docstring del módulo y pinchado en
-    `test_a_live_neighbours_install_temp_is_reaped_once_it_is_stale`.
+    El destino es compartido, así que el pid del temporal identifica a su dueño.
+    Un pid vivo siempre conserva su temporal, incluso si el mtime es antiguo:
+    una copia cross-filesystem lenta puede superar `STALE_PARTIAL_AGE_S` sin
+    terminar. El temporal de un proceso que ya no existe se puede limpiar; el
+    destino nunca entra en el barrido.
     """
     prefix = f"{dest_name}{PARTIAL_MARK}"
     try:
