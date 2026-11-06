@@ -241,12 +241,8 @@ def test_ffmpeg_cmd_voice_only_uses_anull_and_shortest(tmp_path: Path) -> None:
     # La voz entra después de la imagen (input idx 1) y su `-i` está en el argv.
     assert cmd.index(str(img)) < cmd.index(str(voice))
     assert cmd[cmd.index(str(voice)) - 1] == "-i"
-    # COMPORTAMIENTO ACTUAL (bug documentado): el productor
-    # "[1:a]aresample=44100[a_voice]" se agrega a `audio_filters` (pipeline.py:353)
-    # pero ésta nunca se fusiona a `filters` (pipeline.py:366), así que NO llega a
-    # -filter_complex; "[a_voice]anull[aout]" (pipeline.py:364) consume una etiqueta
-    # sin productor y ffmpeg rechazaría el grafo en un render real con audio.
-    assert "aresample" not in fc
+    # The resampler output is present in filter_complex and feeds the audio passthrough.
+    assert "[1:a]aresample=44100[a_voice]" in fc
     assert "[a_voice]anull[aout]" in fc
     assert "amix" not in fc and "a_music" not in fc
     assert _has_subseq(
@@ -272,9 +268,8 @@ def test_ffmpeg_cmd_music_only_uses_anull(tmp_path: Path) -> None:
     fc = _filter_complex(cmd)
     assert cmd.index(str(img)) < cmd.index(str(music))
     assert cmd[cmd.index(str(music)) - 1] == "-i"
-    # Mismo bug que en la rama de voz: el productor "[1:a]aresample=44100[a_music]"
-    # (pipeline.py:357) se descarta al unir sólo `filters` (pipeline.py:366).
-    assert "aresample" not in fc
+    # The music resampler output is present and feeds the audio passthrough.
+    assert "[1:a]aresample=44100[a_music]" in fc
     assert "[a_music]anull[aout]" in fc
     assert "a_voice" not in fc and "amix" not in fc
     assert _has_subseq(
@@ -307,10 +302,9 @@ def test_ffmpeg_cmd_voice_and_music_uses_amix(tmp_path: Path) -> None:
         < cmd.index(str(voice))
         < cmd.index(str(music))
     )
-    # COMPORTAMIENTO ACTUAL (bug documentado): los productores de audio
-    # (pipeline.py:353 y :357) nunca se fusionan a `filters` (pipeline.py:366),
-    # por lo que amix (pipeline.py:361) recibe etiquetas sin productor.
-    assert "aresample" not in fc
+    # Both input resamplers must be in the same graph as the mixer.
+    assert "[2:a]aresample=44100[a_voice]" in fc
+    assert "[3:a]aresample=44100[a_music]" in fc
     assert (
         "[a_voice][a_music]amix=inputs=2:duration=shortest:dropout_transition=0[aout]"
         in fc
