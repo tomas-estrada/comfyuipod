@@ -7,6 +7,7 @@ cancelación/unload y checkpoint/resume.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from comfy_studio.orchestration.gpu_lease import (
     FencingError,
     GpuLease,
     LeaseAdmissionError,
+    LeaseError,
     LeaseUnavailable,
     lock_dir_for,
 )
@@ -70,6 +72,17 @@ def test_admission_rejects_over_budget(tmp_path: Path) -> None:
         lease.acquire(owner="x", engine="huge", vram_mb=200000, ram_mb=16000)
     with pytest.raises(LeaseAdmissionError):
         lease.acquire(owner="x", engine="huge", vram_mb=1000, ram_mb=999999)
+
+
+def test_corrupt_fencing_sequence_fails_closed(tmp_path: Path) -> None:
+    lease = _lease(tmp_path)
+    lease._token_file.write_text("not-a-token", encoding="utf-8")
+
+    with pytest.raises(LeaseError, match="secuencia de fencing ilegible"):
+        lease.acquire(owner="x", engine="e", vram_mb=1000, ram_mb=1000)
+
+    assert lease.current() is None
+    assert not lease._lock_file.exists()
 
 
 # --------------------------------------------------------------------------
@@ -134,8 +147,8 @@ def test_release_runs_and_verifies_unload(tmp_path: Path) -> None:
     assert out["released"] is True and out["cleanup_failed"] is False
 
 
-def test_failed_unload_reports_cleanup_failed_but_frees_lock(tmp_path: Path) -> None:
-    """Un unload roto no deja la GPU bloqueada; se reporta cleanup_failed."""
+def test_failed_unload_reports_cleanup_failed_and_quarantines_lock(tmp_path: Path) -> None:
+    """Un unload no probado bloquea nuevas admisiones hasta limpiar (A04)."""
     lease = _lease(tmp_path)
     grant = lease.acquire(owner="comfyui", engine="e", vram_mb=1000, ram_mb=1000)
 
@@ -144,8 +157,14 @@ def test_failed_unload_reports_cleanup_failed_but_frees_lock(tmp_path: Path) -> 
 
     out = lease.release(grant, unload=_boom)
     assert out["cleanup_failed"] is True
-    assert out["released"] is True
-    assert lease.current() is None  # el lock se liberó pese al fallo
+    assert out["released"] is False
+    assert lease.current() == grant
+    with pytest.raises(LeaseUnavailable):
+        lease.acquire(owner="blender", engine="e", vram_mb=1000, ram_mb=1000)
+    # La limpieza puede reintentarse por el owner actual.
+    retried = lease.release(grant, unload=lambda: True)
+    assert retried["released"] is True and retried["cleanup_failed"] is False
+    assert lease.current() is None
 
 
 # --------------------------------------------------------------------------
@@ -174,9 +193,28 @@ def test_checkpoint_resume_does_not_duplicate_stage(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_two_real_processes_contend_only_one_wins(tmp_path: Path) -> None:
-    """Dos procesos reales intentan el heavy lease; exactamente uno lo gana."""
+@pytest.mark.parametrize("recover_dead_owner", [False, True])
+def test_two_real_processes_contend_only_one_wins(
+    tmp_path: Path, recover_dead_owner: bool
+) -> None:
+    """Contenders reales, también al recuperar un owner muerto, tienen un ganador."""
     lock_dir = tmp_path / ".gpu-lease"
+    if recover_dead_owner:
+        lock_dir.mkdir(parents=True)
+        (lock_dir / "heavy.lock").write_text(
+            json.dumps(
+                {
+                    "owner": "dead-owner",
+                    "token": 1,
+                    "pid": 0,
+                    "engine": "wan_t2v",
+                    "vram_mb": 1000,
+                    "ram_mb": 1000,
+                    "acquired_at": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
     script = (
         "import sys, time\n"
         "from comfy_studio.orchestration.gpu_lease import (\n"
