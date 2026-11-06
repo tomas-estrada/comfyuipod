@@ -376,6 +376,27 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
             name="ad_studio",
             note="compuesto: reutiliza ffmpeg, EDL, audio, music_gen y qa",
         ),
+        EnginePrepSpec(
+            name="reference-local",
+            binaries=("{STUDIO_FFMPEG_BIN}", "ffmpeg", "ffprobe"),
+            modules=("comfy_studio.inspiration",),
+            note="análisis local de referencias; requiere ffmpeg/ffprobe y módulo inspiration",
+        ),
+        EnginePrepSpec(
+            name="atlas-offline",
+            modules=("comfy_studio.atlas.packaging",),
+            note="empaquetado/verificación del bundle del atlas; módulo packaging",
+        ),
+        EnginePrepSpec(
+            name="scene-optimizer",
+            modules=("comfy_studio.cinematography",),
+            note="validación de composición/plan de cámara; módulo cinematography",
+        ),
+        EnginePrepSpec(
+            name="chrono",
+            modules=("comfy_studio.physics",),
+            note="proxy cinemático CPU; módulo physics (no requiere Chrono/Blender real)",
+        ),
     ]
     return {spec.name: spec for spec in specs}
 

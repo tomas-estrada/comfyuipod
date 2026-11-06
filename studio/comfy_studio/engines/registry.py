@@ -220,6 +220,50 @@ def build_default_registry() -> EngineRegistry:
             ),
         )
     )
+    reg.register(
+        EngineEntry(
+            "reference-local",
+            EngineTier.RESIDENT,
+            wired=True,
+            note=(
+                "Análisis local de referencias: cortes/beats/OCR/cámara -> receta editable "
+                "(inspiration.py; CPU)"
+            ),
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "atlas-offline",
+            EngineTier.WARM,
+            wired=True,
+            note=(
+                "Bundle del atlas del Aburrá: catálogo + archivos + licencias + OSM "
+                "(atlas/packaging.py; CPU)"
+            ),
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "scene-optimizer",
+            EngineTier.WARM,
+            wired=True,
+            note=(
+                "Validación de composición y plan de cámara: colisiones, FOV, encuadre "
+                "(cinematography.py; CPU)"
+            ),
+        )
+    )
+    reg.register(
+        EngineEntry(
+            "chrono",
+            EngineTier.WARM,
+            wired=True,
+            note=(
+                "Proxy cinemático CPU de física/articulaciones: simulación determinista "
+                "(physics.py; no es el solver Chrono/Blender real)"
+            ),
+        )
+    )
     return reg
 
 
@@ -228,9 +272,11 @@ def build_default_registry() -> EngineRegistry:
 #: La resolución es perezosa (import bajo demanda, sin efectos laterales).
 ENGINE_CLASSES: dict[str, str] = {
     "ad_studio": "comfy_studio.engines.ad_studio:AdStudioEngine",
+    "atlas-offline": "comfy_studio.engines.atlas_offline:AtlasOfflineEngine",
     "audio": "comfy_studio.engines.audio:AudioEngine",
     "blender": "comfy_studio.engines.blender:BlenderEngine",
     "capture3d": "comfy_studio.engines.capture3d:Capture3dEngine",
+    "chrono": "comfy_studio.engines.chrono:ChronoEngine",
     "comfyui": "comfy_studio.engines.comfyui:ComfyUIEngine",
     "compositor": "comfy_studio.engines.compositor:CompositorEngine",
     "editor": "comfy_studio.engines.editor:EditorEngine",
@@ -240,7 +286,9 @@ ENGINE_CLASSES: dict[str, str] = {
     "lipsync": "comfy_studio.engines.lipsync:LipsyncEngine",
     "music_gen": "comfy_studio.engines.music_gen:MusicGenEngine",
     "qa": "comfy_studio.engines.qa:QaEngine",
+    "reference-local": "comfy_studio.engines.reference_local:ReferenceLocalEngine",
     "roto": "comfy_studio.engines.roto:RotoEngine",
+    "scene-optimizer": "comfy_studio.engines.scene_optimizer:SceneOptimizerEngine",
     "upscaler": "comfy_studio.engines.upscaler:UpscalerEngine",
     "voice_clone": "comfy_studio.engines.voice_clone:VoiceCloneEngine",
 }

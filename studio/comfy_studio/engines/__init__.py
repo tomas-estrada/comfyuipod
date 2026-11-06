@@ -113,7 +113,7 @@ class EngineRunSpec:
 
 def stub_env_name(engine: str) -> str:
     """Nombre de la env var de stub de un motor, p.ej. `STUDIO_STUB_BLENDER`."""
-    return f"STUDIO_STUB_{engine.strip().upper()}"
+    return f"STUDIO_STUB_{engine.strip().upper().replace('-', '_')}"
 
 
 def is_stub_mode(engine: str) -> bool:
