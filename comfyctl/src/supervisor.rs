@@ -571,6 +571,7 @@ pub struct StudioWatchdog {
     consecutive_failures: u32,
     last_spawn: Option<Instant>,
     alive_since: Option<Instant>,
+    restart_pending: bool,
     exhausted: bool,
 }
 
@@ -581,6 +582,7 @@ impl StudioWatchdog {
             consecutive_failures: 0,
             last_spawn: None,
             alive_since: None,
+            restart_pending: false,
             exhausted: false,
         }
     }
@@ -642,11 +644,17 @@ impl StudioWatchdog {
                     observed_exit = true;
                 }
             }
-        } else {
+        } else if !self.restart_pending {
+            // An absent child is a new failed launch only after the respawn delay.
+            if self.last_spawn.is_some_and(|last| last.elapsed() < self.policy.min_respawn_delay) {
+                return false;
+            }
             self.on_failure();
+            self.restart_pending = true;
         }
 
         if observed_exit {
+            self.restart_pending = true;
             // Child::try_wait returns the same exit status on every poll; reap the handle
             // so one process death consumes exactly one restart attempt.
             *studio_child_opt = None;
@@ -672,6 +680,7 @@ impl StudioWatchdog {
         self.last_spawn = Some(Instant::now());
         self.alive_since = None;
         *studio_child_opt = spawn_studio_server_if_enabled(cfg);
+        self.restart_pending = false;
         studio_child_opt.is_some()
     }
 }
