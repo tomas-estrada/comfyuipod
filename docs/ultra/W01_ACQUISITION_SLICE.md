@@ -3,7 +3,7 @@
 Status: integrated partial W01/A01 implementation. PR #122 is merged; follow-up
 PRs #141 and #170 harden concurrent install cleanup and expected-size checks.
 This slice does not claim all A01 requirements are complete. Current review base:
-`main` at `b58e64cbdebbf14749015c848ea099fc0a7ad26f`; audit baseline:
+`main` at `25450f026abfe6a843355a2babab0902d591e2be` (82 commits past the audit); audit baseline:
 `2c0fbd37954f3f8f03f64c43b8882ae1079b4b29`.
 
 ## Changes in this slice
@@ -56,4 +56,4 @@ incomplete. No paid GPU or API validation was performed for this slice.
   caller byte count is rejected before download.
 - Current CPU checks: downloader `--selftest` passed; manifest fixture passed
   4/4; `py_compile` passed for probes, manifest and acquisition modules. Local
-  `pytest` is unavailable; current GitHub Actions validation is running.
+  `pytest` is unavailable locally. The prior PR head passed workflow run `42174104222`; this refreshed documentation commit requires its own CI result.
