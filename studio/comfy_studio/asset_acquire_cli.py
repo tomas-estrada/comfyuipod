@@ -99,9 +99,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-type", default="model")
     parser.add_argument("--stage", required=True, type=Path)
     parser.add_argument("--timeout", type=int, default=3600)
+    parser.add_argument("--expected-bytes", type=int, default=0)
     args = parser.parse_args(argv)
     try:
         need = _find_need(args.repo, args.remote, args.dest, args.repo_type)
+        if args.expected_bytes and int(args.expected_bytes) != int(need.bytes or 0):
+            raise ValueError(
+                f"size mismatch for {args.repo}/{args.remote}: "
+                f"caller expects {int(args.expected_bytes)} bytes, "
+                f"manifest declares {int(need.bytes or 0)}"
+            )
     except (OSError, ValueError) as exc:
         print(f"asset acquisition rejected: {exc}", file=sys.stderr)
         return 2

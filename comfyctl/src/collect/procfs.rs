@@ -197,15 +197,11 @@ pub fn collect_memory_and_disk(comfy_data_dir: &Path) -> (MemoryStatus, DiskStat
         |txt| parse_proc_meminfo(&txt),
     );
 
-    let target_dir = if comfy_data_dir.exists() {
-        comfy_data_dir
-    } else if Path::new("/workspace").exists() {
-        Path::new("/workspace")
-    } else {
-        Path::new("/")
-    };
+    // El directorio de datos puede no existir todavía (primer arranque): se mide su
+    // primer ancestro existente, que es el filesystem que lo alojará.
+    let target_dir = sys::first_existing_ancestor(comfy_data_dir);
 
-    let (total_gb, used_gb, free_gb) = sys::disk_stats_gb(target_dir).unwrap_or((0.0, 0.0, 0.0));
+    let (total_gb, used_gb, free_gb) = sys::disk_stats_gb(&target_dir).unwrap_or((0.0, 0.0, 0.0));
     let disk = DiskStatus {
         path: target_dir.to_string_lossy().into_owned(),
         total_gb,

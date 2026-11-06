@@ -7,18 +7,18 @@ según capacidad y presupuesto de VRAM real; este módulo conecta ambas cosas si
 acoplar el planner al catálogo.
 
 `bind_recipes(state, vram_budget_mb)` recorre los shots ya planificados y, para
-cada capa de generación (`gen`) de un motor AV sin plantilla, selecciona la
-receta de mayor fidelidad que cabe en el presupuesto y fija su `template_id` y
-el motor real. Una capa que ya trae plantilla se respeta. Si ninguna receta cabe,
-la capa queda marcada con el motivo (no se inventa una plantilla): el shot lo
-tratará el feedback loop.
+cada capa de generación, selecciona una receta compatible con su capacidad,
+plantilla y presupuesto. Las plantillas explícitas se conservan, pero también
+deben tener una receta admitida para obtener estimación de lease. Si no existe
+una receta o ninguna cabe, la capa queda marcada como `recipe_unresolved`; la
+aprobación de una producción con capas sin resolver se rechaza.
 
 Puro cálculo determinista (reutiliza el selector CPU de W08). No ejecuta GPU.
 """
 
 from __future__ import annotations
 
-from comfy_studio.av_recipes import select_recipe
+from comfy_studio.av_recipes import VRAM_SAFETY_FACTOR, recipes_for, select_recipe
 from comfy_studio.orchestration.state import ProductionState
 
 #: capas de generación por capacidad: qué pedir al selector según el kind/params.
@@ -30,11 +30,20 @@ DEFAULT_HEIGHT = 720
 DEFAULT_FRAMES = 81
 
 
-def _capability_for(layer_kind: str, params: dict) -> str:
+def _capability_for(
+    layer_kind: str, params: dict, template_id: str | None = None
+) -> str:
     """Capacidad AV que una capa de generación representa."""
     explicit = params.get("capability")
     if explicit:
         return str(explicit)
+    template_capability = {
+        "wan_i2v": "video.image_to_video",
+        "wan_t2v": "video.text_to_video",
+        "sdxl_image": "image.generate",
+    }.get(template_id)
+    if template_capability:
+        return template_capability
     if layer_kind in ("image", "generate_image"):
         return "image.generate"
     if layer_kind in ("i2v",):
@@ -57,13 +66,57 @@ def bind_recipes(
         for layer in shot.layers:
             if layer.kind not in _GEN_KINDS:
                 continue
-            if layer.template_id:
-                summary["skipped_has_template"] += 1
-                continue
-            capability = _capability_for(layer.kind, layer.params)
+            capability = _capability_for(layer.kind, layer.params, layer.template_id)
             width = int(layer.params.get("width", DEFAULT_WIDTH))
             height = int(layer.params.get("height", DEFAULT_HEIGHT))
             frames = int(layer.params.get("frames", DEFAULT_FRAMES))
+            if layer.template_id:
+                # Keep the planner's explicit template, but still admit it
+                # against a catalog recipe when one exists. A template without
+                # a recipe estimate is unresolved for a resource-gated run.
+                matching = [
+                    recipe
+                    for recipe in recipes_for(capability)
+                    if recipe.template_id == layer.template_id
+                ]
+                if not matching:
+                    layer.params["recipe_unresolved"] = (
+                        f"sin receta de recursos para plantilla {layer.template_id}"
+                    )
+                    summary["unresolved"] += 1
+                    continue
+                selected = next(
+                    (
+                        recipe
+                        for recipe in matching
+                        if recipe.fits_request(width=width, height=height, frames=frames)[0]
+                        and recipe.fits_budget(vram_budget_mb)[0]
+                        and (not layer.engine or recipe.engine == layer.engine)
+                    ),
+                    None,
+                )
+                if selected is None:
+                    selected = next(
+                        (
+                            recipe
+                            for recipe in matching
+                            if recipe.fits_request(width=width, height=height, frames=frames)[0]
+                            and recipe.fits_budget(vram_budget_mb)[0]
+                        ),
+                        None,
+                    )
+                if selected is None:
+                    layer.params["recipe_unresolved"] = (
+                        "la plantilla explícita excede límites de receta o presupuesto VRAM"
+                    )
+                    summary["unresolved"] += 1
+                    continue
+                layer.params["recipe_id"] = selected.recipe_id
+                layer.params["lease_vram_mb"] = int(
+                    selected.est_vram_mb * VRAM_SAFETY_FACTOR
+                )
+                summary["skipped_has_template"] += 1
+                continue
             result = select_recipe(
                 capability,
                 width=width,
@@ -79,6 +132,10 @@ def bind_recipes(
             layer.template_id = recipe.template_id
             layer.engine = recipe.engine
             layer.params["recipe_id"] = recipe.recipe_id
+            # Carry the same conservative estimate used at selection into the
+            # runtime lease admission. This is still an estimate, not a GPU
+            # measurement; the lease separately caps it to detected hardware.
+            layer.params["lease_vram_mb"] = int(recipe.est_vram_mb * VRAM_SAFETY_FACTOR)
             layer.params.setdefault("width", width)
             layer.params.setdefault("height", height)
             layer.params.setdefault("frames", frames)

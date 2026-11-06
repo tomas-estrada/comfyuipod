@@ -39,6 +39,8 @@ from comfy_studio.engines import EngineRunSpec
 from comfy_studio.engines.process import ProcessCancelled, run_cancellable
 from comfy_studio.orchestration.conductor import Collaborators
 from comfy_studio.orchestration.evaluator import make_template_reselector
+from comfy_studio.orchestration.gpu_lease import GpuLease
+from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
 from comfy_studio.orchestration.planner import replan_shot_focalized
 from comfy_studio.orchestration.state import ProductionState, Shot
 
@@ -282,8 +284,22 @@ class EngineRunnerAdapter:
             return job
         template_id = job.get("template_id") or self._default_template
         # params del template = todo lo de la capa salvo claves de control.
-        control_keys = {"kind", "shot", "template_id", "graph", "job_id", "project_id",
-                        "atlas", "background_image", "background_sha256", "atlas_resolved"}
+        control_keys = {
+            "kind",
+            "shot",
+            "template_id",
+            "graph",
+            "job_id",
+            "project_id",
+            "atlas",
+            "background_image",
+            "background_sha256",
+            "atlas_resolved",
+            "recipe_id",
+            "recipe_unresolved",
+            "lease_vram_mb",
+            "lease_ram_mb",
+        }
         params = {k: v for k, v in job.items() if k not in control_keys}
         # el fondo del atlas entra al grafo por la entrada de imagen declarada
         # (p. ej. wan_i2v -> image_input -> LoadImage). Si la plantilla no declara
@@ -489,6 +505,47 @@ class EngineAssembler:
         return {"ok": True, "output_path": output, "clips": len(clips)}
 
 
+class _LeasedQaEngine:
+    """Run QA through the same GPU arbitration as generation engines."""
+
+    def __init__(self, engine: Any, lease: GpuLease, unload: Any | None) -> None:
+        self._runner = LeasedEngineRunner(
+            _SingleEngineRunner(engine),
+            lease,
+            owner="orchestration-qa",
+            unload=unload,
+        )
+
+    def run(self, spec: EngineRunSpec) -> dict[str, Any]:
+        return self._runner.run_layer(
+            "qa",
+            spec.job,
+            cost_cap=spec.cost_cap,
+            cancel_event=spec.cancel_event,
+        )
+
+
+class _SingleEngineRunner:
+    """Adapt one sync/async engine to the LeasedEngineRunner contract."""
+
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
+
+    def run_layer(
+        self,
+        _name: str,
+        job: dict[str, Any],
+        *,
+        cost_cap: float | None = None,
+        cancel_event: Event | None = None,
+    ) -> dict[str, Any]:
+        raw = _run_engine_sync(
+            self._engine,
+            EngineRunSpec(job=job, cost_cap=cost_cap, cancel_event=cancel_event),
+        )
+        return _result_to_dict(raw)
+
+
 # ---------------------------------------------------------------------------
 # Armado del Collaborators del servidor
 # ---------------------------------------------------------------------------
@@ -505,6 +562,8 @@ def build_server_collaborators(
     template_registry: Any | None = None,
     atlas_service: Any | None = None,
     comfyui_input_dir: str | None = None,
+    gpu_lease: GpuLease | None = None,
+    unload_gpu: Any | None = None,
 ) -> Collaborators:
     """Arma el `Collaborators` real del servidor desde las piezas disponibles.
 
@@ -523,14 +582,14 @@ def build_server_collaborators(
         if engines
         else None
     )
+    if runner is not None and gpu_lease is not None:
+        runner = LeasedEngineRunner(runner, gpu_lease, unload=unload_gpu)
     # Evaluador combinado: QA técnica del motor + QA de CONTENIDO del LLM de
     # visión. Con llm_client el shot debe pasar AMBAS (vbench_min y
     # semantic_min); sin llm_client queda la QA técnica sola.
-    evaluator = (
-        SemanticQaEvaluator(qa_engine, llm_client)
-        if qa_engine is not None
-        else None
-    )
+    if qa_engine is not None and gpu_lease is not None:
+        qa_engine = _LeasedQaEngine(qa_engine, gpu_lease, unload_gpu)
+    evaluator = SemanticQaEvaluator(qa_engine, llm_client) if qa_engine is not None else None
     assembler = (
         EngineAssembler(editor_engine, compositor_engine=compositor_engine)
         if editor_engine is not None

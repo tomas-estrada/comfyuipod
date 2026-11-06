@@ -235,3 +235,122 @@ fn redactor_redacts_secrets_in_json_quoted_form() {
     assert!(env.contains("STUDIO_API_TOKEN=[REDACTED]"), "{env}");
     assert!(env.contains("PORT=8188"), "{env}");
 }
+
+#[test]
+fn redactor_redacts_bare_hf_tokens_without_eating_hf_prefixed_log_ids() {
+    // rx_hf (`hf_[A-Za-z0-9]{12,}`) cubre el token de Hugging Face suelto en
+    // cualquier linea de log. Ninguna prueba existente la ejercitaba: las demas
+    // solo cubren la forma de asignacion `HF_TOKEN=...` (rx_studio_env), cuyo
+    // valor de ejemplo ni siquiera cumple el umbral de esta expresion.
+    let redactor = SecretRedactor::new(None, None);
+
+    // Los tokens se arman con format! (mismo idiom que `raw_key` mas abajo) para
+    // que el fuente no contenga cadenas con forma de secreto real; en tiempo de
+    // ejecucion el texto es identico, asi que rx_hf se ejercita igual.
+    let token = format!("{}{}", "hf_", "abcdefghijklmnopqrstuvwxyz1234");
+    let out = redactor.redact(&format!(
+        "401 Unauthorized: invalid token {token} for repo org/model"
+    ));
+    assert!(!out.contains(&token), "fuga de token hf: {out}");
+    assert!(out.contains("[REDACTED]"), "{out}");
+
+    // Umbral: 12 caracteres despues de `hf_` si se redactan...
+    let min_token = format!("{}{}", "hf_", "123456789012");
+    assert_eq!(redactor.redact(&format!("id {min_token}")), "id [REDACTED]");
+    // ...11 no (guarda contra falsos positivos sobre identificadores cortos).
+    let below_token = format!("{}{}", "hf_", "12345678901");
+    assert_eq!(
+        redactor.redact(&format!("id {below_token}")),
+        format!("id {below_token}")
+    );
+
+    // Identificadores reales del proyecto con prefijo `hf_` NO son tokens y deben
+    // sobrevivir intactos (linea que emite collect/mod.rs en una descarga estancada).
+    let log_id = "hf_stuck_over_30m: pid=4321 sin avance hace 1900s";
+    assert_eq!(redactor.redact(log_id), log_id);
+
+    // rx_hf corre ANTES de rx_studio_env: la composicion de ambas reglas deja la
+    // asignacion igual, sin duplicar ni romper el enmascarado.
+    assert_eq!(
+        redactor.redact(&format!("env HF_TOKEN={min_token} PORT=8188")),
+        "env HF_TOKEN=[REDACTED] PORT=8188"
+    );
+
+    // Forma JSON: el valor se enmascara y el documento sigue parseando.
+    let json = format!(r#"{{"note": "visto token {token}"}}"#);
+    let red_json = redactor.redact(&json);
+    assert!(!red_json.contains(&token), "fuga en JSON: {red_json}");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&red_json).unwrap_or(serde_json::Value::Null);
+    assert!(
+        parsed
+            .get("note")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v.contains("[REDACTED]")),
+        "JSON roto o valor sin redactar: {red_json}"
+    );
+}
+
+#[test]
+fn redactor_cubre_claves_de_nube_y_cabeceras_authorization() {
+    // Las cadenas con forma de secreto se arman con format! para que el fuente no
+    // las contenga literales (mismo idiom que el test de hf_*).
+    let aws_key = format!("{}IOSFODNN7EXAMPLE", "AKIA");
+    let gcp_key = format!("AIz{}", "aSyA1234567890abcdefghijklmnopqrstuvw");
+    let gh_pat = format!("ghp_{}9012345678", "AbCdEfGhIjKlMnOpQrStUvWxYz0");
+    // También montado con format!: un literal con forma de token de Slack hace que
+    // el escaneo de secretos de GitHub rechace el push.
+    let slack_tok = format!("xox{}-1234567890-abcdefghijklmnop", "b");
+    let aws_secret = format!("wJalrXUtnFEMI/K7MDENG/bPxRfiCY{}", "EXAMPLEKEY");
+    let redactor = SecretRedactor::new(None, None);
+
+    // 1. Cabeceras Authorization: antes solo se cubria el esquema `Bearer`.
+    for header in [
+        format!("Authorization: Basic dXNlcjpwYXNz{aws_secret}"),
+        "authorization=bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0".to_string(),
+        format!("Authorization: token {gh_pat}"),
+        format!("Authorization: ApiKey {gcp_key}"),
+    ] {
+        let cleaned = redactor.redact(&header);
+        assert!(
+            !cleaned.contains("dXNlcjpwYXNz")
+                && !cleaned.contains("eyJhbGciOiJIUzI1NiJ9")
+                && !cleaned.contains(&gh_pat)
+                && !cleaned.contains(&gcp_key),
+            "fuga en cabecera Authorization: {cleaned}"
+        );
+        assert!(cleaned.contains("[REDACTED]"), "{cleaned}");
+    }
+
+    // 2. Claves de nube y de proveedores por su forma, sin necesidad de literal.
+    let cloud_line = format!("aws {aws_key} gcp {gcp_key} gh {gh_pat} slack {slack_tok}");
+    let cleaned_cloud = redactor.redact(&cloud_line);
+    for leaked in [
+        aws_key.as_str(),
+        gcp_key.as_str(),
+        gh_pat.as_str(),
+        slack_tok.as_str(),
+    ] {
+        assert!(
+            !cleaned_cloud.contains(leaked),
+            "fuga de clave de nube {leaked}: {cleaned_cloud}"
+        );
+    }
+
+    // 3. Asignacion de secreto de nube por nombre de variable (AWS_SECRET_ACCESS_KEY
+    //    no estaba en la lista de rx_studio_env).
+    let env_line = format!("AWS_SECRET_ACCESS_KEY={aws_secret} AWS_REGION=us-east-1");
+    let cleaned_env = redactor.redact(&env_line);
+    assert!(!cleaned_env.contains(&aws_secret), "fuga: {cleaned_env}");
+    assert!(
+        cleaned_env.contains("AWS_REGION=us-east-1"),
+        "la linea benigna debe sobrevivir: {cleaned_env}"
+    );
+
+    // 4. Sin falsos positivos: texto sin secretos queda intacto.
+    let benign = "GET /studio/api/health HTTP/1.1 host=127.0.0.1:18190 port=8443 ok";
+    assert_eq!(redactor.redact(benign), benign);
+    // Un esquema sin valor (por debajo del umbral de 8) no se come el resto.
+    let benign_auth = "Authorization: Basic realm";
+    assert_eq!(redactor.redact(benign_auth), benign_auth);
+}

@@ -1,4 +1,4 @@
-"""PR engines-health-states: los 7 niveles, probados en los 16 motores.
+﻿"""PR engines-health-states: los 7 niveles, probados en los 16 motores.
 
 Pines deterministas sobre un árbol sintético en tmp (sin GPU, sin red):
 un árbol completo deja a los 16 en `ready` (prueba que cada spec es
@@ -95,10 +95,10 @@ def test_arbol_completo_deja_los_16_ready(
 ) -> None:
     env = _full_env(tmp_path, monkeypatch)
     report = probe_all(env=env, module_finder=lambda m: True)
-    assert len(report.engines) == 16
+    assert len(report.engines) == 20
     not_ready = {n: p.state for n, p in report.engines.items() if p.state != "ready"}
     assert not_ready == {}, f"motores no listos con árbol completo: {not_ready}"
-    assert report.counts() == {"ready": 16, "weights_required": 0,
+    assert report.counts() == {"ready": 20, "weights_required": 0,
                                "not_installed": 0, "integration_missing": 0}
 
 

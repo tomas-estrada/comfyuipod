@@ -31,6 +31,7 @@ from comfy_studio.engines.comfyui import ComfyUIEngine
 from comfy_studio.engines.editor import EditorEngine
 from comfy_studio.engines.qa import QaEngine
 from comfy_studio.engines.upscaler import UpscalerEngine
+from comfy_studio.hardware_detect import effective_profile
 from comfy_studio.mcp_server import McpContext, create_mcp_router
 from comfy_studio.ml import probe_capabilities
 from comfy_studio.observability import (
@@ -41,6 +42,11 @@ from comfy_studio.observability import (
 )
 from comfy_studio.orchestration.adapters import build_server_collaborators
 from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
+from comfy_studio.orchestration.gpu_lease import (
+    AdmissionBudget,
+    GpuLease,
+    lock_dir_for,
+)
 from comfy_studio.orchestration.service import (
     ProductionService,
 )
@@ -379,12 +385,39 @@ def create_app(
     # El cableado es TOLERANTE a fallos: si construir un motor real falla, esa
     # fase cae a su stub y el servicio arranca igual (nunca tumba el pod).
     orch_collaborators = None
+    orch_resource_vram_budget_mb = None
     if (os.environ.get("STUDIO_ORCH_REAL_ENGINES") or "").strip().lower() in (
         "1",
         "true",
         "yes",
     ):
         try:
+            detected_profile = effective_profile()
+            detected = detected_profile.detected
+            if not (
+                detected_profile.verified
+                and detected.gpu_available
+                and detected.vram_total_mb is not None
+                and detected.ram_limit_bytes is not None
+            ):
+                raise RuntimeError(
+                    "hardware GPU/VRAM/RAM no verificado; ejecución real no admitida"
+                )
+            budget = AdmissionBudget(
+                vram_mb=detected_profile.effective.vram_usable_mb,
+                ram_mb=detected_profile.effective.ram_usable_mb,
+            )
+            gpu_lease = GpuLease(lock_dir=lock_dir_for(), budget=budget)
+
+            def unload_gpu() -> bool:
+                result = asyncio.run(
+                    app.state.comfyui_client.free_memory(
+                        unload_models=True,
+                        free_memory=True,
+                    )
+                )
+                return isinstance(result, dict) and result.get("freed") is True
+
             orch_collaborators = build_server_collaborators(
                 llm_client=app.state.llm_client,
                 engines={
@@ -397,7 +430,10 @@ def create_app(
                 atlas_service=app.state.atlas,
                 comfyui_input_dir=os.environ.get("STUDIO_COMFYUI_INPUT_DIR")
                 or "/workspace/comfyui-data/input",
+                gpu_lease=gpu_lease,
+                unload_gpu=unload_gpu,
             )
+            orch_resource_vram_budget_mb = budget.vram_mb
             logger.info(
                 "STUDIO: orquestación con motores REALES (STUDIO_ORCH_REAL_ENGINES=1)."
             )
@@ -423,6 +459,7 @@ def create_app(
         store=store,
         broker=broker,
         atlas_service=app.state.atlas,
+        resource_vram_budget_mb=orch_resource_vram_budget_mb,
     )
 
     mcp_ctx = McpContext(

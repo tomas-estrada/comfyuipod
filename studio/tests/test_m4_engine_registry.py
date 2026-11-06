@@ -28,7 +28,7 @@ def test_comfyui_is_resident_and_wired() -> None:
     assert comfy.tier == EngineTier.RESIDENT
     assert comfy.wired is True
     residents = [e.name for e in reg.resident()]
-    assert residents == ["comfyui"]
+    assert residents == ["comfyui", "reference-local"]
 
 
 def test_editor_wired_with_remotion() -> None:
@@ -72,5 +72,5 @@ def test_describe_is_serializable(monkeypatch: pytest.MonkeyPatch) -> None:
     # Debe serializar a JSON sin objetos vivos.
     blob = json.dumps(desc)
     assert '"dynamic": false' in blob
-    assert desc["count"] == 16
+    assert desc["count"] == 20
     assert all(set(e) == {"name", "tier", "wired", "note"} for e in desc["engines"])

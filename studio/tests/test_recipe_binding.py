@@ -45,6 +45,27 @@ def test_existing_template_is_respected() -> None:
     assert summary["skipped_has_template"] == 1
     assert summary["bound"] == 0
     assert shot.layers[0].template_id == "wan_t2v"  # no se toca
+    assert shot.layers[0].params.get("recipe_id")
+    assert shot.layers[0].params.get("lease_vram_mb")
+
+
+def test_explicit_image_to_video_template_uses_its_matching_capability() -> None:
+    st, shot = _state_with_gen_layer(template_id="wan_i2v")
+    shot.layers[0].params.update({"width": 1280, "height": 720, "frames": 81})
+
+    summary = bind_recipes(st, vram_budget_mb=VRAM_96)
+
+    assert summary["skipped_has_template"] == 1
+    assert shot.layers[0].template_id == "wan_i2v"
+    assert shot.layers[0].params["recipe_id"] == "wan22_i2v_720p"
+
+
+def test_explicit_template_without_fitting_recipe_is_unresolved() -> None:
+    st, shot = _state_with_gen_layer(template_id="wan_t2v")
+    summary = bind_recipes(st, vram_budget_mb=1)
+    assert summary["unresolved"] == 1
+    assert "recipe_unresolved" in shot.layers[0].params
+    assert "lease_vram_mb" not in shot.layers[0].params
 
 
 def test_unresolvable_layer_is_marked_not_invented() -> None:
@@ -115,6 +136,7 @@ def test_image_kind_binds_image_recipe() -> None:
     assert summary["bound"] == 1
     layer = shot.layers[0]
     assert layer.params.get("recipe_id") == "qwen_image_1024"
+    assert layer.params.get("lease_vram_mb") == int(18000 * 1.15)
     assert layer.template_id == "sdxl_image"
     assert layer.engine == "qwen-image21"
 
