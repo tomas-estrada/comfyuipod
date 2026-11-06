@@ -553,7 +553,7 @@ pub struct StudioRestartPolicy {
 }
 
 impl StudioRestartPolicy {
-    /// Deriva la política de Studio desde sus límites propios, independiente del watchdog ComfyUI.
+    /// Deriva la política de Studio desde sus límites propios, independiente del watchdog `ComfyUI`.
     pub fn from_config(cfg: &RuntimeConfig) -> Self {
         Self {
             max_consecutive_restarts: cfg.studio_max_restarts,
