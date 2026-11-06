@@ -234,14 +234,14 @@ def test_real_engines_flag_wires_live_collaborators(
     No toca GPU: los motores se instancian pero el test solo comprueba que el
     cableado ocurrió (collaborators no vacío con adaptadores reales).
     """
+    from types import SimpleNamespace
+
     from comfy_studio.app import create_app
     from comfy_studio.orchestration.adapters import (
         EngineAssembler,
         EngineRunnerAdapter,
         SemanticQaEvaluator,
     )
-
-    from types import SimpleNamespace
 
     # This is a wiring fixture, not a claim that the CPU CI host has a GPU.
     # Supply verified detected resources explicitly so the live-adapter path is
