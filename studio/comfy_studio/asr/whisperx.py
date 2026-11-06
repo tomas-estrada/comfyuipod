@@ -399,6 +399,74 @@ _DEFAULT_UTTERANCES_ES: tuple[str, ...] = (
 )
 
 
+def parse_asr_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normaliza la salida de WhisperX/faster-whisper a segmentos y palabras.
+
+    Función pura (sin audio, sin GPU, sin red): mapea el payload fijo del
+    backend (`text/segments/words/language`) al modelo de datos interno
+    (`segments[{id,start,end,text,words}]` + `words` plana). No inventa
+    palabras ni hablantes: si el payload no trae palabras, la lista queda
+    vacía; si un segmento trae `speaker`, se conserva tal cual.
+
+    Lanza `ValueError` tipado si un tiempo es inválido (`end <= start`),
+    en vez de corregir timestamps en silencio.
+    """
+    raw_segments = payload.get("segments") or []
+    segments: list[dict[str, Any]] = []
+    flat_words: list[dict[str, Any]] = []
+    for idx, raw_seg in enumerate(raw_segments):
+        if not isinstance(raw_seg, dict):
+            raise ValueError(f"segmento {idx}: no es un objeto")
+        start = float(raw_seg.get("start", 0.0))
+        end = float(raw_seg.get("end", start))
+        if not (end > start):
+            raise ValueError(f"segmento {idx}: end ({end}) debe ser > start ({start})")
+        text = str(raw_seg.get("text") or "").strip()
+        words: list[dict[str, Any]] = []
+        for raw_word in raw_seg.get("words") or []:
+            if not isinstance(raw_word, dict):
+                raise ValueError(f"segmento {idx}: palabra no es un objeto")
+            w_start = float(raw_word.get("start", start))
+            w_end = float(raw_word.get("end", w_start))
+            if not (w_end > w_start):
+                raise ValueError(
+                    f"segmento {idx}: palabra end ({w_end}) debe ser > start ({w_start})"
+                )
+            prob = float(raw_word.get("probability", raw_word.get("score", 0.0)))
+            word_entry: dict[str, Any] = {
+                "word": str(raw_word.get("word") or ""),
+                "start": round(w_start, 3),
+                "end": round(w_end, 3),
+                "probability": prob,
+                "score": prob,
+            }
+            if raw_word.get("speaker"):
+                word_entry["speaker"] = str(raw_word["speaker"])
+            words.append(word_entry)
+        seg_entry: dict[str, Any] = {
+            "id": str(raw_seg.get("id") or f"seg-{idx + 1:03d}"),
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "text": text,
+            "words": words,
+        }
+        if raw_seg.get("speaker"):
+            seg_entry["speaker"] = str(raw_seg["speaker"])
+        if raw_seg.get("no_speech_prob") is not None:
+            seg_entry["no_speech_prob"] = float(raw_seg["no_speech_prob"])
+        segments.append(seg_entry)
+        flat_words.extend(words)
+    full_text = str(payload.get("text") or "").strip() or " ".join(
+        s["text"] for s in segments if s["text"]
+    )
+    return {
+        "text": full_text,
+        "segments": segments,
+        "words": flat_words,
+        "language": str(payload.get("language") or "es"),
+    }
+
+
 def transcribe_project_asset(
     store: ProjectStore,
     project_id: str,
