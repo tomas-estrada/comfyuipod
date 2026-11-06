@@ -109,6 +109,11 @@ class ToolContext:
     # propio turno — hace falta una petición concurrente. Antes de R27 la
     # adquisición bloqueaba el loop y esa promesa era inalcanzable.
     cancel_requested: Callable[[], bool] | None = None
+    # Presupuesto compartido de llamadas LLM del turno (loop.py): `vision_check`
+    # consume una llamada antes de invocar al modelo con visión. Tipado como
+    # `Any` para no importar `loop.py` (ciclo: loop importa este módulo).
+    # `loop.py` lo inyecta; sin él (MCP, tests directos sin turno) no hay tope.
+    call_budget: Any | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -2809,6 +2814,15 @@ async def _handle_vision_check(
             ],
         },
     ]
+    # El gasto LLM de la inspección visual cuenta contra el presupuesto
+    # compartido del turno (loop.py). Sin consumo aquí, `vision_check`
+    # podía gastar llamadas con el presupuesto ya agotado a los ojos del loop.
+    budget = getattr(context, "call_budget", None)
+    if budget is not None and not budget.consume():
+        raise ToolExecutionError(
+            "Se alcanzó el presupuesto de llamadas LLM por turno; "
+            "no se ejecutó la inspección visual (vision_check)."
+        )
     llm = OpenAICompatibleLLMClient(context.config)
     response = await llm.complete(messages, temperature=0.1)
     return {
