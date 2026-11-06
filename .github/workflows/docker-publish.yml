@@ -382,7 +382,7 @@ jobs:
           done
 
       - name: Instalar ffmpeg/ffprobe para los tests de percepción M3 (VAL-PERC-001/002/003/006)
-        timeout-minutes: 8
+        timeout-minutes: 20
         # La imagen ubuntu-24.04 de GitHub Actions NO trae ffmpeg preinstalado (no aparece en
         # los apt packages de Ubuntu2404-Readme). Los tests de M3 sintetizan vídeo real con
         # ffmpeg y extraen firmas RGB de imágenes vía ffmpeg (perception/keyframes.py resuelve
