@@ -540,7 +540,7 @@ pub fn spawn_studio_server_if_enabled(cfg: &RuntimeConfig) -> Option<Child> {
 pub const STUDIO_MIN_RESPAWN_DELAY: Duration = Duration::from_secs(1);
 
 /// Política de relanzamiento de `studio-server`, simétrica a la de `ComfyUI` (`O-02`):
-/// mismo presupuesto de reinicios, mismo uptime sano que lo resetea, más un retardo
+/// presupuesto independiente para Studio, mismo uptime sano que lo resetea, más un retardo
 /// mínimo entre intentos.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StudioRestartPolicy {
@@ -553,11 +553,10 @@ pub struct StudioRestartPolicy {
 }
 
 impl StudioRestartPolicy {
-    /// Deriva la política de la configuración: reutiliza `COMFY_MAX_RESTARTS` y
-    /// `COMFY_HEALTHY_UPTIME` para que un solo concepto gobierne ambos procesos.
+    /// Deriva la política de Studio desde sus límites propios, independiente del watchdog `ComfyUI`.
     pub fn from_config(cfg: &RuntimeConfig) -> Self {
         Self {
-            max_consecutive_restarts: cfg.comfy_max_restarts,
+            max_consecutive_restarts: cfg.studio_max_restarts,
             healthy_uptime: Duration::from_secs(cfg.comfy_healthy_uptime_s),
             min_respawn_delay: STUDIO_MIN_RESPAWN_DELAY,
         }
@@ -572,6 +571,7 @@ pub struct StudioWatchdog {
     consecutive_failures: u32,
     last_spawn: Option<Instant>,
     alive_since: Option<Instant>,
+    restart_pending: bool,
     exhausted: bool,
 }
 
@@ -582,6 +582,7 @@ impl StudioWatchdog {
             consecutive_failures: 0,
             last_spawn: None,
             alive_since: None,
+            restart_pending: false,
             exhausted: false,
         }
     }
@@ -604,10 +605,11 @@ impl StudioWatchdog {
     /// Observa el hijo actual y, si procede, lo relanza. Devuelve `true` si tras el
     /// tick hay un `studio-server` vivo (relanzado o que ya lo estaba).
     pub fn tick(&mut self, cfg: &RuntimeConfig, studio_child_opt: &mut Option<Child>) -> bool {
-        if !should_start_studio_server(cfg) || sys::is_shutdown_requested() {
+        if !should_start_studio_server(cfg) || sys::is_shutdown_requested() || self.exhausted {
             return false;
         }
 
+        let mut observed_exit = false;
         if let Some(ref mut sc) = studio_child_opt {
             match sc.try_wait() {
                 Ok(None) => {
@@ -632,20 +634,33 @@ impl StudioWatchdog {
                         cfg.studio_server_port
                     ));
                     self.on_failure();
+                    observed_exit = true;
                 }
                 Err(e) => {
                     log_sup(&format!(
                         "WARN: Error en try_wait sobre studio-server: {e}. Reiniciando..."
                     ));
                     self.on_failure();
+                    observed_exit = true;
                 }
             }
-        } else {
+        } else if !self.restart_pending {
+            // An absent child is a new failed launch only after the respawn delay.
+            if self
+                .last_spawn
+                .is_some_and(|last| last.elapsed() < self.policy.min_respawn_delay)
+            {
+                return false;
+            }
             self.on_failure();
+            self.restart_pending = true;
         }
 
-        if self.exhausted {
-            return false;
+        if observed_exit {
+            self.restart_pending = true;
+            // Child::try_wait returns the same exit status on every poll; reap the handle
+            // so one process death consumes exactly one restart attempt.
+            *studio_child_opt = None;
         }
 
         // Retardo mínimo entre relanzamientos: un bucle de fallos se convierte en un
@@ -668,6 +683,7 @@ impl StudioWatchdog {
         self.last_spawn = Some(Instant::now());
         self.alive_since = None;
         *studio_child_opt = spawn_studio_server_if_enabled(cfg);
+        self.restart_pending = false;
         studio_child_opt.is_some()
     }
 }
