@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "purpose": "Research-backed engine selection, not a runtime installed-engine manifest.",
   "counts": {
-    "engines": 88,
+    "engines": 89,
     "additional_candidates": 30,
     "capabilities": 34
   },
@@ -1950,6 +1950,29 @@
         "C15"
       ],
       "code_revision": null,
+      "lock_required_before_build": true,
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+    },
+    {
+      "id": "llm-server",
+      "name": "Servidor LLM local (OpenAI-compatible, solo loopback)",
+      "disposition": "required",
+      "source_ids": [
+        "LOCAL-LLM-01"
+      ],
+      "scope": "llama-server (llama.cpp) en 127.0.0.1: chat completions OpenAI-compatibles para el agente sin APIs facturadas; binario horneado pinned, modelo .gguf como dependencia de tarea en runtime.",
+      "terms_review": "Codigo MIT verificado via API (ggml-org/llama.cpp, MIT License). Release v0.9.0 (2026-11-04, https://github.com/ggml-org/llama.cpp/releases/tag/v0.9.0). Sin redistribucion de pesos en la imagen; loopback-only.",
+      "hardware_notes": "CPU u offload GPU segun modelo; binario de decenas de MB; WARM sin residencia VRAM por defecto.",
+      "build_selected": true,
+      "runtime_installs_allowed": false,
+      "weights_policy": "exact_components_on_demand",
+      "implementation_status": "specified_not_implemented_here",
+      "gpu_validation": "not_run",
+      "capabilities": [
+        "C03",
+        "C08"
+      ],
+      "code_revision": "v0.9.0",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     }

@@ -418,7 +418,6 @@ def create_app(
                 vram_mb=detected_profile.effective.vram_usable_mb,
                 ram_mb=detected_profile.effective.ram_usable_mb,
             )
-
             def recover_orphan_gpu(grant: Any) -> bool:
                 """Stop recorded child groups, then verify ComfyUI is idle and freed."""
                 if grant.engine not in {"comfyui", "upscaler", "qa"}:

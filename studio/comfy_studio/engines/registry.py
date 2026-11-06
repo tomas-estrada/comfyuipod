@@ -264,6 +264,17 @@ def build_default_registry() -> EngineRegistry:
             ),
         )
     )
+    reg.register(
+        EngineEntry(
+            "llm_server",
+            EngineTier.WARM,
+            wired=True,
+            note=(
+                "LLM local OpenAI-compatible (llama-server v0.9.0); "
+                "binario horneado pinned, modelo .gguf en runtime"
+            ),
+        )
+    )
     return reg
 
 
@@ -284,6 +295,7 @@ ENGINE_CLASSES: dict[str, str] = {
     "heavy_video": "comfy_studio.engines.heavy_video:HeavyVideoEngine",
     "indextts": "comfy_studio.engines.indextts:IndexttsEngine",
     "lipsync": "comfy_studio.engines.lipsync:LipsyncEngine",
+    "llm_server": "comfy_studio.engines.llm_server:LlmServerEngine",
     "music_gen": "comfy_studio.engines.music_gen:MusicGenEngine",
     "qa": "comfy_studio.engines.qa:QaEngine",
     "reference-local": "comfy_studio.engines.reference_local:ReferenceLocalEngine",
