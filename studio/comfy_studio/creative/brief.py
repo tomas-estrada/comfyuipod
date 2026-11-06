@@ -7,8 +7,16 @@ respaldados por assets (con evidencia), decisiones asumidas, información
 pendiente, presupuesto y criterios de aceptación, más la dirección editorial.
 
 El parseo del prompt es DETERMINISTA (sin LLM): extrae restricciones explícitas
-(duración, formato, plataforma, idioma, música, subtítulos, tono, tipo de pieza)
-y deja constancia de cada una como `user_constraints` con el fragmento original.
+(duración, formato, plataforma, idioma, música, subtítulos, texto en pantalla y
+CTA) y deja constancia de cada una como `user_constraints` con el fragmento
+original. El tono y el tipo de pieza se INFIREN del texto (van a los campos
+`tone`/`piece_type` del intent, no a `user_constraints`).
+
+Unidades de duración soportadas por `_DURATION_PATTERNS`: segundos (`90s`,
+`90 segundos`, `30 seg`, `5 sec`) y minutos (`2 minutos`, `3 min`, `1,5 minutos`),
+más las formas sin dígitos «medio minuto» (30 s) y «un minuto» (60 s). No hay
+patrón para horas: «1.5 hours» no fija duración.
+
 Las inferencias del sistema viven en `assumptions` y nunca pisan las decisiones
 del usuario (`user_constraints` prevalecen).
 """
