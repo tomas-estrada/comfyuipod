@@ -822,3 +822,61 @@ fn strict_hw_profile_comes_from_the_same_env_the_studio_api_resolves() {
     assert_eq!(cfg_def.strict_hw_vram_gb, 96);
     assert_eq!(cfg_def.strict_hw_ram_gb, 128);
 }
+
+#[test]
+fn strict_gpu_query_failure_is_fatal_in_gpu_mode_but_s17_only_warns() {
+    // Sin nvidia-smi no hay GPU, driver ni VRAM: en modo GPU (sin --cpu) S1/S2/S3
+    // deben ser fatal, mientras S17 solo avisa. Antes de este test ninguna rama
+    // `!gpu_query_ok` de modo GPU estaba ejercitada: la unica existente forzaba
+    // `--cpu`, que pone S1/S2/S3 en su rama "Omitido en modo CPU".
+    let vars = consumer_profile_vars();
+    let cfg = RuntimeConfig::from_map(&vars, None);
+    assert!(cfg.strict_require_gpu, "este test asume modo GPU");
+
+    let mut snap = base_healthy_snapshot();
+    snap.gpu_query_ok = false;
+    snap.gpu_name = String::new();
+    snap.driver_version = String::new(); // nvidia-smi fallo: sin driver que reportar
+
+    let rep = evaluate_strict_checks(&cfg, &snap);
+    assert_eq!(rep.result, "fatal");
+
+    let status_of = |id: &str| {
+        rep.checks
+            .iter()
+            .find(|c| c.id == id)
+            .map_or("ausente", |c| c.status.as_str())
+    };
+
+    // S1: fatal y con remediacion para destruir la instancia.
+    assert_eq!(status_of("S1"), "fatal", "S1 debia ser fatal");
+    let s1 = rep.checks.iter().find(|c| c.id == "S1");
+    assert!(
+        matches!(
+            s1,
+            Some(c) if c.remediation.as_deref().unwrap_or_default().contains("comfy destroy")
+        ),
+        "S1 debe remediarse con comfy destroy"
+    );
+
+    // S2: fatal; el driver vacio se reporta como N/A.
+    assert_eq!(status_of("S2"), "fatal", "S2 debia ser fatal");
+    let s2 = rep.checks.iter().find(|c| c.id == "S2");
+    assert!(
+        matches!(s2, Some(c) if c.detail.contains("N/A")),
+        "S2 debia reportar N/A ante un driver vacio"
+    );
+
+    // S3: fatal solo por `!gpu_query_ok`. La VRAM del fixture (32768 MB) supera
+    // el minimo (20000 MB), luego esta asercion discrimina el disjuntivo: si
+    // dejara de contemplar `!gpu_query_ok`, S3 pasaria a "ok".
+    assert_eq!(status_of("S3"), "fatal", "S3 debia ser fatal");
+
+    // S17: jamas fatal; con la GPU sin consultar solo avisa.
+    assert_eq!(status_of("S17"), "warn", "S17 debia ser warn");
+    let s17 = rep.checks.iter().find(|c| c.id == "S17");
+    assert!(
+        matches!(s17, Some(c) if c.detail.contains("no se pudo consultar la GPU")),
+        "S17 debe explicar que no se pudo consultar la GPU"
+    );
+}
