@@ -3,7 +3,7 @@
 Status: integrated partial W01/A01 implementation. PR #122 is merged; follow-up
 PRs #141 and #170 harden concurrent install cleanup and expected-size checks.
 This slice does not claim all A01 requirements are complete. Current review base:
-`main` at `25450f026abfe6a843355a2babab0902d591e2be` (82 commits past the audit); audit baseline:
+`main` at `7ae1d8bb47312d02436eb8b08cbeff2cded8dd9b` (83 commits past the audit); audit baseline:
 `2c0fbd37954f3f8f03f64c43b8882ae1079b4b29`.
 
 ## Changes in this slice
