@@ -3,7 +3,8 @@ use comfyctl::strict::{evaluate_strict_checks, probe_studio_health, SystemSnapsh
 use comfyctl::supervisor::{
     build_studio_server_command, render_crash_diagnostics, run_supervision_loop,
     should_start_studio_server, spawn_studio_server_if_enabled, stop_studio_server,
-    wait_for_studio_ready, write_supervisor_json, SupervisorState,
+    supervise_studio_server_tick, wait_for_studio_ready, write_supervisor_json,
+    StudioRestartPolicy, StudioWatchdog, SupervisorState,
 };
 use comfyctl::sys;
 use std::collections::BTreeMap;
@@ -695,4 +696,133 @@ fn wait_for_studio_ready_non_studio_true_and_zero_timeout_false() {
         !ready,
         "con STUDIO_READY_TIMEOUT_S=0 la espera está desactivada y devuelve false"
     );
+}
+
+fn count_lines(path: &Path) -> usize {
+    fs::read_to_string(path)
+        .map(|s| s.lines().count())
+        .unwrap_or(0)
+}
+
+/// Config de perfil `studio` cuyo `studio-server` muere inmediatamente (rc=3),
+/// dejando constancia de cada arranque en `spawns.txt` para poder contarlos.
+fn studio_crash_loop_cfg(tmp_dir: &Path, max_restarts: &str) -> (RuntimeConfig, PathBuf) {
+    let spawn_log = tmp_dir.join("spawns.txt");
+    let crash_stub = tmp_dir.join("studio_crash_stub.py");
+    let _ = fs::write(
+        &crash_stub,
+        format!(
+            "import os, sys\nwith open({:?}, 'a', encoding='utf-8') as f:\n    f.write(str(os.getpid()) + '\\n')\nsys.exit(3)\n",
+            spawn_log.to_string_lossy()
+        ),
+    );
+    let mut vars = BTreeMap::new();
+    vars.insert("MODEL_PROFILE".to_string(), "studio".to_string());
+    vars.insert(
+        "STUDIO_SERVER_PORT".to_string(),
+        allocate_ephemeral_port().to_string(),
+    );
+    vars.insert(
+        "STUDIO_DATA_DIR".to_string(),
+        tmp_dir.join("data").to_string_lossy().to_string(),
+    );
+    vars.insert("COMFY_MAX_RESTARTS".to_string(), max_restarts.to_string());
+    vars.insert("COMFY_HEALTHY_UPTIME".to_string(), "600".to_string());
+    vars.insert(
+        "STUDIO_SERVER_SCRIPT".to_string(),
+        crash_stub.to_string_lossy().to_string(),
+    );
+    vars.insert(
+        "STUDIO_PYTHON_BIN".to_string(),
+        if cfg!(windows) { "python" } else { "python3" }.to_string(),
+    );
+    (RuntimeConfig::from_map(&vars, None), spawn_log)
+}
+
+// Bucle de relanzamiento de studio-server: el lazo de supervisión llama al tick cada
+// 200 ms. Sin retardo mínimo ni presupuesto, un studio-server que muere al arrancar
+// (dependencia rota, puerto ocupado) se relanzaba en CADA tick: ~5 procesos nuevos
+// por segundo y 5 líneas de WARN por segundo en supervisor.log, en un bucle que no
+// puede prosperar. ComfyUI ya tenía COMFY_RESTART_DELAY + COMFY_MAX_RESTARTS;
+// studio-server no tenía nada equivalente.
+#[test]
+fn studio_server_crash_loop_tiene_retardo_minimo_y_presupuesto() {
+    sys::set_shutdown_requested(false);
+
+    let tmp_dir = std::env::temp_dir().join("comfyctl_sup_studio_crash_loop");
+    let _ = fs::remove_dir_all(&tmp_dir);
+    let _ = fs::create_dir_all(&tmp_dir);
+    let (cfg, spawn_log) = studio_crash_loop_cfg(&tmp_dir, "3");
+
+    // 1. La política se deriva de la configuración, no de constantes sueltas.
+    let policy = StudioRestartPolicy::from_config(&cfg);
+    assert_eq!(policy.max_consecutive_restarts, 3);
+    assert_eq!(policy.healthy_uptime, Duration::from_secs(600));
+    assert!(
+        policy.min_respawn_delay >= Duration::from_secs(1),
+        "el retardo mínimo entre relanzamientos debe ser >= 1s: {:?}",
+        policy.min_respawn_delay
+    );
+
+    // 2. El retardo mínimo frena el bucle caliente: con un retardo largo (30 s, muy
+    //    por encima de lo que tarda el test) los ticks siguientes no relanzan nada.
+    let slow_policy = StudioRestartPolicy {
+        max_consecutive_restarts: 10,
+        healthy_uptime: Duration::from_secs(600),
+        min_respawn_delay: Duration::from_secs(30),
+    };
+    let mut wd_fast = StudioWatchdog::new(slow_policy);
+    let mut child_fast: Option<std::process::Child> = None;
+    supervise_studio_server_tick(&cfg, &mut child_fast, &mut wd_fast);
+    // El stub escribe su PID desde el proceso hijo: hay que darle margen.
+    thread::sleep(Duration::from_millis(700));
+    let after_first = count_lines(&spawn_log);
+    assert!(
+        after_first >= 1,
+        "el primer tick debe lanzar studio-server (vistos {after_first})"
+    );
+    supervise_studio_server_tick(&cfg, &mut child_fast, &mut wd_fast);
+    supervise_studio_server_tick(&cfg, &mut child_fast, &mut wd_fast);
+    assert_eq!(
+        count_lines(&spawn_log),
+        after_first,
+        "con el retardo mínimo sin vencer no debe haber nuevos arranques"
+    );
+
+    // 3. Con el retardo ya vencido, el presupuesto sigue acotando: el número de
+    //    arranques no crece con el número de ticks.
+    let mut watchdog = StudioWatchdog::new(StudioRestartPolicy {
+        max_consecutive_restarts: 3,
+        healthy_uptime: Duration::from_secs(600),
+        min_respawn_delay: Duration::from_millis(1),
+    });
+    let mut child: Option<std::process::Child> = None;
+    let before = count_lines(&spawn_log);
+    for _ in 0..40 {
+        supervise_studio_server_tick(&cfg, &mut child, &mut watchdog);
+        thread::sleep(Duration::from_millis(5));
+    }
+    let after = count_lines(&spawn_log);
+
+    assert!(
+        watchdog.is_exhausted(),
+        "tras agotar el presupuesto el watchdog debe marcarse exhausted"
+    );
+    assert!(
+        after <= before + 4,
+        "el bucle de fallos debe acotarse al presupuesto: {before} arranques antes, {after} tras 40 ticks"
+    );
+
+    // 4. Agotado el presupuesto, ni un tick más relanza nada.
+    supervise_studio_server_tick(&cfg, &mut child, &mut watchdog);
+    supervise_studio_server_tick(&cfg, &mut child, &mut watchdog);
+    assert_eq!(
+        count_lines(&spawn_log),
+        after,
+        "agotado el presupuesto no debe relanzarse studio-server nunca más"
+    );
+
+    stop_studio_server(&mut child);
+    stop_studio_server(&mut child_fast);
+    let _ = fs::remove_dir_all(&tmp_dir);
 }
