@@ -237,12 +237,12 @@ def test_real_engines_flag_wires_live_collaborators(
     from types import SimpleNamespace
 
     from comfy_studio.app import create_app
-    from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
     from comfy_studio.orchestration.adapters import (
         EngineAssembler,
         EngineRunnerAdapter,
         SemanticQaEvaluator,
     )
+    from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
 
     # This is a wiring fixture, not a claim that the CPU CI host has a GPU.
     # Supply verified detected resources explicitly so the live-adapter path is
