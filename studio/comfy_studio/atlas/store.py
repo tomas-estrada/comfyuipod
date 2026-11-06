@@ -771,8 +771,11 @@ class AtlasStore:
         """Verificación de integridad del catálogo contra los archivos en disco.
 
         Comprueba: archivo existe, tamaño, sha256 (opcional), dimensiones
-        decodificables que coinciden, licencia registrada. Devuelve un reporte
-        con errores tipados; `ok` es False si hay cualquier error.
+        decodificables que coinciden, licencia registrada; más integridad
+        referencial: vistas sin referencia/lugar, vista y referencia en lugares
+        distintos, referencias sin lugar y `file_path` duplicado con sha256
+        distinto. Devuelve un reporte con errores tipados; `ok` es False si hay
+        cualquier error.
         """
         from comfy_studio.atlas.imaging import image_dimensions, is_raster_mime, sniff_mime
 
@@ -780,6 +783,19 @@ class AtlasStore:
         warnings: list[str] = []
         refs = self.all_references(usable_only=True, limit=limit)
         checked = 0
+        seen_paths: dict[str, list[tuple[str, str]]] = {}
+        for ref in self.all_references(usable_only=False, limit=limit):
+            seen_paths.setdefault(ref.file_path, []).append((ref.ref_id, ref.sha256))
+            if ref.place_id is not None and self.get_place(ref.place_id) is None:
+                errors.append({"ref_id": ref.ref_id, "error": "referencia sin lugar",
+                               "place_id": ref.place_id})
+        for path, members in seen_paths.items():
+            if len(members) > 1 and len({sha for _, sha in members}) > 1:
+                for ref_id, _ in members:
+                    errors.append({"ref_id": ref_id,
+                                   "error": "file_path duplicado con sha256 distinto",
+                                   "file_path": path,
+                                   "refs": sorted(r for r, _ in members)})
         for ref in refs:
             checked += 1
             fpath = (files_root / ref.file_path).resolve()
@@ -825,12 +841,34 @@ class AtlasStore:
                 errors.append({"ref_id": ref.ref_id, "error": "licencia no registrada"})
             elif not lic.get("license") or lic["license"] == "UNKNOWN":
                 errors.append({"ref_id": ref.ref_id, "error": "licencia desconocida"})
+            if ref.content_class == "pendiente":
+                warnings.append(f"{ref.ref_id}: referencia sin auditar (content_class pendiente)")
+        views_checked = 0
+        with self._lock:
+            view_rows = self._conn.execute("SELECT * FROM views").fetchall()
+        for vrow in view_rows:
+            view = _row_to_view(vrow)
+            views_checked += 1
+            ref = self.get_reference(view.ref_id)
+            if ref is None:
+                errors.append({"view_id": view.view_id, "error": "vista sin referencia",
+                               "ref_id": view.ref_id})
+            if self.get_place(view.place_id) is None:
+                errors.append({"view_id": view.view_id, "error": "vista sin lugar",
+                               "place_id": view.place_id})
+            elif ref is not None and ref.place_id != view.place_id:
+                errors.append({"view_id": view.view_id,
+                               "error": "vista y referencia en lugares distintos",
+                               "place_id": view.place_id,
+                               "ref_place_id": ref.place_id})
         return {
             "ok": not errors,
             "checked_references": checked,
+            "checked_views": views_checked,
             "errors": errors[:500],
             "error_count": len(errors),
             "warnings": warnings[:100],
+            "warning_count": len(warnings),
         }
 
 
