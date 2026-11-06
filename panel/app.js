@@ -36,6 +36,8 @@
         pendingChatByProject: {},
         sseSource: null,
         sseConnected: false,
+        sseRefreshPending: false,
+        sseRefreshInFlight: false,
         auth: loadSavedAuth(),
     };
 
@@ -2628,6 +2630,21 @@
     }
 
     /* --- SSE PROGRESS STREAM --- */
+    function scheduleSseRefresh(task) {
+        state.sseRefreshPending = true;
+        if (document.hidden || state.sseRefreshInFlight) {
+            return;
+        }
+        state.sseRefreshPending = false;
+        state.sseRefreshInFlight = true;
+        Promise.resolve(task()).finally(() => {
+            state.sseRefreshInFlight = false;
+            if (state.sseRefreshPending && !document.hidden) {
+                scheduleSseRefresh(task);
+            }
+        });
+    }
+
     function connectProgressSse() {
         if (typeof EventSource === "undefined") return;
         if (state.sseSource) {
@@ -2670,7 +2687,7 @@
                     if (banner) {
                         banner.innerHTML = `Progreso en vivo — Job <code>${escapeHtml(data.job_id || "")}</code>: ${escapeHtml(data.value || 0)} / ${escapeHtml(data.max || 1)} (nodo <code>${escapeHtml(data.node || "exec")}</code>)`;
                     }
-                    refreshJobs();
+                    scheduleSseRefresh(refreshJobs);
                 } catch (_e) {
                     // Ignorar
                 }
@@ -2682,9 +2699,9 @@
                     if (banner) {
                         banner.innerHTML = `Actualización de Job <code>${escapeHtml(data.job_id || "")}</code>: estado <strong>${escapeHtml(data.status || "updated")}</strong>`;
                     }
-                    refreshJobs();
+                    scheduleSseRefresh(refreshJobs);
                     if (data.status === "done") {
-                        refreshGallery();
+                        scheduleSseRefresh(refreshGallery);
                     }
                 } catch (_e) {
                     // Ignorar
@@ -2692,7 +2709,7 @@
             });
 
             es.addEventListener("edl", function () {
-                refreshEdl();
+                scheduleSseRefresh(refreshEdl);
             });
 
             es.addEventListener("montage", function (evt) {
@@ -2700,12 +2717,12 @@
                     const data = JSON.parse(evt.data);
                     if (data.project_id && data.project_id !== state.activeProjectId) return;
                     if (data.status === "built") {
-                        refreshGallery();
+                        scheduleSseRefresh(refreshGallery);
                     }
                 } catch (_e) {
                     // Ignorar
                 }
-                refreshEdl();
+                scheduleSseRefresh(refreshEdl);
             });
 
             es.onerror = function () {
@@ -3391,6 +3408,12 @@
         if (refreshHealthBtn) {
             refreshHealthBtn.addEventListener("click", refreshHealthAndStatus);
         }
+
+        document.addEventListener("visibilitychange", () => {
+            if (!document.hidden && state.sseRefreshPending && !state.sseRefreshInFlight) {
+                scheduleSseRefresh(refreshJobs);
+            }
+        });
     }
 
     async function initStudioPanel() {

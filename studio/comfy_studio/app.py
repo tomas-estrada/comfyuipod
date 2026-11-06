@@ -29,6 +29,7 @@ from comfy_studio.config import (
 )
 from comfy_studio.engines.comfyui import ComfyUIEngine
 from comfy_studio.engines.editor import EditorEngine
+from comfy_studio.engines.process_registry import cleanup_process_groups
 from comfy_studio.engines.qa import QaEngine
 from comfy_studio.engines.upscaler import UpscalerEngine
 from comfy_studio.hardware_detect import effective_profile
@@ -407,7 +408,40 @@ def create_app(
                 vram_mb=detected_profile.effective.vram_usable_mb,
                 ram_mb=detected_profile.effective.ram_usable_mb,
             )
-            gpu_lease = GpuLease(lock_dir=lock_dir_for(), budget=budget)
+            def recover_orphan_gpu(grant: Any) -> bool:
+                """Stop recorded child groups, then verify ComfyUI is idle and freed."""
+                if grant.engine not in {"comfyui", "upscaler", "qa"}:
+                    return False
+                if not cleanup_process_groups(gpu_lease.child_process_dir(grant)):
+                    return False
+
+                async def _recover() -> bool:
+                    client = app.state.comfyui_client
+                    queue = await client.get_queue()
+                    if queue.queue_running or queue.queue_pending:
+                        return False
+                    freed = await client.free_memory(
+                        unload_models=True,
+                        free_memory=True,
+                    )
+                    if not isinstance(freed, dict) or freed.get("freed") is not True:
+                        return False
+                    queue = await client.get_queue()
+                    return not queue.queue_running and not queue.queue_pending
+
+                try:
+                    return asyncio.run(_recover())
+                except Exception as exc:
+                    logger.warning(
+                        "GPU lease recovery not verified (%s)", type(exc).__name__
+                    )
+                    return False
+
+            gpu_lease = GpuLease(
+                lock_dir=lock_dir_for(),
+                budget=budget,
+                recover_orphan=recover_orphan_gpu,
+            )
 
             def unload_gpu() -> bool:
                 result = asyncio.run(
