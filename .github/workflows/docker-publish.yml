@@ -396,6 +396,13 @@ jobs:
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
 
+      - name: Instalar Node.js para los tests del panel (panel/test_*.py)
+        # panel/test_agent_composer.py ejecuta el agent.js real en un contexto vm de Node
+        # con un DOM mínimo; sin node en el runner esos tests se saltan en silencio.
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
       - name: Validar paquete comfy_studio, panel web y plantillas (ruff + pytest + templates)
         env:
           # Alinea el entorno del runner con la invocación local de la suite (AGENTS.md):
@@ -411,6 +418,9 @@ jobs:
           /tmp/studio-ci-venv/bin/pip install --no-cache-dir -e "./studio[dev]"
           /tmp/studio-ci-venv/bin/ruff check studio panel scripts config/probes
           /tmp/studio-ci-venv/bin/pytest studio/tests -q
+          # Panel: tests deterministas del SPA (Node + DOM mínimo, sin navegador ni red).
+          # -rs muestra los motivos de skip para que un node ausente no pase inadvertido.
+          /tmp/studio-ci-venv/bin/pytest panel -q -rs
           /tmp/studio-ci-venv/bin/python -m comfy_studio.templates
           python3 -m json.tool config/models-studio.json > /dev/null
           python3 -m json.tool scripts/triage_patterns.json > /dev/null
