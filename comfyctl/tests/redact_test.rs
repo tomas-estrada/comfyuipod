@@ -235,3 +235,58 @@ fn redactor_redacts_secrets_in_json_quoted_form() {
     assert!(env.contains("STUDIO_API_TOKEN=[REDACTED]"), "{env}");
     assert!(env.contains("PORT=8188"), "{env}");
 }
+
+#[test]
+fn redactor_redacts_bare_hf_tokens_without_eating_hf_prefixed_log_ids() {
+    // rx_hf (`hf_[A-Za-z0-9]{12,}`) cubre el token de Hugging Face suelto en
+    // cualquier linea de log. Ninguna prueba existente la ejercitaba: las demas
+    // solo cubren la forma de asignacion `HF_TOKEN=...` (rx_studio_env), cuyo
+    // valor de ejemplo ni siquiera cumple el umbral de esta expresion.
+    let redactor = SecretRedactor::new(None, None);
+
+    // Los tokens se arman con format! (mismo idiom que `raw_key` mas abajo) para
+    // que el fuente no contenga cadenas con forma de secreto real; en tiempo de
+    // ejecucion el texto es identico, asi que rx_hf se ejercita igual.
+    let token = format!("{}{}", "hf_", "abcdefghijklmnopqrstuvwxyz1234");
+    let out = redactor.redact(&format!(
+        "401 Unauthorized: invalid token {token} for repo org/model"
+    ));
+    assert!(!out.contains(&token), "fuga de token hf: {out}");
+    assert!(out.contains("[REDACTED]"), "{out}");
+
+    // Umbral: 12 caracteres despues de `hf_` si se redactan...
+    let min_token = format!("{}{}", "hf_", "123456789012");
+    assert_eq!(redactor.redact(&format!("id {min_token}")), "id [REDACTED]");
+    // ...11 no (guarda contra falsos positivos sobre identificadores cortos).
+    let below_token = format!("{}{}", "hf_", "12345678901");
+    assert_eq!(
+        redactor.redact(&format!("id {below_token}")),
+        format!("id {below_token}")
+    );
+
+    // Identificadores reales del proyecto con prefijo `hf_` NO son tokens y deben
+    // sobrevivir intactos (linea que emite collect/mod.rs en una descarga estancada).
+    let log_id = "hf_stuck_over_30m: pid=4321 sin avance hace 1900s";
+    assert_eq!(redactor.redact(log_id), log_id);
+
+    // rx_hf corre ANTES de rx_studio_env: la composicion de ambas reglas deja la
+    // asignacion igual, sin duplicar ni romper el enmascarado.
+    assert_eq!(
+        redactor.redact(&format!("env HF_TOKEN={min_token} PORT=8188")),
+        "env HF_TOKEN=[REDACTED] PORT=8188"
+    );
+
+    // Forma JSON: el valor se enmascara y el documento sigue parseando.
+    let json = format!(r#"{{"note": "visto token {token}"}}"#);
+    let red_json = redactor.redact(&json);
+    assert!(!red_json.contains(&token), "fuga en JSON: {red_json}");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&red_json).unwrap_or(serde_json::Value::Null);
+    assert!(
+        parsed
+            .get("note")
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v.contains("[REDACTED]")),
+        "JSON roto o valor sin redactar: {red_json}"
+    );
+}
