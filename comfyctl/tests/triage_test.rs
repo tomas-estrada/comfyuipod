@@ -235,3 +235,44 @@ fn triage_caps_hits_at_ten_and_keeps_the_earliest_of_each_severity() {
         "los hits 11..15 deben caer al techo: {ids:?}"
     );
 }
+
+#[test]
+fn truncate_chars_cuenta_caracteres_y_no_parte_multibyte() {
+    // truncate_chars limita los tres puntos donde triage corta texto: 220 chars
+    // en la evidencia del hit, 120 en la clave de deduplicado y 300 en el error
+    // reciente. Cortar por bytes reventaria con un log en español: "ñ" ocupa 2
+    // bytes y "😀" 4, asi que el limite caeria a mitad de caracter.
+    use comfyctl::triage::truncate_chars;
+
+    let emoji = "aa😀bb";
+    assert_eq!(truncate_chars(emoji, 3), "aa😀");
+    assert_eq!(truncate_chars(emoji, 3).chars().count(), 3);
+    // Ese mismo corte por bytes es imposible: el byte 3 no es borde de caracter,
+    // que es justo lo que evita recorrer `chars()` en lugar de indexar el str.
+    assert!(
+        emoji.get(0..3).is_none(),
+        "el corte por bytes en 3 no cae en borde de caracter"
+    );
+
+    // Linea real del patron `hf-timeout` de scripts/triage_patterns.json.
+    let linea = "[2026-10-19 12:15:00] ERROR: Falló la descarga de flux1-dev-fp8.safetensors";
+    assert!(
+        linea.len() > linea.chars().count(),
+        "el fixture debe ser multibyte para que el corte signifique algo"
+    );
+    let corte = truncate_chars(linea, 35);
+    assert_eq!(corte.chars().count(), 35, "{corte}");
+    assert!(
+        linea.starts_with(&corte),
+        "el corte debe ser prefijo exacto del original: {corte}"
+    );
+    assert!(
+        corte.contains('ó'),
+        "el corte debe llegar hasta 'Falló' con tilde: {corte}"
+    );
+
+    // Cortes que no deben tocar la cadena ni reventar.
+    assert_eq!(truncate_chars("año", 10), "año");
+    assert_eq!(truncate_chars("año", 0), "");
+    assert_eq!(truncate_chars("", 5), "");
+}
