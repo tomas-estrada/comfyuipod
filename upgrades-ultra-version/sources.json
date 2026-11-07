@@ -1317,6 +1317,19 @@
       "verification": "official_repository_documentation",
       "limitation": "Binary/addons/assets have separate redistribution obligations; test actual headless build.",
       "gpu_measured_here": false
+    },
+    {
+      "id": "LOCAL-LLM-01",
+      "label": "llama.cpp: servidor LLM local OpenAI-compatible",
+      "urls": [
+        "https://github.com/ggml-org/llama.cpp",
+        "https://github.com/ggml-org/llama.cpp/blob/master/LICENSE"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-07",
+      "verification": "official_repository_and_license_referenced_by_engines_json",
+      "limitation": "The repository and code license do not certify the project's llama-server build pin, model quality, hardware performance, or runtime integration.",
+      "gpu_measured_here": false
     }
   ]
 }
