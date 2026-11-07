@@ -290,6 +290,7 @@ class EngineRunnerAdapter:
             "template_id",
             "graph",
             "job_id",
+            "idempotency_key",
             "project_id",
             "atlas",
             "background_image",

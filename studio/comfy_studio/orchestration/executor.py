@@ -15,6 +15,8 @@ adaptador de cada motor— se inyecta desde el server, misma forma de resultado.
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Callable
 from threading import Event
 from typing import Any, Protocol
 
@@ -113,6 +115,7 @@ def execute_next_shot(
     runner: EngineRunner | None = None,
     *,
     cancel_event: Event | None = None,
+    checkpoint: Callable[[ProductionState], None] | None = None,
 ) -> ProductionState:
     """Ejecuta el siguiente shot ejecutable (nodo `execute` del grafo).
 
@@ -127,7 +130,9 @@ def execute_next_shot(
     known = {s.id for s in state.all_shots()}
 
     for shot in topological_shots(state):
-        if shot.status not in (ShotStatus.PLANNED, ShotStatus.REPLANNING):
+        if shot.status not in (
+            ShotStatus.PLANNED, ShotStatus.REPLANNING, ShotStatus.RUNNING
+        ):
             continue
         # una dependencia INEXISTENTE (p.ej. un id alucinado por el LLM) nunca
         # estará en accepted ni en failed -> el shot se saltaría para siempre y
@@ -156,11 +161,35 @@ def execute_next_shot(
             continue
 
         shot.status = ShotStatus.RUNNING
+        if checkpoint is not None:
+            checkpoint(state)
         last_output: str | None = None
-        for layer in shot.layers:
+        for layer_index, layer in enumerate(shot.layers):
             if cancel_event is not None and cancel_event.is_set():
                 return state
+            if layer.output_path:
+                last_output = layer.output_path
+                continue
+            key_material = (
+                f"{state.id}\0{shot.id}\0{layer_index}\0{shot.replan_attempts}"
+            )
+            run_key = "prod_" + hashlib.sha256(key_material.encode()).hexdigest()[:40]
+            state.metadata["_active_layer"] = {
+                "shot_id": shot.id,
+                "layer_index": layer_index,
+                "idempotency_key": run_key,
+            }
+            if checkpoint is not None:
+                checkpoint(state)
             job = {"kind": layer.kind, "shot": shot.id, **layer.params}
+            # Engine adapters receive a stable operation id. Retries after a
+            # process restart must reconcile or deduplicate this same layer,
+            # rather than creating an unrelated paid/render job.
+            job["job_id"] = run_key
+            job["idempotency_key"] = run_key
+            project_id = state.metadata.get("project_id")
+            if project_id:
+                job["project_id"] = project_id
             if layer.template_id:
                 job["template_id"] = layer.template_id
             result = run.run_layer(
@@ -185,6 +214,9 @@ def execute_next_shot(
                 return state
             layer.output_path = result.get("output_path")
             last_output = layer.output_path
+            state.metadata.pop("_active_layer", None)
+            if checkpoint is not None:
+                checkpoint(state)
 
         shot.output_path = last_output
         shot.error = None

@@ -134,6 +134,12 @@ class Shot:
         if nxt is None:
             self.status = ShotStatus.FAILED
             return None
+        # A new replan attempt has a different stable layer operation ID. Do
+        # not carry artifacts from the previous attempt into its checkpoint or
+        # let the resumable executor mistake them for completed new work.
+        for layer in self.layers:
+            layer.output_path = None
+        self.output_path = None
         self.replan_tier = nxt
         self.replan_attempts += 1
         self.status = ShotStatus.REPLANNING

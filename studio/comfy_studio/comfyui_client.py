@@ -1721,8 +1721,39 @@ class ComfyUIClient:
         timeout: float | None = None,
         persist_outputs: bool = True,
         cancel_event: Any | None = None,
+        idempotency_key: str | None = None,
     ) -> PromptResult:
         """Ciclo de alto nivel: submit -> poll -> descarga /view -> registro en proyecto."""
+        # Production-layer IDs are stable across Studio process restarts. Persist
+        # the ComfyUI prompt ID under that key so a retry can reattach to a
+        # queued/running prompt or return the already completed result.
+        saved_job: dict[str, Any] | None = None
+        if job_id and idempotency_key and self._store is not None:
+            saved_job = self._store.get_job(job_id)
+            if saved_job is None:
+                saved_job = self._store.create_job(
+                    job_id=job_id,
+                    kind="production_layer",
+                    project_id=project_id,
+                    template_id=template_id,
+                )
+            elif saved_job.get("project_id") != project_id:
+                raise ComfyUIExecutionError(
+                    "El identificador de capa ya pertenece a otro proyecto"
+                )
+            if saved_job.get("status") == "done":
+                prior = saved_job.get("result") or {}
+                raw_outputs = prior.get("outputs") or []
+                try:
+                    outputs = [ComfyUIOutputFile.model_validate(item) for item in raw_outputs]
+                    return PromptResult(
+                        prompt_id=str(saved_job.get("prompt_id") or prior.get("prompt_id") or ""),
+                        outputs=outputs,
+                    )
+                except Exception as exc:  # noqa: BLE001 - corrupted journal fails closed
+                    raise ComfyUIExecutionError(
+                        "El resultado persistido de la capa no se puede recuperar"
+                    ) from exc
         # Exclusión mutua del trabajo GPU pesado: un solo render a la vez. Se
         # suelta con `async with`, así que también se libera si el render falla
         # o se cancela.
@@ -1777,11 +1808,34 @@ class ComfyUIClient:
                         "El render fue cancelado antes de enviarse",
                         details={"cancelled": True},
                     )
-                submission = await self.submit_prompt(
-                    prompt,
-                    job_id=job_id,
-                    project_id=project_id,
-                )
+                submission = None
+                if job_id:
+                    current_job = (
+                        self._store.get_job(job_id)
+                        if self._store is not None
+                        else saved_job
+                    )
+                    prior_prompt_id = (current_job or {}).get("prompt_id")
+                    if prior_prompt_id and (current_job or {}).get("status") == "running":
+                        submission = PromptSubmission(prompt_id=str(prior_prompt_id))
+                    elif (
+                        idempotency_key
+                        and (current_job or {}).get("status") == "queued"
+                    ):
+                        prior_prompt_id = await self._find_prompt_for_job(idempotency_key)
+                        if prior_prompt_id:
+                            submission = PromptSubmission(prompt_id=prior_prompt_id)
+                if submission is None:
+                    submission = await self.submit_prompt(
+                        prompt,
+                        job_id=job_id,
+                        project_id=project_id,
+                        extra_data=(
+                            {"production_layer_id": idempotency_key}
+                            if idempotency_key
+                            else None
+                        ),
+                    )
                 result = await self.poll_until_complete(
                     submission.prompt_id,
                     poll_interval=poll_interval,
@@ -1908,6 +1962,11 @@ class ComfyUIClient:
                         "subfolder": out_file.subfolder,
                         "storage_type": out_file.storage_type,
                     }
+                    if idempotency_key:
+                        meta["idempotency_key"] = (
+                            f"{idempotency_key}:{out_file.node_id}:"
+                            f"{out_file.filename}"
+                        )
                     if template_id:
                         meta["template_id"] = template_id
                     saved = self._store.save_upload(
@@ -1959,3 +2018,40 @@ class ComfyUIClient:
         )
         note_engine_run("comfyui", True)
         return result
+
+    async def _find_prompt_for_job(self, job_id: str) -> str | None:
+        """Find a submitted prompt by its durable layer key after a lost response."""
+        try:
+            response = await self._request("GET", "/queue")
+            queue = response.json()
+        except Exception as exc:  # noqa: BLE001 - never resubmit if state is unknown
+            raise ComfyUIExecutionError(
+                "No se pudo reconciliar la cola antes de reintentar la capa"
+            ) from exc
+        if not isinstance(queue, dict):
+            raise ComfyUIExecutionError(
+                "La cola de ComfyUI devolvió un estado no válido al reconciliar"
+            )
+        for queue_name in ("queue_running", "queue_pending"):
+            rows = queue.get(queue_name, []) if isinstance(queue, dict) else []
+            for row in rows if isinstance(rows, list) else []:
+                if not isinstance(row, list) or len(row) < 4:
+                    continue
+                extra = row[3]
+                if isinstance(extra, dict) and extra.get("production_layer_id") == job_id:
+                    return str(row[1]) if len(row) > 1 else None
+        try:
+            history = await self.get_history()
+        except Exception as exc:  # noqa: BLE001 - fail closed against duplicate work
+            raise ComfyUIExecutionError(
+                "No se pudo reconciliar el historial antes de reintentar la capa"
+            ) from exc
+        if not isinstance(history, dict):
+            return None
+        for prompt_id, item in history.items():
+            prompt = item.get("prompt") if isinstance(item, dict) else None
+            if isinstance(prompt, list) and len(prompt) > 2:
+                extra = prompt[2]
+                if isinstance(extra, dict) and extra.get("production_layer_id") == job_id:
+                    return str(prompt_id)
+        return None
