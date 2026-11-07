@@ -13,6 +13,7 @@ dependencies = [
     "httpx==0.28.1",
     "openai==3.42.0",
     "pydantic==2.14.2",
+    "langgraph==1.2.20",
     "sqlite-vec==0.1.9",
     "python-multipart==0.0.33",
 ]

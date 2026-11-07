@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -846,7 +847,16 @@ class ProjectStore:
                 status_code=413,
             )
 
-        asset_id = uuid.uuid4().hex[:12]
+        idempotency_key = str((metadata or {}).get("idempotency_key") or "").strip()
+        if idempotency_key and not job_id:
+            raise ValueError("Una carga idempotente requiere job_id")
+        asset_id = (
+            hashlib.sha256(
+                f"{project_id}\0{job_id}\0{idempotency_key}".encode()
+            ).hexdigest()[:32]
+            if idempotency_key
+            else uuid.uuid4().hex[:12]
+        )
         stored_filename = f"{asset_id}_{safe_name}"
         pdir = self._ensure_project_dirs(project_id)
         category_dir = (pdir / category).resolve()
@@ -856,7 +866,27 @@ class ProjectStore:
                 "Nombre de archivo rechazado por política de ruta.", status_code=400
             )
 
-        target_path.write_bytes(data)
+        existing = self.get_asset(project_id, asset_id) if idempotency_key else None
+        if existing is not None:
+            stored_meta = existing.get("metadata") or {}
+            existing_path = (self.data_dir / str(existing.get("rel_path") or "")).resolve()
+            if (
+                stored_meta.get("idempotency_key") == idempotency_key
+                and existing_path.is_relative_to(self.data_dir)
+                and existing_path.is_file()
+                and existing_path.read_bytes() == data
+            ):
+                return existing
+            raise MediaValidationError(
+                "La clave idempotente ya tiene un artefacto distinto.", status_code=409
+            )
+        if target_path.exists():
+            if not idempotency_key or target_path.read_bytes() != data:
+                raise MediaValidationError(
+                    "El archivo de staging de la carga no coincide.", status_code=409
+                )
+        else:
+            target_path.write_bytes(data)
         rel_path = target_path.relative_to(self.data_dir).as_posix()
         now = _utc_now_iso()
 
@@ -999,13 +1029,14 @@ class ProjectStore:
         self,
         *,
         kind: str,
+        job_id: str | None = None,
         project_id: str | None = None,
         template_id: str | None = None,
         prompt_id: str | None = None,
         params: dict[str, Any] | None = None,
         status: str = "queued",
     ) -> dict[str, Any]:
-        job_id = uuid.uuid4().hex[:12]
+        job_id = self._validate_project_id(job_id) if job_id else uuid.uuid4().hex[:12]
         now = _utc_now_iso()
         with self._connection() as conn:
             conn.execute(
@@ -1013,7 +1044,8 @@ class ProjectStore:
                 "(id, project_id, kind, status, template_id, prompt_id, "
                 "progress_value, progress_max, current_node, params_json, "
                 "result_json, error, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO NOTHING",
                 (
                     job_id,
                     project_id,

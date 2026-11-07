@@ -170,6 +170,32 @@ def test_graph_runs_end_to_end(tmp_path):
     assert "assemble" in kinds
 
 
+def test_installed_langgraph_is_the_runtime_backend(tmp_path, monkeypatch):
+    import pytest
+
+    if not langgraph_available():
+        pytest.skip("LangGraph is installed in the production Studio image")
+
+    from comfy_studio.orchestration.graph import ProductionGraph
+
+    invoked: list[bool] = []
+    original_compile = ProductionGraph.compile_langgraph
+
+    def compile_graph(self):
+        invoked.append(True)
+        return original_compile(self)
+
+    monkeypatch.setattr(ProductionGraph, "compile_langgraph", compile_graph)
+    checkpointer = ProductionCheckpointer(tmp_path / "langgraph.sqlite3")
+    final = build_production_graph(checkpointer=checkpointer).run(
+        ProductionState(idea="backend real LangGraph")
+    )
+
+    assert invoked
+    assert final.phase == "done"
+    assert checkpointer.load(final.id).phase == "done"
+
+
 def test_graph_checkpoints_each_step(tmp_path):
     cp = ProductionCheckpointer(db_path=tmp_path / "g2.sqlite3")
     graph = build_production_graph(checkpointer=cp)

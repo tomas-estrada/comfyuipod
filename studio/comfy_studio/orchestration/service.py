@@ -21,7 +21,9 @@ se cablean en el server (como el resto). Los colaboradores reales se inyectan v�
 
 from __future__ import annotations
 
+import hashlib
 import json
+import uuid
 from threading import Event
 from typing import Any
 
@@ -95,6 +97,7 @@ class ProductionService:
         # `graph.should_cancel`.
         self._cancel_requested: set[str] = set()
         self._cancel_events: dict[str, Event] = {}
+        self._runtime_id = uuid.uuid4().hex
         # Atlas georreferenciado: registra producciones que usaron el atlas
         # (lugar/vista/ref/cámara quedan en el catálogo, recuperables).
         self._atlas = atlas_service
@@ -327,6 +330,55 @@ class ProductionService:
         """El humano aprueba; corre el lazo caro y devuelve el resultado."""
         state = self._load(production_id)
         expected_state_json = json.dumps(state.to_dict(), ensure_ascii=False)
+        if state.phase == "executing":
+            # A live graph remains owned by this process. If the checkpoint says
+            # executing but this process has no graph for it, claim the durable
+            # snapshot and resume after a service restart. The single-worker
+            # Studio invariant makes the in-memory ownership check sufficient
+            # for distinguishing an active graph from an orphaned checkpoint.
+            if production_id in self._cancel_events:
+                return {
+                    "production_id": production_id,
+                    "phase": "executing",
+                    "already_in_progress": True,
+                    "status": self._status_dict(state),
+                }
+            if state.metadata.get("execution_runtime_id") == self._runtime_id:
+                # The CAS for a newly approved run can become visible just
+                # before its graph is inserted into _cancel_events. Treat the
+                # matching process token as owned during that short window.
+                return {
+                    "production_id": production_id,
+                    "phase": "executing",
+                    "already_in_progress": True,
+                    "status": self._status_dict(state),
+                }
+            state.metadata["execution_runtime_id"] = self._runtime_id
+            if not self.checkpointer.claim_phase(
+                state,
+                expected_phase="executing",
+                expected_state_json=expected_state_json,
+            ):
+                latest = self._load(production_id)
+                if latest.phase == "executing":
+                    return {
+                        "production_id": production_id,
+                        "phase": "executing",
+                        "already_in_progress": True,
+                        "status": self._status_dict(latest),
+                    }
+                if latest.phase in ("done", "simulated"):
+                    return {
+                        "production_id": production_id,
+                        "phase": latest.phase,
+                        "final_output_path": latest.final_output_path,
+                        "output_asset_ids": latest.metadata.get("output_asset_ids") or [],
+                        "status": self._status_dict(latest),
+                    }
+                raise ProductionAlreadyTerminalError(
+                    f"la producción ya está en fase {latest.phase}"
+                )
+            return self._run_approved_graph(state, production_id)
         # una producción cancelada por el humano no se puede aprobar (fail-closed);
         # el resto de fases terminales (done/failed) mantienen el approve idempotente.
         if state.phase == "cancelled":
@@ -336,6 +388,12 @@ class ProductionService:
         if state.phase in _TERMINAL_PHASES:
             if state.phase in ("done", "simulated"):
                 registered = state.metadata.get("output_asset_ids") or []
+                if state.phase == "done" and not registered:
+                    # The graph checkpoint may have reached done immediately
+                    # before a crash interrupted gallery registration. The
+                    # deterministic asset IDs make this finalization replayable.
+                    registered = self._register_outputs_in_gallery(state)
+                    self.checkpointer.save(state)
                 return {
                     "production_id": production_id,
                     "phase": state.phase,
@@ -375,6 +433,7 @@ class ProductionService:
         state.metadata["storyboard_gate"] = gate.to_dict()
         state.storyboard_approved = True
         state.phase = "executing"
+        state.metadata["execution_runtime_id"] = self._runtime_id
         state.record("approved")
         # Compare-and-set ANTES del lazo: solo una petición puede reclamar el
         # snapshot awaiting_approval. Los reintentos concurrentes se convierten
@@ -412,10 +471,19 @@ class ProductionService:
                 f"la producción ya está en fase {latest.phase}"
             )
 
+        return self._run_approved_graph(state, production_id)
+
+    def _run_approved_graph(
+        self, state: ProductionState, production_id: str
+    ) -> dict[str, Any]:
+        """Run or resume the checkpointed graph and persist its terminal result."""
         # correr el lazo caro (ejecución + evaluación + replan + ensamblaje).
         cancel_event = Event()
         self._cancel_events[production_id] = cancel_event
-        if production_id in self._cancel_requested:
+        if (
+            production_id in self._cancel_requested
+            or state.metadata.get("cancel_requested")
+        ):
             cancel_event.set()
         graph = build_production_graph(
             checkpointer=self.checkpointer,
@@ -440,6 +508,20 @@ class ProductionService:
         )
         try:
             final = graph.run(state)
+        except BaseException as exc:
+            # Release ownership while preserving the in-flight node/layer
+            # checkpoint. A later retry in this process can reclaim it; a real
+            # process crash is claimed by the new runtime token at restart.
+            interrupted = self.checkpointer.load(production_id)
+            if (
+                interrupted is not None
+                and interrupted.phase == "executing"
+                and interrupted.metadata.get("execution_runtime_id") == self._runtime_id
+            ):
+                interrupted.metadata.pop("execution_runtime_id", None)
+                interrupted.record("graph_interrupted", error=type(exc).__name__)
+                self.checkpointer.save(interrupted)
+            raise
         finally:
             self._cancel_requested.discard(production_id)
             self._cancel_events.pop(production_id, None)
@@ -488,6 +570,17 @@ class ProductionService:
             return []
         from pathlib import Path
 
+        def output_job_id(key: str) -> str:
+            digest = hashlib.sha256(f"{state.id}\0{key}".encode()).hexdigest()[:32]
+            job_id = f"pout_{digest}"
+            self.store.create_job(
+                job_id=job_id,
+                kind="production_output",
+                project_id=project_id,
+                status="done",
+            )
+            return job_id
+
         registered: list[str] = []
         for shot in state.all_shots():
             if shot.status is not ShotStatus.ACCEPTED or not shot.output_path:
@@ -506,7 +599,9 @@ class ProductionService:
                     data=path.read_bytes(),
                     max_upload_bytes=2 * 1024 * 1024 * 1024,
                     category="outputs",
+                    job_id=output_job_id(f"shot:{shot.id}"),
                     metadata={
+                        "idempotency_key": f"production:{state.id}:shot:{shot.id}",
                         "production_render": True,
                         "production_id": state.id,
                         "shot_id": shot.id,
@@ -532,7 +627,9 @@ class ProductionService:
                         data=reel.read_bytes(),
                         max_upload_bytes=2 * 1024 * 1024 * 1024,
                         category="outputs",
+                        job_id=output_job_id("reel"),
                         metadata={
+                            "idempotency_key": f"production:{state.id}:reel",
                             "production_render": True,
                             "production_id": state.id,
                             "is_final_reel": True,
