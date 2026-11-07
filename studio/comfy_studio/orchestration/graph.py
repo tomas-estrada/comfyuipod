@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import fields
 from typing import Any, TypedDict
 
 from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
@@ -113,7 +114,7 @@ class ProductionGraph:
                 {"state": state.to_dict()},
                 config={"recursion_limit": max(self.max_steps + 5, 25)},
             )
-            return ProductionState.from_dict(final["state"])
+            return _apply_state_in_place(state, ProductionState.from_dict(final["state"]))
 
         # The SQLite snapshot carries both the node that was in flight and the
         # node selected after the last completed step. A fresh approval starts
@@ -203,6 +204,16 @@ class ProductionGraph:
 
         def _lg_prepare(lg_state: dict) -> dict:
             state = ProductionState.from_dict(lg_state["state"])
+            if state.metadata.get("cancel_requested") or (
+                self.should_cancel is not None and self.should_cancel()
+            ):
+                state.phase = "cancelled"
+                state.metadata["cancel_requested"] = True
+                state.metadata.pop("_graph_inflight_node", None)
+                state.metadata.pop("_graph_next_node", None)
+                state.record("cancelled", stage="execution")
+                self._checkpoint(state)
+                return {"state": state.to_dict()}
             steps = int(state.metadata.get("_graph_steps", 0))
             if steps >= self.max_steps:
                 state.phase = "halted"
@@ -272,3 +283,40 @@ def _wrap_for_langgraph(graph: ProductionGraph, name: str, fn: NodeFn):
         return {"state": state.to_dict()}
 
     return _inner
+
+
+def _apply_state_in_place(target: ProductionState, source: ProductionState) -> ProductionState:
+    """Copy LangGraph's serialized result back while retaining caller references.
+
+    The stdlib runner mutates the objects supplied to ``run``. Keep that public
+    behavior when LangGraph crosses its serialization boundary too: callers may
+    hold references to the original shots or layers.
+    """
+    old_sequences = {sequence.id: sequence for sequence in target.sequences}
+    merged_sequences = []
+    for source_sequence in source.sequences:
+        sequence = old_sequences.get(source_sequence.id, source_sequence)
+        old_shots = {shot.id: shot for shot in sequence.shots}
+        merged_shots = []
+        for source_shot in source_sequence.shots:
+            shot = old_shots.get(source_shot.id, source_shot)
+            old_layers = list(shot.layers)
+            merged_layers = []
+            for index, source_layer in enumerate(source_shot.layers):
+                layer = old_layers[index] if index < len(old_layers) else source_layer
+                for field in fields(source_layer):
+                    setattr(layer, field.name, getattr(source_layer, field.name))
+                merged_layers.append(layer)
+            for field in fields(source_shot):
+                if field.name != "layers":
+                    setattr(shot, field.name, getattr(source_shot, field.name))
+            shot.layers = merged_layers
+            merged_shots.append(shot)
+        sequence.title = source_sequence.title
+        sequence.shots = merged_shots
+        merged_sequences.append(sequence)
+    for field in fields(source):
+        if field.name != "sequences":
+            setattr(target, field.name, getattr(source, field.name))
+    target.sequences = merged_sequences
+    return target

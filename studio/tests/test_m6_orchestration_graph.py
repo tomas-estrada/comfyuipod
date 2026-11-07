@@ -170,6 +170,28 @@ def test_graph_runs_end_to_end(tmp_path):
     assert "assemble" in kinds
 
 
+def test_langgraph_result_updates_existing_state_references():
+    from comfy_studio.orchestration.graph import _apply_state_in_place
+
+    original = _sample_state()
+    sequence = original.sequences[0]
+    shot = sequence.shots[0]
+    layer = shot.layers[0]
+    result = ProductionState.from_dict(original.to_dict())
+    result_shot = result.sequences[0].shots[0]
+    result_shot.status = ShotStatus.FAILED
+    result_shot.layers[0].output_path = "/tmp/result.png"
+
+    returned = _apply_state_in_place(original, result)
+
+    assert returned is original
+    assert original.sequences[0] is sequence
+    assert original.sequences[0].shots[0] is shot
+    assert shot.status is ShotStatus.FAILED
+    assert shot.layers[0] is layer
+    assert layer.output_path == "/tmp/result.png"
+
+
 def test_installed_langgraph_is_the_runtime_backend(tmp_path, monkeypatch):
     import pytest
 
