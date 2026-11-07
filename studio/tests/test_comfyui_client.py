@@ -196,6 +196,97 @@ def test_full_lifecycle_submit_poll_history_view_against_stub(
     assert done_events[-1]["job_id"] == job["id"]
 
 
+@pytest.mark.anyio
+async def test_production_layer_retry_reuses_completed_comfyui_result(
+    studio_data_dir: Path,
+    sample_workflow: dict[str, Any],
+) -> None:
+    """A restarted production gets the saved output without submitting twice."""
+    state = ComfyUIStubState(healthy=True, poll_ticks_before_complete=0)
+    transport = httpx.ASGITransport(app=create_stub_comfyui_app(state))
+    store = ProjectStore(studio_data_dir)
+    project = store.create_project(name="Producción recuperable")
+    client = ComfyUIClient(
+        base_url="http://stub-comfyui.local:39172",
+        transport=transport,
+        store=store,
+        poll_interval=0.01,
+        poll_timeout=5.0,
+        sleep_func=lambda _delay: asyncio.sleep(0),
+    )
+    layer_key = "prod_" + "a" * 40
+
+    first = await client.execute_prompt_job(
+        sample_workflow,
+        job_id=layer_key,
+        idempotency_key=layer_key,
+        project_id=project["id"],
+    )
+    second = await client.execute_prompt_job(
+        sample_workflow,
+        job_id=layer_key,
+        idempotency_key=layer_key,
+        project_id=project["id"],
+    )
+
+    assert len(state.prompts) == 1
+    assert first.prompt_id == second.prompt_id
+    assert [item.model_dump() for item in first.outputs] == [
+        item.model_dump() for item in second.outputs
+    ]
+    assert store.get_job(layer_key)["status"] == "done"
+    assets_before = store.list_assets(project["id"], category="outputs")
+    first_asset = assets_before[0]
+    recovered_bytes = await client.view_output(
+        first_asset["metadata"]["comfy_filename"],
+        subfolder=first_asset["metadata"]["subfolder"],
+        storage_type=first_asset["metadata"]["storage_type"],
+        prompt_id=first.prompt_id,
+    )
+    reused = store.save_upload(
+        project["id"],
+        filename=first_asset["original_filename"],
+        content_type=first_asset["mime_type"],
+        data=recovered_bytes,
+        max_upload_bytes=10_000_000,
+        category="outputs",
+        job_id=layer_key,
+        metadata=first_asset["metadata"],
+    )
+    assert reused["id"] == first_asset["id"]
+    assert len(store.list_assets(project["id"], category="outputs")) == len(assets_before)
+
+
+@pytest.mark.anyio
+async def test_recovery_finds_submitted_prompt_by_layer_key() -> None:
+    """A lost POST response can be reconciled against ComfyUI's live queue."""
+    client = ComfyUIClient(
+        base_url="http://stub-comfyui.local:39172",
+        transport=httpx.ASGITransport(app=create_stub_comfyui_app()),
+    )
+    key = "prod_" + "b" * 40
+
+    async def queue_request(method: str, path: str, **_kwargs: object) -> httpx.Response:
+        assert method == "GET"
+        assert path == "/queue"
+        return httpx.Response(
+            200,
+            json={
+                "queue_running": [
+                    [4, "existing-prompt", {}, {"production_layer_id": key}, []]
+                ],
+                "queue_pending": [],
+            },
+        )
+
+    async def no_history() -> dict[str, Any]:
+        pytest.fail("queue match should not need history lookup")
+
+    client._request = queue_request  # type: ignore[method-assign]
+    client.get_history = no_history  # type: ignore[method-assign]
+    assert await client._find_prompt_for_job(key) == "existing-prompt"
+
+
 def test_uploads_image_and_vhs_video_and_retrieves_via_view(
     sample_png_bytes: bytes,
     sample_mp4_bytes: bytes,

@@ -10,9 +10,8 @@ RUIDOSAMENTE al arrancar, no a mitad de un reel.
 
 Estados:
   - `ready`    : el grafo y el servicio importan y construyen; el lazo corre. El
-                 runner stdlib es el camino OFICIAL de producción (LangGraph no se
-                 hornea por diseño), así que su ausencia NO degrada: se reporta
-                 `ready` con `engine` en los metadatos.
+                 engine efectivo se reporta en `engine`; la imagen incluye
+                 LangGraph y los entornos mínimos conservan el fallback stdlib.
   - `degraded` : reservado para un subsistema realmente roto pero no caído.
   - `down`     : el grafo no se puede construir (fallo de import) — fail-closed.
 """
@@ -55,11 +54,11 @@ def orchestration_health_report() -> dict[str, Any]:
     if not graph_ok or not service_ok:
         state = "down"
     else:
-        # el runner stdlib es un camino de producción válido (equivalente), no un
-        # estado degradado: el pod corre en su modo estándar. Solo 'down' avisa.
+        # LangGraph es el engine de la imagen; stdlib sigue disponible para
+        # entornos mínimos y fixtures CPU.
         state = "ready"
         if not lg:
-            note = note or "runner stdlib (LangGraph no horneado, por diseño)"
+            note = note or "runner stdlib (LangGraph no está instalado en este entorno)"
 
     return {
         "state": state,

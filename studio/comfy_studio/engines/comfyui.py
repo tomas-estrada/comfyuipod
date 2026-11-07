@@ -174,12 +174,14 @@ class ComfyUIEngine:
         job_id = spec.job.get("job_id")
         project_id = spec.job.get("project_id")
         try:
-            result = await self._client.execute_prompt_job(
-                graph,
-                job_id=job_id,
-                project_id=project_id,
-                cancel_event=spec.cancel_event,
-            )
+            run_kwargs = {
+                "job_id": job_id,
+                "project_id": project_id,
+                "cancel_event": spec.cancel_event,
+            }
+            if spec.job.get("idempotency_key"):
+                run_kwargs["idempotency_key"] = spec.job["idempotency_key"]
+            result = await self._client.execute_prompt_job(graph, **run_kwargs)
         except ComfyUIError as exc:
             return EngineResult(
                 ok=False,

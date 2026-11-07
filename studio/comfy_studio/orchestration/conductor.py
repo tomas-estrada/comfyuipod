@@ -60,7 +60,7 @@ class Collaborators:
 
 def _route(state: ProductionState) -> str:
     """Decide el siguiente nodo desde el estado."""
-    if state.phase in ("done", "failed", "cancelled"):
+    if state.phase in ("done", "failed", "cancelled", "halted"):
         return END
     # cancelación cooperativa: el humano canceló durante la ejecución; el lazo se
     # detiene en el siguiente límite de paso (cada paso queda checkpointed).
@@ -94,7 +94,12 @@ def build_production_graph(
     graph.add_node(PLAN, lambda s: plan_production(s, col.planner))
     graph.add_node(
         EXECUTE,
-        lambda s: execute_next_shot(s, col.runner, cancel_event=cancel_event),
+        lambda s: execute_next_shot(
+            s,
+            col.runner,
+            cancel_event=cancel_event,
+            checkpoint=checkpointer.save if checkpointer is not None else None,
+        ),
     )
     graph.add_node(
         EVALUATE,
