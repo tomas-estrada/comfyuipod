@@ -380,28 +380,18 @@ def create_app(
     # de gasto humano: approve_plan NUNCA se expone al agente LLM (ver
     # mcp_server.py / M6-AGT-001), solo la API pública la acciona.
     #
-    # En MODEL_PROFILE=studio/unreal, los motores reales son el backend por defecto.
-    # La simulación requiere una elección explícita (STUDIO_ORCH_REAL_ENGINES=0),
-    # como en CI. Si falta hardware verificado o falla el cableado, el servidor
-    # falla al arrancar; nunca publica una API de producción simulada en silencio.
-    raw_orchestration_mode = os.environ.get("STUDIO_ORCH_REAL_ENGINES", "").strip().lower()
-    if raw_orchestration_mode in {"1", "true", "yes", "real"}:
-        use_real_orchestration = True
-    elif raw_orchestration_mode in {"0", "false", "no", "simulated"}:
-        use_real_orchestration = False
-    elif raw_orchestration_mode == "":
-        use_real_orchestration = (
-            os.environ.get("MODEL_PROFILE", "all").strip().lower() in {"studio", "unreal"}
-        )
-    else:
-        raise RuntimeError(
-            "STUDIO_ORCH_REAL_ENGINES debe ser 0/simulated o 1/real"
-        )
-
+    # Colaboradores: por defecto STUB (CI/tests sin GPU). En el pod, con
+    # STUDIO_ORCH_REAL_ENGINES=1, se cablean los adaptadores reales a los
+    # motores vivos (requiere llm_client ya construido, de ahí esta posición).
+    # El cableado es TOLERANTE a fallos: si construir un motor real falla, esa
+    # fase cae a su stub y el servicio arranca igual (nunca tumba el pod).
     orch_collaborators = None
     orch_resource_vram_budget_mb = None
-    orch_mode = "simulated"
-    if use_real_orchestration:
+    if (os.environ.get("STUDIO_ORCH_REAL_ENGINES") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
         try:
             detected_profile = effective_profile()
             detected = detected_profile.detected
@@ -478,20 +468,16 @@ def create_app(
                 unload_gpu=unload_gpu,
             )
             orch_resource_vram_budget_mb = budget.vram_mb
-            orch_mode = "real"
-            logger.info("STUDIO: orquestación con motores reales y admisión activas.")
+            logger.info(
+                "STUDIO: orquestación con motores REALES (STUDIO_ORCH_REAL_ENGINES=1)."
+            )
         except Exception as exc:
-            # Redacta el detalle y oculta el contexto original para no filtrar
-            # credenciales de un adaptador al log de arranque.
-            safe_detail = redactor.redact(str(exc))
-            raise RuntimeError(
-                f"orquestación real requerida pero no disponible: {safe_detail}"
-            ) from None
-    else:
-        logger.info(
-            "STUDIO: orquestación simulada explícitamente "
-            "(STUDIO_ORCH_REAL_ENGINES=0 o perfil no productivo)."
-        )
+            logger.warning(
+                "STUDIO: no se pudieron cablear los motores reales de orquestación "
+                "(%s); se usan stubs.",
+                redactor.redact(str(exc)),
+            )
+            orch_collaborators = None
     # Checkpointer de producciones arraigado en el data-dir de la config (en prod
     # equivale a _default_checkpoint_dir; en tests aísla cada app en su tmp_path).
     # STUDIO_ORCH_CHECKPOINT_DIR sigue como override explícito.
@@ -509,7 +495,6 @@ def create_app(
         atlas_service=app.state.atlas,
         resource_vram_budget_mb=orch_resource_vram_budget_mb,
     )
-    app.state.orchestration_mode = orch_mode
 
     mcp_ctx = McpContext(
         store=store,
