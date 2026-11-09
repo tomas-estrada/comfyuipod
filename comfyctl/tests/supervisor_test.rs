@@ -64,9 +64,9 @@ http.server.ThreadingHTTPServer(("127.0.0.1", port), H).serve_forever()
 fn base_healthy_studio_snapshot(studio_ok: bool, studio_detail: &str) -> SystemSnapshot {
     SystemSnapshot {
         gpu_query_ok: true,
-        gpu_name: "NVIDIA GeForce RTX 5090".to_string(),
+        gpu_name: "NVIDIA GeForce RTX PRO 6000 Blackwell".to_string(),
         driver_version: "570.124.06".to_string(),
-        vram_total_mb: 32607,
+        vram_total_mb: 98304,
         ram_probe_ok: true,
         ram_total_mb: 65536,
         disk_free_gb: 200.0,
@@ -79,7 +79,7 @@ fn base_healthy_studio_snapshot(studio_ok: bool, studio_detail: &str) -> SystemS
         comfy_install_ok: true,
         comfy_install_detail: "/opt/ComfyUI/main.py presente".to_string(),
         cuda_torch_ok: true,
-        cuda_torch_detail: "torch=2.9.1+cu128 cuda=12.8 device=NVIDIA GeForce RTX 5090 matmul=ok"
+        cuda_torch_detail: "torch=2.9.1+cu128 cuda=12.8 device=NVIDIA GeForce RTX PRO 6000 Blackwell matmul=ok"
             .to_string(),
         studio_health_ok: studio_ok,
         studio_health_detail: studio_detail.to_string(),

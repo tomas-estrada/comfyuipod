@@ -440,6 +440,13 @@ def create_app(
                     return not queue.queue_running and not queue.queue_pending
 
                 try:
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop and loop.is_running():
+                        future = asyncio.run_coroutine_threadsafe(_recover(), loop)
+                        return bool(future.result(timeout=30))
                     return asyncio.run(_recover())
                 except Exception as exc:
                     logger.warning(
@@ -534,7 +541,6 @@ def create_app(
             active_cfg.require_auth
             or bool(effective_pass)
             or os.environ.get("STUDIO_REQUIRE_AUTH", "").strip() in {"1", "true", "yes"}
-            or request.headers.get("X-Studio-Simulate-Edge") == "1"
         )
 
         # Sin contraseña configurada no hay credencial válida posible: exigir auth

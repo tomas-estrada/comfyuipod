@@ -154,7 +154,7 @@ def create_stub_comfyui_app(state: ComfyUIStubState | None = None) -> FastAPI:
             },
             "devices": [
                 {
-                    "name": "cuda:0 NVIDIA GeForce RTX 5090 (stub)",
+                    "name": "cuda:0 NVIDIA GeForce RTX PRO 6000 Blackwell (stub)",
                     "type": "cuda",
                     "index": 0,
                     # ComfyUI publica el driver del host en algunas versiones;

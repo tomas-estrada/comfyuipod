@@ -1,5 +1,5 @@
 # Informe de Estado y Diagnóstico — ComfyUIPod
-Generado: `2026-10-19T12:00:00Z` · Hostname: `vast-5090-node` · Uptime: `120s` · Instancia Vast: `C.998877` · Puerto externo 8188: `41888`
+Generado: `2026-10-19T12:00:00Z` · Hostname: `vast-pro6000-node` · Uptime: `120s` · Instancia Vast: `C.998877` · Puerto externo 8188: `41888`
 Imagen: `tag=sha-512e485` · `built_at=2026-10-19T11:00:00Z` · `comfyui_sha=4c62a84068a0` · `pytorch=2.9.1+cu128` · `cuda=12.8` · `ubuntu=24.04`
 
 ## 0. Triage automático
@@ -16,7 +16,7 @@ Imagen: `tag=sha-512e485` · `built_at=2026-10-19T11:00:00Z` · `comfyui_sha=4c6
 
 ## 2. Diagnóstico de arranque ([DIAG])
 ```text
-[DIAG][OK] gpu: NVIDIA GeForce RTX 5090
+[DIAG][OK] gpu: NVIDIA GeForce RTX PRO 6000 Blackwell
 [DIAG] resumen: 10 ok, 0 warn, 0 fail
 ```
 
@@ -25,7 +25,7 @@ Imagen: `tag=sha-512e485` · `built_at=2026-10-19T11:00:00Z` · `comfyui_sha=4c6
 Sin caídas registradas en `/var/log/supervisor.log`.
 
 ## 4. GPU, memoria y disco
-- **GPU**: `NVIDIA GeForce RTX 5090` · Driver `570.124.06` · VRAM `1024 / 32768 MB` · Uso `10%` · Temp `42°C`
+- **GPU**: `NVIDIA GeForce RTX PRO 6000 Blackwell` · Driver `570.124.06` · VRAM `1024 / 98304 MB` · Uso `10%` · Temp `42°C`
 - **Memoria RAM**: `11410` MB usados / `64340` MB totales (`52930` MB disponibles) · Swap usado: `0` MB
 - **Disco (`/workspace/comfyui-data`)**: `30` GB usados / `150` GB totales (`120` GB libres)
 

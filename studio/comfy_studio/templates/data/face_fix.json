@@ -106,7 +106,7 @@
       "codeformer_weight": 0.5,
       "resolution": "source (832x480 por defecto al recargar)"
     },
-    "notas_rendimiento": "Pesos ligeros (~1.5 GiB en total incluyendo detectores facexlib); corre en VRAM mínima comparado con los modelos de vídeo y es apto para RTX 4090/5090 sin offload."
+    "notas_rendimiento": "Pesos ligeros (~1.5 GiB en total incluyendo detectores facexlib); corre en VRAM mínima comparado con los modelos de vídeo y es apto para RTX PRO 6000 Blackwell sin offload."
   },
   "workflow": {
     "1": {
