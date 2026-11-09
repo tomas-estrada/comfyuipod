@@ -1,0 +1,11 @@
+{
+  "schema": "comfy_studio.demo_fixture.d04.v1",
+  "fixture_kind": "synthetic identity references and Spanish word-timing metadata",
+  "locale": "es-CO",
+  "identity_reference_ids": ["actor_ref_01", "actor_ref_01", "actor_ref_01"],
+  "word_timings": [
+    {"text": "Buenos", "start_s": 0.0, "end_s": 0.32},
+    {"text": "días", "start_s": 0.34, "end_s": 0.68},
+    {"text": "Medellín", "start_s": 0.72, "end_s": 1.24}
+  ]
+}

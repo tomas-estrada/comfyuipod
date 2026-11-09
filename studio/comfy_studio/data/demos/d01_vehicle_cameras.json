@@ -1,0 +1,17 @@
+{
+  "schema": "comfy_studio.demo_fixture.d01.v1",
+  "fixture_kind": "synthetic calibrated landmarks and protected-logo mask",
+  "max_reprojection_rmse_px": 0.01,
+  "cameras": [
+    {"id": "cam_front", "intrinsics": [800, 800, 640, 360], "points": [
+      {"xyz": [0.0, 0.0, 4.0], "uv": [640, 360]},
+      {"xyz": [0.5, 0.25, 5.0], "uv": [720, 400]}
+    ]},
+    {"id": "cam_side_heldout", "intrinsics": [900, 900, 640, 360], "points": [
+      {"xyz": [-0.4, 0.2, 4.0], "uv": [550, 405]},
+      {"xyz": [0.2, -0.2, 3.0], "uv": [700, 300]}
+    ]}
+  ],
+  "logo_mask_before": [0, 1, 1, 0, 0, 1],
+  "logo_mask_after": [0, 1, 1, 0, 0, 1]
+}
