@@ -17,12 +17,12 @@ Cada hallazgo se reprodujo localmente antes de tocarse.
 | Indicador | Valor |
 |---|---|
 | Subsistemas revisados | 5 (en paralelo) |
-| Bugs de producción encontrados y corregidos | 7 |
+| Bugs de producción encontrados y corregidos | 6 |
 | Tests que fallaban en `origin/main` y ahora pasan | 8 |
 | Falsas garantías de test eliminadas | 2 |
 | Archivos modificados | 35 |
-| Inserciones / eliminaciones | +902 / −98 |
-| Tests al final | **2514 passed, 0 failed** (baseline: 8 failed) |
+| Inserciones / eliminaciones | 1154 / 103 |
+| Tests al final | **2519 passed, 4 skipped, 0 failed** (baseline: 8 failed) |
 | Ruff / py_compile / `bash -n` | PASS |
 
 **Veredicto: APTO PARA PRODUCCIÓN** una vez que la CI de la PR #255 quede en verde
@@ -269,6 +269,49 @@ manifiesto y pasa después; la paridad O-11 entre `download-models.sh` y
 `EXPECTED_MODELS` sigue en pie (26/26); el diff del manifiesto es de 1 inserción
 y 6 eliminaciones.
 
+### 5.4 Tercera pasada: revisión holística de la rama (commit `0bead88`)
+
+Una revisión adversaria centrada en **la coherencia de la propia rama** (no del repo)
+encontró tres problemas autoinfligidos, todos en código que esta rama añadió:
+
+#### ALTO — el redactor de streaming no retenía 7 de los patrones nuevos
+
+La rama había corregido exactamente esta clase de bug para `_URL_USERINFO_RE`, y luego
+añadió 7 patrones más para paridad con Rust **sin contrapartida en vuelo**. El buffer
+solo retiene lo que coincide con `_INFLIGHT_STREAM_REGEXES`, así que un credencial
+partida entre dos chunks de un stream SSE se emitía en claro. Reproducido:
+`push("xoxb-1234") + push("567890-abcdefghij")` devolvía el token completo.
+Añadidas las entradas ancladas `^…$` correspondientes, de modo que `redact()` y el
+stream no puedan volver a divergir.
+
+#### MEDIO — la exención de `mailto:`/`sip:` miraba el grupo equivocado
+
+La comprobación usaba `m.group(0)`, que incluye el delimitador inicial obligatorio
+(espacio/comilla/`(`/`[`/`{`/`=`/`,`), así que `startswith("mailto:")` solo era cierto
+en la posición 0: **todo** `mailto:user@example.com` incrustado en un valor JSON perdía
+su parte local. Ahora se compara `group(2)` contra la misma lista de 9 esquemas que
+usa Rust.
+
+#### MEDIO — el confinamiento estaba en 1 de los 3 puntos de entrada de motor
+
+`QaShotEvaluator.evaluate` y `EngineAssembler.assemble` llamaban a `_run_engine_sync`
+directamente, así que el `video_path` del qa y los `clips`/`output_path` del editor
+quedaban sin confinar. Y `shot.output_path` se restaura **tal cual** del checkpoint de
+SQLite, así que no está garantizado que venga de un `run_layer` confinado. Ambos
+confina ahora.
+
+Además, confinar solo al dir de Studio era incorrecto: en el pod `comfyui_input_dir` es
+`COMFY_DATA_DIR/input` y ComfyUI escribe en `COMFY_DATA_DIR/output`, que son
+**hermanos** de `COMFY_DATA_DIR/studio`. Una referencia correcta como
+`/workspace/comfyui-data/input/x.png` colapsaba en silencio a `<studio>/x.png`, que no
+existe. `_allowed_roots()` admite ahora el volumen entero (el contrato real es «todo
+bajo el volumen») y `_confine_one` usa `realpath` para que los prefijos con enlaces
+simbólicos comparen de forma coherente.
+
+5 tests de regresión nuevos: retención en vuelo por patrón, `mailto:` incrustado,
+preservación de rutas hermanas legítimas, confinamiento del qa sobre una ruta
+restaurada del checkpoint, y confinamiento de `clips` del assembler.
+
 #### Asimetría importante entre los dos redactores
 
 El redactor de Python corre sobre el **cuerpo JSON serializado**, que el cliente vuelve a
@@ -277,8 +320,6 @@ Python **deben** excluir los delimitadores de JSON, mientras que en Rust `[^\s]*
 El primer intento de esta paridad copió las clases de Rust tal cual y rompió todos los cuerpos
 de `/studio/api/health` con `Extra data` (7 fallos de test, capturados por la suite). Ambos
 patrones nuevos de URL son ahora JSON-safe, y hay un test que fija el invariante.
-
-
 
 ---
 
@@ -301,8 +342,8 @@ patrones nuevos de URL son ahora JSON-safe, y hay un test que fija el invariante
 | `ruff check` (`studio/comfy_studio`, `studio/tests`, `scripts`, `config/probes`, `panel`) | **PASS** |
 | `py_compile` | **PASS** |
 | `bash -n` (`start.sh`, `download-models.sh`, `tools/mac/comfy`) | **PASS** |
-| `pytest studio/tests` (desde la raíz del repo) | **2507 passed, 4 skipped, 0 failed** |
-| — baseline `origin/main` | **8 failed** (`test_health_auth` ×7, `test_m6_production_wiring` ×1) |
+| `pytest studio/tests` (desde la raíz del repo) | **2519 passed, 4 skipped, 0 failed** (4 errores, ver abajo) |
+| — baseline `origin/main` | **8 failed** (`test_health_auth` ×7, `test_m6_production_wiring` ×1). *Nota:* los 7 de `test_health_auth` solo se reproducen con un intérprete cuya ruta contiene `@` (Python de Homebrew fuera de venv); en un entorno con venv `main` muestra solo el de `test_m6_production_wiring`. |
 | `nginx.conf` balance de llaves / cobertura HSTS+CSP | 0 desbalance / **17/17 locations** |
 | `cargo fmt --check` / `clippy -D warnings` / `test --locked` | **PASS** (88 tests) — ejecutado por el agente de revisión; **no reproducible en este host** (sin `cargo`) |
 | Docker build + smoke tests | ⏳ En curso en CI (PR #255) |
@@ -323,16 +364,22 @@ preexistentes y de entorno, no regresiones.
 | HSTS inerte sin TLS | BAJO | RFC 6797 §7.2: los navegadores ignoran HSTS sobre transporte no seguro. Solo surte efecto con `COMFY_TLS=1`. |
 | `routers/productions.py:111` hace `await run_in_threadpool(service.approve_plan, …)` | MEDIO | La petición HTTP (y un worker de anyio) queda retenida durante toda la producción, contradiciendo la intención de "job en fondo sin 504 de Nginx". **No corregido**: arreglarlo cambia el contrato de la API (202 + job-id). Requiere decisión de producto. |
 | Cambios Rust sin compilar localmente | BAJO | `cargo` no está disponible en este host. Los edits son mecánicos (snapshot, comentarios, `writeln!`), verificados por lectura; la CI los compila. |
-| `comfyctl/src/supervisor.rs:511` acepta cualquier listener en el puerto de studio-server | BAJO | **Corregido**: tras conectar exige además que el hijo siga vivo. |
-| `comfyctl/src/supervisor.rs:135-136` `keep_bytes` fijo en 20 MiB | BAJO | **Corregido**: `min(20 MiB, max_bytes)`. |
-| `comfyctl/src/report.rs:437` usa el `MODEL_PROFILE` crudo para la etiqueta | BAJO | **Corregido**: reutiliza `valid_profile_name()`. |
-| `config/models-core.json` (flux) declaraba perfiles más amplios que `models.rs` | BAJO | **Corregido**: el checker ahora entiende la guarda de igualdad simple y el manifiesto dice `["all"]`. |
 | Fixtures `nvidia_smi_*.csv` huérfanos | INFO | Ningún test hace `include_str!` sobre ellos. Re-brandados por consistencia. |
-| `planner.py` sigue aceptando `params` sin esquema por motor | MEDIO | Las **rutas** ya están confinadas en el punto de paso único, así que no hay lectura/escritura fuera del volumen. Un `params` con claves inventadas sigue llegando al motor, que hoy las ignora. **Recomendado:** allowlist de claves por motor. |
-| `engines/{ffmpeg,heavy_video}.py` con rutas sin confinar | BAJO | No reachable: `app.py` solo registra `comfyui` y `upscaler`. El confinamiento nuevo ya cubre sus claves de ruta si se registran. |
-| Redactor Python es subconjunto del de Rust | BAJO | **Corregido**: portados `Authorization`, URL de esquema genérico, `user:pass@host` sin esquema y las claves por forma AKIA/AIza/ghp_/xox. |
-| `install_log_redaction` engancha el filtro solo al logger `comfy_studio` | BAJO | **Corregido**: ahora también engancha al logger raíz. |
-| `ml/runner.py` acepta `redactor=None` en 5 de 7 llamadas | BAJO | **Corregido**: el respaldo por defecto es `from_env()`, no un redactor pelado. |
+| `planner.py` sigue aceptando `params` sin esquema por motor | MEDIO | Las **rutas** ya están confinadas en los tres puntos de entrada de motor, así que no hay lectura/escritura fuera del volumen. Un `params` con claves inventadas sigue llegando al motor, que hoy las ignora. **Recomendado:** allowlist de claves por motor. |
+| `engines/{ffmpeg,heavy_video}.py` con rutas sin confinar | BAJO | No reachable: `app.py` solo registra `comfyui` y `upscaler`. El confinamiento ya cubre sus claves de ruta si se registran. |
+| `_URL_AUTH_RE` mangles URLs con puerto y una `@` posterior | BAJO | `https://cdn.example.com:443/img@2x.png` → `…:[REDACTED]@2x.png`. Inherente a la forma del patrón (el de Rust es peor) y **no afecta a ninguna respuesta actual**. Arreglarlo exigiría excluir `/` de la clave, que reabriría la fuga de contraseñas con `/`. |
+
+### 8.1 Cerrado en esta pasada (no son riesgos residuales)
+
+| Hallazgo | Estado |
+|---|---|
+| `comfyctl/src/supervisor.rs:511` acepta cualquier listener en el puerto de studio-server | **Corregido**: tras conectar exige además que el hijo siga vivo. |
+| `comfyctl/src/supervisor.rs:135-136` `keep_bytes` fijo en 20 MiB | **Corregido**: `min(20 MiB, max_bytes)`. |
+| `comfyctl/src/report.rs:437` usa el `MODEL_PROFILE` crudo para la etiqueta | **Corregido**: reutiliza `valid_profile_name()`. |
+| `config/models-core.json` (flux) declaraba perfiles más amplios que `models.rs` | **Corregido**: el checker ahora entiende la guarda de igualdad simple y el manifiesto dice `["all"]`. |
+| Redactor Python es subconjunto del de Rust | **Corregido**: portados `Authorization`, URL de esquema genérico, `user:pass@host` sin esquema y las claves por forma AKIA/AIza/ghp_/xox. |
+| `install_log_redaction` engancha el filtro solo al logger `comfy_studio` | **Corregido**: ahora también engancha al logger raíz. |
+| `ml/runner.py` acepta `redactor=None` en 5 de 7 llamadas | **Corregido**: el respaldo por defecto es `from_env()`, no un redactor pelado. |
 
 ---
 
