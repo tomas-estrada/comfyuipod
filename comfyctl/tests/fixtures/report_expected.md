@@ -49,7 +49,7 @@ Sin errores en `/var/log/nginx/error.log`.
 ### Diferencias `pip freeze` vs `/etc/comfyui/requirements.lock`
 - Sin cambios respecto a `/etc/comfyui/requirements.lock`.
 ### Estado de `custom_nodes/` vs `/etc/comfyui/nodes.lock`
-- Los 10 custom nodes coinciden exactamente con los SHAs de `/etc/comfyui/nodes.lock`.
+- `/etc/comfyui/nodes.lock` no disponible: no se pudo verificar la deriva de custom nodes.
 ### Variables de entorno relevantes (enmascaradas)
 - `MODEL_PROFILE` = `anime`
 - `COMFY_USER` = `admin`

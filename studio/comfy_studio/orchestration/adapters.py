@@ -52,6 +52,29 @@ logger = logging.getLogger("comfy_studio.orchestration.adapters")
 # ---------------------------------------------------------------------------
 
 
+def _run_coro_sync(coro: Any) -> Any:
+    """Ejecuta una corrutina desde código síncrono, verificando el contexto.
+
+    Invariante: el grafo de producción se invoca siempre vía
+    `run_in_threadpool` (`routers/productions.py`, `mcp_server.py`), es decir en
+    un hilo de anyio **sin** bucle de eventos vivo, donde `asyncio.run` es la
+    forma correcta. Si algún día se llama desde una ruta `async` con el bucle
+    activo, `asyncio.run` lanzaría
+    `RuntimeError: asyncio.run() cannot be called from a running event loop`;
+    este helper lo detecta y falla con un mensaje accionable en vez de un error
+    críptico (o, peor, de quedar tragado por un `except Exception`).
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    raise RuntimeError(
+        "corrutina lanzada desde un bucle de eventos vivo: el grafo de "
+        "producción debe invocarse con run_in_threadpool, nunca con await "
+        "directo desde una ruta async"
+    )
+
+
 def _run_engine_sync(engine: Any, spec: EngineRunSpec) -> Any:
     """Llama `engine.run(spec)` tolerando que sea síncrono o async.
 
@@ -62,7 +85,7 @@ def _run_engine_sync(engine: Any, spec: EngineRunSpec) -> Any:
     """
     result = engine.run(spec)
     if asyncio.iscoroutine(result):
-        return asyncio.run(result)
+        return _run_coro_sync(result)
     return result
 
 
@@ -113,7 +136,12 @@ class LLMPlannerAdapter:
             {"role": "user", "content": user},
         ]
         try:
-            response = asyncio.run(self._llm.complete(messages, temperature=0.3))
+            response = _run_coro_sync(self._llm.complete(messages, temperature=0.3))
+        except RuntimeError:
+            # Un RuntimeError aquí es un error de cableado (p. ej. llamar al
+            # planner desde una ruta async), no un fallo del LLM: no debe
+            # enmascararse como "plan mínimo".
+            raise
         except Exception as exc:
             logger.warning("LLMPlannerAdapter: el cliente LLM falló (%s); plan mínimo.", exc)
             return self._fallback_plan(idea)
@@ -753,7 +781,7 @@ class VisionShotEvaluator:
                     await asyncio.sleep(0.05)
                 return task.result()
 
-            response = asyncio.run(_complete_or_cancel())
+            response = _run_coro_sync(_complete_or_cancel())
         except ProcessCancelled:
             return {"semantic": 0.0}
         except Exception as exc:  # noqa: BLE001

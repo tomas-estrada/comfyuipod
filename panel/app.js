@@ -50,16 +50,15 @@
         try {
             const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
             if (!raw) {
-                return { username: "admin", password: "", simulateEdge: false };
+                return { username: "admin", password: "" };
             }
             const parsed = JSON.parse(raw);
             return {
                 username: parsed.username || "admin",
                 password: parsed.password || "",
-                simulateEdge: Boolean(parsed.simulateEdge),
             };
         } catch (_err) {
-            return { username: "admin", password: "", simulateEdge: false };
+            return { username: "admin", password: "" };
         }
     }
 
@@ -78,9 +77,6 @@
                 unescape(encodeURIComponent(`${state.auth.username}:${state.auth.password}`))
             );
             headers["Authorization"] = `Basic ${token}`;
-        }
-        if (state.auth && state.auth.simulateEdge) {
-            headers["X-Studio-Simulate-Edge"] = "1";
         }
         return headers;
     }
@@ -3677,18 +3673,15 @@
         if (loginForm) {
             const userInput = document.getElementById("login-user-input");
             const passInput = document.getElementById("login-pass-input");
-            const simCheck = document.getElementById("login-simulate-edge-checkbox");
 
             if (userInput) userInput.value = state.auth.username || "admin";
             if (passInput) passInput.value = state.auth.password || "";
-            if (simCheck) simCheck.checked = Boolean(state.auth.simulateEdge);
 
             loginForm.addEventListener("submit", async (event) => {
                 event.preventDefault();
                 state.auth = {
                     username: userInput ? userInput.value.trim() || "admin" : "admin",
                     password: passInput ? passInput.value : "",
-                    simulateEdge: simCheck ? simCheck.checked : false,
                 };
                 saveAuthToStorage();
                 await refreshHealthAndStatus();
@@ -3700,12 +3693,10 @@
         const clearLoginBtn = document.getElementById("login-clear-btn");
         if (clearLoginBtn) {
             clearLoginBtn.addEventListener("click", async () => {
-                state.auth = { username: "admin", password: "", simulateEdge: false };
+                state.auth = { username: "admin", password: "" };
                 saveAuthToStorage();
                 const passInput = document.getElementById("login-pass-input");
-                const simCheck = document.getElementById("login-simulate-edge-checkbox");
                 if (passInput) passInput.value = "";
-                if (simCheck) simCheck.checked = false;
                 await refreshHealthAndStatus();
                 setToast("Credenciales locales limpiadas.", "success");
             });

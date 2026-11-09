@@ -55,7 +55,10 @@ def test_nginx_sends_csp_on_every_location() -> None:
     assert close, "bloque http sin cierre"
     http_body = conf[http_block.end(): http_block.end() + close.start()]
     assert "server_tokens off;" in http_body, "server_tokens off debe estar dentro del bloque http"
-    tokens = list(re.finditer(r"location\s+(\S+)\s*\{|[{}]", conf))
+    # El modificador de location es opcional (`=`, `~`, `~*`, `^~`): sin
+    # contemplarlo el tokenizer se salta `location = X {` y `location ~ re {`,
+    # que es justo donde antes faltaban las cabeceras.
+    tokens = list(re.finditer(r"location\s+(?:=|~\*|~|\^~)?\s*(\S+)\s*\{|[{}]", conf))
     stack: list[dict] = []
     blocks: list[tuple[str, str]] = []
     for t in tokens:
@@ -72,6 +75,13 @@ def test_nginx_sends_csp_on_every_location() -> None:
         assert "X-Content-Type-Options" in block, f"location {name} sin X-Content-Type-Options"
         assert "X-Frame-Options" in block, f"location {name} sin X-Frame-Options"
         assert "Referrer-Policy" in block, f"location {name} sin Referrer-Policy"
+        assert "Strict-Transport-Security" in block, f"location {name} sin HSTS"
+    # Cadena total de locations declaradas en el fichero: si el tokenizer se
+    # queda corto, el assert de arriba daría una falsa sensación de cobertura.
+    declared = len(re.findall(r"^\s*location\s", conf, re.M))
+    assert len(blocks) == declared, (
+        f"el tokenizer solo vio {len(blocks)} de {declared} locations"
+    )
 
 
 def test_panel_static_files_served_at_studio_root(client: TestClient) -> None:

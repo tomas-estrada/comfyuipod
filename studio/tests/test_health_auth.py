@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 
 from comfy_studio.app import create_app
@@ -149,14 +151,44 @@ def test_edge_auth_no_lockout_when_require_auth_true_but_no_password(
         # M3-SEC-002: el fail-open sin contraseña exigible debe ser VISIBLE
         assert resp.json()["edge_auth"] == "open"
 
+        # La cabecera de bypass se eliminó: enviarla ya no cambia nada. Con
+        # contraseña exigible debe dar 401, no 200 (regresión del bypass).
         resp_edge = c.get(
             "/studio/api/health",
             headers={"X-Studio-Simulate-Edge": "1"},
         )
-        assert resp_edge.status_code == 200
+        assert resp_edge.status_code == 200  # sin COMFY_PASS no hay nada que validar
 
         resp_projects = c.get("/studio/api/projects")
         assert resp_projects.status_code == 200
+
+
+def test_simulate_edge_header_cannot_bypass_auth(
+    studio_config, stub_comfyui_transport
+) -> None:
+    """Con COMFY_PASS exigible, X-Studio-Simulate-Edge: 1 NO exime la auth."""
+    cfg = replace(
+        studio_config,
+        comfy_user="admin",
+        comfy_pass="secreto-de-prueba",
+        require_auth=True,
+    )
+    app = create_app(config=cfg, comfyui_transport=stub_comfyui_transport)
+    with TestClient(app) as c:
+        for headers in (
+            {},
+            {"X-Studio-Simulate-Edge": "1"},
+            {"X-Studio-Simulate-Edge": "true"},
+        ):
+            resp = c.get("/studio/api/health", headers=headers)
+            assert resp.status_code == 401, (
+                f"la cabecera {headers} no debe eximir la autenticación"
+            )
+        ok = c.get(
+            "/studio/api/health",
+            auth=("admin", "secreto-de-prueba"),
+        )
+        assert ok.status_code == 200
 
 
 def test_health_reports_edge_auth_basic_when_password_enforced(

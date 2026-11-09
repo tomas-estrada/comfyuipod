@@ -69,6 +69,14 @@ curl_auth() {
     local pass="$2"
     shift 2
     check_pass_safe "${pass}"
+    # El usuario también se interpola en el fichero de configuración de curl
+    # (-K -): unas comillas dobles o un salto de línea inyectarían directivas
+    # adicionales (p. ej. `url =`), así que se valida igual que la contraseña.
+    case "${user}" in
+        *$'\n'*|*$'\r'*|*$'"'*)
+            die "El valor de COMFY_USER contiene saltos de línea o comillas dobles no válidas."
+            ;;
+    esac
     local escaped_pass="${pass//\\/\\\\}"
     escaped_pass="${escaped_pass//\"/\\\"}"
     printf 'user = "%s:%s"\n' "${user}" "${escaped_pass}" | curl -K - "$@"

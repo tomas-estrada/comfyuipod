@@ -60,6 +60,7 @@ from comfy_studio.perception import (
 )
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
+from comfy_studio.recovery import _background_tasks as _recovery_poll_tasks
 from comfy_studio.recovery import recover_interrupted_jobs
 from comfy_studio.routers import register_all_routes
 from comfy_studio.stubs.llm import StubLLMClient
@@ -223,6 +224,18 @@ def create_app(
                     "STUDIO: %d render(s) en segundo plano cancelados por el apagado "
                     "(se recuperan al arrancar).",
                     len(render_tasks),
+                )
+            # Las tareas de re-enganche de prompts de recovery.py viven en un set
+            # de módulo que nadie cancelaba: un apagado a mitad del sondeo dejaba
+            # un job a medio finalizar. Se drenan aquí igual que los renders.
+            poll_tasks = [t for t in _recovery_poll_tasks if not t.done()]
+            for poll_task in poll_tasks:
+                poll_task.cancel()
+            if poll_tasks:
+                await asyncio.gather(*poll_tasks, return_exceptions=True)
+                logger.info(
+                    "STUDIO: %d sondeo(s) de re-enganche cancelados por el apagado.",
+                    len(poll_tasks),
                 )
 
     app = FastAPI(
@@ -461,6 +474,10 @@ def create_app(
             )
 
             def unload_gpu() -> bool:
+                # Callback síncrono invocado por GpuLease.release desde el hilo
+                # del grafo (leased_runner), donde no hay bucle vivo: asyncio.run
+                # es la forma correcta. Si el cableado cambiara y corriera dentro
+                # del bucle, asyncio.run lanzaría RuntimeError de inmediato.
                 result = asyncio.run(
                     app.state.comfyui_client.free_memory(
                         unload_models=True,

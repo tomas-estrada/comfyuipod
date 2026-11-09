@@ -53,7 +53,11 @@ _STUDIO_API_TOKEN_ASSIGN_RE = re.compile(r"(?i)(STUDIO_API_TOKEN\s*[:=]\s*)(\S+)
 _STUDIO_WEBHOOK_SECRET_ASSIGN_RE = re.compile(r"(?i)(STUDIO_WEBHOOK_SECRET\s*[:=]\s*)(\S+)")
 _VAST_API_KEY_ASSIGN_RE = re.compile(r"(?i)(VAST_API_KEY\s*[:=]\s*)(\S+)")
 _BEARER_RE = re.compile(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{6,}")
-_URL_USERINFO_RE = re.compile(r"(https?://[^/\s:@]+:)(.*)(@)")
+# userinfo de una URL (`https://usuario:clave@host`). El grupo central se limita a
+# caracteres que NO puedan ser estructura JSON (comillas, llaves, corchetes): con
+# `.*` o `[^@\s]*` la sustitución se pasaba de los delimitadores y devolvía un
+# cuerpo JSON inválido ("Extra data") en cuanto el texto posterior contenía una `@`.
+_URL_USERINFO_RE = re.compile(r"(https?://[^/\s:@]+:)([^@\s\"'\[\]{}]*)(@)")
 
 _CASE_SENSITIVE_STREAM_PREFIXES: tuple[str, ...] = (
     "hf_",

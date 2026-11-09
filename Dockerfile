@@ -129,7 +129,7 @@ RUN pip3 install --upgrade --ignore-installed pip setuptools wheel \
     done \
     && pip3 install \
         "huggingface-hub>=1.0.0,<3.0.0" \
-        "onnxruntime-gpu>=1.20.0,<2.0.0" \
+        "onnxruntime-gpu>=1.31.1,<2.0.0" \
         insightface \
         facexlib==0.3.0 \
         filterpy \
