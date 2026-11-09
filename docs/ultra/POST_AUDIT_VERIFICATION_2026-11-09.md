@@ -21,8 +21,8 @@ Cada hallazgo se reprodujo localmente antes de tocarse.
 | Tests que fallaban en `origin/main` y ahora pasan | 8 |
 | Falsas garantías de test eliminadas | 2 |
 | Archivos modificados | 35 |
-| Inserciones / eliminaciones | 1270 / 104 |
-| Tests al final | **2520 passed, 4 skipped, 0 failed** (baseline: 8 failed) |
+| Inserciones / eliminaciones | 1339 / 104 |
+| Tests al final | **2521 passed, 4 skipped, 0 failed** (baseline: 8 failed) |
 | Ruff / py_compile / `bash -n` | PASS |
 
 **Veredicto: APTO PARA PRODUCCIÓN** una vez que la CI de la PR #255 quede en verde
@@ -375,11 +375,11 @@ patrones nuevos de URL son ahora JSON-safe, y hay un test que fija el invariante
 | `ruff check` (`studio/comfy_studio`, `studio/tests`, `scripts`, `config/probes`, `panel`) | **PASS** |
 | `py_compile` | **PASS** |
 | `bash -n` (`start.sh`, `download-models.sh`, `tools/mac/comfy`) | **PASS** |
-| `pytest studio/tests` (desde la raíz del repo) | **2520 passed, 4 skipped, 0 failed** (4 errores, ver abajo) |
+| `pytest studio/tests` (desde la raíz del repo) | **2521 passed, 4 skipped, 0 failed** (4 errores, ver abajo) |
 | — baseline `origin/main` | **8 failed** (`test_health_auth` ×7, `test_m6_production_wiring` ×1). *Nota:* los 7 de `test_health_auth` solo se reproducen con un intérprete cuya ruta contiene `@` (Python de Homebrew fuera de venv); en un entorno con venv `main` muestra solo el de `test_m6_production_wiring`. |
 | `nginx.conf` balance de llaves / cobertura HSTS+CSP | 0 desbalance / **17/17 locations** |
 | `cargo fmt --check` / `clippy -D warnings` / `test --locked` | **PASS** (88 tests) — ejecutado por el agente de revisión; **no reproducible en este host** (sin `cargo`) |
-| Docker build + smoke tests | ⏳ En curso en CI (PR #255) |
+| Docker build + smoke tests | ✅ **SUCCESS** en la ejecución `42694751058` de esta misma rama (build + smoke tests completos, incluidos los asserts del banner de `STUDIO_API_TOKEN`) |
 | Dry-run de resolución de manifiestos | **PASS** — ver §3.1 (original BROKEN / fixed RESOLVES OK) |
 
 Los 4 errores de `test_integration_startup_live.py` requieren un contenedor vivo
