@@ -548,6 +548,10 @@ class BuildEdlArgs(BaseModel):
             "Sobrescribe la relación de aspecto de entrega (16:9 horizontal, 9:16 vertical)."
         ),
     )
+    resolution: Literal["standard", "4k"] = Field(
+        default="standard",
+        description="Resolución de salida; 4k usa 3840x2160, 2160x3840 o 2160x2160.",
+    )
     source_asset_id: str | None = Field(
         default=None,
         description="ID opcional del vídeo fuente sobre el que aplicar los cortes.",
@@ -1946,6 +1950,7 @@ async def _handle_build_edl(
                 edl_id=edl_id,
                 version=args.version,
                 aspect_ratio=aspect,
+                resolution=args.resolution,
                 source_asset_id=args.source_asset_id,
                 ffmpeg_timeout_s=context.config.studio_ffmpeg_timeout_s,
                 ffprobe_timeout_s=context.config.studio_ffprobe_timeout_s,

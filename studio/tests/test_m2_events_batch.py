@@ -222,3 +222,74 @@ def test_edl_build_renders_each_aspect_variant(
     built = [d for t, d in captured if t == "edl" and d.get("status") == "built"]
     assert len(built) == 2
     assert {d["aspect_ratio"] for d in built} == {"16:9", "9:16"}
+
+
+@pytest.mark.skipif(
+    pytest.importorskip("shutil").which("ffmpeg") is None,
+    reason="ffmpeg no disponible en este runner",
+)
+@pytest.mark.parametrize(
+    ("aspect_ratio", "expected_dimensions"),
+    [("16:9", (3840, 2160)), ("9:16", (2160, 3840))],
+)
+def test_edl_build_renders_and_probes_exact_4k_canvas(
+    client: TestClient,
+    tmp_path: Path,
+    aspect_ratio: str,
+    expected_dimensions: tuple[int, int],
+) -> None:
+    """La ruta HTTP entrega 4K real y falla si ffprobe no confirma el canvas."""
+    import shutil
+    import subprocess
+
+    src = tmp_path / "src-4k.mp4"
+    proc = subprocess.run(
+        [
+            shutil.which("ffmpeg"),
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=#10b981:s=320x180:d=1:r=12",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            str(src),
+        ],
+        check=False,
+        capture_output=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")
+
+    project_id = client.post("/studio/api/projects", json={"name": "4K"}).json()["id"]
+    asset = client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("src.mp4", src.read_bytes(), "video/mp4")},
+    ).json()
+    response = client.post(
+        f"/studio/api/projects/{project_id}/edl/build",
+        json={
+            "resolution": "4k",
+            "aspect_ratio": aspect_ratio,
+            "fps": 12,
+            "source_asset_id": asset["id"],
+            "cuts": [{"in_sec": 0.0, "out_sec": 1.0, "reason": "4k-smoke"}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["resolution"] == "4k"
+    assert result["verification"]["probe_ok"] is True
+    assert result["verification"]["verified"] is True
+    assert (
+        result["verification"]["width"],
+        result["verification"]["height"],
+    ) == expected_dimensions
+    assert result["output_asset"]["filename"].endswith("_4k.mp4")
