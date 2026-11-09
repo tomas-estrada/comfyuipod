@@ -30,6 +30,7 @@ from comfy_studio.orchestration import (
     build_server_collaborators,
     plan_production,
 )
+from comfy_studio.orchestration.adapters import _confine_one
 from comfy_studio.orchestration.gpu_lease import AdmissionBudget, GpuLease
 from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
 
@@ -603,3 +604,41 @@ def test_engine_assembler_confines_clip_paths(tmp_path):
     for clip in seen["clips"]:
         assert Path(clip["path"]).is_relative_to(root), clip
     assert Path(seen["output_path"]).is_relative_to(root)
+
+
+def test_confinement_preserves_volume_paths_and_blocks_app_and_system_dirs(tmp_path, monkeypatch):
+    """El contrato real es «todo bajo el volumen»: los modelos, inputs, outputs y
+    assets del estudio deben conservarse tal cual, mientras que `/opt/ComfyUI`
+    (código inmutable) y las rutas de sistema deben quedar bloqueadas."""
+    volume = tmp_path / "comfyui-data"
+    studio = volume / "studio"
+    studio.mkdir(parents=True)
+    monkeypatch.setenv("COMFY_DATA_DIR", str(volume))
+    monkeypatch.setenv("STUDIO_COMFYUI_INPUT_DIR", str(volume / "input"))
+
+    eng = _CapturingEngine("upscaler")
+    runner = EngineRunnerAdapter({"upscaler": eng}, data_root=studio)
+    preserved = [
+        str(volume / "models" / "checkpoints" / "flux1-dev-fp8.safetensors"),
+        str(volume / "models" / "loras" / "x.safetensors"),
+        str(volume / "input" / "x.png"),
+        str(volume / "output" / "y.mp4"),
+        str(studio / "projects" / "p" / "assets" / "a.png"),
+    ]
+    blocked = ["/opt/ComfyUI/custom_nodes/Foo/x.py", "/etc/nginx/.htpasswd", "/etc/shadow"]
+
+    for raw in preserved + blocked:
+        runner.run_layer("upscaler", {"kind": "upscale", "input_path": raw})
+
+    assert eng.seen is not None
+    # La última pasada usó una ruta bloqueada.
+    assert Path(eng.seen["input_path"]).is_relative_to(studio)
+    for raw in blocked:
+        out = _confine_one(
+            raw, runner._allowed_roots, runner._data_root
+        )
+        assert not out.is_relative_to(Path("/opt")), raw
+        assert Path(out).is_relative_to(studio), raw
+    for raw in preserved:
+        out = _confine_one(raw, runner._allowed_roots, runner._data_root)
+        assert str(out) == raw, f"ruta legítima alterada: {raw} -> {out}"
