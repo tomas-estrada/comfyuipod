@@ -498,6 +498,9 @@ def create_app(
                 atlas_service=app.state.atlas,
                 comfyui_input_dir=os.environ.get("STUDIO_COMFYUI_INPUT_DIR")
                 or "/workspace/comfyui-data/input",
+                # Confinamiento de rutas de motor bajo el directorio de datos
+                # real de Studio (no el CWD del proceso).
+                data_root=cfg.studio_data_dir,
                 gpu_lease=gpu_lease,
                 unload_gpu=unload_gpu,
             )

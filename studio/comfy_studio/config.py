@@ -50,6 +50,12 @@ _COMFY_PASS_ASSIGN_RE = re.compile(r"(?i)(COMFY_PASS\s*[:=]\s*)(\S+)")
 _STUDIO_AUTH_PASS_ASSIGN_RE = re.compile(r"(?i)(STUDIO_AUTH_PASS\s*[:=]\s*)(\S+)")
 _HF_TOKEN_ASSIGN_RE = re.compile(r"(?i)(HF_TOKEN\s*[:=]\s*)(\S+)")
 _STUDIO_API_TOKEN_ASSIGN_RE = re.compile(r"(?i)(STUDIO_API_TOKEN\s*[:=]\s*)(\S+)")
+# Credencial real del motor heavy_video (engines/heavy_video.py: KEY_ENV). Sin este
+# patrón ni literal, un proveedor que haga eco de la clave en su cuerpo de error la
+# devuelve tal cual al cliente y al log.
+_STUDIO_HEAVY_VIDEO_KEY_ASSIGN_RE = re.compile(
+    r"(?i)(STUDIO_HEAVY_VIDEO_KEY\s*[:=]\s*)(\S+)"
+)
 _STUDIO_WEBHOOK_SECRET_ASSIGN_RE = re.compile(r"(?i)(STUDIO_WEBHOOK_SECRET\s*[:=]\s*)(\S+)")
 _VAST_API_KEY_ASSIGN_RE = re.compile(r"(?i)(VAST_API_KEY\s*[:=]\s*)(\S+)")
 _BEARER_RE = re.compile(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{6,}")
@@ -87,7 +93,7 @@ _INFLIGHT_STREAM_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)^STUDIO_API_TOKEN(?:\s*|\s*[:=]\s*\S*)$"),
     re.compile(r"(?i)^STUDIO_WEBHOOK_SECRET(?:\s*|\s*[:=]\s*\S*)$"),
     re.compile(r"(?i)^VAST_API_KEY(?:\s*|\s*[:=]\s*\S*)$"),
-    re.compile(r"^https?://[^/\s@]*$"),
+    re.compile(r"^https?://[^@\s\"'\[\]{}]*$"),
 )
 
 
@@ -164,6 +170,7 @@ class SecretRedactor:
                     source.get("STUDIO_WEBHOOK_SECRET"),
                     source.get("STUDIO_API_TOKEN"),
                     source.get("VAST_API_KEY"),
+                    source.get("STUDIO_HEAVY_VIDEO_KEY"),
                 )
                 if s
             ],
@@ -182,6 +189,10 @@ class SecretRedactor:
                     config.get_webhook_secret(),
                     config.get_api_token(),
                     config.get_vast_api_key(),
+                    # Clave del motor heavy_video: se declara aquí para que el
+                    # valor literal también se enmascare (un proveedor puede
+                    # repetirla en su cuerpo de error).
+                    os.environ.get("STUDIO_HEAVY_VIDEO_KEY"),
                 )
                 if s
             ],
@@ -208,6 +219,7 @@ class SecretRedactor:
         out = _STUDIO_AUTH_PASS_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _HF_TOKEN_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _STUDIO_API_TOKEN_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
+        out = _STUDIO_HEAVY_VIDEO_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _STUDIO_WEBHOOK_SECRET_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _VAST_API_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _BEARER_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)

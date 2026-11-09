@@ -13,6 +13,7 @@ igual que los stubs reales harían sin backend. El grafo sigue siendo síncrono.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from comfy_studio.engines import EngineResult, EngineRunSpec
@@ -443,3 +444,84 @@ def test_server_collaborators_run_full_graph_to_done(tmp_path, monkeypatch):
         assert s.last_score is not None
         assert s.last_score.get("vbench", 0.0) >= 0.5
         assert s.last_score.get("semantic", 0.0) >= 0.6
+
+
+class _CapturingEngine:
+    """Motor falso que devuelve el job que recibió, para inspeccionar rutas."""
+
+    def __init__(self, name: str = "capture") -> None:
+        self.name = name
+        self.seen: dict | None = None
+
+    def run(self, spec: EngineRunSpec) -> EngineResult:
+        self.seen = dict(spec.job)
+        return EngineResult(ok=True, engine=self.name, verb="run", payload={})
+
+
+def test_engine_runner_confines_layer_paths_to_the_data_root(tmp_path, monkeypatch):
+    """El planner (LLM) puede emitir params arbitrarios: ninguna ruta de capa
+    debe escapar del directorio de datos, ni por ruta absoluta ni por `..`."""
+    root = tmp_path / "studio"
+    root.mkdir()
+    eng = _CapturingEngine("upscaler")
+    runner = EngineRunnerAdapter({"upscaler": eng}, data_root=root)
+    res = runner.run_layer(
+        "upscaler",
+        {
+            "kind": "upscale",
+            "input_path": "/etc/shadow",
+            "output_path": "../../../../root/.ssh/authorized_keys",
+            "clips": [{"path": "../../etc/passwd", "duration_s": 1.0}, "not-a-dict"],
+            "prompt": "hi",
+            "scale": 4,
+        },
+    )
+    assert res["ok"] is True
+    job = eng.seen
+    assert job is not None
+    for key in ("input_path", "output_path"):
+        assert Path(job[key]).is_relative_to(root), f"{key} escapó del volumen: {job[key]}"
+    for clip in job["clips"]:
+        if isinstance(clip, dict):
+            assert Path(clip["path"]).is_relative_to(root)
+    # Las claves que no son rutas no se tocan.
+    assert job["prompt"] == "hi"
+    assert job["scale"] == 4
+
+
+def test_engine_runner_keeps_benign_relative_paths_inside_the_root(tmp_path):
+    root = tmp_path / "studio"
+    root.mkdir()
+    eng = _CapturingEngine("upscaler")
+    runner = EngineRunnerAdapter({"upscaler": eng}, data_root=root)
+    runner.run_layer(
+        "upscaler",
+        {"kind": "upscale", "input_path": "projects/p/in.png", "output_path": "out.mp4"},
+    )
+    assert eng.seen is not None
+    assert eng.seen["input_path"] == str(root / "projects" / "p" / "in.png")
+    assert eng.seen["output_path"] == str(root / "out.mp4")
+
+
+def test_engine_assembler_output_path_is_anchored_under_the_volume(tmp_path):
+    """El reel final NO puede caer relativo al CWD del proceso studio-server."""
+    root = tmp_path / "studio"
+    root.mkdir()
+
+    class _Editor:
+        name = "editor"
+
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            return EngineResult(
+                ok=True,
+                engine="editor",
+                verb="run",
+                payload={"output_path": spec.job["output_path"]},
+            )
+
+    assembler = EngineAssembler(_Editor(), data_root=root)
+    res = assembler.assemble("prod-1", [{"path": "a.mp4", "duration_s": 2.0}])
+    assert res["ok"] is True
+    out = Path(str(res["output_path"]))
+    assert out.is_relative_to(root), f"output_path fuera del volumen: {out}"
+    assert out.name == "prod-1_reel.mp4"

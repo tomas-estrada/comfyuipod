@@ -30,11 +30,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from threading import Event
 from typing import Any
 
+from comfy_studio.config import _default_studio_data_dir
 from comfy_studio.engines import EngineRunSpec
 from comfy_studio.engines.process import ProcessCancelled, run_cancellable
 from comfy_studio.orchestration.conductor import Collaborators
@@ -214,6 +216,52 @@ _GRAPH_ENGINES: frozenset[str] = frozenset({"comfyui"})
 _DEFAULT_COMFY_TEMPLATE = "wan_t2v"
 
 
+# ---------------------------------------------------------------------------
+# Confinamiento de rutas de los motores
+# ---------------------------------------------------------------------------
+
+#: Claves del job que los motores interpretan como rutas de filesystem. El planner
+#: (un LLM) puede emitir `params` arbitrarios, así que sin confinar, una capa podría
+#: leer o escribir fuera del volumen — incluido el `/opt/ComfyUI` inmutable.
+_JOB_PATH_KEYS = ("input_path", "output_path", "audio_path", "video_path", "path")
+
+
+def _confine_one(raw: str, root: Path) -> Path:
+    """Normaliza `raw` para que caiga dentro de `root`.
+
+    Una ruta relativa se ancla a `root`. Si una absoluta (o una con `..`) se sale
+    del volumen, se conserva **solo el nombre final** bajo `root`: el motor nunca
+    escribe fuera, y el fallo es visible en vez de silencioso.
+    """
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = Path(os.path.normpath(candidate))
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return root / Path(raw).name
+    return resolved
+
+
+def _confine_job_paths(job: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Aplica `_confine_one` a todas las rutas del job (incl. `clips[]`)."""
+    confined = dict(job)
+    for key in list(confined):
+        value = confined[key]
+        if key in _JOB_PATH_KEYS and isinstance(value, str) and value:
+            confined[key] = str(_confine_one(value, root))
+        elif key == "clips" and isinstance(value, list):
+            new_clips = []
+            for clip in value:
+                if isinstance(clip, dict) and isinstance(clip.get("path"), str) and clip["path"]:
+                    clip = dict(clip)
+                    clip["path"] = str(_confine_one(clip["path"], root))
+                new_clips.append(clip)
+            confined["clips"] = new_clips
+    return confined
+
+
 class EngineRunnerAdapter:
     """`EngineRunner` que despacha cada capa al motor real correspondiente.
 
@@ -240,12 +288,22 @@ class EngineRunnerAdapter:
         default_comfy_template: str = _DEFAULT_COMFY_TEMPLATE,
         atlas_service: Any | None = None,
         comfyui_input_dir: str | None = None,
+        data_root: Path | None = None,
     ) -> None:
         self._engines = dict(engines)
         self._registry = template_registry
         self._default_template = default_comfy_template
         self._atlas = atlas_service
         self._comfyui_input_dir = comfyui_input_dir
+        # Raíz de confinamiento para las rutas de los motores. Por defecto el
+        # directorio de datos de Studio (COMFY_DATA_DIR/studio), el mismo donde
+        # viven los proyectos, para que el contrato "todo bajo el volumen" se
+        # cumpla también en las capas de motor.
+        self._data_root = (
+            Path(data_root).resolve()
+            if data_root is not None
+            else _default_studio_data_dir(os.environ).resolve()
+        )
 
     def _resolve_atlas_background(self, job: dict[str, Any]) -> dict[str, Any]:
         """Resuelve el fondo del atlas referenced en `job['atlas']` a un archivo local real.
@@ -390,6 +448,9 @@ class EngineRunnerAdapter:
                 "error": f"motor no disponible en el servidor: {engine!r}",
             }
         job = dict(job)
+        # Confinar las rutas ANTES de toar ningún motor: el planner puede emitir
+        # params arbitrarios y los motores hacen `Path(job[...])` sin comprobar.
+        job = _confine_job_paths(job, self._data_root)
         resolved_atlas = self._resolve_atlas_background(job)
         if isinstance(resolved_atlas, dict) and "_atlas_error" in resolved_atlas:
             return {
@@ -490,9 +551,23 @@ class EngineAssembler:
     directamente los `output_path` de cada shot). Nunca lanza hacia el grafo.
     """
 
-    def __init__(self, editor_engine: Any, *, compositor_engine: Any | None = None) -> None:
+    def __init__(
+        self,
+        editor_engine: Any,
+        *,
+        compositor_engine: Any | None = None,
+        data_root: Path | None = None,
+    ) -> None:
         self._editor = editor_engine
         self._compositor = compositor_engine
+        # Ancla explícita bajo el volumen: sin ella el `output_path` del reel era
+        # relativo al CWD del proceso studio-server, que en el pod NO es el
+        # volumen, así que el editor hacía `mkdir -p` fuera de COMFY_DATA_DIR.
+        self._data_root = (
+            Path(data_root).resolve()
+            if data_root is not None
+            else _default_studio_data_dir(os.environ).resolve()
+        )
 
     def assemble(
         self,
@@ -514,7 +589,10 @@ class EngineAssembler:
                 }
                 for c in clips
             ],
-            "output_path": f"projects/default/outputs/{production_id}_reel.mp4",
+            "output_path": str(
+                self._data_root / "projects" / "default" / "outputs"
+                / f"{production_id}_reel.mp4"
+            ),
             "mode": "assemble",
         }
         spec = EngineRunSpec(job=job, cancel_event=cancel_event)
@@ -601,6 +679,7 @@ def build_server_collaborators(
     comfyui_input_dir: str | None = None,
     gpu_lease: GpuLease | None = None,
     unload_gpu: Any | None = None,
+    data_root: Path | None = None,
 ) -> Collaborators:
     """Arma el `Collaborators` real del servidor desde las piezas disponibles.
 
@@ -615,6 +694,7 @@ def build_server_collaborators(
             template_registry=template_registry,
             atlas_service=atlas_service,
             comfyui_input_dir=comfyui_input_dir,
+            data_root=data_root,
         )
         if engines
         else None
@@ -628,7 +708,7 @@ def build_server_collaborators(
         qa_engine = _LeasedQaEngine(qa_engine, gpu_lease, unload_gpu)
     evaluator = SemanticQaEvaluator(qa_engine, llm_client) if qa_engine is not None else None
     assembler = (
-        EngineAssembler(editor_engine, compositor_engine=compositor_engine)
+        EngineAssembler(editor_engine, compositor_engine=compositor_engine, data_root=data_root)
         if editor_engine is not None
         else None
     )
