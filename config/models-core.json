@@ -689,12 +689,7 @@
    "revision": "10cf201a3d49f7ff4de84d6a97d6a32cdfa8cb86",
    "sha256": "8e91b68084b53a7fc44ed2a3756d821e355ac1a7b6fe29be760c1db532f3d88a",
    "profiles": [
-    "all",
-    "anime",
-    "general",
-    "realistic",
-    "studio",
-    "unreal"
+    "all"
    ]
   }
  ]

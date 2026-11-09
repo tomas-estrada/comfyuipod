@@ -31,6 +31,15 @@ PROFILES = ("all", "general", "realistic", "anime", "minimal", "studio", "unreal
 _GUARD_RE = re.compile(
     r'if\s+\[\[\s*"\$\{MODEL_PROFILE\}"\s*=~\s*\^\(([^)]*)\)\$\s*\]\]\s*;\s*then'
 )
+# Forma de igualdad simple (`if [ "${MODEL_PROFILE}" = "all" ]; then`). Sin esto
+# la guarda era invisible para el checker, que la trataba como "sin guarda" y por
+# tanto la ensanchaba a «todos salvo minimal»: un manifiesto demasiado amplio
+# podía coincidir con una lectura errónea y nadie lo detectaba.
+# Deliberadamente NO casa formas compuestas (`!=`, `&&`, `||`): esas se dejan sin
+# parsear en vez de admitir una conjetura.
+_GUARD_EQ_RE = re.compile(
+    r'if\s+\[\s*"\$\{MODEL_PROFILE\}"\s*=\s*"([^"]+)"\s*\]\s*;\s*then'
+)
 _HF_FETCH_RE = re.compile(r'hf_fetch\s+"([^"]+)"\s+"([^"]+)"')
 
 
@@ -75,8 +84,13 @@ def _parse_plan(lines: list[str], default: set[str]) -> dict[str, set[str]]:
     while i < len(lines):
         line = lines[i]
         guard = _GUARD_RE.search(line)
+        guard_eq = _GUARD_EQ_RE.search(line)
         if guard:
             current = {p.strip() for p in guard.group(1).split("|")}
+            i += 1
+            continue
+        if guard_eq:
+            current = {guard_eq.group(1)}
             i += 1
             continue
         if line.strip() == "fi":
