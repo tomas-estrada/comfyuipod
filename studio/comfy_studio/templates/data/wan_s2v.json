@@ -143,7 +143,7 @@
       "scheduler": "simple",
       "audio_encoder": "wav2vec2-large-xlsr-53-spanish.safetensors"
     },
-    "notas_rendimiento": "El S2V 14B fp8_scaled (~16.4 GiB) más el encoder wav2vec2 español (~1.2 GiB) corren a 480p con holgura en RTX 5090 (32 GB). El audio original se muxa en el MP4 de salida vía VHS_VideoCombine (audio), así el clip ya sale con sonido."
+    "notas_rendimiento": "El S2V 14B fp8_scaled (~16.4 GiB) más el encoder wav2vec2 español (~1.2 GiB) corren a 480p con holgura en RTX PRO 6000 Blackwell (32 GB). El audio original se muxa en el MP4 de salida vía VHS_VideoCombine (audio), así el clip ya sale con sonido."
   },
   "workflow": {
     "1": {

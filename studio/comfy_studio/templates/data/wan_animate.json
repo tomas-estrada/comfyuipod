@@ -4,7 +4,7 @@
   "category": "video_edit",
   "output_kind": "video",
   "summary": "Transferencia de movimiento con Wan 2.2 Animate 14B int8: anima el sujeto de una imagen de referencia con la pose/movimiento de un vídeo guía, conservando identidad, fondo opcional y coherencia temporal.",
-  "description": "Conduce el movimiento de un vídeo de pose (pose_video) sobre el personaje u objeto concreto de una imagen de referencia (reference_image + CLIP Vision), generando un nuevo vídeo con esa identidad. Admite face_video opcional para matices faciales y background_video opcional para conservar el fondo del vídeo guía. Requiere los pesos opt-in wan2.2_animate_14B_int8_convrot.safetensors (STUDIO_INCLUDE_ANIMATE=1). Opera a 480p (832x480) con el modelo int8 quantizado para caber en RTX 5090 32 GB.",
+  "description": "Conduce el movimiento de un vídeo de pose (pose_video) sobre el personaje u objeto concreto de una imagen de referencia (reference_image + CLIP Vision), generando un nuevo vídeo con esa identidad. Admite face_video opcional para matices faciales y background_video opcional para conservar el fondo del vídeo guía. Requiere los pesos opt-in wan2.2_animate_14B_int8_convrot.safetensors (STUDIO_INCLUDE_ANIMATE=1). Opera a 480p (832x480) con el modelo int8 quantizado para caber en RTX PRO 6000 Blackwell 32 GB.",
   "performance_defaults": {
     "precision": "int8_convrot",
     "resolution": "480p",
@@ -149,7 +149,7 @@
       "denoise": 1.0,
       "precision": "int8_convrot"
     },
-    "notas_rendimiento": "Requiere el modelo opt-in wan2.2_animate_14B_int8_convrot.safetensors (+17.15 GiB, STUDIO_INCLUDE_ANIMATE=1). Sin esos pesos la plantilla no se ofrece ni acepta submits. El int8 quantizado con conv-rotaciones permite 480p en RTX 5090 32 GB sin par de expertos."
+    "notas_rendimiento": "Requiere el modelo opt-in wan2.2_animate_14B_int8_convrot.safetensors (+17.15 GiB, STUDIO_INCLUDE_ANIMATE=1). Sin esos pesos la plantilla no se ofrece ni acepta submits. El int8 quantizado con conv-rotaciones permite 480p en RTX PRO 6000 Blackwell 32 GB sin par de expertos."
   },
   "workflow": {
     "1": {

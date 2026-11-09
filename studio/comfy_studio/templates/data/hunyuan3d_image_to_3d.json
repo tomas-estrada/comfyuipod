@@ -113,7 +113,7 @@
       "sampler": "euler",
       "scheduler": "normal"
     },
-    "notas_rendimiento": "El checkpoint fp16 ocupa ~6.9 GiB en disco y ~8-12 GiB de VRAM durante el muestreo en RTX 5090; una malla a 30 pasos y octree 256 tarda ~1-3 min. Requiere ComfyUI >= 0.3.59 (nodos nativos Hunyuan3D) y el modelo del grupo 'three_d' (STUDIO_INCLUDE_3D=1 o MODEL_PROFILE=unreal)."
+    "notas_rendimiento": "El checkpoint fp16 ocupa ~6.9 GiB en disco y ~8-12 GiB de VRAM durante el muestreo en RTX PRO 6000 Blackwell; una malla a 30 pasos y octree 256 tarda ~1-3 min. Requiere ComfyUI >= 0.3.59 (nodos nativos Hunyuan3D) y el modelo del grupo 'three_d' (STUDIO_INCLUDE_3D=1 o MODEL_PROFILE=unreal)."
   },
   "workflow": {
     "1": {
