@@ -38,6 +38,7 @@ include = ["comfy_studio*"]
 
 [tool.setuptools.package-data]
 "comfy_studio.templates.data" = ["*.json"]
+"comfy_studio.data.demos" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

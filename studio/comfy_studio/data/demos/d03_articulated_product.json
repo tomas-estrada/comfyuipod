@@ -1,0 +1,10 @@
+{
+  "schema": "comfy_studio.demo_fixture.d03.v1",
+  "fixture_kind": "synthetic part/joint graph metadata",
+  "parts": [{"id": "body"}, {"id": "lid"}, {"id": "handle"}],
+  "joints": [
+    {"parent": "body", "child": "lid", "type": "hinge", "axis": [1, 0, 0]},
+    {"parent": "lid", "child": "handle", "type": "hinge", "axis": [0, 1, 0]}
+  ],
+  "heldout_views": ["front_heldout", "top_heldout"]
+}
