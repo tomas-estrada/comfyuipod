@@ -404,7 +404,7 @@ patrones nuevos de URL son ahora JSON-safe, y hay un test que fija el invariante
 | — baseline `origin/main` | **8 failed** (`test_health_auth` ×7, `test_m6_production_wiring` ×1). *Nota:* los 7 de `test_health_auth` solo se reproducen con un intérprete cuya ruta contiene `@` (Python de Homebrew fuera de venv); en un entorno con venv `main` muestra solo el de `test_m6_production_wiring`. |
 | `nginx.conf` balance de llaves / cobertura HSTS+CSP | 0 desbalance / **17/17 locations** |
 | `cargo fmt --check` / `clippy -D warnings` / `test --locked` | **PASS** (88 tests) — ejecutado por el agente de revisión; **no reproducible en este host** (sin `cargo`) |
-| Docker build + smoke tests | ✅ **SUCCESS** en la ejecución `42694751058` de esta misma rama (build + smoke tests completos, incluidos los asserts del banner de `STUDIO_API_TOKEN`) |
+| Docker build + smoke tests | ✅ **SUCCESS** en la ejecución `42707644366`, cuyo `headSha` es `552b4c4` — es decir, **el HEAD final de la rama**. Los tres jobs en verde sobre el estado definitivo (también había pasado antes en `42694751058`). |
 | Dry-run de resolución de manifiestos | **PASS** — ver §3.1 (original BROKEN / fixed RESOLVES OK) |
 
 Los 4 errores de `test_integration_startup_live.py` requieren un contenedor vivo
