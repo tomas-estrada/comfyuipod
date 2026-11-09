@@ -4,8 +4,18 @@
 # producción en `awaiting_approval` SIN gastar GPU; el lazo caro (ejecución
 # + ensamblaje) solo corre tras `approve`, y `approve` SOLO vive aquí, en la
 # API pública accionada por el usuario. El agente LLM NUNCA ve `approve`
-# (ver BELT_TOOLS_EXPOSED en mcp_server.py). `approve` despacha el lazo como
-# tarea de fondo (run_in_threadpool) para no bloquear Nginx (504).
+# (ver BELT_TOOLS_EXPOSED en mcp_server.py).
+#
+# `approve` es SÍNCRONO a propósito: devuelve el resultado completo del lazo
+# (fase, assets, reel), y dos tests E2E se apoyan en ese contrato para verificar
+# la canalización entera — incluido que el MP4 final existe y es válido.
+#
+# `run_in_threadpool` NO evita que Nginx se cuelgue: solo saca el trabajo del
+# event loop. Lo que evita el 504 es `proxy_read_timeout 3600s` de
+# `location /studio/api/` (config/nginx.conf). Consecuencia documentada: una
+# producción de más de 1 h haría 504. Convertirla en 202 + job-id (con el panel
+# sondeando por SSE) liberaría la conexión, pero rompería ese contrato y esos
+# tests; se deja anotado como alternativa, no implementado.
 
 
 
@@ -104,10 +114,17 @@ def register_routes(app: FastAPI) -> None:
         production_id: str,
         request: Request,
     ) -> dict[str, Any]:
-        """Aprobación HUMANA de la puerta de gasto: corre el lazo caro de fondo."""
+        """Aprobación HUMANA de la puerta de gasto: corre el lazo y devuelve el resultado.
+
+        Síncrono a propósito (ver la nota de gobernanza del módulo): el llamador
+        recibe la fase final y los assets. `run_in_threadpool` solo saca el
+        trabajo del event loop; el límite real de duración lo pone
+        `proxy_read_timeout 3600s` de `location /studio/api/`.
+        """
         service: ProductionService = request.app.state.production_service
         try:
-            # corre el grafo caro fuera del event loop para no bloquear Nginx.
+            # Saca el grafo del event loop (no de la petición HTTP: el límite de
+            # duración lo fija proxy_read_timeout, ver la nota del módulo).
             return await run_in_threadpool(service.approve_plan, production_id)
         except ProductionNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

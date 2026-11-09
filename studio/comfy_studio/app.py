@@ -654,10 +654,12 @@ def create_app(
     #
     # GOBERNANZA (M6-AGT-001): la puerta de gasto humano. `plan` deja la
     # producción en `awaiting_approval` SIN gastar GPU; el lazo caro (ejecución
-    # + ensamblaje) solo corre tras `approve`, y `approve` SOLO vive aquí, en la
-    # API pública accionada por el usuario. El agente LLM NUNCA ve `approve`
-    # (ver BELT_TOOLS_EXPOSED en mcp_server.py). `approve` despacha el lazo como
-    # tarea de fondo (run_in_threadpool) para no bloquear Nginx (504).
+    # + ensamblaje) solo corre tras `approve`, y `approve` SOLO vive en
+    # `routers/productions.py`, en la API pública accionada por el usuario. El
+    # agente LLM NUNCA ve `approve` (ver BELT_TOOLS_EXPOSED en mcp_server.py).
+    # Es sincrónico a propósito y su límite de duración lo fija
+    # `proxy_read_timeout 3600s` de `location /studio/api/`; ver la nota
+    # completa en ese router.
 
 
     @app.api_route(
