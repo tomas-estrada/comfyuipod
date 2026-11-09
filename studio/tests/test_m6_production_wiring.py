@@ -354,3 +354,39 @@ def test_explicit_simulated_mode_keeps_stub_collaborators(
     assert collab.runner is None
     assert collab.evaluator is None
     assert collab.assembler is None
+
+
+def test_real_orchestration_threads_the_data_root_to_every_engine_entry_point(
+    monkeypatch, studio_config, stub_comfyui_transport
+) -> None:
+    """El confinamiento de rutas debe llegar a los TRES puntos de entrada de motor.
+
+    Regresión: `run_layer` lo tenía, pero `QaShotEvaluator.evaluate` y
+    `EngineAssembler.assemble` llamaban a `_run_engine_sync` directamente, y
+    `shot.output_path` se restaura tal cual del checkpoint de SQLite.
+    """
+    from comfy_studio.app import create_app
+
+    monkeypatch.setenv("MODEL_PROFILE", "studio")
+    monkeypatch.delenv("STUDIO_ORCH_REAL_ENGINES", raising=False)
+    monkeypatch.setenv("STUDIO_STUB_LLM", "1")
+    monkeypatch.setenv("STUDIO_STUB_COMFYUI", "1")
+    monkeypatch.setattr(
+        "comfy_studio.app.effective_profile", _verified_hardware_profile
+    )
+    app = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
+
+    collab = app.state.production_service.collaborators
+    runner = getattr(collab.runner, "_inner", None)
+    assert runner is not None, "el runner con lease debe envolver al EngineRunnerAdapter"
+    assert runner._data_root is not None
+    assert runner._allowed_roots, "el runner necesita raíces permitidas"
+    tech = getattr(collab.evaluator, "_tech", None)
+    assert tech is not None and tech._data_root is not None, (
+        "QaShotEvaluator debe recibir data_root"
+    )
+    assert tech._allowed_roots, "QaShotEvaluator necesita raíces permitidas"
+    assert collab.assembler._data_root is not None, (
+        "EngineAssembler debe recibir data_root"
+    )
+    assert collab.assembler._allowed_roots, "EngineAssembler necesita raíces permitidas"
