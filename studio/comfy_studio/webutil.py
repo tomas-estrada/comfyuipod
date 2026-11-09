@@ -240,6 +240,7 @@ class EdlBuildRequest(BaseModel):
     edl_id: str | None = None
     version: int | None = Field(default=None, ge=1)
     aspect_ratio: str | None = Field(default=None, pattern=r"^(16:9|9:16|1:1|4:5)$")
+    resolution: str = Field(default="standard", pattern=r"^(standard|4k)$")
     # M2 (`M3-IDEA-036`): un único POST puede encolar varias variantes de entrega.
     # `aspect_ratio` (singular) sigue siendo el caso de una sola variante.
     aspect_ratios: list[str] = Field(

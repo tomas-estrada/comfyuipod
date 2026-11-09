@@ -26,6 +26,11 @@ ASPECT_DIMENSIONS: dict[str, tuple[int, int]] = {
     "1:1": (720, 720),
     "4:5": (720, 900),
 }
+FOUR_K_DIMENSIONS: dict[str, tuple[int, int]] = {
+    "16:9": (3840, 2160),
+    "9:16": (2160, 3840),
+    "1:1": (2160, 2160),
+}
 
 # M3-SCR-005: cota defensiva de cortes por EDL (cada corte = 1 subprocess ffmpeg)
 MAX_EDL_CUTS = 200
@@ -63,9 +68,17 @@ def cut_subprocess_timeout(
 probe_media_file = probe_media_info
 
 
-def resolve_aspect_dimensions(aspect_ratio: str) -> tuple[int, int]:
-    """Devuelve `(width, height)` pares para el formato de entrega solicitado."""
+def resolve_aspect_dimensions(aspect_ratio: str, resolution: str = "standard") -> tuple[int, int]:
+    """Return the exact output canvas for an aspect ratio and resolution profile."""
     cleaned = (aspect_ratio or "16:9").strip()
+    if resolution == "4k":
+        if cleaned not in FOUR_K_DIMENSIONS:
+            raise ValueError(
+                f"No hay dimensiones 4K aprobadas para {cleaned!r}; usa 16:9, 9:16 o 1:1."
+            )
+        return FOUR_K_DIMENSIONS[cleaned]
+    if resolution != "standard":
+        raise ValueError("La resolución debe ser 'standard' o '4k'.")
     return ASPECT_DIMENSIONS.get(cleaned, ASPECT_DIMENSIONS["16:9"])
 
 
@@ -107,6 +120,7 @@ def execute_edl_ffmpeg(
     edl_id: str | None = None,
     version: int | None = None,
     aspect_ratio: str | None = None,
+    resolution: str = "standard",
     source_asset_id: str | None = None,
     cuts: list[dict[str, Any]] | None = None,
     fps: int = 24,
@@ -167,7 +181,7 @@ def execute_edl_ffmpeg(
     if not ffmpeg_bin:
         raise RuntimeError("No se encontró `ffmpeg` en el PATH para ejecutar el EDL.")
 
-    target_w, target_h = resolve_aspect_dimensions(resolved_aspect)
+    target_w, target_h = resolve_aspect_dimensions(resolved_aspect, resolution)
     vf_chain = (
         f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
         f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,"
@@ -395,10 +409,18 @@ def execute_edl_ffmpeg(
                 "El MP4 renderizado no pudo verificarse con ffprobe (probe_ok=false): "
                 "revisa que ffprobe exista en el PATH y que el contenedor sea válido."
             )
+        actual_size = (probe_info.get("width"), probe_info.get("height"))
+        if actual_size != (target_w, target_h):
+            raise RuntimeError(
+                "El MP4 renderizado no coincide con las dimensiones solicitadas: "
+                f"esperadas {target_w}x{target_h}, obtenidas "
+                f"{actual_size[0]}x{actual_size[1]}."
+            )
 
     aspect_slug = resolved_aspect.replace(":", "x")
     edl_ver = int(edl_record["version"])
-    out_filename = f"edl_v{edl_ver}_{aspect_slug}.mp4"
+    resolution_slug = "4k" if resolution == "4k" else "720p"
+    out_filename = f"edl_v{edl_ver}_{aspect_slug}_{resolution_slug}.mp4"
 
     output_asset = store.save_upload(
         project_id,
@@ -412,6 +434,7 @@ def execute_edl_ffmpeg(
             "edl_id": edl_record["id"],
             "edl_version": edl_ver,
             "aspect_ratio": resolved_aspect,
+            "resolution": resolution,
             "expected_duration_sec": expected_duration_sec,
             "actual_duration_sec": probe_info.get("duration_sec", expected_duration_sec),
             "width": probe_info.get("width", target_w),
@@ -433,6 +456,7 @@ def execute_edl_ffmpeg(
         "edl_id": edl_record["id"],
         "version": edl_ver,
         "aspect_ratio": resolved_aspect,
+        "resolution": resolution,
         "output_asset": output_asset,
         "edl": updated_edl["edl"] if updated_edl else edl_doc,
         "cuts_applied": applied_cuts,
