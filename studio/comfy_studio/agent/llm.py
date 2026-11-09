@@ -60,6 +60,17 @@ class LLMResponse:
     finish_reason: str = "stop"
 
 
+@dataclass(frozen=True, slots=True)
+class LLMProviderProfile:
+    """Secret-free configuration and protocol capabilities for one provider."""
+
+    provider: Literal["primary", "fallback"]
+    base_url: str
+    model: str
+    supports_tools: bool
+    supports_streaming: bool
+
+
 def encode_image_to_data_url(data: bytes, mime_type: str = "image/png") -> str:
     """Codifica bytes de imagen como data URL en base64 para visión del LLM."""
     if not isinstance(data, (bytes, bytearray)) or len(data) == 0:
@@ -220,6 +231,27 @@ class OpenAICompatibleLLMClient:
             if not any(isinstance(f, RedactingLogFilter) for f in target_logger.filters):
                 target_logger.addFilter(RedactingLogFilter(self._redactor))
 
+    def provider_profile(
+        self, provider: Literal["primary", "fallback"]
+    ) -> LLMProviderProfile:
+        """Return the endpoint contract without exposing its API key."""
+        fallback = provider == "fallback"
+        prefix = "studio_llm_fallback_" if fallback else "studio_llm_"
+        return LLMProviderProfile(
+            provider=provider,
+            base_url=getattr(self._config, prefix + "base_url"),
+            model=getattr(self._config, prefix + "model"),
+            supports_tools=getattr(self._config, prefix + "supports_tools"),
+            supports_streaming=getattr(self._config, prefix + "supports_streaming"),
+        )
+
+    def _profile_tools(
+        self,
+        provider: Literal["primary", "fallback"],
+        tools: Sequence[dict[str, Any]] | None,
+    ) -> Sequence[dict[str, Any]] | None:
+        return tools if self.provider_profile(provider).supports_tools else None
+
     @property
     def stub_client(self) -> StubLLMClient | None:
         return self._stub_client
@@ -346,7 +378,7 @@ class OpenAICompatibleLLMClient:
         try:
             raw = self._stub_client.chat(
                 messages,
-                tools=tools,
+                tools=self._profile_tools("primary", tools),
                 model_override=self._config.studio_llm_model,
                 provider="primary",
                 api_key=primary_key,
@@ -370,7 +402,7 @@ class OpenAICompatibleLLMClient:
                 fb_key = self._ensure_fallback_key_available()
                 raw_fb = self._stub_client.chat(
                     messages,
-                    tools=tools,
+                    tools=self._profile_tools("fallback", tools),
                     model_override=self._config.studio_llm_fallback_model,
                     provider="fallback",
                     api_key=fb_key,
@@ -423,15 +455,29 @@ class OpenAICompatibleLLMClient:
                     if hasattr(res, "__await__"):
                         await res
 
-            raw_res = await self._stub_client.stream_chat(
-                messages,
-                tools=tools,
-                model_override=model_override,
-                provider=provider_kind,
-                api_key=api_key,
-                primary_key=primary_key,
-                on_token=_redacted_on_token,
-            )
+            profile = self.provider_profile(provider_kind)
+            if profile.supports_streaming:
+                raw_res = await self._stub_client.stream_chat(
+                    messages,
+                    tools=self._profile_tools(provider_kind, tools),
+                    model_override=model_override,
+                    provider=provider_kind,
+                    api_key=api_key,
+                    primary_key=primary_key,
+                    on_token=_redacted_on_token,
+                )
+            else:
+                raw_res = self._stub_client.chat(
+                    messages,
+                    tools=self._profile_tools(provider_kind, tools),
+                    model_override=model_override,
+                    provider=provider_kind,
+                    api_key=api_key,
+                    primary_key=primary_key,
+                )
+                content = str(raw_res.get("content") or "")
+                async for piece in self._iter_text_chunks(content):
+                    await _redacted_on_token(piece, str(raw_res.get("model") or model_override))
             resolved_model = str(raw_res.get("model") or last_model)
             tail_piece = stream_redactor.flush()
             if tail_piece:
@@ -503,6 +549,7 @@ class OpenAICompatibleLLMClient:
             "temperature": temperature,
             "stream": False,
         }
+        tools = self._profile_tools(provider, tools)
         if tools:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
@@ -571,6 +618,7 @@ class OpenAICompatibleLLMClient:
             "temperature": temperature,
             "stream": True,
         }
+        tools = self._profile_tools(provider, tools)
         if tools:
             payload["tools"] = list(tools)
             payload["tool_choice"] = "auto"
@@ -736,6 +784,42 @@ class OpenAICompatibleLLMClient:
             finish_reason=finish_reason,
         )
 
+    async def _http_profiled_stream_complete(
+        self,
+        *,
+        provider: Literal["primary", "fallback"],
+        messages: Sequence[dict[str, Any]],
+        tools: Sequence[dict[str, Any]] | None,
+        temperature: float,
+        on_token: Callable[[str, str], Any] | None,
+    ) -> LLMResponse:
+        """Use SSE only when the selected profile declares streaming support."""
+        profile = self.provider_profile(provider)
+        if profile.supports_streaming:
+            return await self._http_stream_complete(
+                base_url=profile.base_url,
+                model=profile.model,
+                provider=provider,
+                messages=messages,
+                tools=tools,
+                temperature=temperature,
+                on_token=on_token,
+            )
+        response = await self._http_complete(
+            base_url=profile.base_url,
+            model=profile.model,
+            provider=provider,
+            messages=messages,
+            tools=tools,
+            temperature=temperature,
+        )
+        if response.content and on_token is not None:
+            async for piece in self._iter_text_chunks(response.content):
+                result = on_token(piece, response.model)
+                if hasattr(result, "__await__"):
+                    await result
+        return response
+
     async def stream_complete(
         self,
         messages: Sequence[dict[str, Any]],
@@ -768,9 +852,7 @@ class OpenAICompatibleLLMClient:
 
         primary_err: Exception | None = None
         try:
-            return await self._http_stream_complete(
-                base_url=self._config.studio_llm_base_url,
-                model=self._config.studio_llm_model,
+            return await self._http_profiled_stream_complete(
                 provider="primary",
                 messages=messages,
                 tools=tools,
@@ -805,9 +887,7 @@ class OpenAICompatibleLLMClient:
             )
 
         try:
-            return await self._http_stream_complete(
-                base_url=self._config.studio_llm_fallback_base_url,
-                model=self._config.studio_llm_fallback_model,
+            return await self._http_profiled_stream_complete(
                 provider="fallback",
                 messages=messages,
                 tools=tools,

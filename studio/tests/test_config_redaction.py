@@ -24,9 +24,13 @@ def test_config_from_env_parses_defaults_and_overrides(tmp_path: Path) -> None:
         "STUDIO_LLM_BASE_URL": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         "STUDIO_LLM_KEY": placeholder_key,
         "STUDIO_LLM_MODEL": "qwen3-vl-plus",
+        "STUDIO_LLM_SUPPORTS_TOOLS": "0",
+        "STUDIO_LLM_SUPPORTS_STREAMING": "yes",
         "STUDIO_LLM_FALLBACK_BASE_URL": "https://api.deepseek.com",
         "STUDIO_LLM_FALLBACK_KEY": placeholder_fb_key,
         "STUDIO_LLM_FALLBACK_MODEL": "deepseek-chat",
+        "STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS": "true",
+        "STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING": "false",
         "STUDIO_COMFYUI_URL": "http://127.0.0.1:39172",
         "STUDIO_DATA_DIR": str(tmp_path / "data"),
         "STUDIO_SERVER_PORT": "18190",
@@ -38,6 +42,10 @@ def test_config_from_env_parses_defaults_and_overrides(tmp_path: Path) -> None:
     assert cfg.model_profile == "studio"
     assert cfg.studio_llm_model == "qwen3-vl-plus"
     assert cfg.studio_llm_fallback_model == "deepseek-chat"
+    assert cfg.studio_llm_supports_tools is False
+    assert cfg.studio_llm_supports_streaming is True
+    assert cfg.studio_llm_fallback_supports_tools is True
+    assert cfg.studio_llm_fallback_supports_streaming is False
     assert cfg.studio_comfyui_url == "http://127.0.0.1:39172"
     assert cfg.studio_data_dir == tmp_path / "data"
     assert cfg.studio_server_port == 18190
@@ -73,6 +81,8 @@ def test_secret_never_leaks_in_repr_str_or_public_dict(tmp_path: Path) -> None:
     assert placeholder_pass not in serialized
     assert public_dict["STUDIO_LLM_KEY"] == "<definida>"
     assert public_dict["STUDIO_LLM_FALLBACK_KEY"] == "<definida>"
+    assert public_dict["STUDIO_LLM_SUPPORTS_TOOLS"] == "1"
+    assert public_dict["STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING"] == "1"
 
 
 def test_secret_redactor_scrubs_literals_and_patterns() -> None:

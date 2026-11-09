@@ -195,8 +195,12 @@ def _run_comfy(
         "STUDIO_LLM_FALLBACK_KEY",
         "STUDIO_LLM_BASE_URL",
         "STUDIO_LLM_MODEL",
+        "STUDIO_LLM_SUPPORTS_TOOLS",
+        "STUDIO_LLM_SUPPORTS_STREAMING",
         "STUDIO_LLM_FALLBACK_BASE_URL",
         "STUDIO_LLM_FALLBACK_MODEL",
+        "STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS",
+        "STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING",
         "STUDIO_INCLUDE_ANIMATE",
         "STUDIO_STUB_LLM",
         "STUDIO_RESUME_JOBS",
@@ -443,6 +447,10 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
             "STUDIO_LLM_FALLBACK_BASE_URL": "https://api.deepseek.com",
             "STUDIO_LLM_FALLBACK_KEY": synthetic_fallback_key,
             "STUDIO_LLM_FALLBACK_MODEL": "deepseek-chat",
+            "STUDIO_LLM_SUPPORTS_TOOLS": "1",
+            "STUDIO_LLM_SUPPORTS_STREAMING": "0",
+            "STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS": "0",
+            "STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING": "1",
             "STUDIO_RESUME_JOBS": "0",
             "STUDIO_RESUME_DELAY_S": "15",
             "STUDIO_WEBHOOK_URL": synthetic_webhook_url,
@@ -503,6 +511,10 @@ def test_rent_studio_hidden_prompt_no_echo_no_disk_and_env_plumbing(tmp_path: Pa
     assert f'-e COMFY_PASS="{synthetic_pod_pass}"' in env_arg
     assert '-e STUDIO_LLM_MODEL="qwen3-vl-plus"' in env_arg
     assert '-e STUDIO_LLM_FALLBACK_MODEL="deepseek-chat"' in env_arg
+    assert '-e STUDIO_LLM_SUPPORTS_TOOLS="1"' in env_arg
+    assert '-e STUDIO_LLM_SUPPORTS_STREAMING="0"' in env_arg
+    assert '-e STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS="0"' in env_arg
+    assert '-e STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING="1"' in env_arg
 
 
 def test_rent_studio_animate_opt_in_raises_derived_disk(tmp_path: Path) -> None:

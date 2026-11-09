@@ -292,9 +292,13 @@
         "STUDIO_LLM_KEY": { "type": "string" },
         "STUDIO_LLM_BASE_URL": { "type": "string" },
         "STUDIO_LLM_MODEL": { "type": "string" },
+        "STUDIO_LLM_SUPPORTS_TOOLS": { "type": "string", "enum": ["0", "1"] },
+        "STUDIO_LLM_SUPPORTS_STREAMING": { "type": "string", "enum": ["0", "1"] },
         "STUDIO_LLM_FALLBACK_BASE_URL": { "type": "string" },
         "STUDIO_LLM_FALLBACK_KEY": { "type": "string" },
         "STUDIO_LLM_FALLBACK_MODEL": { "type": "string" },
+        "STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS": { "type": "string", "enum": ["0", "1"] },
+        "STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING": { "type": "string", "enum": ["0", "1"] },
         "STUDIO_COMFYUI_URL": { "type": "string" },
         "STUDIO_DATA_DIR": { "type": "string" }
       }
