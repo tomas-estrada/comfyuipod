@@ -239,19 +239,19 @@ if [ ! -f "${COMFY_DATA_DIR}/user/default/ComfyUI-Manager/config.ini" ]; then
     cp -f /etc/comfyui/manager-config.ini "${COMFY_DATA_DIR}/user/default/ComfyUI-Manager/config.ini"
 fi
 
-# BAJA-05: Ajustar base_path dinámicamente según COMFY_DATA_DIR en extra_model_paths.yaml
-# Usar python3 con ruta pasada por argumento para evitar inyección de comillas.
-python3 /dev/stdin <<'PYEOF'
+# BAJA-05: Ajustar base_path dinámicamente según COMFY_DATA_DIR en extra_model_paths.yaml.
+# Usar python3 -c con ruta pasada por argv para evitar inyección de comillas
+# y asegurar que los argumentos siempre lleguen a sys.argv.
+python3 -c '
 import sys
-src = '/etc/comfyui/extra_model_paths.yaml'
+src = "/etc/comfyui/extra_model_paths.yaml"
 dst = sys.argv[1]
-with open(src, 'r', encoding='utf-8') as f:
+with open(src, "r", encoding="utf-8") as f:
     data = f.read()
-data = data.replace('/workspace/comfyui-data/', sys.argv[2] + '/')
-with open(dst, 'w', encoding='utf-8') as f:
+data = data.replace("/workspace/comfyui-data/", sys.argv[2] + "/")
+with open(dst, "w", encoding="utf-8") as f:
     f.write(data)
-PYEOF
-"${COMFY_APP_DIR}/extra_model_paths.yaml" "${COMFY_DATA_DIR%/}"
+' "${COMFY_APP_DIR}/extra_model_paths.yaml" "${COMFY_DATA_DIR%/}"
 
 # ------------------------------------------------------------------------------
 # 3. Configuración segura de HTTP Basic Auth en Nginx (SEC-01, SEC-02, SEC-04, BAJA-01)
