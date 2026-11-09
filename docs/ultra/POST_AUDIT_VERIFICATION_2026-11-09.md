@@ -21,8 +21,8 @@ Cada hallazgo se reprodujo localmente antes de tocarse.
 | Tests que fallaban en `origin/main` y ahora pasan | 8 |
 | Falsas garantías de test eliminadas | 2 |
 | Archivos modificados | 35 |
-| Inserciones / eliminaciones | 1339 / 104 |
-| Tests al final | **2521 passed, 4 skipped, 0 failed** (baseline: 8 failed) |
+| Inserciones / eliminaciones | 1378 / 104 |
+| Tests al final | **2522 passed, 4 skipped, 0 failed** (baseline: 8 failed) |
 | Ruff / py_compile / `bash -n` | PASS |
 
 **Veredicto: APTO PARA PRODUCCIÓN** una vez que la CI de la PR #255 quede en verde
@@ -345,6 +345,31 @@ Además se verificó con un smoke local que replica los asserts de CI sobre el
 studio-server: 401 sin auth, 200 con auth, JSON válido en `/studio/api/health`,
 `/status`, `/templates` y `/projects`, y ningún secreto en ningún cuerpo.
 
+### 5.6 Quinta pasada: el contrato de volumen verificado en los dos sentidos (commit `61ec41b`)
+
+Los tests de confinamiento anteriores solo afirmaban que las rutas hostiles caen
+dentro del directorio de datos. Eso deja un agujero: un cambio que **colapsara una
+ruta legítima del volumen a su basename** seguiría pasándolos, que es exactamente
+el bug que corrigió el refactor multi-raíz.
+
+Verificado contra el layout real del pod (`data_root=/workspace/comfyui-data/studio`,
+raíces permitidas `[studio, input, /workspace/comfyui-data]`):
+
+```
+PRESERVED  /workspace/comfyui-data/models/checkpoints/flux1-dev-fp8.safetensors
+PRESERVED  /workspace/comfyui-data/models/loras/x.safetensors
+PRESERVED  /workspace/comfyui-data/input/x.png
+PRESERVED  /workspace/comfyui-data/output/y.mp4
+PRESERVED  /workspace/comfyui-data/studio/projects/p/assets/a.png
+BLOCKED    /opt/ComfyUI/custom_nodes/Foo/x.py     (dir de app inmutable)
+BLOCKED    /etc/nginx/.htpasswd
+BLOCKED    /etc/shadow
+```
+
+Ahora hay un test que fija **las dos direcciones**, para que el contrato «todo bajo
+el volumen» no se pueda romper ni por exceso (bloquear lo legítimo) ni por defecto
+(dejar pasar lo que no pertenece al volumen).
+
 #### Asimetría importante entre los dos redactores
 
 El redactor de Python corre sobre el **cuerpo JSON serializado**, que el cliente vuelve a
@@ -375,7 +400,7 @@ patrones nuevos de URL son ahora JSON-safe, y hay un test que fija el invariante
 | `ruff check` (`studio/comfy_studio`, `studio/tests`, `scripts`, `config/probes`, `panel`) | **PASS** |
 | `py_compile` | **PASS** |
 | `bash -n` (`start.sh`, `download-models.sh`, `tools/mac/comfy`) | **PASS** |
-| `pytest studio/tests` (desde la raíz del repo) | **2521 passed, 4 skipped, 0 failed** (4 errores, ver abajo) |
+| `pytest studio/tests` (desde la raíz del repo) | **2522 passed, 4 skipped, 0 failed** (4 errores, ver abajo) |
 | — baseline `origin/main` | **8 failed** (`test_health_auth` ×7, `test_m6_production_wiring` ×1). *Nota:* los 7 de `test_health_auth` solo se reproducen con un intérprete cuya ruta contiene `@` (Python de Homebrew fuera de venv); en un entorno con venv `main` muestra solo el de `test_m6_production_wiring`. |
 | `nginx.conf` balance de llaves / cobertura HSTS+CSP | 0 desbalance / **17/17 locations** |
 | `cargo fmt --check` / `clippy -D warnings` / `test --locked` | **PASS** (88 tests) — ejecutado por el agente de revisión; **no reproducible en este host** (sin `cargo`) |
