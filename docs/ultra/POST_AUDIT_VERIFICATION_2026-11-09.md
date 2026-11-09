@@ -20,8 +20,8 @@ Cada hallazgo se reprodujo localmente antes de tocarse.
 | Bugs de producción encontrados y corregidos | 7 |
 | Tests que fallaban en `origin/main` y ahora pasan | 8 |
 | Falsas garantías de test eliminadas | 2 |
-| Archivos modificados | 33 |
-| Inserciones / eliminaciones | +293 / −88 |
+| Archivos modificados | 34 |
+| Inserciones / eliminaciones | +383 / −91 |
 | Tests al final | **2510 passed, 0 failed** (baseline: 8 failed) |
 | Ruff / py_compile / `bash -n` | PASS |
 
@@ -231,6 +231,27 @@ Corregido en el **único punto de paso** por el que pasan todos los motores:
   ningún secreto literal: `COMFY_PASS`, `HF_TOKEN` y `STUDIO_API_TOKEN` no se enmascaraban en
   las cadenas de error de los motores. Ahora usan `SecretRedactor.from_env()`, igual que ya
   reciben `ComfyUIClient` y `StudioAgent`.
+- `install_log_redaction` se llamaba **dos veces contra el mismo logger** (`comfy_studio`):
+  una por el valor por defecto y otra explícita, así que el logger raíz nunca llevaba el
+  filtro. `Logger.callHandlers` ignora los filtros de un logger *ancestro* para los registros
+  propagados, de modo que `getLogger("comfy_studio.x").warning(...)` llegaba al handler raíz
+  (y a `/var/log/studio-server.log`) sin redactar. Reproducido y corregido.
+- `ml/runner.py` hacía `redactor or SecretRedactor()`: el respaldo era un redactor **sin
+  secretos literales**. Ahora `SecretRedactor.from_env()`.
+- Portados desde `comfyctl/src/redact.rs` los patrones que al Python le faltaban:
+  `Authorization` con todos los esquemas (no solo `Bearer`), credenciales en URLs de esquema
+  genérico (`postgres://`, `ftp://`, …), la forma sin esquema `user:pass@host`, y las claves
+  por forma `AKIA|ASIA`, `AIza…`, `ghp_…`, `xox[baprs]-…`.
+
+#### Asimetría importante entre los dos redactores
+
+El redactor de Python corre sobre el **cuerpo JSON serializado**, que el cliente vuelve a
+parsear; el de Rust solo corre sobre texto de log. Por eso las clases de caracteres del de
+Python **deben** excluir los delimitadores de JSON, mientras que en Rust `[^\s]*` es válido.
+El primer intento de esta paridad copió las clases de Rust tal cual y rompió todos los cuerpos
+de `/studio/api/health` con `Extra data` (7 fallos de test, capturados por la suite). Ambos
+patrones nuevos de URL son ahora JSON-safe, y hay un test que fija el invariante.
+
 
 
 ---
@@ -283,9 +304,9 @@ preexistentes y de entorno, no regresiones.
 | Fixtures `nvidia_smi_*.csv` huérfanos | INFO | Ningún test hace `include_str!` sobre ellos. Re-brandados por consistencia. |
 | `planner.py` sigue aceptando `params` sin esquema por motor | MEDIO | Las **rutas** ya están confinadas en el punto de paso único, así que no hay lectura/escritura fuera del volumen. Un `params` con claves inventadas sigue llegando al motor, que hoy las ignora. **Recomendado:** allowlist de claves por motor. |
 | `engines/{ffmpeg,heavy_video}.py` con rutas sin confinar | BAJO | No reachable: `app.py` solo registra `comfyui` y `upscaler`. El confinamiento nuevo ya cubre sus claves de ruta si se registran. |
-| Redactor Python es subconjunto del de Rust | BAJO | Faltan en Python los patrones de AWS/GitHub/Slack/OpenAI/Google/Anthropic y la forma `user:pass@host` sin esquema. El redactor de Rust sí los tiene, y `/logs/*` pasa por él. |
-| `install_log_redaction` engancha el filtro solo al logger `comfy_studio` | BAJO | Los registros propagados pueden esquivarlo en algunos despliegues. Contenido: el fichero es 0600 root y `/logs/studio` se re-redacta en comfyctl. **Recomendado:** enganchar también al logger raíz. |
-| `ml/runner.py` acepta `redactor=None` en 5 de 7 llamadas | BAJO | El worker usa un allowlist de entorno sin secretos, así que hace falta que el secreto ya esté en disco. **Recomendado:** hacer el argumento obligatorio. |
+| Redactor Python es subconjunto del de Rust | BAJO | **Corregido**: portados `Authorization`, URL de esquema genérico, `user:pass@host` sin esquema y las claves por forma AKIA/AIza/ghp_/xox. |
+| `install_log_redaction` engancha el filtro solo al logger `comfy_studio` | BAJO | **Corregido**: ahora también engancha al logger raíz. |
+| `ml/runner.py` acepta `redactor=None` en 5 de 7 llamadas | BAJO | **Corregido**: el respaldo por defecto es `from_env()`, no un redactor pelado. |
 
 ---
 
