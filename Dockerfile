@@ -1,5 +1,5 @@
 # ==============================================================================
-# Dockerfile — ComfyUI "Everything-Ready" para Vast.ai (RTX 5090 / RTX 4090)
+# Dockerfile — ComfyUI "Everything-Ready" para Vast.ai (RTX PRO 6000 Blackwell)
 # ==============================================================================
 # --- Stage 1: Compilar comfyctl (Rust 1.86.0 fijado por digest, §4.3 / §4.4) ---
 FROM rust:1.86.0-slim-bookworm@sha256:57d415bbd61ce11e2d5f73de068103c7bd9f3188dc132c97cef4a8f62989e944 AS builder
@@ -21,7 +21,7 @@ RUN touch src/main.rs src/lib.rs && cargo build --release --locked --bin comfyct
 # se conserva por legibilidad, pero el digest garantiza pulls reproducibles.
 FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04@sha256:44e43f0e0bcca1fc6fdc775e6002c67834bf78d39eb1fd76825240fc79ba4a49
 
-LABEL org.opencontainers.image.title="ComfyUI Everything-Ready (Vast.ai RTX 5090 / 4090)"
+LABEL org.opencontainers.image.title="ComfyUI Everything-Ready (Vast.ai RTX PRO 6000 Blackwell, 96 GB)"
 LABEL org.opencontainers.image.description="ComfyUI (/opt/ComfyUI) + ComfyUI-Manager + ffmpeg (libx264/nvenc) + Nginx Basic Auth + Top Custom Nodes & Auto-Models"
 
 # M7-OPS-001: allocator de CUDA con segmentos expandibles por defecto (torch >= 2.2).
@@ -133,7 +133,7 @@ RUN pip3 install --upgrade --ignore-installed pip setuptools wheel \
         insightface \
         facexlib==0.3.0 \
         filterpy \
-        "opencv-python-headless>=4.10.0.84,<5.0.0" \
+        "opencv-python-headless>=4.11.0.86,<5.0.0" \
         imageio-ffmpeg \
         ultralytics \
         segment-anything \
@@ -166,7 +166,7 @@ RUN awk '$1 == "node" {print $2, $3, $4}' /etc/comfyui/nodes.lock | while read -
         git -C "${dir_name}" checkout -B main FETCH_HEAD && \
         for req_file in "${dir_name}/requirements.txt" "${dir_name}/requirements-no-cupy.txt"; do \
             if [ -f "${req_file}" ]; then \
-                grep -Ev '^\s*(#|$|onnxruntime(\s*[<>=!~]|$)|opencv-python(\s*[<>=!~]|$)|opencv-contrib-python(\s*[<>=!~]|$)|numpy(\s*[<>=!~]|$)|torch(\s*[<>=!~]|$)|torchvision(\s*[<>=!~]|$)|torchaudio(\s*[<>=!~]|$)|git\+https://github\.com/facebookresearch/sam2)' "${req_file}" > /tmp/req_filtered.txt || true; \
+                grep -Ev '^\s*(#|$|onnxruntime(\s*[<>=!~]|$)|opencv-python(\s*[<>=!~]|$)|opencv-contrib-python(\s*[<>=!~]|$)|numpy(\s*[<>=!~]|$)|torch(\s*[<>=!~]|$)|torchvision(\s*[<>=!~]|$)|torchaudio(\s*[<>=!~]|$)|git\+https://github\.com/facebookresearch/sam2(\.git)?(@|\s*[<>=!~]|$))' "${req_file}" > /tmp/req_filtered.txt || true; \
                 if [ -s /tmp/req_filtered.txt ]; then \
                     pip3 install -r /tmp/req_filtered.txt; \
                 fi; \
@@ -179,7 +179,7 @@ RUN awk '$1 == "node" {print $2, $3, $4}' /etc/comfyui/nodes.lock | while read -
     fi \
     && touch /root/.latentsync16_dependencies_installed \
     && pip3 uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless onnxruntime onnxruntime-gpu || true \
-    && pip3 install --no-deps --force-reinstall "opencv-python-headless>=4.10.0.84,<5.0.0" "onnxruntime-gpu>=1.20.0,<2.0.0" \
+    && pip3 install --no-deps --force-reinstall "opencv-python-headless>=4.11.0.86,<5.0.0" "onnxruntime-gpu>=1.31.1,<2.0.0" \
     && pip3 freeze > /etc/comfyui/requirements.lock \
     && rm -rf /root/.cache \
     && find /usr/local/lib -type d \( -path "*/nvidia/*/lib" -o -path "*/torch/lib" \) > /etc/ld.so.conf.d/pytorch-cuda.conf \

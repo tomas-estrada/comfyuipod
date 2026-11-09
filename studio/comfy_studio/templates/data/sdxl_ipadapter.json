@@ -123,7 +123,7 @@
       "scheduler": "karras",
       "ipadapter_weight": 0.8
     },
-    "notas_rendimiento": "Añade ~1.5 GiB de VRAM (IP-Adapter ViT-H + CLIP ViT-H-14) sobre los ~6.6 GiB de Juggernaut XI; en RTX 5090/4090 sigue sobrando. Los pesos ip-adapter_sdxl_vit-h.safetensors y el encoder CLIP-ViT-H-14 ya vienen en el perfil studio (grupo ipadapter_sdxl)."
+    "notas_rendimiento": "Añade ~1.5 GiB de VRAM (IP-Adapter ViT-H + CLIP ViT-H-14) sobre los ~6.6 GiB de Juggernaut XI; en RTX PRO 6000 Blackwell sigue sobrando. Los pesos ip-adapter_sdxl_vit-h.safetensors y el encoder CLIP-ViT-H-14 ya vienen en el perfil studio (grupo ipadapter_sdxl)."
   },
   "workflow": {
     "1": {

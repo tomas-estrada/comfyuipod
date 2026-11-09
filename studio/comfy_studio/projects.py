@@ -1582,11 +1582,22 @@ class ProjectStore:
             params.append(current["resolved_by"])
             sets.insert(len(sets) - 1, "resolved_by = ?")
         params.extend([_utc_now_iso(), current["project_id"], current["id"]])
+        allowed_sets = {
+            "t_start = ?",
+            "t_end = ?",
+            "status = ?",
+            "resolution_note = ?",
+            "updated_at = ?",
+            "resolved_by = ?",
+        }
+        sets: list[str] = [s for s in sets if s in allowed_sets]
+        if not sets:
+            raise ValueError("Sin campos actualizables.")
         with self._connect() as conn:
             conn.execute(
                 f"UPDATE review_pins SET {', '.join(sets)} "
                 "WHERE project_id = ? AND id = ?",
-                params,
+                params[: len(sets)] + [current["project_id"], current["id"]],
             )
             conn.commit()
         return self.get_review_pin(project_id, pin_id)

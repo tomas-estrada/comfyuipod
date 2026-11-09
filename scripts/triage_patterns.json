@@ -12,7 +12,7 @@
     "sources": ["comfyui"],
     "pattern": "HostBuffer|read_file_slice failed|pinned memory|cudaErrorInvalidValue",
     "severity": "alta",
-    "cause": "Fallo conocido de memoria pinned / HostBuffer en arquitectura Blackwell (RTX 5090, ComfyUI #15255/#14250)",
+    "cause": "Fallo conocido de memoria pinned / HostBuffer en arquitectura Blackwell (RTX PRO 6000 Blackwell, ComfyUI #15255/#14250)",
     "first_command": "Añadir -e COMFYUI_EXTRA_ARGS=\"--disable-pinned-memory\" en la plantilla de Vast.ai y reiniciar la instancia"
   },
   {
