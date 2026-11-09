@@ -20,9 +20,9 @@ Cada hallazgo se reprodujo localmente antes de tocarse.
 | Bugs de producción encontrados y corregidos | 7 |
 | Tests que fallaban en `origin/main` y ahora pasan | 8 |
 | Falsas garantías de test eliminadas | 2 |
-| Archivos modificados | 34 |
-| Inserciones / eliminaciones | +383 / −91 |
-| Tests al final | **2510 passed, 0 failed** (baseline: 8 failed) |
+| Archivos modificados | 35 |
+| Inserciones / eliminaciones | +902 / −98 |
+| Tests al final | **2514 passed, 0 failed** (baseline: 8 failed) |
 | Ruff / py_compile / `bash -n` | PASS |
 
 **Veredicto: APTO PARA PRODUCCIÓN** una vez que la CI de la PR #255 quede en verde
@@ -243,6 +243,32 @@ Corregido en el **único punto de paso** por el que pasan todos los motores:
   genérico (`postgres://`, `ftp://`, …), la forma sin esquema `user:pass@host`, y las claves
   por forma `AKIA|ASIA`, `AIza…`, `ghp_…`, `xox[baprs]-…`.
 
+### 5.3 El checker de paridad de perfiles no veía la guarda de igualdad (commit `95babbf`)
+
+`scripts/check_profile_parity.py` solo entendía la forma
+`[[ "${MODEL_PROFILE}" =~ ^(a|b)$ ]]`. La guarda que envuelve la descarga de
+FLUX.1-dev es `if [ "${MODEL_PROFILE}" = "all" ]; then` (`download-models.sh:561`),
+así que para el checker esa descarga aparecía **sin guarda** y la ensanchaba a
+«todos salvo minimal». Casualidad peligrosa: eso coincidía exactamente con la
+declaración de 6 perfiles que `config/models-core.json` tenía para
+`flux1-dev-fp8.safetensors`, así que **un manifiesto incorrecto y una lectura
+incorrecta se validaban entre sí** y el checker daba OK.
+
+Corregido por las dos caras:
+
+- el checker entiende ahora la forma de igualdad simple. Las guardas compuestas
+  (`!=`, `&&`, `||`) se dejan **sin parsear** en vez de admitir una conjetura:
+  las únicas de igualdad dentro de `run_phase1`/`run_phase2` son el retorno
+  temprano de `minimal` (sin `hf_fetch` dentro, sin efecto) y la de FLUX.
+- `config/models-core.json` baja `flux1-dev-fp8.safetensors` de 6 perfiles a
+  `["all"]`, coincidiendo con `download-models.sh:561` y con
+  `comfyctl/src/collect/models.rs:191-196` (`&["all"]`).
+
+Verificado: el checker corregido **reporta la divergencia antes** del cambio de
+manifiesto y pasa después; la paridad O-11 entre `download-models.sh` y
+`EXPECTED_MODELS` sigue en pie (26/26); el diff del manifiesto es de 1 inserción
+y 6 eliminaciones.
+
 #### Asimetría importante entre los dos redactores
 
 El redactor de Python corre sobre el **cuerpo JSON serializado**, que el cliente vuelve a
@@ -300,7 +326,7 @@ preexistentes y de entorno, no regresiones.
 | `comfyctl/src/supervisor.rs:511` acepta cualquier listener en el puerto de studio-server | BAJO | **Corregido**: tras conectar exige además que el hijo siga vivo. |
 | `comfyctl/src/supervisor.rs:135-136` `keep_bytes` fijo en 20 MiB | BAJO | **Corregido**: `min(20 MiB, max_bytes)`. |
 | `comfyctl/src/report.rs:437` usa el `MODEL_PROFILE` crudo para la etiqueta | BAJO | **Corregido**: reutiliza `valid_profile_name()`. |
-| `config/models-core.json:668-675` (flux) declara perfiles más amplios que `models.rs` | BAJO | `check_profile_parity.py` no ve el guard `[ "${MODEL_PROFILE}" = "all" ]`. Sin impacto numérico hoy. |
+| `config/models-core.json` (flux) declaraba perfiles más amplios que `models.rs` | BAJO | **Corregido**: el checker ahora entiende la guarda de igualdad simple y el manifiesto dice `["all"]`. |
 | Fixtures `nvidia_smi_*.csv` huérfanos | INFO | Ningún test hace `include_str!` sobre ellos. Re-brandados por consistencia. |
 | `planner.py` sigue aceptando `params` sin esquema por motor | MEDIO | Las **rutas** ya están confinadas en el punto de paso único, así que no hay lectura/escritura fuera del volumen. Un `params` con claves inventadas sigue llegando al motor, que hoy las ignora. **Recomendado:** allowlist de claves por motor. |
 | `engines/{ffmpeg,heavy_video}.py` con rutas sin confinar | BAJO | No reachable: `app.py` solo registra `comfyui` y `upscaler`. El confinamiento nuevo ya cubre sus claves de ruta si se registran. |
