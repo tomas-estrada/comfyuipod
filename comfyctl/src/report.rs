@@ -439,7 +439,12 @@ pub fn build_report_markdown(
         let _ = writeln!(out, "- Sin datos de carpetas de modelos.");
     }
 
-    let active_prof = env_m.get("MODEL_PROFILE").map_or("all", String::as_str);
+    // La etiqueta debe usar el MISMO nombre normalizado que usó el inventario
+    // (`models.rs`): un perfil desconocido se calcula como `all`, así que
+    // imprimir el valor crudo mentiría sobre la lista de abajo.
+    let active_prof = crate::collect::models::valid_profile_name(
+        env_m.get("MODEL_PROFILE").map_or("all", String::as_str),
+    );
     let _ = writeln!(
         out,
         "### Modelos esperados para el perfil `{active_prof}` aún ausentes"
