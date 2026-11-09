@@ -447,3 +447,25 @@ def test_resolve_aspect_dimensions_falls_back_to_16x9(
     expected: tuple[int, int],
 ) -> None:
     assert resolve_aspect_dimensions(aspect) == expected
+
+
+@pytest.mark.parametrize(
+    ("aspect", "expected"),
+    [
+        ("16:9", (3840, 2160)),
+        ("9:16", (2160, 3840)),
+        ("1:1", (2160, 2160)),
+    ],
+)
+def test_resolve_4k_aspect_dimensions(aspect: str, expected: tuple[int, int]) -> None:
+    assert resolve_aspect_dimensions(aspect, "4k") == expected
+
+
+def test_resolve_4k_rejects_undefined_canvas() -> None:
+    with pytest.raises(ValueError, match="No hay dimensiones 4K aprobadas"):
+        resolve_aspect_dimensions("4:5", "4k")
+
+
+def test_resolve_dimensions_rejects_unknown_resolution() -> None:
+    with pytest.raises(ValueError, match="La resolución debe ser"):
+        resolve_aspect_dimensions("16:9", "8k")

@@ -253,6 +253,7 @@ def register_routes(app: FastAPI) -> None:
                     edl_id=body.edl_id,
                     version=body.version,
                     aspect_ratio=aspect,
+                    resolution=body.resolution,
                     source_asset_id=body.source_asset_id,
                     cuts=cuts_dicts,
                     fps=body.fps,
