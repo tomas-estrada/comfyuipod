@@ -20,8 +20,8 @@ Cada hallazgo se reprodujo localmente antes de tocarse.
 | Bugs de producción encontrados y corregidos | 6 |
 | Tests que fallaban en `origin/main` y ahora pasan | 8 |
 | Falsas garantías de test eliminadas | 2 |
-| Archivos modificados | 23 |
-| Inserciones / eliminaciones | +214 / −80 |
+| Archivos modificados | 26 |
+| Inserciones / eliminaciones | +224 / −86 |
 | Tests al final | **2507 passed, 0 failed** (baseline: 8 failed) |
 | Ruff / py_compile / `bash -n` | PASS |
 
@@ -157,6 +157,21 @@ explícitamente. Snapshot actualizado.
   `X-Studio-Simulate-Edge`, sin efecto en el servidor desde que se borró el bypass.
 - **Nuevo test de regresión**: la cabecera devuelve **401** cuando `COMFY_PASS` está definido.
 
+### 5.1 Tres brechas de robustez de `comfyctl` cerradas (commit `d491f65`)
+
+- **`supervisor.rs::truncate_logs_if_needed()`**: `keep_bytes` estaba fijo en 20 MiB, así que
+  con `LOG_MAX_MB < 20` cada pasada reescribía el fichero completo **sin truncar nada**: el
+  techo nunca se cumplía. Ahora es `min(20 MiB, max_bytes)`.
+- **`supervisor.rs::spawn_studio_server_if_enabled()`**: el bucle de espera aceptaba
+  **cualquier** proceso escuchando en `studio_server_port` como "studio-server listo" (falso
+  positivo si el puerto está ocupado por otro). Tras conectar con éxito exige además que el
+  hijo siga vivo.
+- **`report.rs` §9**: la etiqueta de la lista de modelos ausentes usaba el `MODEL_PROFILE`
+  crudo de `env_masked`, mientras `models.rs` normaliza los valores desconocidos a `all`
+  (y `unreal` a `studio`). Un perfil desconocido imprimía su propio nombre sobre una lista
+  calculada para `all`. Ahora reutiliza el mismo `valid_profile_name()` que el inventario,
+  de modo que no pueden divergir.
+
 ---
 
 ## 6. Documentación corregida
@@ -199,9 +214,9 @@ preexistentes y de entorno, no regresiones.
 | HSTS inerte sin TLS | BAJO | RFC 6797 §7.2: los navegadores ignoran HSTS sobre transporte no seguro. Solo surte efecto con `COMFY_TLS=1`. |
 | `routers/productions.py:111` hace `await run_in_threadpool(service.approve_plan, …)` | MEDIO | La petición HTTP (y un worker de anyio) queda retenida durante toda la producción, contradiciendo la intención de "job en fondo sin 504 de Nginx". **No corregido**: arreglarlo cambia el contrato de la API (202 + job-id). Requiere decisión de producto. |
 | Cambios Rust sin compilar localmente | BAJO | `cargo` no está disponible en este host. Los edits son mecánicos (snapshot, comentarios, `writeln!`), verificados por lectura; la CI los compila. |
-| `comfyctl/src/supervisor.rs:511` acepta cualquier listener en el puerto de studio-server | BAJO | Falso positivo posible si el puerto está ocupado. Endurecer exigiendo además `child.try_wait() == Ok(None)`. |
-| `comfyctl/src/supervisor.rs:135-136` `keep_bytes` fijo en 20 MiB | BAJO | Con `LOG_MAX_MB < 20` cada pasada de truncado reescribe el fichero completo sin efecto. |
-| `comfyctl/src/report.rs:437` usa el `MODEL_PROFILE` crudo para la etiqueta | BAJO | Un perfil desconocido imprime su nombre crudo sobre una lista calculada para `all`. |
+| `comfyctl/src/supervisor.rs:511` acepta cualquier listener en el puerto de studio-server | BAJO | **Corregido**: tras conectar exige además que el hijo siga vivo. |
+| `comfyctl/src/supervisor.rs:135-136` `keep_bytes` fijo en 20 MiB | BAJO | **Corregido**: `min(20 MiB, max_bytes)`. |
+| `comfyctl/src/report.rs:437` usa el `MODEL_PROFILE` crudo para la etiqueta | BAJO | **Corregido**: reutiliza `valid_profile_name()`. |
 | `config/models-core.json:668-675` (flux) declara perfiles más amplios que `models.rs` | BAJO | `check_profile_parity.py` no ve el guard `[ "${MODEL_PROFILE}" = "all" ]`. Sin impacto numérico hoy. |
 | Fixtures `nvidia_smi_*.csv` huérfanos | INFO | Ningún test hace `include_str!` sobre ellos. Re-brandados por consistencia. |
 
@@ -220,8 +235,8 @@ de Rust (los edits de `comfyctl` no se compilaron en este host).
 2. **CSP con nonce/hash** para `/home` y `/status` (externalizar el script inline del portal).
 3. **`approve_plan` asíncrono** (202 + job-id) para no retener la petición HTTP — requiere
    decisión de producto por el cambio de contrato.
-4. **Endurecimientos de `comfyctl`** de bajo riesgo listados en §8 (supervisor readiness,
-   `keep_bytes`, etiqueta de perfil).
+4. **Endurecimientos de `comfyctl`** — **ya aplicados** en el commit `d491f65`
+   (supervisor readiness, `keep_bytes`, etiqueta de perfil).
 5. **Ramas de upgrade** ya creadas: `upgrade/cuda-13-torch-2.15`, `upgrade/comfyui-v0.25`,
    `upgrade/nodejs-22`.
 
