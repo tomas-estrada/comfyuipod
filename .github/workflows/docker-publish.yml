@@ -52,6 +52,9 @@ jobs:
       - name: Validar sondas Python, esquema de triage_patterns.json, paridad O-11 y portal sin CDN (§9.1)
         run: |
           python3 -m py_compile config/probes/*.py scripts/check_models_manifest.py
+          # Los hashes CSP deben corresponder al HTML servido: si se edita el
+          # portal o status_html sin regenerar, la página queda en blanco.
+          python3 scripts/update_csp_hashes.py --check
           python3 - << 'EOF'
           import json, pathlib, re
 

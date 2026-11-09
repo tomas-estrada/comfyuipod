@@ -1675,3 +1675,51 @@ def test_panel_does_not_offer_templates_without_weights(client: TestClient) -> N
     assert len(result["optionsAfter"]) > len(options_before) - 1
     # La tarjeta de documentación muestra la plantilla seleccionada (disponible).
     assert result["optionsAfter"][0] in result["docCardText"] or "Wan" in result["docCardText"]
+
+
+def test_csp_uses_content_hashes_not_unsafe_inline() -> None:
+    """Ninguna location debe depender de 'unsafe-inline'.
+
+    `'unsafe-inline'` en `script-src` anula la protección contra XSS de la
+    directiva: cualquier script inyectado se ejecutaría. Las dos vistas que
+    incrustan bloques inline usan en su lugar el hash sha256 del contenido.
+    """
+    conf = (REPO_ROOT / "config" / "nginx.conf").read_text(encoding="utf-8")
+    policies = re.findall(r'add_header Content-Security-Policy "([^"]*)"', conf)
+    assert policies, "no se encontraron directivas CSP"
+    for policy in policies:
+        assert "'unsafe-inline'" not in policy, f"CSP con unsafe-inline: {policy}"
+
+
+def test_csp_hashes_match_the_served_html() -> None:
+    """El hash debe corresponder al HTML que se sirve.
+
+    Si alguien edita `config/portal/index.html` o
+    `comfyctl/src/status_html.html` sin regenerar, el navegador rechaza el bloque
+    y la página queda en blanco. Este test es el que lo detecta.
+    """
+    import base64
+    import hashlib
+
+    conf = (REPO_ROOT / "config" / "nginx.conf").read_text(encoding="utf-8")
+    declared = re.findall(
+        r"add_header Content-Security-Policy \"([^\"]*)\"", conf
+    )
+    hashed = [p for p in declared if "sha256-" in p]
+    assert len(hashed) == 2, f"se esperaban 2 CSP con hash, hay {len(hashed)}"
+
+    for rel in ("config/portal/index.html", "comfyctl/src/status_html.html"):
+        raw = (REPO_ROOT / rel).read_bytes()
+        # El Dockerfile normaliza CRLF -> LF antes de servir el portal.
+        text = raw.replace(b"\r\n", b"\n").decode("utf-8")
+        for tag in ("style", "script"):
+            match = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.S)
+            assert match, f"{rel}: falta el bloque <{tag}>"
+            digest = base64.b64encode(
+                hashlib.sha256(match.group(1).encode("utf-8")).digest()
+            ).decode("ascii")
+            expected = f"'sha256-{digest}'"
+            assert any(expected in p for p in hashed), (
+                f"{rel}: el hash de <{tag}> no está en nginx.conf. "
+                "Ejecuta scripts/update_csp_hashes.py"
+            )
