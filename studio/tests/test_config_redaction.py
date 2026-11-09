@@ -303,3 +303,79 @@ def test_hunyuan3d_template_params_validation() -> None:
 
 
 
+
+
+def test_redactor_never_breaks_the_json_body_it_runs_on() -> None:
+    """Invariante: el redactor corre sobre el cuerpo JSON serializado, que el
+    cliente vuelve a parsear. Ningún patrón puede comerse delimitadores.
+
+    Regresión: `_URL_AUTH_RE` con una clase de clave permisiva (`[^\\s]*`)
+    abarcaba desde `http://host:` hasta la siguiente `@`, borrando la
+    estructura JSON intermedia y devolviendo `Extra data`.
+    """
+    import json
+
+    redactor = SecretRedactor.from_env({})
+    body = json.dumps(
+        {
+            "comfyui_url": "http://stub-comfyui.local:39172",
+            "nested": {"k": 1, "deep": {"a": [1, 2, 3]}},
+            # Una `@` muy posterior (ruta del intérprete) es el señuelo clásico.
+            "interpreter": "/opt/homebrew/Cellar/python@3.12/bin/python3.12",
+        }
+    )
+    out = redactor.redact(body)
+    parsed = json.loads(out)  # no debe lanzar
+    assert parsed["nested"]["deep"]["a"] == [1, 2, 3]
+    assert parsed["comfyui_url"] == "http://stub-comfyui.local:39172"
+
+
+def test_redactor_covers_provider_key_shapes() -> None:
+    """Paridad de cobertura con `comfyctl/src/redact.rs` para las formas de
+    clave que no necesitan literal (el proceso que las emite puede no ser el
+    que las configuró)."""
+    redactor = SecretRedactor.from_env({})
+    cases = {
+        "k=AKIAIOSFODNN7EXAMPLE": "AKIAIOSFODNN7EXAMPLE",
+        "g=AIzaSyA1234567890abcdefghijklmnopqrstuv": "AIzaSyA1234567890abcdefghijklmnopqrstuv",
+        "t=ghp_" + "a" * 40: "ghp_" + "a" * 40,
+        "s=xoxb-1234567890-abcdefghij": "xoxb-1234567890-abcdefghij",
+        "Authorization: Basic dXNlcjpwYXNzd29yZA==": "dXNlcjpwYXNzd29yZA==",
+        "postgres://user:secretpw@db.host:5432/x": "secretpw",
+        "proxy user:secretpw@host:3128": "secretpw",
+    }
+    for text, secret in cases.items():
+        out = redactor.redact(text)
+        assert secret not in out, f"no se redactó {secret!r} en {text!r} -> {out!r}"
+        assert SECRET_PLACEHOLDER in out, f"falta el placeholder en {text!r} -> {out!r}"
+
+
+def test_redactor_leaves_benign_colons_and_mailto_intact() -> None:
+    """Los falsos positivos destruyen el contenido: un puerto y un `mailto:`
+    no son credenciales y deben sobrevivir."""
+    redactor = SecretRedactor.from_env({})
+    for benign in ("connect host:8443/path ok", "mailto:user@example.com", "ratio 16:9"):
+        assert redactor.redact(benign) == benign, benign
+
+
+def test_redaction_filter_covers_propagated_records_from_the_root_logger() -> None:
+    """`Logger.callHandlers` ignora los filtros de un logger ancestro para los
+    registros propagados: sin el filtro en el root, un
+    `getLogger("comfy_studio.x").warning(...)` llegaba sin redactar."""
+    import io
+
+    secret = "SUPERSECRETPASS-1234"
+    redactor = SecretRedactor.from_env({"COMFY_PASS": secret})
+    stream = io.StringIO()
+    root = logging.getLogger()
+    handler = logging.StreamHandler(stream)
+    root.addHandler(handler)
+    try:
+        # Cableado real de create_app: root + comfy_studio.
+        install_log_redaction(redactor, logger=logging.getLogger())
+        install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
+        logging.getLogger("comfy_studio.comfyui_client").warning(f"pass={secret}")
+    finally:
+        root.removeHandler(handler)
+    assert secret not in stream.getvalue(), stream.getvalue()
+    assert SECRET_PLACEHOLDER in stream.getvalue()

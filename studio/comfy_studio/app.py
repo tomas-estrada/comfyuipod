@@ -94,7 +94,11 @@ def create_app(
 ) -> FastAPI:
     cfg = config if config is not None else StudioConfig.from_env()
     redactor = cfg.redactor()
-    install_log_redaction(redactor)
+    # El logger raíz también lleva el filtro: `Logger.callHandlers` ignora los
+    # filtros de un logger *ancestro* para los registros propagados, así que sin
+    # esto un `getLogger("comfy_studio.x").warning(...)` llegaba al handler raíz
+    # (y a /var/log/studio-server.log) sin redactar.
+    install_log_redaction(redactor, logger=logging.getLogger())
     install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
 
     # M3-SEC-002: sin contraseña exigible no hay lockout posible (ver test de
