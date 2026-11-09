@@ -426,3 +426,50 @@ def test_redaction_filter_covers_propagated_records_from_the_root_logger() -> No
         root.removeHandler(handler)
     assert secret not in stream.getvalue(), stream.getvalue()
     assert SECRET_PLACEHOLDER in stream.getvalue()
+
+
+def test_log_redaction_covers_lastresort_with_the_real_uvicorn_boot_order() -> None:
+    """Regresión: el filtro en el logger raíz NO bastaba.
+
+    uvicorn no configura handlers en el logger raíz, así que
+    `Logger.callHandlers` no encuentra ninguno al subir por la jerarquía y el
+    registro de `comfy_studio.*` cae en `logging.lastResort`. Los filtros de un
+    logger *ancestro* nunca se consultan para un registro originado en un hijo,
+    así que el secreto salía en claro a /var/log/studio-server.log.
+    """
+    import io
+    from logging.config import dictConfig
+
+    import uvicorn
+
+    secret = "SUPERSECRETPASS-1234"
+    redactor = SecretRedactor.from_env({"COMFY_PASS": secret})
+    # Orden real de server.py: create_app (instala el filtro) y luego
+    # uvicorn.run (aplica su LOGGING_CONFIG).
+    install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
+    install_log_redaction(redactor, logger=logging.getLogger())
+    dictConfig(uvicorn.config.LOGGING_CONFIG)
+
+    # Dejar la raíz SIN handlers es exactamente la situación de producción
+    # (uvicorn no configura ninguno): así `callHandlers` no encuentra nada y el
+    # registro cae en `lastResort`. Sin vaciarlos, el plugin de logging de pytest
+    # añadiría el suyo y el camino real no se ejercitaría.
+    saved_root_handlers = logging.getLogger().handlers[:]
+    for handler in saved_root_handlers:
+        logging.getLogger().removeHandler(handler)
+    captured = io.StringIO()
+    original_emit = logging.lastResort.emit
+    logging.lastResort.emit = lambda rec: captured.write(
+        logging.lastResort.format(rec) + "\n"
+    )
+    try:
+        logging.getLogger("comfy_studio.comfyui_client").warning(f"boot con pass={secret}")
+    finally:
+        logging.lastResort.emit = original_emit
+        for handler in saved_root_handlers:
+            logging.getLogger().addHandler(handler)
+
+    emitted = captured.getvalue()
+    assert emitted, "el registro no pasó por lastResort; el test no ejercita el camino real"
+    assert secret not in emitted, emitted
+    assert SECRET_PLACEHOLDER in emitted, emitted

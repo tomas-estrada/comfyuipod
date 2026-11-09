@@ -421,7 +421,16 @@ def install_log_redaction(
     redactor: SecretRedactor,
     logger: logging.Logger | None = None,
 ) -> None:
-    """Instala RedactingLogFilter en el logger indicado (o en comfy_studio por defecto)."""
+    """Instala RedactingLogFilter en el logger indicado (o en comfy_studio por defecto).
+
+    También cubre `logging.lastResort`, que es por donde salen realmente los
+    registros de `comfy_studio.*`: uvicorn NO configura handlers en el logger
+    raíz, así que `Logger.callHandlers` no encuentra ninguno al subir por la
+    jerarquía y el registro cae en el `_StderrHandler` de último recurso — sin
+    pasar por ningún filtro de logger ancestro (esos solo se consultan en el
+    logger de origen). Sin esto, un `getLogger("comfy_studio.x").warning(...)`
+    con un secreto llegaba a `/var/log/studio-server.log` en claro.
+    """
     target = logger if logger is not None else logging.getLogger("comfy_studio")
     # Reemplazar filtros previos de redacción para mantener idempotencia
     target.filters = [
@@ -433,6 +442,12 @@ def install_log_redaction(
             f for f in handler.filters if not isinstance(f, RedactingLogFilter)
         ]
         handler.addFilter(RedactingLogFilter(redactor))
+    # `lastResort` es un singleton de proceso: se filtra una sola vez.
+    if logging.lastResort is not None:
+        logging.lastResort.filters = [
+            f for f in logging.lastResort.filters if not isinstance(f, RedactingLogFilter)
+        ]
+        logging.lastResort.addFilter(RedactingLogFilter(redactor))
 
 
 @dataclass

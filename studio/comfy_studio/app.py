@@ -127,6 +127,12 @@ def create_app(
 
     @asynccontextmanager
     async def _webhook_lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+        # Reinstalar la redacción de logs AQUÍ, no solo en `create_app`: el
+        # lifespan corre ya dentro de uvicorn, así que cualquier handler que
+        # `uvicorn.run()` haya añadido entretanto también queda filtrado. En
+        # `create_app` la raíz aún no tenía ninguno.
+        install_log_redaction(redactor, logger=logging.getLogger())
+        install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
         # El lazo de orquestación corre en threadpool: vincula el loop al broker para
         # que sus eventos (production_step, etc.) lleguen al bus SSE de forma segura.
         broker.bind_loop(asyncio.get_running_loop())
