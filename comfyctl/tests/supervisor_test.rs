@@ -79,8 +79,9 @@ fn base_healthy_studio_snapshot(studio_ok: bool, studio_detail: &str) -> SystemS
         comfy_install_ok: true,
         comfy_install_detail: "/opt/ComfyUI/main.py presente".to_string(),
         cuda_torch_ok: true,
-        cuda_torch_detail: "torch=2.9.1+cu128 cuda=12.8 device=NVIDIA GeForce RTX PRO 6000 Blackwell matmul=ok"
-            .to_string(),
+        cuda_torch_detail:
+            "torch=2.9.1+cu128 cuda=12.8 device=NVIDIA GeForce RTX PRO 6000 Blackwell matmul=ok"
+                .to_string(),
         studio_health_ok: studio_ok,
         studio_health_detail: studio_detail.to_string(),
         studio_perception_ok: true,
