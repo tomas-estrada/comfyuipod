@@ -93,7 +93,7 @@
       "sampler": "dpmpp_2m_sde",
       "scheduler": "karras"
     },
-    "notas_rendimiento": "Juggernaut XI SDXL ocupa ~6.6 GiB de VRAM en fp16 y genera una imagen 1024x1024 en pocos segundos en RTX 5090/4090."
+    "notas_rendimiento": "Juggernaut XI SDXL ocupa ~6.6 GiB de VRAM en fp16 y genera una imagen 1024x1024 en pocos segundos en RTX PRO 6000 Blackwell."
   },
   "workflow": {
     "1": {

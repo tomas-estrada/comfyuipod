@@ -22,7 +22,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
 
     let _ = fs::write(
         tmp_log_dir.join("diag.txt"),
-        "[DIAG][OK] gpu: NVIDIA GeForce RTX 5090\n[DIAG] resumen: 10 ok, 0 warn, 0 fail\n",
+        "[DIAG][OK] gpu: NVIDIA GeForce RTX PRO 6000 Blackwell\n[DIAG] resumen: 10 ok, 0 warn, 0 fail\n",
     );
     let _ = fs::write(
         tmp_log_dir.join("comfyui.log"),
@@ -77,16 +77,16 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
             ubuntu: "24.04".to_string(),
         },
         instance: InstanceInfo {
-            hostname: "vast-5090-node".to_string(),
+            hostname: "vast-pro6000-node".to_string(),
             uptime_s: 120,
             vast_instance_id: "C.998877".to_string(),
             external_port_8188: "41888".to_string(),
         },
         gpu: GpuStatus {
             available: true,
-            name: "NVIDIA GeForce RTX 5090".to_string(),
+            name: "NVIDIA GeForce RTX PRO 6000 Blackwell".to_string(),
             driver: "570.124.06".to_string(),
-            vram_total_mb: 32768,
+            vram_total_mb: 98304,
             vram_used_mb: 1024,
             util_pct: 10,
             temp_c: 42,

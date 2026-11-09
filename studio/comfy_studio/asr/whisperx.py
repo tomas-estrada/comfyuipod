@@ -1,6 +1,6 @@
 """Transcripción ASR local con whisperx (faster-whisper large-v3) y timestamps por palabra.
 
-Incluye la resolución y cadena de fallbacks para arquitecturas Blackwell (`sm_120`, RTX 5090):
+Incluye la resolución y cadena de fallbacks para arquitecturas Blackwell (`sm_120`, RTX PRO 6000):
 1. `whisperx` (`faster-whisper-large-v3` en `cuda` con `float16` + aligners wav2vec2 ES/EN)
 2. `whisperx` en `cuda` con `float32` (si el kernel `float16` de CTranslate2 falla en `sm_120`)
 3. `openai-whisper` en `cuda` con `float16` (fallback PyTorch nativo)

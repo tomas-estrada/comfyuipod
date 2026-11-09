@@ -4,7 +4,7 @@
   "category": "video_generation",
   "output_kind": "video",
   "summary": "Generación local de vídeo con audio estéreo nativo (una sola pasada) condicionada por referencias: la imagen de referencia fija la identidad del sujeto y el prompt dirige la escena — Ref2VA pruned-int8 en la GPU local (32 GB Blackwell) con el LoRA turbo de 4 pasos. Soporta el finetune Singularity V2 (WarmBloodAban) vía diffusion_model.",
-  "description": "MiniMax H3 es el modelo omni-modal de la línea Hailuo, abierto desde 2026-08-03 y soportado nativamente por ComfyUI (#15224). Este template usa la variante Ref2VA pruned-int8-convrot (19.5 GiB de DiT) con el text encoder Qwen3-VL-32B nvfp4 (14.6 GiB): cabe y corre en una RTX 5090 de 32 GB con el offload dinámico de ComfyUI. Genera vídeo 768p a 24 fps con AUDIO ESTÉREO NATIVO (voz, efectos, música modelados en la misma pasada, no añadidos después), condicionado por una imagen de referencia que fija la identidad del sujeto (<Picture 1> en el prompt). El LoRA turbo de 4 pasos (oficial v0.1) reduce el muestreo a 4 pasos res_multistep. Licencia: MiniMax H3 Community License (uso no comercial).",
+  "description": "MiniMax H3 es el modelo omni-modal de la línea Hailuo, abierto desde 2026-08-03 y soportado nativamente por ComfyUI (#15224). Este template usa la variante Ref2VA pruned-int8-convrot (19.5 GiB de DiT) con el text encoder Qwen3-VL-32B nvfp4 (14.6 GiB): cabe y corre en una RTX PRO 6000 Blackwell de 32 GB con el offload dinámico de ComfyUI. Genera vídeo 768p a 24 fps con AUDIO ESTÉREO NATIVO (voz, efectos, música modelados en la misma pasada, no añadidos después), condicionado por una imagen de referencia que fija la identidad del sujeto (<Picture 1> en el prompt). El LoRA turbo de 4 pasos (oficial v0.1) reduce el muestreo a 4 pasos res_multistep. Licencia: MiniMax H3 Community License (uso no comercial).",
   "performance_defaults": {
     "precision": "pruned_int8_convrot",
     "resolution": "768p",
@@ -139,7 +139,7 @@
       "sampler": "res_multistep",
       "audio": "estéreo 32 kHz nativo (VAEDecodeAudio -> VHS_VideoCombine)"
     },
-    "notas_rendimiento": "Requiere el grupo opt-in minimax_h3_opt_in (STUDIO_INCLUDE_MINIMAX=1, +42.03 GB): DiT Ref2VA pruned-int8-convrot 19.5 GiB + Qwen3-VL-32B nvfp4 14.6 GiB + VAE de vídeo int8 + VAE de audio fp32 + LoRA turbo 4-step. El pruned-int8 con offload dinámico corre en 32 GB VRAM (RTX 5090 Blackwell) sin par de expertos. Licencia: MiniMax H3 Community License (no comercial). Variante Singularity V2: Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors (mismo grupo opt-in, mismo slot, Apache-2.0). Protocolo A/B recomendado: ambos int8 pruned, baja resolución (864x480 = 0.4 MP), 20 pasos, lora_strength=0.0, mismo seed y mismo prompt con escenas de acción — comparar dinamismo y rapidez."
+    "notas_rendimiento": "Requiere el grupo opt-in minimax_h3_opt_in (STUDIO_INCLUDE_MINIMAX=1, +42.03 GB): DiT Ref2VA pruned-int8-convrot 19.5 GiB + Qwen3-VL-32B nvfp4 14.6 GiB + VAE de vídeo int8 + VAE de audio fp32 + LoRA turbo 4-step. El pruned-int8 con offload dinámico corre en 32 GB VRAM (RTX PRO 6000 Blackwell Blackwell) sin par de expertos. Licencia: MiniMax H3 Community License (no comercial). Variante Singularity V2: Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors (mismo grupo opt-in, mismo slot, Apache-2.0). Protocolo A/B recomendado: ambos int8 pruned, baja resolución (864x480 = 0.4 MP), 20 pasos, lora_strength=0.0, mismo seed y mismo prompt con escenas de acción — comparar dinamismo y rapidez."
   },
   "workflow": {
     "1": {

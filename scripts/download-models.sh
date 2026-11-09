@@ -10,7 +10,7 @@
 #              (60.56 GiB en perfil 'all'; 13.22 GiB / 8 archivos en 'studio').
 #              Se ejecuta en segundo plano.
 #   --phase3 : Inventario de estudio de vídeo y voz desde config/models-studio.json
-#              (146.05 GB = 136.02 GiB por defecto en 77 archivos; +18.41 GB =
+#              (163.71 GB = 152.46 GiB por defecto en 79 archivos; +18.41 GB =
 #              +17.15 GiB opt-in con STUDIO_INCLUDE_ANIMATE=1; +7.37 GB opt-in con
 #              STUDIO_INCLUDE_3D=1 — Hunyuan3D 2.1, M3-D). Perfiles 'studio'/'unreal'.
 #

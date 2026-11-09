@@ -33,9 +33,11 @@ ComfyUI y Comfy Studio para un pod Linux de un solo usuario, con Vast.ai como ru
 
 ---
 
-## 2. Catálogo de modelos y custom nodes (63.35 GiB de inventario core)
+## 2. Catálogo de modelos y custom nodes
 
-> Los tamaños y grupos de fase describen el catálogo disponible. El arranque actual descarga cero modelos por defecto; los pesos de tarea se adquieren bajo demanda. El total del catálogo no equivale a una descarga obligatoria ni al espacio mínimo para iniciar.
+> Los tamaños y grupos de fase describen el catálogo disponible. El arranque normal descarga cero modelos por defecto; los pesos de tarea se adquieren bajo demanda. El total del catálogo no equivale a una descarga obligatoria ni al espacio mínimo para iniciar. Consulta [`docs/POLITICA_ARQUITECTURA_RECURSOS.md`](docs/POLITICA_ARQUITECTURA_RECURSOS.md) para el cálculo derivado del volumen mínimo por perfil.
+
+**Inventario core (Fases 1 + 2): 63.35 GiB**
 
 ### Fase 1 — Modelos críticos ligeros (2.79 GiB)
 
@@ -129,16 +131,16 @@ Todos los tamaños han sido verificados contra la cabecera `x-linked-size` de Hu
 |---|---|---|
 | `OPEN_BUTTON_PORT` | `8188` | Puerto que abre el botón azul **Open** en la consola web de Vast.ai. |
 | `COMFY_USER` | `admin` | Usuario para HTTP Basic Auth en Nginx (puerto 8188). |
-| `COMFY_PASS` | *(Autogenerada de 24 hex chars si se omite)* | Contraseña para HTTP Basic Auth. Si la defines, **no se imprime en los logs**; si la omites, se genera una clave aleatoria única con `openssl rand -hex 12` y se muestra una vez en el log de arranque (y nunca se expone en `/status/api`, `/report.md` ni `/diag`). |
+| `COMFY_PASS` | *(Autogenerada de 24 hex chars si se omite)* | Contraseña para HTTP Basic Auth. Si la defines, **no se imprime en los logs**; si la omites, se genera una clave aleatoria única con `openssl rand -hex 12` y se muestra una vez en el log de arranque (y nunca se expone en `/status/api`, `/report.md` ni `/diag`). **Seguridad:** si usas una plantilla pública en Vast.ai, no definas `COMFY_PASS` en Docker Options (queda visible). Usa contraseña autogenerada por sesión o un túnel SSH. |
 | `STRICT_START` | `1` | Ejecuta las comprobaciones de host antes de iniciar ComfyUI o adquirir modelos. En Studio/Unreal hay validaciones adicionales, incluido el diagnóstico del perfil Blackwell. El disco de arranque usa el valor derivado y horneado en `storage-requirement.json` (actualmente 11 GB con bootstrap vacío); los mínimos de volumen total se calculan por perfil y no son ese gate. `STRICT_FATAL_GRACE` conserva portal y diagnóstico durante 600 s antes de salir con código 20. |
 | `STRICT_MIN_VRAM_MB` / `STRICT_WARN_VRAM_MB` | `20000` / `22000` | Umbrales de VRAM en MiB (`FATAL` si `< STRICT_MIN_VRAM_MB`, `WARN` si `< STRICT_WARN_VRAM_MB`). |
 | `STRICT_MIN_RAM_MB` / `STRICT_WARN_RAM_MB` | `16384` / `32768` | Umbrales de RAM en MiB (`FATAL` si `< STRICT_MIN_RAM_MB * 0.95`, `WARN` si `< STRICT_WARN_RAM_MB`). |
-| `STRICT_MIN_DISK_GB` | Derivado de la imagen/perfil; override explícito disponible | Espacio libre mínimo en `COMFY_DATA_DIR` para el arranque. La imagen actual deriva 11 GB con bootstrap vacío; consulta `scripts/storage_requirement.py` para el volumen total del perfil y no confundas ambas cifras. |
+| `COMFY_DISK_GB` | *(derivado)* | Override explícito del mínimo de disco derivado por `scripts/storage_requirement.py`. Usar solo cuando la carga de trabajo (opt-ins combinados, outputs prolongados) justifique un volumen mayor al derivado. |
 | `STRICT_MIN_DRIVER` | `570` | Versión mayor mínima del driver NVIDIA (CUDA 12.8) exigida por la comprobación `S2` de `strict-check`. |
 | `STRICT_FATAL_GRACE` | `600` | Segundos de gracia tras un `FATAL` con `STRICT_START=1` durante los que se mantienen vivos Nginx, `/home`, `/status` y `/report.md` antes de salir con código `20`. |
 | `STRICT_REQUIRE_GPU` | `1` (auto: `0` si `COMFYUI_EXTRA_ARGS` incluye `--cpu`) | Fuerza (`1`) u omite (`0`) la sonda `S10` `cuda_torch` de `strict-check`. |
 | `STRICT_REQUIRE_HTPASSWD` | `1` en `comfyctl supervise` (`0` en subcomandos aislados) | Controla si `S7` exige `.htpasswd` ya presente (`fatal` si falta) o lo degrada a `warn`. |
-| `MODEL_PROFILE` | `all` | Selecciona el inventario que puede adquirirse. Las cifras `all`, `general`, `realistic`, `anime`, `minimal`, `studio` y `unreal` que siguen son tamaños de catálogo, no descargas de arranque. Pesos de tarea se adquieren bajo demanda; las opciones de capacidad y los grupos opt-in controlan qué se solicita. |
+| `MODEL_PROFILE` | `all` | Selecciona el inventario que puede adquirirse. Las cifras `all`, `general`, `realistic`, `anime`, `minimal`, `studio` y `unreal` que siguen son tamaños de catálogo, no descargas de arranque. Pesos de tarea se adquieren bajo demanda; las opciones de capacidad y los grupos opt-in controlan qué se solicita. **Nota:** la guía de despliegue usa studio como perfil de referencia; all es el default neutro del catálogo. |
 | `STUDIO_INCLUDE_ANIMATE` | `0` | En `MODEL_PROFILE=studio`, pon `1` para incluir el modelo base de Wan 2.2 Animate (`wan2.2_animate_14B_int8_convrot.safetensors`, +18.41 GB / +17.15 GiB, total Fase 3 = 80 archivos / 182.12 GB). Requiere alquilar al menos 250 GB de disco en Vast.ai. |
 | `STUDIO_INCLUDE_3D` | `0` | Pon `1` para incluir los pesos de Hunyuan3D 2.1 (`hunyuan_3d_v2.1.safetensors`, +7.37 GB / +6.86 GiB) y habilitar la plantilla `hunyuan3d_image_to_3d`. Implícito (y siempre activo) con `MODEL_PROFILE=unreal`. |
 | `STUDIO_INCLUDE_MINIMAX` | `0` | Pon `1` para incluir MiniMax H3 / Hailuo 3.0 Ref2VA (6 archivos, +63.00 GB / +58.67 GiB) y habilitar la plantilla `minimax_r2v`. El mínimo derivado actual es 294 GB; vuelve a calcularlo si combinas opt-ins o cambia tu carga de trabajo. |

@@ -170,7 +170,7 @@
       "offload": true,
       "precision": "fp8_scaled"
     },
-    "notas_rendimiento": "Utiliza los pesos Wan 2.2 Fun VACE 14B fp8_scaled (32.2 GiB el par) con resolución 480p y offload de modelos activo por defecto para ejecutarse con holgura en RTX 5090 (32 GB)."
+    "notas_rendimiento": "Utiliza los pesos Wan 2.2 Fun VACE 14B fp8_scaled (32.2 GiB el par) con resolución 480p y offload de modelos activo por defecto para ejecutarse con holgura en RTX PRO 6000 Blackwell (32 GB)."
   },
   "workflow": {
     "1": {

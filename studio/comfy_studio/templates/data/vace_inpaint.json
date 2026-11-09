@@ -4,7 +4,7 @@
   "category": "video_edit",
   "output_kind": "video",
   "summary": "Edición e inpainting localizado sobre vídeo con máscara usando el par Wan 2.2 Fun VACE 14B fp8_scaled a 480p con offload activado.",
-  "description": "Reemplaza o modifica regiones específicas de un vídeo base guiado por una máscara y un prompt textual manteniendo la coherencia temporal del movimiento original. Configurado por defecto en fp8_scaled a 480p (832x480) con offload de bloques para caber dentro de los 32 GiB de VRAM de la RTX 5090 (el par fp8 ocupa 32.2 GiB en disco frente a los 64.6 GiB de bf16).",
+  "description": "Reemplaza o modifica regiones específicas de un vídeo base guiado por una máscara y un prompt textual manteniendo la coherencia temporal del movimiento original. Configurado por defecto en fp8_scaled a 480p (832x480) con offload de bloques para caber dentro de los 32 GiB de VRAM de la RTX PRO 6000 Blackwell (el par fp8 ocupa 32.2 GiB en disco frente a los 64.6 GiB de bf16).",
   "performance_defaults": {
     "precision": "fp8_scaled",
     "resolution": "480p",

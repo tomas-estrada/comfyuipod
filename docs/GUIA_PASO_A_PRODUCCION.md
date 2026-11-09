@@ -1,6 +1,6 @@
 # Guía de paso a producción — ComfyUI "Everything-Ready" para Vast.ai
 
-**Actualizado:** 2026-11-05 · **Código revisado:** `main` en `5850191`; comprueba la CI y digest de imagen más recientes antes de desplegar. La demo GPU W26 usó una imagen anterior y no valida automáticamente este `main`.
+**Actualizado:** 2026-11-05 · **Código revisado:** `main` en `002b63e`; comprueba la CI y digest de imagen más recientes antes de desplegar. La demo GPU W26 usó una imagen anterior y no valida automáticamente este `main`.
 **Público objetivo:** operadores desde Windows, macOS o Linux; los pasos con helper Bash se señalan explícitamente.
 
 ---
@@ -10,6 +10,20 @@
 Tienes una imagen Docker Linux para un pod de un solo usuario. El perfil de hardware predeterminado es RTX PRO 6000 Blackwell (96 GB de VRAM) con 128 GB de RAM de host; hay una variante de RAM de 256 GB y un perfil heredado de GPU de consumo. El hardware objetivo no implica que todas las plantillas estén medidas. La imagen incluye ComfyUI, Studio, portal, diagnóstico y supervisor. El helper Bash es opcional (macOS/Linux o WSL2); la interfaz funciona en un navegador de Windows, macOS o Linux.
 
 > **Qué es real y qué es simulado en Comfy Studio.** La extracción de keyframes, `sqlite-vec`, el almacenamiento de identidades, el EDL y el render final son componentes reales. El backend ML arranca en `auto`: usa modelos reales si el probe de capacidades tiene éxito; de lo contrario usa simulación determinista, declarada por `simulated: true` y `simulation_notice`. `STUDIO_PERCEPTION_BACKEND=real` exige modelos reales y falla de forma explícita cuando no están disponibles; `sim` fuerza el camino simulado. Algunas funciones del índice visual CLIP permanecen deterministas incluso con backend real. Comprueba siempre el campo de respuesta antes de evaluar calidad. Si falta `sqlite-vec`, las funciones dependientes se degradan y reportan el motivo sin tumbar todo Studio.
+
+## Variables de entorno clave
+
+| Variable | Descripción |
+|---|---|
+| `STRICT_START` | Ejecuta comprobaciones de host antes de iniciar ComfyUI. |
+| `STRICT_MIN_VRAM_MB` / `STRICT_WARN_VRAM_MB` | Umbrales de VRAM en MiB (FATAL/WARN). |
+| `STRICT_MIN_RAM_MB` / `STRICT_WARN_RAM_MB` | Umbrales de RAM en MiB (FATAL/WARN). |
+| `STRICT_MIN_DISK_GB` | Espacio libre mínimo en COMFY_DATA_DIR para el arranque. |
+| `STRICT_FATAL_GRACE` | Segundos de gracia tras FATAL antes de salir con código 20. |
+| `COMFY_REQUIRE_PERSISTENT_VOLUME` | Si es 1, aborta si /workspace no es un montaje persistente. |
+| `HF_HUB_DISABLE_XET` | Si es 1, desactiva el motor hf_xet y usa descarga HTTP clásica. |
+
+> Para la tabla completa, consulta [README.md](../README.md#3-variables-de-entorno-soportadas).
 
 ---
 
@@ -208,4 +222,4 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 
 ---
 
-*Revisada contra `main` en `5850191` el 2026-11-05. El reporte W26 corresponde a un digest anterior y a una sola receta; antes de desplegar, confirma CI, digest y validación que corresponden al perfil/tarea que usarás.*
+*Revisada contra `main` en `002b63e` el 2026-11-05. El reporte W26 corresponde a un digest anterior y a una sola receta; antes de desplegar, confirma CI, digest y validación que corresponden al perfil/tarea que usarás.*

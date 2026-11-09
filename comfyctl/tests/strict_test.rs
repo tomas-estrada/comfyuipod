@@ -16,9 +16,9 @@ use std::time::{Duration, Instant};
 fn base_healthy_snapshot() -> SystemSnapshot {
     SystemSnapshot {
         gpu_query_ok: true,
-        gpu_name: "NVIDIA GeForce RTX 5090".to_string(),
+        gpu_name: "NVIDIA GeForce RTX PRO 6000 Blackwell".to_string(),
         driver_version: "570.124.06".to_string(),
-        vram_total_mb: 32768, // 32 GB reales de una RTX 5090
+        vram_total_mb: 98304, // 96 GB reales de una RTX PRO 6000 Blackwell
         ram_probe_ok: true,
         ram_total_mb: 65536,
         disk_free_gb: 120.0,
@@ -31,8 +31,9 @@ fn base_healthy_snapshot() -> SystemSnapshot {
         comfy_install_ok: true,
         comfy_install_detail: "/opt/ComfyUI/main.py presente".to_string(),
         cuda_torch_ok: true,
-        cuda_torch_detail: "torch=2.9.1+cu128 cuda=12.8 device=NVIDIA GeForce RTX 5090 matmul=ok"
-            .to_string(),
+        cuda_torch_detail:
+            "torch=2.9.1+cu128 cuda=12.8 device=NVIDIA GeForce RTX PRO 6000 Blackwell matmul=ok"
+                .to_string(),
         studio_health_ok: true,
         studio_health_detail:
             "studio-server healthy en 127.0.0.1:18190 (/studio/api/health HTTP 200)".to_string(),
@@ -53,7 +54,7 @@ fn base_healthy_snapshot() -> SystemSnapshot {
 }
 
 /// Perfil con el que S17 confronta la máquina. Los tests que usan la fixture
-/// de una RTX 5090 declaran el perfil de consumo a propósito: un perfil menor
+/// de una RTX PRO 6000 Blackwell declaran el perfil de consumo a propósito: un perfil menor
 /// que satisface el seleccionado es válido y S17 no debe avisar por ello.
 fn consumer_profile_vars() -> BTreeMap<String, String> {
     let mut vars = BTreeMap::new();
@@ -67,7 +68,7 @@ fn consumer_profile_vars() -> BTreeMap<String, String> {
 }
 
 #[test]
-fn strict_all_ok_on_rtx_5090() {
+fn strict_all_ok_on_pro6000_blackwell() {
     let vars = consumer_profile_vars();
     let mut cfg = RuntimeConfig::from_map(&vars, None);
     let tmp_dir = std::env::temp_dir().join("comfyctl_test_strict_ok");
@@ -242,7 +243,7 @@ fn simulated_nvidia_smi_binary_probe_and_subprocess_timeout() {
         let p = tmp_dir.join("fake-nvidia-smi.sh");
         let _ = fs::write(
             &p,
-            "#!/bin/sh\necho 'NVIDIA GeForce RTX 5090, 570.86.16, 32607'\n",
+            "#!/bin/sh\necho 'NVIDIA GeForce RTX PRO 6000 Blackwell, 570.86.16, 98304'\n",
         );
         if let Ok(meta) = fs::metadata(&p) {
             let mut perms = meta.permissions();
@@ -256,7 +257,7 @@ fn simulated_nvidia_smi_binary_probe_and_subprocess_timeout() {
         let p = tmp_dir.join("fake-nvidia-smi.cmd");
         let _ = fs::write(
             &p,
-            "@echo off\r\necho NVIDIA GeForce RTX 5090, 570.86.16, 32607\r\n",
+            "@echo off\r\necho NVIDIA GeForce RTX PRO 6000 Blackwell, 570.86.16, 98304\r\n",
         );
         p
     };
@@ -267,9 +268,9 @@ fn simulated_nvidia_smi_binary_probe_and_subprocess_timeout() {
     let _ = fs::remove_dir_all(&tmp_dir);
 
     assert!(ok);
-    assert_eq!(name, "NVIDIA GeForce RTX 5090");
+    assert_eq!(name, "NVIDIA GeForce RTX PRO 6000 Blackwell");
     assert_eq!(driver, "570.86.16");
-    assert_eq!(vram, 32607);
+    assert_eq!(vram, 98304);
 
     // R-07: Verificar que run_command_with_timeout mata procesos colgados en < 2s.
     // Umbral holgado: el timeout del comando es 250 ms, pero los runners de CI
