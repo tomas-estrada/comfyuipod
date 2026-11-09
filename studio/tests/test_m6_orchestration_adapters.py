@@ -458,9 +458,9 @@ class _CapturingEngine:
         return EngineResult(ok=True, engine=self.name, verb="run", payload={})
 
 
-def test_engine_runner_confines_layer_paths_to_the_data_root(tmp_path, monkeypatch):
+def test_engine_runner_confines_layer_paths_to_the_data_root(tmp_path):
     """El planner (LLM) puede emitir params arbitrarios: ninguna ruta de capa
-    debe escapar del directorio de datos, ni por ruta absoluta ni por `..`."""
+    debe escapar del volumen, ni por ruta absoluta ni por `..`."""
     root = tmp_path / "studio"
     root.mkdir()
     eng = _CapturingEngine("upscaler")
@@ -503,6 +503,63 @@ def test_engine_runner_keeps_benign_relative_paths_inside_the_root(tmp_path):
     assert eng.seen["output_path"] == str(root / "out.mp4")
 
 
+def test_confinement_preserves_legitimate_sibling_paths_on_the_volume(tmp_path, monkeypatch):
+    """Regresión: confinar SOLO al dir de Studio rompía las referencias válidas.
+
+    En el pod `comfyui_input_dir` = COMFY_DATA_DIR/input y ComfyUI escribe en
+    COMFY_DATA_DIR/output: son **hermanos** de COMFY_DATA_DIR/studio, no hijos.
+    El contrato real es «todo bajo el volumen», así que esas rutas deben
+    conservarse tal cual en vez de colapsar al basename.
+    """
+    volume = tmp_path / "comfyui-data"
+    studio = volume / "studio"
+    comfyui_input = volume / "input"
+    for d in (studio, comfyui_input, volume / "output"):
+        d.mkdir(parents=True)
+    # start.sh exporta siempre COMFY_DATA_DIR; el test lo refleja.
+    monkeypatch.setenv("COMFY_DATA_DIR", str(volume))
+    eng = _CapturingEngine("upscaler")
+    runner = EngineRunnerAdapter(
+        {"upscaler": eng}, data_root=studio, comfyui_input_dir=str(comfyui_input)
+    )
+    runner.run_layer(
+        "upscaler",
+        {
+            "kind": "upscale",
+            "input_path": str(comfyui_input / "x.png"),
+            "output_path": str(volume / "output" / "y.mp4"),
+        },
+    )
+    assert eng.seen is not None
+    assert eng.seen["input_path"] == str(comfyui_input / "x.png")
+    assert eng.seen["output_path"] == str(volume / "output" / "y.mp4")
+
+
+def test_qa_evaluator_confines_the_checkpoint_restored_video_path(tmp_path):
+    """`shot.output_path` se restaura tal cual del checkpoint de SQLite, así que
+    no está garantizado que venga de un `run_layer` confinado."""
+    root = tmp_path / "studio"
+    root.mkdir()
+
+    class _Qa:
+        name = "qa"
+
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            return EngineResult(ok=True, engine="qa", verb="run", payload={"passed": True})
+
+    seen: dict = {}
+
+    class _QaCapture(_Qa):
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            seen.update(spec.job)
+            return EngineResult(ok=True, engine="qa", verb="run", payload={"passed": True})
+
+    evaluator = QaShotEvaluator(_QaCapture(), data_root=root)
+    shot = Shot(id="s1", description="d", duration_s=1.0, output_path="/etc/shadow")
+    evaluator.evaluate(shot)
+    assert seen["video_path"] == str(root / "shadow")
+
+
 def test_engine_assembler_output_path_is_anchored_under_the_volume(tmp_path):
     """El reel final NO puede caer relativo al CWD del proceso studio-server."""
     root = tmp_path / "studio"
@@ -525,3 +582,24 @@ def test_engine_assembler_output_path_is_anchored_under_the_volume(tmp_path):
     out = Path(str(res["output_path"]))
     assert out.is_relative_to(root), f"output_path fuera del volumen: {out}"
     assert out.name == "prod-1_reel.mp4"
+
+
+def test_engine_assembler_confines_clip_paths(tmp_path):
+    """Las rutas de `clips` llegan de `shot.output_path` (checkpoint): se
+    confinan igual que en `run_layer`."""
+    root = tmp_path / "studio"
+    root.mkdir()
+    seen: dict = {}
+
+    class _Editor:
+        name = "editor"
+
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            seen.update(spec.job)
+            return EngineResult(ok=True, engine="editor", verb="run", payload={})
+
+    assembler = EngineAssembler(_Editor(), data_root=root)
+    assembler.assemble("prod-2", [{"path": "/etc/passwd", "duration_s": 2.0}])
+    for clip in seen["clips"]:
+        assert Path(clip["path"]).is_relative_to(root), clip
+    assert Path(seen["output_path"]).is_relative_to(root)

@@ -117,6 +117,17 @@ _INFLIGHT_STREAM_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)^STUDIO_API_TOKEN(?:\s*|\s*[:=]\s*\S*)$"),
     re.compile(r"(?i)^STUDIO_WEBHOOK_SECRET(?:\s*|\s*[:=]\s*\S*)$"),
     re.compile(r"(?i)^VAST_API_KEY(?:\s*|\s*[:=]\s*\S*)$"),
+    # Patrones añadidos para paridad con `comfyctl/src/redact.rs`. Sin su
+    # contrapartida en vuelo, un credencial partida entre dos chunks de un
+    # stream SSE se emitía en claro: el buffer solo retiene lo que coincide con
+    # uno de estos, así que `redact()` y el stream no pueden divergir.
+    re.compile(r"(?i)^STUDIO_HEAVY_VIDEO_KEY(?:\s*|\s*[:=]\s*\S*)$"),
+    re.compile(r"(?i)^Authorization\s*[:=]\s*(?:basic|bearer|token|apikey|key|jwt|pat|digest)?\s*[A-Za-z0-9._\-+/=]*$"),
+    re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://[^/\s:@]+:[^@\s\"'\[\]{}]*$"),
+    re.compile(r"(?:AKIA|ASIA)[0-9A-Z]*$"),
+    re.compile(r"AIza[0-9A-Za-z_\-]*$"),
+    re.compile(r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]*$"),
+    re.compile(r"xox[baprs]-[A-Za-z0-9\-]*$"),
     re.compile(r"^https?://[^@\s\"'\[\]{}]*$"),
 )
 
@@ -250,10 +261,17 @@ class SecretRedactor:
         out = _AUTHORIZATION_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _URL_AUTH_RE.sub(rf"\1{SECRET_PLACEHOLDER}\3", out)
         # La forma sin esquema se descarta si es un esquema tipo mailto:/sip:,
-        # igual que hace el redactor de Rust.
+        # igual que hace el redactor de Rust. OJO: hay que mirar `group(2)` (el
+        # usuario), NO `group(0)`: group(0) incluye el delimitador inicial
+        # obligatorio (espacio/comilla/`(`/`[`/`{`/`=`/`,`), así que
+        # `startswith("mailto:")` solo era cierto en la posición 0 y todo
+        # `mailto:` incrustado en un valor JSON perdía su parte local.
+        _SCHEMELESS_EXEMPT = (
+            "mailto", "tel", "sip", "sips", "xmpp", "callto", "ldap", "news", "urn",
+        )
         out = _URL_AUTH_SCHEMELESS_RE.sub(
             lambda m: m.group(0)
-            if m.group(0).lower().startswith(("mailto:", "sip:"))
+            if m.group(2).lower() in _SCHEMELESS_EXEMPT
             else f"{m.group(1)}{m.group(2)}:{SECRET_PLACEHOLDER}@",
             out,
         )

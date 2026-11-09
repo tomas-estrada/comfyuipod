@@ -11,6 +11,7 @@ from comfy_studio.config import (
     SECRET_PLACEHOLDER,
     RedactingLogFilter,
     SecretRedactor,
+    SecretStreamRedactor,
     StudioConfig,
     install_log_redaction,
 )
@@ -348,6 +349,52 @@ def test_redactor_covers_provider_key_shapes() -> None:
         out = redactor.redact(text)
         assert secret not in out, f"no se redactó {secret!r} en {text!r} -> {out!r}"
         assert SECRET_PLACEHOLDER in out, f"falta el placeholder en {text!r} -> {out!r}"
+
+
+def test_redactor_leaves_embedded_mailto_and_schemes_intact() -> None:
+    """Regresión: la exención de esquemas miraba `group(0)`, que incluye el
+    delimitador inicial obligatorio, así que solo funcionaba en la posición 0 y
+    todo `mailto:` incrustado en un valor JSON perdía su parte local."""
+    redactor = SecretRedactor.from_env({})
+    for text in (
+        '{"contact": "mailto:soporte@example.com", "ok": 1}',
+        "Contact: mailto:user@example.com",
+        "ver sip:a@b.com",
+        "tel:+15551234@x",
+        "xmpp:a@b.com",
+        "urn:a@b.com",
+        "news:a@b.com",
+        "ldap:a@b.com",
+        "callto:a@b.com",
+    ):
+        assert redactor.redact(text) == text, text
+    # Una credencial real SÍ se redacta, esquema exento o no.
+    assert SECRET_PLACEHOLDER in redactor.redact("proxy user:secretpw@host:3128")
+
+
+def test_stream_redactor_holds_back_every_pattern_redact_covers() -> None:
+    """Invariante: `redact()` y el stream no pueden divergir.
+
+    Regresión: los 7 patrones añadidos para paridad con el redactor de Rust no
+    tenían contrapartida en `_INFLIGHT_STREAM_REGEXES`, así que un credencial
+    partida entre dos chunks de un stream SSE se emitía en claro.
+    """
+    redactor = SecretRedactor.from_env({})
+    # (chunks, fragmento que NUNCA debe salir emitido)
+    cases = [
+        (["xoxb-1234", "567890-abcdefghij"], "567890-abcdefghij"),
+        (["AKIAIOS", "FODNN7EXAMPLE"], "FODNN7EXAMPLE"),
+        (["AIzaSyA1234567890abc", "defghijklmnopqrstuv"], "defghijklmnopqrstuv"),
+        (["ghp_" + "a" * 20, "b" * 20], "b" * 20),
+        (["postgres://u:sec", "retpw@db:5432/x"], "retpw"),
+        (["Authorization: Basic dXNlcjpwYXNz", "d29yZA=="], "d29yZA=="),
+        (["STUDIO_HEAVY_VIDEO_KEY=abc", "def123456"], "def123456"),
+    ]
+    for chunks, secret in cases:
+        stream = SecretStreamRedactor(redactor)
+        emitted = "".join(stream.push(c) for c in chunks) + stream.flush()
+        assert secret not in emitted, f"fuga en stream: {chunks!r} -> {emitted!r}"
+        assert SECRET_PLACEHOLDER in emitted, f"sin redactar: {chunks!r} -> {emitted!r}"
 
 
 def test_redactor_leaves_benign_colons_and_mailto_intact() -> None:
