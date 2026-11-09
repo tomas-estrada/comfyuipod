@@ -1,0 +1,8 @@
+{
+  "schema": "comfy_studio.demo_fixture.d02.v1",
+  "fixture_kind": "small explicit before/after layer buffer with causal mask",
+  "background": [10, 20, 30, 40, 50, 60],
+  "before": [10, 99, 98, 40, 97, 60],
+  "after": [10, 20, 30, 40, 50, 60],
+  "causal_mask": [false, true, true, false, true, false]
+}
