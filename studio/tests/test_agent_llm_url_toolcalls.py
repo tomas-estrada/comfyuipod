@@ -181,6 +181,70 @@ async def test_complete_sends_inline_data_url_to_built_endpoint(studio_data_dir:
 
 
 @pytest.mark.anyio
+async def test_provider_profile_without_tools_omits_tool_contract(studio_data_dir: Path) -> None:
+    seen: list[dict[str, Any]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=_message_response("respuesta de texto"), request=request)
+
+    config = _config(studio_data_dir)
+    config.studio_llm_supports_tools = False
+    client = OpenAICompatibleLLMClient(config=config, transport=httpx.MockTransport(handler))
+    tool = {"type": "function", "function": {"name": "never_sent"}}
+
+    response = await client.complete([{"role": "user", "content": "hola"}], tools=[tool])
+
+    assert response.content == "respuesta de texto"
+    assert "tools" not in seen[0]
+    profile = client.provider_profile("primary")
+    assert profile.model == "cfg-model"
+    assert profile.supports_tools is False
+    assert not hasattr(profile, "api_key")
+
+
+@pytest.mark.anyio
+async def test_fallback_profile_can_be_nonstreaming_and_text_only(studio_data_dir: Path) -> None:
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        seen.append((str(request.url), payload))
+        if str(request.url) == _PRIMARY_ENDPOINT:
+            return httpx.Response(503, json={"error": "primary unavailable"}, request=request)
+        return httpx.Response(
+            200,
+            json=_message_response("respuesta final", model="fallback-v2"),
+            request=request,
+        )
+
+    config = _config(studio_data_dir)
+    config.studio_llm_fallback_supports_tools = False
+    config.studio_llm_fallback_supports_streaming = False
+    client = OpenAICompatibleLLMClient(config=config, transport=httpx.MockTransport(handler))
+    tokens: list[str] = []
+
+    async def on_token(piece: str, _model: str) -> None:
+        tokens.append(piece)
+
+    result = await client.stream_complete(
+        [{"role": "user", "content": "hola"}],
+        tools=[{"type": "function", "function": {"name": "unused"}}],
+        on_token=on_token,
+    )
+
+    assert result.provider == "fallback"
+    assert result.model == "fallback-v2"
+    assert "".join(tokens) == "respuesta final"
+    assert seen[0][1]["model"] == "cfg-model"
+    assert seen[0][1]["stream"] is True
+    assert seen[1][1]["model"] == "cfg-fallback-model"
+    assert seen[1][1]["stream"] is False
+    assert "tools" not in seen[1][1]
+    assert client.provider_profile("fallback").supports_streaming is False
+
+
+@pytest.mark.anyio
 async def test_complete_accepts_string_form_data_url_image(studio_data_dir: Path) -> None:
     """`image_url` como string plano con data URL válido pasa el guard del cliente."""
     calls: list[str] = []

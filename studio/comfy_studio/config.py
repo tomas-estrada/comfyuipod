@@ -371,9 +371,13 @@ class StudioConfig:
     studio_llm_base_url: str = DEFAULT_STUDIO_LLM_BASE_URL
     studio_llm_key: str | None = field(default=None, repr=False)
     studio_llm_model: str = DEFAULT_STUDIO_LLM_MODEL
+    studio_llm_supports_tools: bool = True
+    studio_llm_supports_streaming: bool = True
     studio_llm_fallback_base_url: str = DEFAULT_STUDIO_LLM_FALLBACK_BASE_URL
     studio_llm_fallback_key: str | None = field(default=None, repr=False)
     studio_llm_fallback_model: str = DEFAULT_STUDIO_LLM_FALLBACK_MODEL
+    studio_llm_fallback_supports_tools: bool = True
+    studio_llm_fallback_supports_streaming: bool = True
     studio_comfyui_url: str = DEFAULT_STUDIO_COMFYUI_URL
     studio_data_dir: Path = field(
         default_factory=lambda: _default_studio_data_dir(os.environ)
@@ -533,6 +537,12 @@ class StudioConfig:
             studio_llm_model=(
                 source.get("STUDIO_LLM_MODEL", "").strip() or DEFAULT_STUDIO_LLM_MODEL
             ),
+            studio_llm_supports_tools=_parse_bool(
+                source.get("STUDIO_LLM_SUPPORTS_TOOLS"), default=True
+            ),
+            studio_llm_supports_streaming=_parse_bool(
+                source.get("STUDIO_LLM_SUPPORTS_STREAMING"), default=True
+            ),
             studio_llm_fallback_base_url=(
                 source.get("STUDIO_LLM_FALLBACK_BASE_URL", "").strip()
                 or DEFAULT_STUDIO_LLM_FALLBACK_BASE_URL
@@ -543,6 +553,12 @@ class StudioConfig:
             studio_llm_fallback_model=(
                 source.get("STUDIO_LLM_FALLBACK_MODEL", "").strip()
                 or DEFAULT_STUDIO_LLM_FALLBACK_MODEL
+            ),
+            studio_llm_fallback_supports_tools=_parse_bool(
+                source.get("STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS"), default=True
+            ),
+            studio_llm_fallback_supports_streaming=_parse_bool(
+                source.get("STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING"), default=True
             ),
             studio_comfyui_url=(
                 source.get("STUDIO_COMFYUI_URL", "").strip()
@@ -709,9 +725,19 @@ class StudioConfig:
             "STUDIO_LLM_BASE_URL": self.studio_llm_base_url,
             "STUDIO_LLM_KEY": self.masked_llm_key_status(),
             "STUDIO_LLM_MODEL": self.studio_llm_model,
+            "STUDIO_LLM_SUPPORTS_TOOLS": "1" if self.studio_llm_supports_tools else "0",
+            "STUDIO_LLM_SUPPORTS_STREAMING": (
+                "1" if self.studio_llm_supports_streaming else "0"
+            ),
             "STUDIO_LLM_FALLBACK_BASE_URL": self.studio_llm_fallback_base_url,
             "STUDIO_LLM_FALLBACK_KEY": self.masked_llm_fallback_key_status(),
             "STUDIO_LLM_FALLBACK_MODEL": self.studio_llm_fallback_model,
+            "STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS": (
+                "1" if self.studio_llm_fallback_supports_tools else "0"
+            ),
+            "STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING": (
+                "1" if self.studio_llm_fallback_supports_streaming else "0"
+            ),
             "STUDIO_COMFYUI_URL": self.studio_comfyui_url,
             "STUDIO_DATA_DIR": str(self.studio_data_dir),
             "STUDIO_SERVER_PORT": str(self.studio_server_port),

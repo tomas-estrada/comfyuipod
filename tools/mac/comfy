@@ -1215,6 +1215,13 @@ PYEOF
             check_secret_safe "${STUDIO_LLM_MODEL}" "STUDIO_LLM_MODEL"
             env_flags="${env_flags} -e STUDIO_LLM_MODEL=\"${STUDIO_LLM_MODEL}\""
         fi
+        for llm_capability_var in STUDIO_LLM_SUPPORTS_TOOLS STUDIO_LLM_SUPPORTS_STREAMING; do
+            llm_capability_value="${!llm_capability_var:-}"
+            if [ -n "${llm_capability_value}" ]; then
+                check_secret_safe "${llm_capability_value}" "${llm_capability_var}"
+                env_flags="${env_flags} -e ${llm_capability_var}=\"${llm_capability_value}\""
+            fi
+        done
         if [ -n "${STUDIO_LLM_FALLBACK_BASE_URL:-}" ]; then
             check_secret_safe "${STUDIO_LLM_FALLBACK_BASE_URL}" "STUDIO_LLM_FALLBACK_BASE_URL"
             env_flags="${env_flags} -e STUDIO_LLM_FALLBACK_BASE_URL=\"${STUDIO_LLM_FALLBACK_BASE_URL}\""
@@ -1226,6 +1233,13 @@ PYEOF
             check_secret_safe "${STUDIO_LLM_FALLBACK_MODEL}" "STUDIO_LLM_FALLBACK_MODEL"
             env_flags="${env_flags} -e STUDIO_LLM_FALLBACK_MODEL=\"${STUDIO_LLM_FALLBACK_MODEL}\""
         fi
+        for llm_capability_var in STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING; do
+            llm_capability_value="${!llm_capability_var:-}"
+            if [ -n "${llm_capability_value}" ]; then
+                check_secret_safe "${llm_capability_value}" "${llm_capability_var}"
+                env_flags="${env_flags} -e ${llm_capability_var}=\"${llm_capability_value}\""
+            fi
+        done
         if [ -n "${STUDIO_INCLUDE_ANIMATE:-}" ]; then
             check_secret_safe "${STUDIO_INCLUDE_ANIMATE}" "STUDIO_INCLUDE_ANIMATE"
             env_flags="${env_flags} -e STUDIO_INCLUDE_ANIMATE=\"${STUDIO_INCLUDE_ANIMATE}\""
@@ -1258,7 +1272,7 @@ PYEOF
         [ -z "${STUDIO_WEBHOOK_SECRET:-}" ] || webhook_secret_state="<definida>"
         echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, hardware=${HW_PROFILE_NAME} vram>=${min_vram_gb} GB ram>=${min_cpu_ram_gb} GB, disco=${disk_gb} GB, --args)."
         echo "[DRY-RUN] Filtros aplicados: ${query}"
-        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_FALLBACK_KEY=${llm_fallback_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', STUDIO_RESUME_JOBS='${STUDIO_RESUME_JOBS:-1}', STUDIO_RESUME_DELAY_S='${STUDIO_RESUME_DELAY_S:-30}', STUDIO_WEBHOOK_URL=${webhook_url_state}, STUDIO_WEBHOOK_SECRET=${webhook_secret_state}, COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
+        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_FALLBACK_KEY=${llm_fallback_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_LLM_SUPPORTS_TOOLS='${STUDIO_LLM_SUPPORTS_TOOLS:-1}', STUDIO_LLM_SUPPORTS_STREAMING='${STUDIO_LLM_SUPPORTS_STREAMING:-1}', STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS='${STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS:-1}', STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING='${STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING:-1}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', STUDIO_RESUME_JOBS='${STUDIO_RESUME_JOBS:-1}', STUDIO_RESUME_DELAY_S='${STUDIO_RESUME_DELAY_S:-30}', STUDIO_WEBHOOK_URL=${webhook_url_state}, STUDIO_WEBHOOK_SECRET=${webhook_secret_state}, COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
         return 0
     fi
 
