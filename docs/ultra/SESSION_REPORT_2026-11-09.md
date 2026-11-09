@@ -183,21 +183,20 @@ Ambos upgrades se aplicaron también en el paso de reinstalación forzada del Do
 
 ## 4. Correcciones de robustez y calidad de código
 
-### 4.1. Redacción de secretos en logs de arranque
+### 4.1. Redacción de secretos en logs de arranque — intentada y revertida
 
 - **Archivo:** `scripts/start.sh` (líneas 289, 333)
 - **Severidad:** MEDIUM
-- **Hallazgo:** Cuando `COMFY_PASS` o `STUDIO_API_TOKEN` eran autogenerados, se imprimían en texto plano en el banner de arranque:
+- **Hallazgo:** Cuando `COMFY_PASS` o `STUDIO_API_TOKEN` son autogenerados, se imprimen en texto plano en el banner de arranque:
   ```bash
   echo "  Contraseña : ${COMFY_PASS}  (AUTOGENERADA para esta sesión)"
   ```
-  Esto exponía secretos en `/var/log/start.log` (accesible desde el contenedor) y en la salida de `docker logs`.
-- **Fix:** Se reemplazó la impresión del valor por una referencia al archivo efímero:
-  ```bash
-  echo "  Contraseña : [AUTOGENERADA — revisa /run/comfyui-pass o el log de Vast.ai]"
-  echo "  Token      : [AUTOGENERADO — revisa /run/comfyui-api-token durante la sesión]"
-  ```
-  Los secretos siguen accesibles durante la sesión en `/run/comfyui-pass` y `/run/comfyui-api-token` (0600), que `comfyctl supervise` lee y elimina con `unlink` tras el consumo. No se imprimen en ningún log persistente.
+  Esto expone los secretos en `/var/log/start.log` (0600, creado antes del `tee`) y en la salida de `docker logs`.
+- **Intento de fix:** se sustituyó la impresión del valor por una referencia al archivo efímero (`[AUTOGENERADA — revisa /run/comfyui-pass …]`).
+- **Resultado: REVERTIDO.** El smoke test de CI (paso 15b de `.github/workflows/docker-publish.yml`) exige que el `STUDIO_API_TOKEN` autogenerado (48 hex) sea visible en el banner **exactamente una vez**; ocultarlo hacía fallar el job `Build Candidate, Smoke-Test & Promote to Latest` con `No se encontró el STUDIO_API_TOKEN autogenerado (48 hex) en el banner de arranque`.
+- **Estado final:** se conserva la impresión del valor autogenerado. Es una decisión de producto deliberada: los ficheros efímeros `/run/comfyui-pass` y `/run/comfyui-api-token` (0600) los consume `comfyctl supervise` y los borra con `unlink`, por lo que **no** sirven para que el operario recupere la credencial; el banner es el único punto donde puede leerla.
+- **Endurecimiento aplicado en su lugar:** `scripts/start.sh` arranca ttyd con `env -u COMFY_PASS -u STUDIO_API_TOKEN -u HF_TOKEN`, de modo que una shell autenticada en `/terminal/` no puede leer los secretos con `env`. `/logs/*` sigue resolviéndose contra una lista blanca de 10 nombres, así que `/run/comfyui-*` no es alcanzable por HTTP.
+- **Riesgo residual aceptado:** el secreto autogenerado aparece una vez en `docker logs`. Mitigación: definir `COMFY_PASS` y `STUDIO_API_TOKEN` explícitamente en el arranque (entonces el banner muestra `[OCULTO]`/`[OCULTA]`).
 
 ### 4.2. Cabeceras HSTS faltantes en Nginx
 
@@ -280,7 +279,7 @@ python3 -c "import cv2; print(cv2.__version__)"
 | `sed` con ruta maliciosa | No ejecuta comandos (Python inline) |
 | SQL allowlist en `review_pins` | Campos fuera de allowlist son descartados |
 | HSTS en todas las locaciones | Confirmado en dump de `nginx -T` |
-| Secretos en stdout de `start.sh` | Redactados, solo referencias a `/run/` |
+| Secretos en stdout de `start.sh` | Autogenerados se imprimen una vez (exigido por el smoke test); los definidos por el operario se ocultan con `[OCULTO]` |
 
 ---
 

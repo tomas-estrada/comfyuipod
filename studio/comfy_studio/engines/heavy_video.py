@@ -164,7 +164,7 @@ class HeavyVideoEngine:
 
         from comfy_studio.config import SecretRedactor
 
-        redactor = SecretRedactor()
+        redactor = SecretRedactor.from_env()
         base_url = (
             os.environ.get("STUDIO_HEAVY_VIDEO_BASE_URL")
             or "https://api.minimax.io/v1"

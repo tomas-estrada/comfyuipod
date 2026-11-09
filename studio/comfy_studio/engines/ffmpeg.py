@@ -184,7 +184,9 @@ class FfmpegEngine(Engine):
     def _run_transcode(
         self, binary: str, parsed: TranscodeSpec, start: float
     ) -> EngineResult:
-        redactor = SecretRedactor()
+        # Igual que en upscaler/heavy_video: con secretos literales del entorno,
+        # no un redactor pelado sin ninguno.
+        redactor = SecretRedactor.from_env()
         cmd = [binary, "-y"]
         for path in parsed.inputs:
             cmd += ["-i", str(path)]

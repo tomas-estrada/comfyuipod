@@ -81,7 +81,10 @@ def run_worker(
     `ok=False` con `error`/`stderr_tail`/`exit_code` en fallo. Nunca lanza
     excepción por fallo del worker: todo se tipifica en la respuesta.
     """
-    redactor = redactor or SecretRedactor()
+    # `from_env()` y no un `SecretRedactor()` pelado: el pelado no tiene ningún
+    # secreto literal, así que un `stderr_tail` que los contenga saldría sin
+    # máscara. `from_env()` los toma del entorno real del proceso.
+    redactor = redactor or SecretRedactor.from_env()
     payload = payload or {}
     timeout = _default_timeout(subcommand, timeout_s)
     worker_path = str(Path(__file__).resolve().parent / "worker.py")

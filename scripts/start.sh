@@ -365,6 +365,7 @@ fi
 # htpasswd debe estar listo antes de exponer nginx (fail-closed si falla).
 wait "${_htpasswd_pid}" || {
     echo "[FATAL] htpasswd falló al crear /etc/nginx/.htpasswd; abortando."
+    cat "${_htpasswd_log}" >&2 || true
     exit 1
 }
 rm -f "${_htpasswd_log}"
@@ -382,7 +383,7 @@ if [ "${ENABLE_WEB_TERMINAL:-0}" = "1" ]; then
         echo "[4/7] Iniciando terminal web ttyd en 127.0.0.1:7681 (/terminal/)..."
         touch /var/log/ttyd.log
         chmod 600 /var/log/ttyd.log
-        setsid -f env -u COMFY_PASS ttyd --interface 127.0.0.1 --port 7681 --base-path /terminal --writable bash -l >> /var/log/ttyd.log 2>&1 < /dev/null
+        setsid -f env -u COMFY_PASS -u STUDIO_API_TOKEN -u HF_TOKEN ttyd --interface 127.0.0.1 --port 7681 --base-path /terminal --writable bash -l >> /var/log/ttyd.log 2>&1 < /dev/null
     else
         echo "[WARN] ENABLE_WEB_TERMINAL=1 pero el binario ttyd no está instalado."
     fi

@@ -50,10 +50,44 @@ _COMFY_PASS_ASSIGN_RE = re.compile(r"(?i)(COMFY_PASS\s*[:=]\s*)(\S+)")
 _STUDIO_AUTH_PASS_ASSIGN_RE = re.compile(r"(?i)(STUDIO_AUTH_PASS\s*[:=]\s*)(\S+)")
 _HF_TOKEN_ASSIGN_RE = re.compile(r"(?i)(HF_TOKEN\s*[:=]\s*)(\S+)")
 _STUDIO_API_TOKEN_ASSIGN_RE = re.compile(r"(?i)(STUDIO_API_TOKEN\s*[:=]\s*)(\S+)")
+# Credencial real del motor heavy_video (engines/heavy_video.py: KEY_ENV). Sin este
+# patrón ni literal, un proveedor que haga eco de la clave en su cuerpo de error la
+# devuelve tal cual al cliente y al log.
+_STUDIO_HEAVY_VIDEO_KEY_ASSIGN_RE = re.compile(
+    r"(?i)(STUDIO_HEAVY_VIDEO_KEY\s*[:=]\s*)(\S+)"
+)
 _STUDIO_WEBHOOK_SECRET_ASSIGN_RE = re.compile(r"(?i)(STUDIO_WEBHOOK_SECRET\s*[:=]\s*)(\S+)")
 _VAST_API_KEY_ASSIGN_RE = re.compile(r"(?i)(VAST_API_KEY\s*[:=]\s*)(\S+)")
 _BEARER_RE = re.compile(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{6,}")
-_URL_USERINFO_RE = re.compile(r"(https?://[^/\s:@]+:)(.*)(@)")
+# Paridad con `comfyctl/src/redact.rs`: sin estos, una credencial en una cadena de
+# excepción o en un cuerpo de error de proveedor llegaba al cliente. El redactor de
+# Rust sí los tiene, así que los dos no deben divergir.
+_AUTHORIZATION_RE = re.compile(
+    r"(?i)(authorization\s*[:=]\s*(?:basic|bearer|token|apikey|key|jwt|pat|digest)\s+)"
+    r"[A-Za-z0-9._\-+/=]{8,}"
+)
+# Esquema genérico (ftp://, postgres://, mongodb://...): anclarse solo a https?
+# dejaba la clave en claro en cualquier log que no usara http.
+# OJO: la clase de la clave excluye los caracteres estructurales de JSON. El
+# redactor de Rust usa `[^\s]*`, válido allí porque solo corre sobre texto de
+# log; aquí se aplica al cuerpo JSON serializado, que el cliente vuelve a
+# parsear, así que una clase permisiva se come los delimitadores y devuelve
+# "Extra data" (mismo fallo que tuvo `_URL_USERINFO_RE`).
+_URL_AUTH_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://[^/\s:@]+:)([^@\s\"'\[\]{}]*)(@)")
+# Forma sin esquema (`user:pass@host`, proxies y .netrc).
+_URL_AUTH_SCHEMELESS_RE = re.compile(
+    r"(^|[\s\"'(\[\{=,])([A-Za-z0-9._~%+\-]+):([^@\s\"'\[\]{}/@?#&=]+)@"
+)
+# Claves de nube/proveedores por su FORMA: no hacen falta literales.
+_AWS_KEY_ID_RE = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}")
+_CLOUD_API_KEY_RE = re.compile(r"AIza[0-9A-Za-z_\-]{35,}")
+_VCS_TOKEN_RE = re.compile(r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,254}")
+_SLACK_TOKEN_RE = re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,248}")
+# userinfo de una URL (`https://usuario:clave@host`). El grupo central se limita a
+# caracteres que NO puedan ser estructura JSON (comillas, llaves, corchetes): con
+# `.*` o `[^@\s]*` la sustitución se pasaba de los delimitadores y devolvía un
+# cuerpo JSON inválido ("Extra data") en cuanto el texto posterior contenía una `@`.
+_URL_USERINFO_RE = re.compile(r"(https?://[^/\s:@]+:)([^@\s\"'\[\]{}]*)(@)")
 
 _CASE_SENSITIVE_STREAM_PREFIXES: tuple[str, ...] = (
     "hf_",
@@ -83,7 +117,18 @@ _INFLIGHT_STREAM_REGEXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?i)^STUDIO_API_TOKEN(?:\s*|\s*[:=]\s*\S*)$"),
     re.compile(r"(?i)^STUDIO_WEBHOOK_SECRET(?:\s*|\s*[:=]\s*\S*)$"),
     re.compile(r"(?i)^VAST_API_KEY(?:\s*|\s*[:=]\s*\S*)$"),
-    re.compile(r"^https?://[^/\s@]*$"),
+    # Patrones añadidos para paridad con `comfyctl/src/redact.rs`. Sin su
+    # contrapartida en vuelo, un credencial partida entre dos chunks de un
+    # stream SSE se emitía en claro: el buffer solo retiene lo que coincide con
+    # uno de estos, así que `redact()` y el stream no pueden divergir.
+    re.compile(r"(?i)^STUDIO_HEAVY_VIDEO_KEY(?:\s*|\s*[:=]\s*\S*)$"),
+    re.compile(r"(?i)^Authorization\s*[:=]\s*(?:basic|bearer|token|apikey|key|jwt|pat|digest)?\s*[A-Za-z0-9._\-+/=]*$"),
+    re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://[^/\s:@]+:[^@\s\"'\[\]{}]*$"),
+    re.compile(r"(?:AKIA|ASIA)[0-9A-Z]*$"),
+    re.compile(r"AIza[0-9A-Za-z_\-]*$"),
+    re.compile(r"(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]*$"),
+    re.compile(r"xox[baprs]-[A-Za-z0-9\-]*$"),
+    re.compile(r"^https?://[^@\s\"'\[\]{}]*$"),
 )
 
 
@@ -160,6 +205,7 @@ class SecretRedactor:
                     source.get("STUDIO_WEBHOOK_SECRET"),
                     source.get("STUDIO_API_TOKEN"),
                     source.get("VAST_API_KEY"),
+                    source.get("STUDIO_HEAVY_VIDEO_KEY"),
                 )
                 if s
             ],
@@ -178,6 +224,10 @@ class SecretRedactor:
                     config.get_webhook_secret(),
                     config.get_api_token(),
                     config.get_vast_api_key(),
+                    # Clave del motor heavy_video: se declara aquí para que el
+                    # valor literal también se enmascare (un proveedor puede
+                    # repetirla en su cuerpo de error).
+                    os.environ.get("STUDIO_HEAVY_VIDEO_KEY"),
                 )
                 if s
             ],
@@ -204,9 +254,31 @@ class SecretRedactor:
         out = _STUDIO_AUTH_PASS_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _HF_TOKEN_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _STUDIO_API_TOKEN_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
+        out = _STUDIO_HEAVY_VIDEO_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _STUDIO_WEBHOOK_SECRET_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _VAST_API_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _BEARER_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
+        out = _AUTHORIZATION_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
+        out = _URL_AUTH_RE.sub(rf"\1{SECRET_PLACEHOLDER}\3", out)
+        # La forma sin esquema se descarta si es un esquema tipo mailto:/sip:,
+        # igual que hace el redactor de Rust. OJO: hay que mirar `group(2)` (el
+        # usuario), NO `group(0)`: group(0) incluye el delimitador inicial
+        # obligatorio (espacio/comilla/`(`/`[`/`{`/`=`/`,`), así que
+        # `startswith("mailto:")` solo era cierto en la posición 0 y todo
+        # `mailto:` incrustado en un valor JSON perdía su parte local.
+        _SCHEMELESS_EXEMPT = (
+            "mailto", "tel", "sip", "sips", "xmpp", "callto", "ldap", "news", "urn",
+        )
+        out = _URL_AUTH_SCHEMELESS_RE.sub(
+            lambda m: m.group(0)
+            if m.group(2).lower() in _SCHEMELESS_EXEMPT
+            else f"{m.group(1)}{m.group(2)}:{SECRET_PLACEHOLDER}@",
+            out,
+        )
+        out = _AWS_KEY_ID_RE.sub(SECRET_PLACEHOLDER, out)
+        out = _CLOUD_API_KEY_RE.sub(SECRET_PLACEHOLDER, out)
+        out = _VCS_TOKEN_RE.sub(SECRET_PLACEHOLDER, out)
+        out = _SLACK_TOKEN_RE.sub(SECRET_PLACEHOLDER, out)
         out = _URL_USERINFO_RE.sub(rf"\1{SECRET_PLACEHOLDER}\3", out)
         return out
 
@@ -349,7 +421,16 @@ def install_log_redaction(
     redactor: SecretRedactor,
     logger: logging.Logger | None = None,
 ) -> None:
-    """Instala RedactingLogFilter en el logger indicado (o en comfy_studio por defecto)."""
+    """Instala RedactingLogFilter en el logger indicado (o en comfy_studio por defecto).
+
+    También cubre `logging.lastResort`, que es por donde salen realmente los
+    registros de `comfy_studio.*`: uvicorn NO configura handlers en el logger
+    raíz, así que `Logger.callHandlers` no encuentra ninguno al subir por la
+    jerarquía y el registro cae en el `_StderrHandler` de último recurso — sin
+    pasar por ningún filtro de logger ancestro (esos solo se consultan en el
+    logger de origen). Sin esto, un `getLogger("comfy_studio.x").warning(...)`
+    con un secreto llegaba a `/var/log/studio-server.log` en claro.
+    """
     target = logger if logger is not None else logging.getLogger("comfy_studio")
     # Reemplazar filtros previos de redacción para mantener idempotencia
     target.filters = [
@@ -361,6 +442,12 @@ def install_log_redaction(
             f for f in handler.filters if not isinstance(f, RedactingLogFilter)
         ]
         handler.addFilter(RedactingLogFilter(redactor))
+    # `lastResort` es un singleton de proceso: se filtra una sola vez.
+    if logging.lastResort is not None:
+        logging.lastResort.filters = [
+            f for f in logging.lastResort.filters if not isinstance(f, RedactingLogFilter)
+        ]
+        logging.lastResort.addFilter(RedactingLogFilter(redactor))
 
 
 @dataclass

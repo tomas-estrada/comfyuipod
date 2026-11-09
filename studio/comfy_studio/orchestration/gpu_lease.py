@@ -423,10 +423,39 @@ class GpuLease:
             return True
 
 
+def _lock_root_writable(path: Path) -> bool:
+    """True si `path` se puede crear y admite escritura.
+
+    Fuera del pod (desarrollo/CI) `/workspace` puede no existir o el `/` raíz
+    puede ser de solo lectura (SIP en macOS): en ese caso el lock no puede vivir
+    ahí y hay que usar un directorio temporal.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return os.access(path, os.W_OK)
+
+
 def lock_dir_for(env: dict[str, str] | None = None) -> Path:
     environment = os.environ if env is None else env
-    data = (environment.get("COMFY_DATA_DIR") or "").strip() or "/workspace/comfyui-data"
-    return Path(data) / LOCK_DIRNAME
+    explicit = (environment.get("COMFY_DATA_DIR") or "").strip()
+    if explicit:
+        # El operador fijó el volumen a propósito: se respeta tal cual, sin
+        # sondear su escritura (un path no creado todavía sigue siendo el destino
+        # correcto; quien falla es el mkdir de GpuLease, con un error claro).
+        return Path(explicit) / LOCK_DIRNAME
+    candidate = Path("/workspace/comfyui-data") / LOCK_DIRNAME
+    if _lock_root_writable(candidate):
+        return candidate
+    # Fuera del pod (desarrollo/CI) /workspace puede no existir o el `/` raíz
+    # puede ser de solo lectura (SIP en macOS): sin este respaldo `create_app`
+    # en modo orquestación real falla con "[Errno 30] Read-only file system".
+    import tempfile
+
+    fallback_root = Path(tempfile.gettempdir()) / "comfy_studio_data"
+    fallback_root.mkdir(parents=True, exist_ok=True)
+    return fallback_root / LOCK_DIRNAME
 
 
 __all__ = [

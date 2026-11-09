@@ -868,7 +868,7 @@ fn strict_gpu_query_failure_is_fatal_in_gpu_mode_but_s17_only_warns() {
         "S2 debia reportar N/A ante un driver vacio"
     );
 
-    // S3: fatal solo por `!gpu_query_ok`. La VRAM del fixture (32768 MB) supera
+    // S3: fatal solo por `!gpu_query_ok`. La VRAM del fixture (98304 MB) supera
     // el minimo (20000 MB), luego esta asercion discrimina el disjuntivo: si
     // dejara de contemplar `!gpu_query_ok`, S3 pasaria a "ok".
     assert_eq!(status_of("S3"), "fatal", "S3 debia ser fatal");
@@ -1125,7 +1125,7 @@ fn strict_cuda_fatal_in_gpu_mode_and_perception_checks_warn_never_fatal() {
 #[test]
 fn strict_vram_warn_band_between_min_and_recommended() {
     // S3: la banda WARN de VRAM (>= 20000 minimo, < 22000 recomendado; §6.2 /
-    // R-06) nunca se habia ejercitado: los tests usaban 12000/0 (fatal), 32768+
+    // R-06) nunca se habia ejercitado: los tests usaban 12000/0 (fatal), 98304+
     // (ok) o lo omitian en modo CPU. El aviso informa sin remediation, y el
     // umbral recomendado exacto ya no avisa.
     // El perfil declarado (20 GB VRAM / 16 GB RAM) lo cubre la fixture, para que

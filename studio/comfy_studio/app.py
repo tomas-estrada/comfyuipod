@@ -60,6 +60,7 @@ from comfy_studio.perception import (
 )
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
+from comfy_studio.recovery import _background_tasks as _recovery_poll_tasks
 from comfy_studio.recovery import recover_interrupted_jobs
 from comfy_studio.routers import register_all_routes
 from comfy_studio.stubs.llm import StubLLMClient
@@ -93,7 +94,11 @@ def create_app(
 ) -> FastAPI:
     cfg = config if config is not None else StudioConfig.from_env()
     redactor = cfg.redactor()
-    install_log_redaction(redactor)
+    # El logger raíz también lleva el filtro: `Logger.callHandlers` ignora los
+    # filtros de un logger *ancestro* para los registros propagados, así que sin
+    # esto un `getLogger("comfy_studio.x").warning(...)` llegaba al handler raíz
+    # (y a /var/log/studio-server.log) sin redactar.
+    install_log_redaction(redactor, logger=logging.getLogger())
     install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
 
     # M3-SEC-002: sin contraseña exigible no hay lockout posible (ver test de
@@ -122,6 +127,12 @@ def create_app(
 
     @asynccontextmanager
     async def _webhook_lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+        # Reinstalar la redacción de logs AQUÍ, no solo en `create_app`: el
+        # lifespan corre ya dentro de uvicorn, así que cualquier handler que
+        # `uvicorn.run()` haya añadido entretanto también queda filtrado. En
+        # `create_app` la raíz aún no tenía ninguno.
+        install_log_redaction(redactor, logger=logging.getLogger())
+        install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
         # El lazo de orquestación corre en threadpool: vincula el loop al broker para
         # que sus eventos (production_step, etc.) lleguen al bus SSE de forma segura.
         broker.bind_loop(asyncio.get_running_loop())
@@ -223,6 +234,18 @@ def create_app(
                     "STUDIO: %d render(s) en segundo plano cancelados por el apagado "
                     "(se recuperan al arrancar).",
                     len(render_tasks),
+                )
+            # Las tareas de re-enganche de prompts de recovery.py viven en un set
+            # de módulo que nadie cancelaba: un apagado a mitad del sondeo dejaba
+            # un job a medio finalizar. Se drenan aquí igual que los renders.
+            poll_tasks = [t for t in _recovery_poll_tasks if not t.done()]
+            for poll_task in poll_tasks:
+                poll_task.cancel()
+            if poll_tasks:
+                await asyncio.gather(*poll_tasks, return_exceptions=True)
+                logger.info(
+                    "STUDIO: %d sondeo(s) de re-enganche cancelados por el apagado.",
+                    len(poll_tasks),
                 )
 
     app = FastAPI(
@@ -461,6 +484,10 @@ def create_app(
             )
 
             def unload_gpu() -> bool:
+                # Callback síncrono invocado por GpuLease.release desde el hilo
+                # del grafo (leased_runner), donde no hay bucle vivo: asyncio.run
+                # es la forma correcta. Si el cableado cambiara y corriera dentro
+                # del bucle, asyncio.run lanzaría RuntimeError de inmediato.
                 result = asyncio.run(
                     app.state.comfyui_client.free_memory(
                         unload_models=True,
@@ -481,6 +508,9 @@ def create_app(
                 atlas_service=app.state.atlas,
                 comfyui_input_dir=os.environ.get("STUDIO_COMFYUI_INPUT_DIR")
                 or "/workspace/comfyui-data/input",
+                # Confinamiento de rutas de motor bajo el directorio de datos
+                # real de Studio (no el CWD del proceso).
+                data_root=cfg.studio_data_dir,
                 gpu_lease=gpu_lease,
                 unload_gpu=unload_gpu,
             )

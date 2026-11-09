@@ -1,6 +1,6 @@
 # Guía de paso a producción — ComfyUI "Everything-Ready" para Vast.ai
 
-**Actualizado:** 2026-11-05 · **Código revisado:** `main` en `002b63e`; comprueba la CI y digest de imagen más recientes antes de desplegar. La demo GPU W26 usó una imagen anterior y no valida automáticamente este `main`.
+**Actualizado:** 2026-11-05 · **Código revisado:** `main` en `c2c2971`; comprueba la CI y digest de imagen más recientes antes de desplegar. La demo GPU W26 usó una imagen anterior y no valida automáticamente este `main`.
 **Público objetivo:** operadores desde Windows, macOS o Linux; los pasos con helper Bash se señalan explícitamente.
 
 ---
@@ -187,7 +187,7 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 
 | Síntoma | Qué significa | Qué hacer |
 |---|---|---|
-| Banner rojo **FATAL** en `/home` / `/status` | El arranque estricto (`strict-check` S1–S10, o S1–S16 en `studio`/`unreal`) detectó un host incompatible (GPU, VRAM, RAM, disco...) | Ejecuta `comfy destroy <id>` y alquila otra oferta; el banner indica la causa y la remediación. La instancia sale sola con código 20 tras 10 min |
+| Banner rojo **FATAL** en `/home` / `/status` | El arranque estricto (`strict-check` S1–S10, o S1–S17 en `studio`/`unreal`) detectó un host incompatible (GPU, VRAM, RAM, disco...) | Ejecuta `comfy destroy <id>` y alquila otra oferta; el banner indica la causa y la remediación. La instancia sale sola con código 20 tras 10 min |
 | Pantalla de espera eterna | El arranque o una comprobación se bloqueó | Abre `/status` y revisa las comprobaciones y logs; el motor de triaje (17 patrones) suele señalar la causa. Los modelos de tarea se descargan solo cuando se solicitan. |
 | Error 401 al abrir el portal | Contraseña incorrecta o no definida | `comfy pass <id>` recupera la contraseña autogenerada desde los logs de arranque |
 | ComfyUI no responde pero el portal sí | El supervisor está reiniciando `main.py` (OOM, crash CUDA, etc.) | Mira `/status` (clasifica la salida: 137 OOM, 134/139 crash nativo...) y `/report.md` para el informe completo |
@@ -222,4 +222,4 @@ Regla de oro: **máquina encendida solo mientras la usas; `comfy destroy` al ter
 
 ---
 
-*Revisada contra `main` en `002b63e` el 2026-11-05. El reporte W26 corresponde a un digest anterior y a una sola receta; antes de desplegar, confirma CI, digest y validación que corresponden al perfil/tarea que usarás.*
+*Revisada contra `main` en `c2c2971` el 2026-11-05. El reporte W26 corresponde a un digest anterior y a una sola receta; antes de desplegar, confirma CI, digest y validación que corresponden al perfil/tarea que usarás.*

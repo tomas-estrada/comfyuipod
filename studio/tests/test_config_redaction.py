@@ -11,6 +11,7 @@ from comfy_studio.config import (
     SECRET_PLACEHOLDER,
     RedactingLogFilter,
     SecretRedactor,
+    SecretStreamRedactor,
     StudioConfig,
     install_log_redaction,
 )
@@ -303,3 +304,172 @@ def test_hunyuan3d_template_params_validation() -> None:
 
 
 
+
+
+def test_redactor_never_breaks_the_json_body_it_runs_on() -> None:
+    """Invariante: el redactor corre sobre el cuerpo JSON serializado, que el
+    cliente vuelve a parsear. Ningún patrón puede comerse delimitadores.
+
+    Regresión: `_URL_AUTH_RE` con una clase de clave permisiva (`[^\\s]*`)
+    abarcaba desde `http://host:` hasta la siguiente `@`, borrando la
+    estructura JSON intermedia y devolviendo `Extra data`.
+    """
+    import json
+
+    redactor = SecretRedactor.from_env({})
+    body = json.dumps(
+        {
+            "comfyui_url": "http://stub-comfyui.local:39172",
+            "nested": {"k": 1, "deep": {"a": [1, 2, 3]}},
+            # Una `@` muy posterior (ruta del intérprete) es el señuelo clásico.
+            "interpreter": "/opt/homebrew/Cellar/python@3.12/bin/python3.12",
+        }
+    )
+    out = redactor.redact(body)
+    parsed = json.loads(out)  # no debe lanzar
+    assert parsed["nested"]["deep"]["a"] == [1, 2, 3]
+    assert parsed["comfyui_url"] == "http://stub-comfyui.local:39172"
+
+
+def test_redactor_covers_provider_key_shapes() -> None:
+    """Paridad de cobertura con `comfyctl/src/redact.rs` para las formas de
+    clave que no necesitan literal (el proceso que las emite puede no ser el
+    que las configuró)."""
+    redactor = SecretRedactor.from_env({})
+    cases = {
+        "k=AKIAIOSFODNN7EXAMPLE": "AKIAIOSFODNN7EXAMPLE",
+        "g=AIzaSyA1234567890abcdefghijklmnopqrstuv": "AIzaSyA1234567890abcdefghijklmnopqrstuv",
+        "t=ghp_" + "a" * 40: "ghp_" + "a" * 40,
+        "s=xoxb-1234567890-abcdefghij": "xoxb-1234567890-abcdefghij",
+        "Authorization: Basic dXNlcjpwYXNzd29yZA==": "dXNlcjpwYXNzd29yZA==",
+        "postgres://user:secretpw@db.host:5432/x": "secretpw",
+        "proxy user:secretpw@host:3128": "secretpw",
+    }
+    for text, secret in cases.items():
+        out = redactor.redact(text)
+        assert secret not in out, f"no se redactó {secret!r} en {text!r} -> {out!r}"
+        assert SECRET_PLACEHOLDER in out, f"falta el placeholder en {text!r} -> {out!r}"
+
+
+def test_redactor_leaves_embedded_mailto_and_schemes_intact() -> None:
+    """Regresión: la exención de esquemas miraba `group(0)`, que incluye el
+    delimitador inicial obligatorio, así que solo funcionaba en la posición 0 y
+    todo `mailto:` incrustado en un valor JSON perdía su parte local."""
+    redactor = SecretRedactor.from_env({})
+    for text in (
+        '{"contact": "mailto:soporte@example.com", "ok": 1}',
+        "Contact: mailto:user@example.com",
+        "ver sip:a@b.com",
+        "tel:+15551234@x",
+        "xmpp:a@b.com",
+        "urn:a@b.com",
+        "news:a@b.com",
+        "ldap:a@b.com",
+        "callto:a@b.com",
+    ):
+        assert redactor.redact(text) == text, text
+    # Una credencial real SÍ se redacta, esquema exento o no.
+    assert SECRET_PLACEHOLDER in redactor.redact("proxy user:secretpw@host:3128")
+
+
+def test_stream_redactor_holds_back_every_pattern_redact_covers() -> None:
+    """Invariante: `redact()` y el stream no pueden divergir.
+
+    Regresión: los 7 patrones añadidos para paridad con el redactor de Rust no
+    tenían contrapartida en `_INFLIGHT_STREAM_REGEXES`, así que un credencial
+    partida entre dos chunks de un stream SSE se emitía en claro.
+    """
+    redactor = SecretRedactor.from_env({})
+    # (chunks, fragmento que NUNCA debe salir emitido)
+    cases = [
+        (["xoxb-1234", "567890-abcdefghij"], "567890-abcdefghij"),
+        (["AKIAIOS", "FODNN7EXAMPLE"], "FODNN7EXAMPLE"),
+        (["AIzaSyA1234567890abc", "defghijklmnopqrstuv"], "defghijklmnopqrstuv"),
+        (["ghp_" + "a" * 20, "b" * 20], "b" * 20),
+        (["postgres://u:sec", "retpw@db:5432/x"], "retpw"),
+        (["Authorization: Basic dXNlcjpwYXNz", "d29yZA=="], "d29yZA=="),
+        (["STUDIO_HEAVY_VIDEO_KEY=abc", "def123456"], "def123456"),
+    ]
+    for chunks, secret in cases:
+        stream = SecretStreamRedactor(redactor)
+        emitted = "".join(stream.push(c) for c in chunks) + stream.flush()
+        assert secret not in emitted, f"fuga en stream: {chunks!r} -> {emitted!r}"
+        assert SECRET_PLACEHOLDER in emitted, f"sin redactar: {chunks!r} -> {emitted!r}"
+
+
+def test_redactor_leaves_benign_colons_and_mailto_intact() -> None:
+    """Los falsos positivos destruyen el contenido: un puerto y un `mailto:`
+    no son credenciales y deben sobrevivir."""
+    redactor = SecretRedactor.from_env({})
+    for benign in ("connect host:8443/path ok", "mailto:user@example.com", "ratio 16:9"):
+        assert redactor.redact(benign) == benign, benign
+
+
+def test_redaction_filter_covers_propagated_records_from_the_root_logger() -> None:
+    """`Logger.callHandlers` ignora los filtros de un logger ancestro para los
+    registros propagados: sin el filtro en el root, un
+    `getLogger("comfy_studio.x").warning(...)` llegaba sin redactar."""
+    import io
+
+    secret = "SUPERSECRETPASS-1234"
+    redactor = SecretRedactor.from_env({"COMFY_PASS": secret})
+    stream = io.StringIO()
+    root = logging.getLogger()
+    handler = logging.StreamHandler(stream)
+    root.addHandler(handler)
+    try:
+        # Cableado real de create_app: root + comfy_studio.
+        install_log_redaction(redactor, logger=logging.getLogger())
+        install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
+        logging.getLogger("comfy_studio.comfyui_client").warning(f"pass={secret}")
+    finally:
+        root.removeHandler(handler)
+    assert secret not in stream.getvalue(), stream.getvalue()
+    assert SECRET_PLACEHOLDER in stream.getvalue()
+
+
+def test_log_redaction_covers_lastresort_with_the_real_uvicorn_boot_order() -> None:
+    """Regresión: el filtro en el logger raíz NO bastaba.
+
+    uvicorn no configura handlers en el logger raíz, así que
+    `Logger.callHandlers` no encuentra ninguno al subir por la jerarquía y el
+    registro de `comfy_studio.*` cae en `logging.lastResort`. Los filtros de un
+    logger *ancestro* nunca se consultan para un registro originado en un hijo,
+    así que el secreto salía en claro a /var/log/studio-server.log.
+    """
+    import io
+    from logging.config import dictConfig
+
+    import uvicorn
+
+    secret = "SUPERSECRETPASS-1234"
+    redactor = SecretRedactor.from_env({"COMFY_PASS": secret})
+    # Orden real de server.py: create_app (instala el filtro) y luego
+    # uvicorn.run (aplica su LOGGING_CONFIG).
+    install_log_redaction(redactor, logger=logging.getLogger("comfy_studio"))
+    install_log_redaction(redactor, logger=logging.getLogger())
+    dictConfig(uvicorn.config.LOGGING_CONFIG)
+
+    # Dejar la raíz SIN handlers es exactamente la situación de producción
+    # (uvicorn no configura ninguno): así `callHandlers` no encuentra nada y el
+    # registro cae en `lastResort`. Sin vaciarlos, el plugin de logging de pytest
+    # añadiría el suyo y el camino real no se ejercitaría.
+    saved_root_handlers = logging.getLogger().handlers[:]
+    for handler in saved_root_handlers:
+        logging.getLogger().removeHandler(handler)
+    captured = io.StringIO()
+    original_emit = logging.lastResort.emit
+    logging.lastResort.emit = lambda rec: captured.write(
+        logging.lastResort.format(rec) + "\n"
+    )
+    try:
+        logging.getLogger("comfy_studio.comfyui_client").warning(f"boot con pass={secret}")
+    finally:
+        logging.lastResort.emit = original_emit
+        for handler in saved_root_handlers:
+            logging.getLogger().addHandler(handler)
+
+    emitted = captured.getvalue()
+    assert emitted, "el registro no pasó por lastResort; el test no ejercita el camino real"
+    assert secret not in emitted, emitted
+    assert SECRET_PLACEHOLDER in emitted, emitted

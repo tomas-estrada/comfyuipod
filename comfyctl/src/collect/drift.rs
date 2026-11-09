@@ -90,11 +90,9 @@ pub fn collect_drift(
             }
         }
     }
-    let nodes_lock_count = if nodes_lock.is_empty() {
-        10
-    } else {
-        nodes_lock.len()
-    };
+    // 0 significa "nodes.lock no disponible": el informe lo dice explícitamente en
+    // vez de inventar un recuento de 10 nodos.
+    let nodes_lock_count = nodes_lock.len();
 
     let mut node_drift = Vec::new();
     let custom_nodes_dir = comfy_app_dir.join("custom_nodes");

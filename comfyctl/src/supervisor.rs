@@ -133,7 +133,9 @@ pub(crate) fn log_sup(msg: &str) {
 /// conservando los últimos 20 MiB de cada uno.
 pub fn truncate_logs_if_needed(log_max_mb: u64) {
     let max_bytes = log_max_mb.saturating_mul(1_048_576);
-    let keep_bytes: u64 = 20 * 1_048_576;
+    // Con LOG_MAX_MB < 20 un `keep_bytes` fijo en 20 MiB haría que cada pasada
+    // reescribiera el fichero completo sin truncar nada: nunca se cumple el techo.
+    let keep_bytes: u64 = (20 * 1_048_576).min(max_bytes);
     let log_paths = [
         "/var/log/comfyui.log",
         "/var/log/nginx/access.log",
@@ -509,6 +511,15 @@ pub fn spawn_studio_server_if_enabled(cfg: &RuntimeConfig) -> Option<Child> {
                     return None;
                 }
                 if crate::collect::procfs::check_tcp_port(cfg.studio_server_port, 100) {
+                    // El puerto responde, pero si el hijo ya murió quien escucha
+                    // es otro proceso (puerto squatting): no es "studio-server listo".
+                    if let Ok(Some(status)) = child.try_wait() {
+                        let rc = extract_exit_code(status);
+                        log_sup(&format!(
+                            "WARN: studio-server salió tras abrir el puerto (rc={rc}); el listener no es suyo."
+                        ));
+                        return None;
+                    }
                     break;
                 }
                 thread::sleep(Duration::from_millis(100));

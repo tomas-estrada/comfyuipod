@@ -177,6 +177,15 @@ def register_routes(app: FastAPI) -> None:
                         )
 
         if filename:
+            # Studio no puede confiar en que ComfyUI valide `/view`: se rechaza
+            # aquí cualquier separador o `..` antes de proxyar, para que un
+            # `?filename=../../../../etc/passwd` no llegue a una lectura de disco.
+            for label, value in (("filename", filename), ("subfolder", subfolder or "")):
+                if "/" in value or "\\" in value or ".." in value.split("/"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{label} contiene componentes de ruta no permitidos",
+                    )
             try:
                 raw_bytes = await active_comfyui.view_output(
                     filename,

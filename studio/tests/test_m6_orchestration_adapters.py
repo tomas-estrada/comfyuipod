@@ -13,6 +13,7 @@ igual que los stubs reales harían sin backend. El grafo sigue siendo síncrono.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from comfy_studio.engines import EngineResult, EngineRunSpec
@@ -29,6 +30,7 @@ from comfy_studio.orchestration import (
     build_server_collaborators,
     plan_production,
 )
+from comfy_studio.orchestration.adapters import _confine_one
 from comfy_studio.orchestration.gpu_lease import AdmissionBudget, GpuLease
 from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
 
@@ -443,3 +445,200 @@ def test_server_collaborators_run_full_graph_to_done(tmp_path, monkeypatch):
         assert s.last_score is not None
         assert s.last_score.get("vbench", 0.0) >= 0.5
         assert s.last_score.get("semantic", 0.0) >= 0.6
+
+
+class _CapturingEngine:
+    """Motor falso que devuelve el job que recibió, para inspeccionar rutas."""
+
+    def __init__(self, name: str = "capture") -> None:
+        self.name = name
+        self.seen: dict | None = None
+
+    def run(self, spec: EngineRunSpec) -> EngineResult:
+        self.seen = dict(spec.job)
+        return EngineResult(ok=True, engine=self.name, verb="run", payload={})
+
+
+def test_engine_runner_confines_layer_paths_to_the_data_root(tmp_path):
+    """El planner (LLM) puede emitir params arbitrarios: ninguna ruta de capa
+    debe escapar del volumen, ni por ruta absoluta ni por `..`."""
+    root = tmp_path / "studio"
+    root.mkdir()
+    eng = _CapturingEngine("upscaler")
+    runner = EngineRunnerAdapter({"upscaler": eng}, data_root=root)
+    res = runner.run_layer(
+        "upscaler",
+        {
+            "kind": "upscale",
+            "input_path": "/etc/shadow",
+            "output_path": "../../../../root/.ssh/authorized_keys",
+            "clips": [{"path": "../../etc/passwd", "duration_s": 1.0}, "not-a-dict"],
+            "prompt": "hi",
+            "scale": 4,
+        },
+    )
+    assert res["ok"] is True
+    job = eng.seen
+    assert job is not None
+    for key in ("input_path", "output_path"):
+        assert Path(job[key]).is_relative_to(root), f"{key} escapó del volumen: {job[key]}"
+    for clip in job["clips"]:
+        if isinstance(clip, dict):
+            assert Path(clip["path"]).is_relative_to(root)
+    # Las claves que no son rutas no se tocan.
+    assert job["prompt"] == "hi"
+    assert job["scale"] == 4
+
+
+def test_engine_runner_keeps_benign_relative_paths_inside_the_root(tmp_path):
+    root = tmp_path / "studio"
+    root.mkdir()
+    eng = _CapturingEngine("upscaler")
+    runner = EngineRunnerAdapter({"upscaler": eng}, data_root=root)
+    runner.run_layer(
+        "upscaler",
+        {"kind": "upscale", "input_path": "projects/p/in.png", "output_path": "out.mp4"},
+    )
+    assert eng.seen is not None
+    assert eng.seen["input_path"] == str(root / "projects" / "p" / "in.png")
+    assert eng.seen["output_path"] == str(root / "out.mp4")
+
+
+def test_confinement_preserves_legitimate_sibling_paths_on_the_volume(tmp_path, monkeypatch):
+    """Regresión: confinar SOLO al dir de Studio rompía las referencias válidas.
+
+    En el pod `comfyui_input_dir` = COMFY_DATA_DIR/input y ComfyUI escribe en
+    COMFY_DATA_DIR/output: son **hermanos** de COMFY_DATA_DIR/studio, no hijos.
+    El contrato real es «todo bajo el volumen», así que esas rutas deben
+    conservarse tal cual en vez de colapsar al basename.
+    """
+    volume = tmp_path / "comfyui-data"
+    studio = volume / "studio"
+    comfyui_input = volume / "input"
+    for d in (studio, comfyui_input, volume / "output"):
+        d.mkdir(parents=True)
+    # start.sh exporta siempre COMFY_DATA_DIR; el test lo refleja.
+    monkeypatch.setenv("COMFY_DATA_DIR", str(volume))
+    eng = _CapturingEngine("upscaler")
+    runner = EngineRunnerAdapter(
+        {"upscaler": eng}, data_root=studio, comfyui_input_dir=str(comfyui_input)
+    )
+    runner.run_layer(
+        "upscaler",
+        {
+            "kind": "upscale",
+            "input_path": str(comfyui_input / "x.png"),
+            "output_path": str(volume / "output" / "y.mp4"),
+        },
+    )
+    assert eng.seen is not None
+    assert eng.seen["input_path"] == str(comfyui_input / "x.png")
+    assert eng.seen["output_path"] == str(volume / "output" / "y.mp4")
+
+
+def test_qa_evaluator_confines_the_checkpoint_restored_video_path(tmp_path):
+    """`shot.output_path` se restaura tal cual del checkpoint de SQLite, así que
+    no está garantizado que venga de un `run_layer` confinado."""
+    root = tmp_path / "studio"
+    root.mkdir()
+
+    class _Qa:
+        name = "qa"
+
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            return EngineResult(ok=True, engine="qa", verb="run", payload={"passed": True})
+
+    seen: dict = {}
+
+    class _QaCapture(_Qa):
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            seen.update(spec.job)
+            return EngineResult(ok=True, engine="qa", verb="run", payload={"passed": True})
+
+    evaluator = QaShotEvaluator(_QaCapture(), data_root=root)
+    shot = Shot(id="s1", description="d", duration_s=1.0, output_path="/etc/shadow")
+    evaluator.evaluate(shot)
+    assert seen["video_path"] == str(root / "shadow")
+
+
+def test_engine_assembler_output_path_is_anchored_under_the_volume(tmp_path):
+    """El reel final NO puede caer relativo al CWD del proceso studio-server."""
+    root = tmp_path / "studio"
+    root.mkdir()
+
+    class _Editor:
+        name = "editor"
+
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            return EngineResult(
+                ok=True,
+                engine="editor",
+                verb="run",
+                payload={"output_path": spec.job["output_path"]},
+            )
+
+    assembler = EngineAssembler(_Editor(), data_root=root)
+    res = assembler.assemble("prod-1", [{"path": "a.mp4", "duration_s": 2.0}])
+    assert res["ok"] is True
+    out = Path(str(res["output_path"]))
+    assert out.is_relative_to(root), f"output_path fuera del volumen: {out}"
+    assert out.name == "prod-1_reel.mp4"
+
+
+def test_engine_assembler_confines_clip_paths(tmp_path):
+    """Las rutas de `clips` llegan de `shot.output_path` (checkpoint): se
+    confinan igual que en `run_layer`."""
+    root = tmp_path / "studio"
+    root.mkdir()
+    seen: dict = {}
+
+    class _Editor:
+        name = "editor"
+
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            seen.update(spec.job)
+            return EngineResult(ok=True, engine="editor", verb="run", payload={})
+
+    assembler = EngineAssembler(_Editor(), data_root=root)
+    assembler.assemble("prod-2", [{"path": "/etc/passwd", "duration_s": 2.0}])
+    for clip in seen["clips"]:
+        assert Path(clip["path"]).is_relative_to(root), clip
+    assert Path(seen["output_path"]).is_relative_to(root)
+
+
+def test_confinement_preserves_volume_paths_and_blocks_app_and_system_dirs(tmp_path, monkeypatch):
+    """El contrato real es «todo bajo el volumen»: los modelos, inputs, outputs y
+    assets del estudio deben conservarse tal cual, mientras que `/opt/ComfyUI`
+    (código inmutable) y las rutas de sistema deben quedar bloqueadas."""
+    volume = tmp_path / "comfyui-data"
+    studio = volume / "studio"
+    studio.mkdir(parents=True)
+    monkeypatch.setenv("COMFY_DATA_DIR", str(volume))
+    monkeypatch.setenv("STUDIO_COMFYUI_INPUT_DIR", str(volume / "input"))
+
+    eng = _CapturingEngine("upscaler")
+    runner = EngineRunnerAdapter({"upscaler": eng}, data_root=studio)
+    preserved = [
+        str(volume / "models" / "checkpoints" / "flux1-dev-fp8.safetensors"),
+        str(volume / "models" / "loras" / "x.safetensors"),
+        str(volume / "input" / "x.png"),
+        str(volume / "output" / "y.mp4"),
+        str(studio / "projects" / "p" / "assets" / "a.png"),
+    ]
+    blocked = ["/opt/ComfyUI/custom_nodes/Foo/x.py", "/etc/nginx/.htpasswd", "/etc/shadow"]
+
+    for raw in preserved + blocked:
+        runner.run_layer("upscaler", {"kind": "upscale", "input_path": raw})
+
+    assert eng.seen is not None
+    # La última pasada usó una ruta bloqueada.
+    assert Path(eng.seen["input_path"]).is_relative_to(studio)
+    for raw in blocked:
+        out = _confine_one(
+            raw, runner._allowed_roots, runner._data_root
+        )
+        assert not out.is_relative_to(Path("/opt")), raw
+        assert Path(out).is_relative_to(studio), raw
+    for raw in preserved:
+        out = _confine_one(raw, runner._allowed_roots, runner._data_root)
+        assert str(out) == raw, f"ruta legítima alterada: {raw} -> {out}"

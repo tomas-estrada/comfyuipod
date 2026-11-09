@@ -30,11 +30,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from threading import Event
 from typing import Any
 
+from comfy_studio.config import _default_studio_data_dir
 from comfy_studio.engines import EngineRunSpec
 from comfy_studio.engines.process import ProcessCancelled, run_cancellable
 from comfy_studio.orchestration.conductor import Collaborators
@@ -52,6 +54,29 @@ logger = logging.getLogger("comfy_studio.orchestration.adapters")
 # ---------------------------------------------------------------------------
 
 
+def _run_coro_sync(coro: Any) -> Any:
+    """Ejecuta una corrutina desde código síncrono, verificando el contexto.
+
+    Invariante: el grafo de producción se invoca siempre vía
+    `run_in_threadpool` (`routers/productions.py`, `mcp_server.py`), es decir en
+    un hilo de anyio **sin** bucle de eventos vivo, donde `asyncio.run` es la
+    forma correcta. Si algún día se llama desde una ruta `async` con el bucle
+    activo, `asyncio.run` lanzaría
+    `RuntimeError: asyncio.run() cannot be called from a running event loop`;
+    este helper lo detecta y falla con un mensaje accionable en vez de un error
+    críptico (o, peor, de quedar tragado por un `except Exception`).
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    raise RuntimeError(
+        "corrutina lanzada desde un bucle de eventos vivo: el grafo de "
+        "producción debe invocarse con run_in_threadpool, nunca con await "
+        "directo desde una ruta async"
+    )
+
+
 def _run_engine_sync(engine: Any, spec: EngineRunSpec) -> Any:
     """Llama `engine.run(spec)` tolerando que sea síncrono o async.
 
@@ -62,7 +87,7 @@ def _run_engine_sync(engine: Any, spec: EngineRunSpec) -> Any:
     """
     result = engine.run(spec)
     if asyncio.iscoroutine(result):
-        return asyncio.run(result)
+        return _run_coro_sync(result)
     return result
 
 
@@ -113,7 +138,12 @@ class LLMPlannerAdapter:
             {"role": "user", "content": user},
         ]
         try:
-            response = asyncio.run(self._llm.complete(messages, temperature=0.3))
+            response = _run_coro_sync(self._llm.complete(messages, temperature=0.3))
+        except RuntimeError:
+            # Un RuntimeError aquí es un error de cableado (p. ej. llamar al
+            # planner desde una ruta async), no un fallo del LLM: no debe
+            # enmascararse como "plan mínimo".
+            raise
         except Exception as exc:
             logger.warning("LLMPlannerAdapter: el cliente LLM falló (%s); plan mínimo.", exc)
             return self._fallback_plan(idea)
@@ -186,6 +216,91 @@ _GRAPH_ENGINES: frozenset[str] = frozenset({"comfyui"})
 _DEFAULT_COMFY_TEMPLATE = "wan_t2v"
 
 
+# ---------------------------------------------------------------------------
+# Confinamiento de rutas de los motores
+# ---------------------------------------------------------------------------
+
+#: Claves del job que los motores interpretan como rutas de filesystem. El planner
+#: (un LLM) puede emitir `params` arbitrarios, así que sin confinar, una capa podría
+#: leer o escribir fuera del volumen — incluido el `/opt/ComfyUI` inmutable.
+_JOB_PATH_KEYS = ("input_path", "output_path", "audio_path", "video_path", "path")
+
+
+def _resolve_data_root(data_root: Path | None) -> Path:
+    """Ancla para rutas relativas de motor: el dir de datos de Studio."""
+    if data_root is not None:
+        return Path(data_root).resolve()
+    return _default_studio_data_dir(os.environ).resolve()
+
+
+def _allowed_roots(data_root: Path, comfyui_input_dir: str | None = None) -> tuple[Path, ...]:
+    """Raíces bajo las que una ruta absoluta de motor es legítima.
+
+    No vale solo el dir de Studio: ComfyUI lee de `comfyui_input_dir` y escribe en
+    `COMFY_DATA_DIR/output`, que en el pod son **hermanos** de
+    `COMFY_DATA_DIR/studio`, no hijos. Confinar únicamente al dir de Studio
+    convertiría una referencia correcta en `<studio>/<basename>`, que no existe.
+    El contrato real es «todo bajo el volumen», así que el volumen entra entero.
+    """
+    roots = [data_root]
+    for extra in (
+        (comfyui_input_dir or "").strip(),
+        (os.environ.get("COMFY_DATA_DIR") or "").strip(),
+    ):
+        if not extra:
+            continue
+        candidate = Path(extra).resolve()
+        if candidate not in roots:
+            roots.append(candidate)
+    return tuple(roots)
+
+
+def _confine_one(raw: str, roots: tuple[Path, ...], primary: Path) -> Path:
+    """Normaliza `raw` para que caiga bajo alguna de `roots`.
+
+    Una ruta relativa se ancla a `primary`. Si una absoluta (o una con `..`) no
+    cae bajo ninguna raíz permitida, se conserva **solo el nombre final** bajo
+    `primary`: el motor nunca escribe fuera del volumen, y el fallo es visible en
+    vez de silencioso.
+    """
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = primary / candidate
+    # `realpath` (no `normpath`): las raíces permitidas se resuelven con
+    # `.resolve()`, así que el candidato debe resolverse igual para que la
+    # comparación sea coherente. Sin esto, en macOS `/tmp` → `/private/tmp`
+    # hacía que una ruta legítima bajo `COMFY_DATA_DIR/input` no casara con la
+    # raíz permitida y colapsara al basename.
+    resolved = Path(os.path.realpath(candidate))
+    for root in roots:
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return resolved
+    return primary / Path(raw).name
+
+
+def _confine_job_paths(
+    job: dict[str, Any], roots: tuple[Path, ...], primary: Path
+) -> dict[str, Any]:
+    """Aplica `_confine_one` a todas las rutas del job (incl. `clips[]`)."""
+    confined = dict(job)
+    for key in list(confined):
+        value = confined[key]
+        if key in _JOB_PATH_KEYS and isinstance(value, str) and value:
+            confined[key] = str(_confine_one(value, roots, primary))
+        elif key == "clips" and isinstance(value, list):
+            new_clips = []
+            for clip in value:
+                if isinstance(clip, dict) and isinstance(clip.get("path"), str) and clip["path"]:
+                    clip = dict(clip)
+                    clip["path"] = str(_confine_one(clip["path"], roots, primary))
+                new_clips.append(clip)
+            confined["clips"] = new_clips
+    return confined
+
+
 class EngineRunnerAdapter:
     """`EngineRunner` que despacha cada capa al motor real correspondiente.
 
@@ -212,12 +327,20 @@ class EngineRunnerAdapter:
         default_comfy_template: str = _DEFAULT_COMFY_TEMPLATE,
         atlas_service: Any | None = None,
         comfyui_input_dir: str | None = None,
+        data_root: Path | None = None,
     ) -> None:
         self._engines = dict(engines)
         self._registry = template_registry
         self._default_template = default_comfy_template
         self._atlas = atlas_service
         self._comfyui_input_dir = comfyui_input_dir
+        # Raíz de anclaje para rutas relativas y conjunto de raíces permitidas
+        # para las absolutas. Por defecto el directorio de datos de Studio
+        # (COMFY_DATA_DIR/studio), el mismo donde viven los proyectos, para que
+        # el contrato "todo bajo el volumen" se cumpla también en las capas de
+        # motor.
+        self._data_root = _resolve_data_root(data_root)
+        self._allowed_roots = _allowed_roots(self._data_root, comfyui_input_dir)
 
     def _resolve_atlas_background(self, job: dict[str, Any]) -> dict[str, Any]:
         """Resuelve el fondo del atlas referenced en `job['atlas']` a un archivo local real.
@@ -362,6 +485,9 @@ class EngineRunnerAdapter:
                 "error": f"motor no disponible en el servidor: {engine!r}",
             }
         job = dict(job)
+        # Confinar las rutas ANTES de toar ningún motor: el planner puede emitir
+        # params arbitrarios y los motores hacen `Path(job[...])` sin comprobar.
+        job = _confine_job_paths(job, self._allowed_roots, self._data_root)
         resolved_atlas = self._resolve_atlas_background(job)
         if isinstance(resolved_atlas, dict) and "_atlas_error" in resolved_atlas:
             return {
@@ -418,15 +544,32 @@ class QaShotEvaluator:
     veredicto FFmpeg nivel 1 (pass→alto, fallo→bajo). Nunca lanza.
     """
 
-    def __init__(self, qa_engine: Any, *, pass_score: float = 0.8, fail_score: float = 0.2) -> None:
+    def __init__(
+        self,
+        qa_engine: Any,
+        *,
+        pass_score: float = 0.8,
+        fail_score: float = 0.2,
+        data_root: Path | None = None,
+        comfyui_input_dir: str | None = None,
+    ) -> None:
         self._qa = qa_engine
         self._pass_score = pass_score
         self._fail_score = fail_score
+        # `shot.output_path` se restaura tal cual del checkpoint de SQLite, así
+        # que no está garantizado que venga de un `run_layer` confinado: se
+        # confina aquí también antes de tocar el motor qa.
+        self._data_root = _resolve_data_root(data_root)
+        self._allowed_roots = _allowed_roots(self._data_root, comfyui_input_dir)
 
     def evaluate(self, shot: Shot, *, cancel_event: Event | None = None) -> dict[str, float]:
         if not shot.output_path:
             return {"vbench": 0.0}
-        job = {"video_path": shot.output_path, "acceptance": dict(shot.acceptance)}
+        job = _confine_job_paths(
+            {"video_path": shot.output_path, "acceptance": dict(shot.acceptance)},
+            self._allowed_roots,
+            self._data_root,
+        )
         spec = EngineRunSpec(
             job=job, cost_cap=shot.cost_cap_usd or None, cancel_event=cancel_event
         )
@@ -462,9 +605,21 @@ class EngineAssembler:
     directamente los `output_path` de cada shot). Nunca lanza hacia el grafo.
     """
 
-    def __init__(self, editor_engine: Any, *, compositor_engine: Any | None = None) -> None:
+    def __init__(
+        self,
+        editor_engine: Any,
+        *,
+        compositor_engine: Any | None = None,
+        data_root: Path | None = None,
+        comfyui_input_dir: str | None = None,
+    ) -> None:
         self._editor = editor_engine
         self._compositor = compositor_engine
+        # Ancla explícita bajo el volumen: sin ella el `output_path` del reel era
+        # relativo al CWD del proceso studio-server, que en el pod NO es el
+        # volumen, así que el editor hacía `mkdir -p` fuera de COMFY_DATA_DIR.
+        self._data_root = _resolve_data_root(data_root)
+        self._allowed_roots = _allowed_roots(self._data_root, comfyui_input_dir)
 
     def assemble(
         self,
@@ -486,9 +641,13 @@ class EngineAssembler:
                 }
                 for c in clips
             ],
-            "output_path": f"projects/default/outputs/{production_id}_reel.mp4",
+            "output_path": str(
+                self._data_root / "projects" / "default" / "outputs"
+                / f"{production_id}_reel.mp4"
+            ),
             "mode": "assemble",
         }
+        job = _confine_job_paths(job, self._allowed_roots, self._data_root)
         spec = EngineRunSpec(job=job, cancel_event=cancel_event)
         try:
             raw = _run_engine_sync(self._editor, spec)
@@ -573,6 +732,7 @@ def build_server_collaborators(
     comfyui_input_dir: str | None = None,
     gpu_lease: GpuLease | None = None,
     unload_gpu: Any | None = None,
+    data_root: Path | None = None,
 ) -> Collaborators:
     """Arma el `Collaborators` real del servidor desde las piezas disponibles.
 
@@ -587,6 +747,7 @@ def build_server_collaborators(
             template_registry=template_registry,
             atlas_service=atlas_service,
             comfyui_input_dir=comfyui_input_dir,
+            data_root=data_root,
         )
         if engines
         else None
@@ -598,9 +759,23 @@ def build_server_collaborators(
     # semantic_min); sin llm_client queda la QA técnica sola.
     if qa_engine is not None and gpu_lease is not None:
         qa_engine = _LeasedQaEngine(qa_engine, gpu_lease, unload_gpu)
-    evaluator = SemanticQaEvaluator(qa_engine, llm_client) if qa_engine is not None else None
+    evaluator = (
+        SemanticQaEvaluator(
+            qa_engine,
+            llm_client,
+            data_root=data_root,
+            comfyui_input_dir=comfyui_input_dir,
+        )
+        if qa_engine is not None
+        else None
+    )
     assembler = (
-        EngineAssembler(editor_engine, compositor_engine=compositor_engine)
+        EngineAssembler(
+            editor_engine,
+            compositor_engine=compositor_engine,
+            data_root=data_root,
+            comfyui_input_dir=comfyui_input_dir,
+        )
         if editor_engine is not None
         else None
     )
@@ -753,7 +928,7 @@ class VisionShotEvaluator:
                     await asyncio.sleep(0.05)
                 return task.result()
 
-            response = asyncio.run(_complete_or_cancel())
+            response = _run_coro_sync(_complete_or_cancel())
         except ProcessCancelled:
             return {"semantic": 0.0}
         except Exception as exc:  # noqa: BLE001
@@ -789,8 +964,19 @@ class SemanticQaEvaluator:
     falla, nunca se acepta a ciegas.
     """
 
-    def __init__(self, qa_engine: Any, llm_client: Any | None = None) -> None:
-        self._tech = QaShotEvaluator(qa_engine)
+    def __init__(
+        self,
+        qa_engine: Any,
+        llm_client: Any | None = None,
+        *,
+        data_root: Path | None = None,
+        comfyui_input_dir: str | None = None,
+    ) -> None:
+        self._tech = QaShotEvaluator(
+            qa_engine,
+            data_root=data_root,
+            comfyui_input_dir=comfyui_input_dir,
+        )
         self._vision = VisionShotEvaluator(llm_client) if llm_client is not None else None
 
     def evaluate(self, shot: Shot, *, cancel_event: Event | None = None) -> dict[str, float]:

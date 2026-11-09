@@ -163,7 +163,10 @@ class UpscalerEngine:
         )
 
     def _run_model(self, u: UpscaleSpec, start: float, *, cancel_event=None) -> EngineResult:
-        redactor = SecretRedactor()
+        # `from_env()` y no un `SecretRedactor()` pelado: el pelado no tiene
+        # ningún secreto literal, así que COMFY_PASS/HF_TOKEN/etc. presentes en
+        # un stderr o en un mensaje de error del binario saldrían sin máscara.
+        redactor = SecretRedactor.from_env()
         bin_path = (
             os.environ.get(_BIN_ENV) or shutil.which("realesrgan-ncnn-vulkan") or ""
         ).strip()

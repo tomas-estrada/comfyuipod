@@ -385,15 +385,20 @@ pub fn build_report_markdown(
         "### Estado de `custom_nodes/` vs `/etc/comfyui/nodes.lock`"
     );
     if heavy.drift.node_drift.is_empty() {
-        let lock_count = if heavy.drift.nodes_lock_count > 0 {
-            heavy.drift.nodes_lock_count
+        if heavy.drift.nodes_lock_count > 0 {
+            let lock_count = heavy.drift.nodes_lock_count;
+            let _ = writeln!(
+                out,
+                "- Los {lock_count} custom nodes coinciden exactamente con los SHAs de `/etc/comfyui/nodes.lock`."
+            );
         } else {
-            10
-        };
-        let _ = writeln!(
-            out,
-            "- Los {lock_count} custom nodes coinciden exactamente con los SHAs de `/etc/comfyui/nodes.lock`."
-        );
+            // Sin nodes.lock no hay nada que comparar: inventar un número daba
+            // una falsa sensación de verificación en /report.md.
+            let _ = writeln!(
+                out,
+                "- `/etc/comfyui/nodes.lock` no disponible: no se pudo verificar la deriva de custom nodes."
+            );
+        }
     } else {
         for nd in &heavy.drift.node_drift {
             let _ = writeln!(out, "{nd}");
@@ -434,7 +439,12 @@ pub fn build_report_markdown(
         let _ = writeln!(out, "- Sin datos de carpetas de modelos.");
     }
 
-    let active_prof = env_m.get("MODEL_PROFILE").map_or("all", String::as_str);
+    // La etiqueta debe usar el MISMO nombre normalizado que usó el inventario
+    // (`models.rs`): un perfil desconocido se calcula como `all`, así que
+    // imprimir el valor crudo mentiría sobre la lista de abajo.
+    let active_prof = crate::collect::models::valid_profile_name(
+        env_m.get("MODEL_PROFILE").map_or("all", String::as_str),
+    );
     let _ = writeln!(
         out,
         "### Modelos esperados para el perfil `{active_prof}` aún ausentes"
@@ -549,7 +559,7 @@ mod tests {
                 ubuntu: "24.04".to_string(),
             },
             instance: InstanceInfo {
-                hostname: "vast-5090-node".to_string(),
+                hostname: "vast-pro6000-node".to_string(),
                 uptime_s: 120,
                 vast_instance_id: "C.998877".to_string(),
                 external_port_8188: "41888".to_string(),

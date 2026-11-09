@@ -15,7 +15,7 @@
 #              STUDIO_INCLUDE_3D=1 — Hunyuan3D 2.1, M3-D). Perfiles 'studio'/'unreal'.
 #
 # Desglose de Fase 3 por categoría (config/models-studio.json, x-linked-size):
-#   - wan_core          : 14 archivos |  83,184,917,475 B ( 83.18 GB /  77.47 GiB) | Apache-2.0
+#   - wan_core          : 16 archivos | 100,841,841,876 B (100.84 GB /  93.92 GiB) | Apache-2.0
 #   - vace_fp8          :  2 archivos |  34,692,112,208 B ( 34.69 GB /  32.31 GiB) | Apache-2.0
 #   - lora_turbo_5b     :  1 archivo  |     332,348,584 B (  0.33 GB /   0.31 GiB) | Apache-2.0
 #   - latentsync        : 12 archivos |   9,970,426,719 B (  9.97 GB /   9.29 GiB) | openrail++ / MIT
@@ -26,9 +26,9 @@
 #   - clip_vit_l14      :  7 archivos |   1,712,163,490 B (  1.71 GB /   1.59 GiB) | MIT (caveats card)
 #   - ipadapter_sdxl    :  3 archivos |   4,388,305,741 B (  4.39 GB /   4.09 GiB) | Apache-2.0
 #   - campplus          :  3 archivos |      28,037,453 B (  0.03 GB /   0.03 GiB) | Apache-2.0
-#   - TOTAL FASE 3 BASE : 77 archivos | 146,049,867,640 B (146.05 GB / 136.02 GiB)
+#   - TOTAL FASE 3 BASE : 79 archivos | 163,706,792,041 B (163.71 GB / 152.46 GiB)
 #   - animate_opt_in    : +1 archivo  | +18,413,068,672 B (+18.41 GB / +17.15 GiB) | Apache-2.0 (STUDIO_INCLUDE_ANIMATE=1)
-#   - minimax_h3_opt_in : +5 archivos | +42,030,035,159 B (+42.03 GB / +39.13 GiB) | minimax-h3-community (STUDIO_INCLUDE_MINIMAX=1)
+#   - minimax_h3_opt_in : +6 archivos | +62,997,682,615 B (+63.00 GB / +58.67 GiB) | minimax-h3-community (STUDIO_INCLUDE_MINIMAX=1)
 #   - three_d_opt_in    : +1 archivo  | +7,365,943,290 B (+7.37 GB / +6.86 GiB) | Tencent Hunyuan Community License (STUDIO_INCLUDE_3D=1 o MODEL_PROFILE=unreal)
 #
 # Perfiles soportados vía variable de entorno MODEL_PROFILE (por defecto 'all'):
@@ -38,9 +38,9 @@
 #   - anime     : Fase 1 (2.79 GiB) + Fase 2 (29.43 GiB) = 32.22 GiB total
 #   - minimal   : Solo Fase 1 (2.79 GiB; omite Fase 2)
 #   - studio    : Fase 1 (2.79 GiB) + Fase 2 SDXL/ControlNet (13.22 GiB) +
-#                 Fase 3 (136.02 GiB / 146.05 GB) ≈ 152.03 GiB (≈163.24 GB en disco)
+#                 Fase 3 (152.46 GiB / 163.71 GB) ≈ 168.47 GiB (≈180.91 GB en disco)
 #   - unreal    : 'studio' + Hunyuan3D 2.1 implícito (+7.37 GB; STUDIO_INCLUDE_3D=0
-#                 renuncia) ≈ 158.89 GiB (≈170.61 GB en disco; alquiler ≥ 210 GB)
+#                 renuncia) ≈ 175.33 GiB (≈188.25 GB en disco; alquiler ≥ 210 GB)
 #
 # Variables de entorno adicionales de control de descarga (§11):
 #   - HF_FETCH_TIMEOUT       : Timeout en segundos por archivo e intento (default: 3600).
@@ -89,6 +89,21 @@ if [ -z "${STUDIO_MANIFEST}" ]; then
         STUDIO_MANIFEST="/etc/comfyui/models-studio.json"
     else
         STUDIO_MANIFEST="config/models-studio.json"
+    fi
+fi
+# Misma cadena de reserva para el manifiesto core. En la imagen el script vive en
+# /usr/local/bin, así que ${SCRIPT_DIR}/../config/models-core.json apunta a
+# /usr/local/config/models-core.json, que no existe: sin este respaldo el
+# asset_acquire_cli solo ve models-studio.json (que no declara ningún asset core)
+# y rechaza las 26 descargas de Fase 1/2 con "asset is not declared at destination".
+STUDIO_CORE_MANIFEST="${STUDIO_CORE_MANIFEST:-}"
+if [ -z "${STUDIO_CORE_MANIFEST}" ]; then
+    if [ -f "${SCRIPT_DIR}/../config/models-core.json" ]; then
+        STUDIO_CORE_MANIFEST="${SCRIPT_DIR}/../config/models-core.json"
+    elif [ -f "/etc/comfyui/models-core.json" ]; then
+        STUDIO_CORE_MANIFEST="/etc/comfyui/models-core.json"
+    else
+        STUDIO_CORE_MANIFEST="config/models-core.json"
     fi
 fi
 # STAGE_DIR en el mismo filesystem que MODELS_DIR para que mv sea rename() atómico
@@ -606,6 +621,7 @@ print(mmx_n)
 print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in; +%.2f GB MiniMax-H3 opt-in" % (base_bytes / 1e9, anim / 1e9, three_d / 1e9, mmx / 1e9))
 ' | tr -d '\r'
     )"
+    local phase3_base phase3_mmx_n phase3_sizes
     phase3_base="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '1p')"
     phase3_mmx_n="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '2p')"
     phase3_sizes="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '3p')"
@@ -860,16 +876,6 @@ mkdir -p "$(dirname "${stage_dir}/${repo_path}")"
 printf 'fake-model-bytes' > "${stage_dir}/${repo_path}"
 FAKE
     chmod +x "${bin}/fake-hf"
-
-    # hf_fetch usa `timeout N <cmd>` (GNU coreutils), que no existe en macOS. El
-    # fake-hf es instantáneo, así que el envoltorio solo descarta los segundos.
-    cat > "${bin}/timeout" <<'SHIM'
-#!/usr/bin/env bash
-set -euo pipefail
-[ "$#" -gt 0 ] && shift
-exec "$@"
-SHIM
-    chmod +x "${bin}/timeout"
 
     bootstrap_log="${tmp}/bootstrap.log"
     if ! COMFY_DATA_DIR="${data}" COMFY_APP_DIR="${app}" STUDIO_CORE_MANIFEST="${manifest}" \

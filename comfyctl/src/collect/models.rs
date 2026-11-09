@@ -238,7 +238,7 @@ fn walk_dir_files(dir: &Path) -> (usize, u64) {
     (count, total_bytes)
 }
 
-fn valid_profile_name(profile: &str) -> &str {
+pub fn valid_profile_name(profile: &str) -> &str {
     match profile {
         "all" | "general" | "realistic" | "anime" | "minimal" | "studio" => profile,
         // M3-D: 'unreal' extiende 'studio' (mismo inventario Fase 1/2 + opt-in 3D)

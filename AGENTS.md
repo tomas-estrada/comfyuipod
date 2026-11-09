@@ -1,6 +1,6 @@
 # ComfyUIPod Agent Conventions
 
-## Project Structure- `comfyctl/` — Rust supervisor, status server, strict checks (S1..S16 + S13b/S13c), triage, redaction
+## Project Structure- `comfyctl/` — Rust supervisor, status server, strict checks (S1..S17 + S13b/S13c), triage, redaction
 - `studio/comfy_studio/` — Python FastAPI service (`comfy_studio`), package layout:
   - `app.py` / `server.py` / `webutil.py` — app assembly, single-worker CLI entry, shared HTTP/upload/auth helpers
   - `routers/` — 14 route modules under `/studio/api/*` (core, projects, assets, jobs, templates, chat, perception, media_ops, brief, ads, review_pins, montage, productions)
@@ -67,6 +67,7 @@ nginx -t -c config/nginx.conf
 
 ## Security Rules
 1. **NEVER print/persist** `COMFY_PASS`, `STUDIO_LLM*KEY`, `STUDIO_API_TOKEN`, `VAST_API_KEY`, `STUDIO_WEBHOOK_SECRET`
+   - **Excepción documentada:** cuando `COMFY_PASS` o `STUDIO_API_TOKEN` se **autogeneran** (el operario no los definió), `scripts/start.sh` los imprime una sola vez en el banner de arranque. Es la única forma de que el operario los lea: los ficheros efímeros `/run/comfyui-pass` y `/run/comfyui-api-token` (0600) los consume `comfyctl supervise` y los borra con `unlink`. El smoke test de CI (paso 15b) exige esa impresión única. Si el operario los define, el banner muestra `[OCULTO]`/`[OCULTA]`.
 2. All services bind exclusively to `127.0.0.1`; only nginx exposes port 8188
 3. All outputs through public endpoints must pass `SecretRedactor` (studio/config.py)
 4. No external CDNs anywhere in the web UI (home, panel, status) — all assets vendored locally
