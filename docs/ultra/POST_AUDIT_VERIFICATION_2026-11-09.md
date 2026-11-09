@@ -17,12 +17,12 @@ Cada hallazgo se reprodujo localmente antes de tocarse.
 | Indicador | Valor |
 |---|---|
 | Subsistemas revisados | 5 (en paralelo) |
-| Bugs de producción encontrados y corregidos | 6 |
+| Bugs de producción encontrados y corregidos | 7 |
 | Tests que fallaban en `origin/main` y ahora pasan | 8 |
 | Falsas garantías de test eliminadas | 2 |
-| Archivos modificados | 26 |
-| Inserciones / eliminaciones | +224 / −86 |
-| Tests al final | **2507 passed, 0 failed** (baseline: 8 failed) |
+| Archivos modificados | 33 |
+| Inserciones / eliminaciones | +293 / −88 |
+| Tests al final | **2510 passed, 0 failed** (baseline: 8 failed) |
 | Ruff / py_compile / `bash -n` | PASS |
 
 **Veredicto: APTO PARA PRODUCCIÓN** una vez que la CI de la PR #255 quede en verde
@@ -155,7 +155,6 @@ explícitamente. Snapshot actualizado.
 ---
 
 ## 5. Endurecimiento adicional
-
 - **`adapters.py`**: las tres llamadas a `asyncio.run()` pasan por un nuevo
   `_run_coro_sync()` que falla con un mensaje accionable si algún día se invoca desde un
   bucle vivo, y `RuntimeError` se **re-lanza** en vez de enmascararse como "el LLM falló".
@@ -188,6 +187,51 @@ explícitamente. Snapshot actualizado.
   (y `unreal` a `studio`). Un perfil desconocido imprimía su propio nombre sobre una lista
   calculada para `all`. Ahora reutiliza el mismo `valid_profile_name()` que el inventario,
   de modo que no pueden divergir.
+
+### 5.2 Confinamiento de rutas de motor y brechas de redacción (commit `9f4579a`)
+
+Segunda pasada adversaria centrada en las dos áreas que el objetivo nombra explícitamente:
+**confinamiento de rutas** y **redacción de secretos**.
+
+#### Confinamiento de rutas — ALTO
+
+El planner es un LLM: `planner.py:171-179` construye
+`Layer(kind=…, engine=…, params=dict(...))` directamente de su JSON **sin esquema**, y
+`executor.py:184` hace splat de esos `params` dentro del job del motor. El nombre de motor
+ya se validaba contra el mapa registrado, pero los `params` no — y `UpscalerEngine` **sí**
+está registrado (`app.py:493`). Una capa como
+`{"engine":"upscaler","params":{"input_path":"/etc/shadow","output_path":"/root/x"}}`
+llegaba al `Path(job[...])` pelado de `upscaler.py:_parse`, dando lectura arbitraria y
+creación arbitraria de ficheros — incluido dentro del `/opt/ComfyUI` inmutable.
+
+Corregido en el **único punto de paso** por el que pasan todos los motores:
+
+- `_confine_job_paths()` normaliza cada clave de ruta del job (`input_path`, `output_path`,
+  `audio_path`, `video_path`, `path` y `clips[].path`) al directorio de datos de Studio. Una
+  ruta relativa se ancla ahí; una absoluta o con `..` que se salga **conserva solo el nombre
+  final**, de modo que el motor nunca escribe fuera del volumen y el fallo es visible en vez
+  de silencioso.
+- `EngineRunnerAdapter` / `EngineAssembler` aceptan `data_root`; `app.py` pasa
+  `cfg.studio_data_dir`, así que el ancla es el volumen real y no el CWD del proceso.
+- `EngineAssembler.assemble` ancló su `output_path` del reel (antes el relativo al CWD
+  `projects/default/outputs/…`), que rompía en silencio el contrato "todo bajo el volumen".
+- `/studio/api/view` rechaza `filename`/`subfolder` con separadores o `..` en lugar de
+  reenviarlos tal cual al `/view` de ComfyUI.
+
+#### Redacción — MEDIO
+
+- `SecretStreamRedactor` tenía un patrón de retención en vuelo **más estricto** que
+  `_URL_USERINFO_RE`: una contraseña de userinfo con `/` partida entre chunks se filtraba
+  completa. Alineados; verificado que el redactor de streaming y el de una sola pasada
+  ahora coinciden.
+- `STUDIO_HEAVY_VIDEO_KEY` es una credencial real de proveedor que **ningún** literal y
+  **ningún** regex de asignación cubría, así que un proveedor que la repetía en su cuerpo de
+  error la devolvía tal cual al cliente y al log. Añadida a ambos y a `from_env`/`from_config`.
+- `engines/{upscaler,ffmpeg,heavy_video}.py` construían un `SecretRedactor()` **pelado**, sin
+  ningún secreto literal: `COMFY_PASS`, `HF_TOKEN` y `STUDIO_API_TOKEN` no se enmascaraban en
+  las cadenas de error de los motores. Ahora usan `SecretRedactor.from_env()`, igual que ya
+  reciben `ComfyUIClient` y `StudioAgent`.
+
 
 ---
 
@@ -237,6 +281,11 @@ preexistentes y de entorno, no regresiones.
 | `comfyctl/src/report.rs:437` usa el `MODEL_PROFILE` crudo para la etiqueta | BAJO | **Corregido**: reutiliza `valid_profile_name()`. |
 | `config/models-core.json:668-675` (flux) declara perfiles más amplios que `models.rs` | BAJO | `check_profile_parity.py` no ve el guard `[ "${MODEL_PROFILE}" = "all" ]`. Sin impacto numérico hoy. |
 | Fixtures `nvidia_smi_*.csv` huérfanos | INFO | Ningún test hace `include_str!` sobre ellos. Re-brandados por consistencia. |
+| `planner.py` sigue aceptando `params` sin esquema por motor | MEDIO | Las **rutas** ya están confinadas en el punto de paso único, así que no hay lectura/escritura fuera del volumen. Un `params` con claves inventadas sigue llegando al motor, que hoy las ignora. **Recomendado:** allowlist de claves por motor. |
+| `engines/{ffmpeg,heavy_video}.py` con rutas sin confinar | BAJO | No reachable: `app.py` solo registra `comfyui` y `upscaler`. El confinamiento nuevo ya cubre sus claves de ruta si se registran. |
+| Redactor Python es subconjunto del de Rust | BAJO | Faltan en Python los patrones de AWS/GitHub/Slack/OpenAI/Google/Anthropic y la forma `user:pass@host` sin esquema. El redactor de Rust sí los tiene, y `/logs/*` pasa por él. |
+| `install_log_redaction` engancha el filtro solo al logger `comfy_studio` | BAJO | Los registros propagados pueden esquivarlo en algunos despliegues. Contenido: el fichero es 0600 root y `/logs/studio` se re-redacta en comfyctl. **Recomendado:** enganchar también al logger raíz. |
+| `ml/runner.py` acepta `redactor=None` en 5 de 7 llamadas | BAJO | El worker usa un allowlist de entorno sin secretos, así que hace falta que el secreto ya esté en disco. **Recomendado:** hacer el argumento obligatorio. |
 
 ---
 
