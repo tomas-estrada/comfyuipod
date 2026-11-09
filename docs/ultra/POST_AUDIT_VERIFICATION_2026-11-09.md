@@ -21,8 +21,8 @@ Cada hallazgo se reprodujo localmente antes de tocarse.
 | Tests que fallaban en `origin/main` y ahora pasan | 8 |
 | Falsas garantías de test eliminadas | 2 |
 | Archivos modificados | 35 |
-| Inserciones / eliminaciones | 1154 / 103 |
-| Tests al final | **2519 passed, 4 skipped, 0 failed** (baseline: 8 failed) |
+| Inserciones / eliminaciones | 1270 / 104 |
+| Tests al final | **2520 passed, 4 skipped, 0 failed** (baseline: 8 failed) |
 | Ruff / py_compile / `bash -n` | PASS |
 
 **Veredicto: APTO PARA PRODUCCIÓN** una vez que la CI de la PR #255 quede en verde
@@ -312,6 +312,39 @@ simbólicos comparen de forma coherente.
 preservación de rutas hermanas legítimas, confinamiento del qa sobre una ruta
 restaurada del checkpoint, y confinamiento de `clips` del assembler.
 
+### 5.5 Cuarta pasada: smoke local que replica el arranque de CI (commit `def86d0`)
+
+Un smoke local que reproduce el orden de arranque real de `server.py`
+(`create_app` → `uvicorn.run`) destapó que la corrección del commit `093eb48`
+**no funcionaba**.
+
+uvicorn **no** configura handlers en el logger raíz. Cuando un registro nace en
+`comfy_studio.x`, `Logger.callHandlers` sube por la jerarquía, no encuentra ningún
+handler y cae en `logging.lastResort` — un `_StderrHandler` a nivel de módulo. Los
+filtros de un logger *ancestro* nunca se consultan para un registro originado en un
+hijo, así que el secreto llegaba en claro a `/var/log/studio-server.log`:
+
+```
+BEFORE (no lastResort) -> 'boot con pass=SUPERSECRETPASS'  LEAKS=True
+AFTER  (with lastResort) -> 'boot con pass=[REDACTED]'     LEAKS=False
+```
+
+Dos cambios:
+
+- `install_log_redaction()` filtra también `logging.lastResort`, de forma idempotente.
+  Es el destino real de los registros de `comfy_studio.*` en el arranque con uvicorn, y
+  al ser un singleton de proceso basta filtrarlo una vez.
+- El lifespan **reinstala** la redacción cuando uvicorn ya está corriendo, de modo que
+  los handlers que uvicorn añade entre `create_app` y el serve también quedan cubiertos
+  (en `create_app` la raíz aún no tenía ninguno).
+
+El test de regresión modela el orden real y vacía los handlers de la raíz: si no, el
+plugin de logging de pytest añade el suyo y el camino por `lastResort` no se ejercita.
+
+Además se verificó con un smoke local que replica los asserts de CI sobre el
+studio-server: 401 sin auth, 200 con auth, JSON válido en `/studio/api/health`,
+`/status`, `/templates` y `/projects`, y ningún secreto en ningún cuerpo.
+
 #### Asimetría importante entre los dos redactores
 
 El redactor de Python corre sobre el **cuerpo JSON serializado**, que el cliente vuelve a
@@ -342,7 +375,7 @@ patrones nuevos de URL son ahora JSON-safe, y hay un test que fija el invariante
 | `ruff check` (`studio/comfy_studio`, `studio/tests`, `scripts`, `config/probes`, `panel`) | **PASS** |
 | `py_compile` | **PASS** |
 | `bash -n` (`start.sh`, `download-models.sh`, `tools/mac/comfy`) | **PASS** |
-| `pytest studio/tests` (desde la raíz del repo) | **2519 passed, 4 skipped, 0 failed** (4 errores, ver abajo) |
+| `pytest studio/tests` (desde la raíz del repo) | **2520 passed, 4 skipped, 0 failed** (4 errores, ver abajo) |
 | — baseline `origin/main` | **8 failed** (`test_health_auth` ×7, `test_m6_production_wiring` ×1). *Nota:* los 7 de `test_health_auth` solo se reproducen con un intérprete cuya ruta contiene `@` (Python de Homebrew fuera de venv); en un entorno con venv `main` muestra solo el de `test_m6_production_wiring`. |
 | `nginx.conf` balance de llaves / cobertura HSTS+CSP | 0 desbalance / **17/17 locations** |
 | `cargo fmt --check` / `clippy -D warnings` / `test --locked` | **PASS** (88 tests) — ejecutado por el agente de revisión; **no reproducible en este host** (sin `cargo`) |
@@ -378,7 +411,7 @@ preexistentes y de entorno, no regresiones.
 | `comfyctl/src/report.rs:437` usa el `MODEL_PROFILE` crudo para la etiqueta | **Corregido**: reutiliza `valid_profile_name()`. |
 | `config/models-core.json` (flux) declaraba perfiles más amplios que `models.rs` | **Corregido**: el checker ahora entiende la guarda de igualdad simple y el manifiesto dice `["all"]`. |
 | Redactor Python es subconjunto del de Rust | **Corregido**: portados `Authorization`, URL de esquema genérico, `user:pass@host` sin esquema y las claves por forma AKIA/AIza/ghp_/xox. |
-| `install_log_redaction` engancha el filtro solo al logger `comfy_studio` | **Corregido**: ahora también engancha al logger raíz. |
+| `install_log_redaction` engancha el filtro solo al logger `comfy_studio` | **Corregido**: raíz + `lastResort` + reinstalado en el lifespan (ver §5.5). |
 | `ml/runner.py` acepta `redactor=None` en 5 de 7 llamadas | **Corregido**: el respaldo por defecto es `from_env()`, no un redactor pelado. |
 
 ---
