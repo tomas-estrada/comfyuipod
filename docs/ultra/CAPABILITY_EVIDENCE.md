@@ -9,7 +9,7 @@ This records the highest evidence level actually demonstrated for each capabilit
 | ID | Capability | Main evidence level | Evidence and limit |
 |---|---|---:|---|
 | C01 | Archivo audiovisual semántico | L1 partial | W05 code and CPU regression evidence are summarized in [`CLOSING.md`](CLOSING.md); the 100-file mixed-media acceptance and real extraction remain unproven. |
-| C02 | Referencia a receta editable | L0 | W06/W20 acceptance is not complete; specification only. |
+| C02 | Referencia a receta editable | L1 partial | `studio/comfy_studio/inspiration.py` derives editable shot, beat-sync, title, and camera steps from supplied reference analysis while preserving observed/inferred/adapted provenance. `studio/tests/test_inspiration.py` covers offline own-library derivation, connector blocked/paid states, and no-virality claims. Automated extraction from authorized reference media and full adaptation against project assets remain unproven. |
 | C03 | Dirección desde intención incompleta | L0 | W22 acceptance is not complete; specification only. |
 | C04 | Memoria de lenguaje audiovisual | L1 partial | W04 persistence/lineage contracts are summarized in [`CLOSING.md`](CLOSING.md); director-level memory behavior remains unproven. |
 | C05 | Cámara cinematográfica dirigida | L0 | W11 animatic and camera-path acceptance is not complete. |
