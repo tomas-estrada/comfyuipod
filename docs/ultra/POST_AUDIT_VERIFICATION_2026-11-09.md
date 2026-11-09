@@ -74,6 +74,23 @@ respaldo `/etc/comfyui/models-core.json`.
 
 **Fix:** misma cadena de reserva que `STUDIO_MANIFEST`.
 
+**Dry-run de la resolución** (layout de imagen, manifiestos solo bajo `/etc/comfyui/`):
+
+```
+### ORIGINAL ###
+  -> /usr/local/bin/../config/models-core.json
+  BROKEN (file not found)
+### FIXED ###
+  -> /etc/comfyui/models-core.json
+  RESOLVES OK
+```
+
+Premisa confirmada: `Dockerfile:478` hace `COPY config/models-core.json /etc/comfyui/models-core.json`.
+Alcance confirmado: `supervisor.rs:284` lanza `download-models.sh --bootstrap` (que ya tenía el
+respaldo correcto en la línea 713), mientras que `--phase1`/`--phase2` son comandos manuales
+documentados para el operario (`report.rs:292`: *"se ejecuta a mano con `download-models.sh
+--phase2`"*) — ese era exactamente el camino roto dentro del pod.
+
 ### 3.2 `config.py` — regex de userinfo corrompía el JSON (ALTO)
 
 `_URL_USERINFO_RE` usaba `(.*)` (codicioso) para el grupo de userinfo. Un `http://…:` seguido
@@ -198,6 +215,7 @@ explícitamente. Snapshot actualizado.
 | `nginx.conf` balance de llaves / cobertura HSTS+CSP | 0 desbalance / **17/17 locations** |
 | `cargo fmt --check` / `clippy -D warnings` / `test --locked` | **PASS** (88 tests) — ejecutado por el agente de revisión; **no reproducible en este host** (sin `cargo`) |
 | Docker build + smoke tests | ⏳ En curso en CI (PR #255) |
+| Dry-run de resolución de manifiestos | **PASS** — ver §3.1 (original BROKEN / fixed RESOLVES OK) |
 
 Los 4 errores de `test_integration_startup_live.py` requieren un contenedor vivo
 (nginx + status-server + upstream reales) y **también fallan en `origin/main`**: son
