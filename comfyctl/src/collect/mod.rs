@@ -50,8 +50,55 @@ pub struct StatusApiPayload {
     /// (el informe dice «no disponible», no inventa).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub startup: Option<crate::collect::startup::StartupStatus>,
+    /// Espacio, VRAM y RAM: disponible vs requerido, con las reservas vigentes
+    /// (VRAM 2048 MB, RAM 8192 MB, `studio/comfy_studio/hardware_profile.py`).
+    /// VRAM y RAM se evalúan por separado: no son intercambiables.
+    pub resources: ResourceBudget,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub strict: Option<StrictReport>,
+}
+
+/// Presupuesto de recursos separado por tipo, con la reserva vigente aplicada.
+/// Las entradas `Option::None` son «no disponible» (sin medición): nunca 0 fijo.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ResourceBudget {
+    pub disk_free_gb: Option<f64>,
+    pub disk_measurable: bool,
+    /// Espacio que la puerta de arranque exige (`storage-requirement.json`);
+    /// `None` = no disponible (sin fichero derivado o perfil sin entrada).
+    pub disk_required_gb: Option<f64>,
+    pub vram_total_mb: Option<u64>,
+    pub vram_used_mb: Option<u64>,
+    pub vram_reserve_mb: u64,
+    pub vram_usable_mb: Option<u64>,
+    /// Requerimiento de VRAM del flujo actual: sin workflow cargado no se mide.
+    pub vram_required_mb: Option<u64>,
+    pub ram_total_mb: Option<u64>,
+    pub ram_available_mb: Option<u64>,
+    pub ram_reserve_mb: u64,
+    pub ram_usable_mb: Option<u64>,
+    pub ram_required_mb: Option<u64>,
+}
+
+/// Reserva vigente (§ «regla de tarefa»: VRAM 2 GB, RAM 8 GB).
+pub const VRAM_RESERVE_MB: u64 = 2048;
+pub const RAM_RESERVE_MB: u64 = 8192;
+
+/// Línea de alarma `disk.free_gb < 10` para el triage; `None` cuando la medición
+/// no existe (0s sintéticos): el patrón `disk-full` no debe dispararse sin dato.
+#[must_use]
+pub fn disk_warning_line(disk: &DiskStatus) -> Option<String> {
+    if !disk.measurable || disk.total_gb <= 0.0 {
+        return None;
+    }
+    if disk.free_gb < 10.0 {
+        Some(format!(
+            "disk.free_gb < 10 (libre actual: {} GB en {})",
+            disk.free_gb, disk.path
+        ))
+    } else {
+        None
+    }
 }
 
 pub fn build_status_api_payload(
@@ -78,6 +125,7 @@ pub fn build_status_api_payload(
     let strict = load_strict_report(&cfg.strict_json_path);
     let weights = collect_weight_status(&cfg.comfy_data_dir, cfg.model_profile.as_str());
     add_disk_truth(&mut phases, &weights);
+    let resources = collect_resource_budget(&memory, &disk, &gpu, cfg);
     let phase_banner = format_phase_banner(&comfyui, &phases, strict.as_ref());
 
     let mut log_buffers: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -114,11 +162,8 @@ pub fn build_status_api_payload(
     log_buffers.insert("processes".to_string(), proc_lines);
 
     let mut api_lines = Vec::new();
-    if disk.total_gb > 0.0 && disk.free_gb < 10.0 {
-        api_lines.push(format!(
-            "disk.free_gb < 10 (libre actual: {} GB en {})",
-            disk.free_gb, disk.path
-        ));
+    if let Some(line) = disk_warning_line(&disk) {
+        api_lines.push(line);
     }
     log_buffers.insert("api".to_string(), api_lines);
 
@@ -165,6 +210,77 @@ pub fn build_status_api_payload(
             log_dir,
             &cfg.supervisor_json_path,
         )),
+        resources,
         strict,
     }
+}
+
+/// Presupuesto separado por tipo; el requerido sale del derivado de
+/// `scripts/storage_requirement.py` (`storage-requirement.json`). Sin fichero
+/// derivado o sin GPU/meminfo: `None` = «no disponible», nunca 0 inventado.
+fn collect_resource_budget(
+    memory: &MemoryStatus,
+    disk: &DiskStatus,
+    gpu: &GpuStatus,
+    cfg: &RuntimeConfig,
+) -> ResourceBudget {
+    let mut budget = build_resource_budget(memory, disk, gpu);
+    budget.disk_required_gb = disk_start_gate_gb(cfg, cfg.model_profile.as_str());
+    budget
+}
+
+/// Presupuesto separado por tipo desde las medidas ya recolectadas. Al ser
+/// `build` puro lo ejercitan los tests sin ficheros ni entorno.
+fn build_resource_budget(
+    memory: &MemoryStatus,
+    disk: &DiskStatus,
+    gpu: &GpuStatus,
+) -> ResourceBudget {
+    let disk_free = if disk.measurable {
+        Some(disk.free_gb)
+    } else {
+        None
+    };
+    let vram_total = if gpu.available && gpu.vram_total_mb > 0 {
+        Some(gpu.vram_total_mb)
+    } else {
+        None
+    };
+    let vram_used = if gpu.available {
+        Some(gpu.vram_used_mb)
+    } else {
+        None
+    };
+    let vram_usable = vram_total.map(|total| total.saturating_sub(VRAM_RESERVE_MB));
+    let ram_available = if memory.measurable {
+        Some(memory.available_mb)
+    } else {
+        None
+    };
+    ResourceBudget {
+        disk_free_gb: disk_free,
+        disk_measurable: disk.measurable,
+        disk_required_gb: None,
+        vram_total_mb: vram_total,
+        vram_used_mb: vram_used,
+        vram_reserve_mb: VRAM_RESERVE_MB,
+        vram_usable_mb: vram_usable,
+        vram_required_mb: None,
+        ram_total_mb: memory.measurable.then_some(memory.total_mb),
+        ram_available_mb: ram_available,
+        ram_reserve_mb: RAM_RESERVE_MB,
+        ram_usable_mb: ram_available.map(|a| a.saturating_sub(RAM_RESERVE_MB)),
+        ram_required_mb: None,
+    }
+}
+
+fn disk_start_gate_gb(cfg: &RuntimeConfig, profile: &str) -> Option<f64> {
+    let txt = fs::read_to_string(&cfg.storage_requirement_path).ok()?;
+    let val: serde_json::Value = serde_json::from_str(&txt).ok()?;
+    let start_gate = val
+        .get("profiles")?
+        .get(profile)?
+        .get("start_gate_gb")?
+        .as_f64()?;
+    (start_gate > 0.0).then_some(start_gate)
 }

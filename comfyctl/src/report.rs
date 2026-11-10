@@ -3,6 +3,7 @@
 use crate::collect::drift::DriftSummary;
 use crate::collect::phases::STATE_NOT_REQUIRED;
 use crate::collect::StatusApiPayload;
+use crate::collect::{RAM_RESERVE_MB, VRAM_RESERVE_MB};
 use crate::logtail::{resolve_log_path, tail_lines};
 use crate::redact::SecretRedactor;
 use crate::sys;
@@ -231,11 +232,54 @@ pub fn build_report_markdown(
         "- **Memoria RAM**: `{}` MB usados / `{}` MB totales (`{}` MB disponibles) · Swap usado: `{}` MB",
         mem.used_mb, mem.total_mb, mem.available_mb, mem.swap_used_mb
     );
+    if disk.measurable {
+        let _ = writeln!(
+            out,
+            "- **Disco (`{}`)**: `{}` GB usados / `{}` GB totales (`{}` GB libres)\n",
+            disk.path, disk.used_gb, disk.total_gb, disk.free_gb
+        );
+    } else {
+        let _ = writeln!(
+            out,
+            "- **Disco (`{}`)**: no disponible (sin medición de `statvfs`: no se puede afirmar que haya espacio ni que falte)\n",
+            disk.path
+        );
+    }
+    // Disponible vs requerido, VRAM y RAM por separado, con las reservas vigentes.
+    let r = &api.resources;
+    let opt_f: fn(Option<f64>) -> String =
+        |v| v.map_or_else(|| "no disponible".to_string(), |x| format!("{x:.1}"));
+    let opt_u: fn(Option<u64>) -> String =
+        |v| v.map_or_else(|| "no disponible".to_string(), |x| x.to_string());
     let _ = writeln!(
         out,
-        "- **Disco (`{}`)**: `{}` GB usados / `{}` GB totales (`{}` GB libres)\n",
-        disk.path, disk.used_gb, disk.total_gb, disk.free_gb
+        "### Disponible vs requerido (VRAM y RAM por separado; reservas vigentes)"
     );
+    let _ = writeln!(
+        out,
+        "- **Espacio en disco**: disponible `{}` GB · requerido (puerta de arranque) `{}` GB",
+        opt_f(r.disk_free_gb),
+        opt_f(r.disk_required_gb)
+    );
+    let _ = writeln!(
+        out,
+        "- **VRAM**: total `{}` MB · usado `{}` MB · usable (total − reserva de `{} MB`) = `{}` MB · requerido por el flujo actual: `{}`",
+        opt_u(r.vram_total_mb),
+        opt_u(r.vram_used_mb),
+        VRAM_RESERVE_MB,
+        opt_u(r.vram_usable_mb),
+        opt_u(r.vram_required_mb)
+    );
+    let _ = writeln!(
+        out,
+        "- **RAM**: total `{}` MB · disponible `{}` MB · usable (disponible − reserva de `{} MB`) = `{}` MB · requerido por el flujo actual: `{}`",
+        opt_u(r.ram_total_mb),
+        opt_u(r.ram_available_mb),
+        RAM_RESERVE_MB,
+        opt_u(r.ram_usable_mb),
+        opt_u(r.ram_required_mb)
+    );
+    let _ = writeln!(out);
 
     // 5. Descargas (Fase 1 y Fase 2)
     let _ = writeln!(out, "## 5. Descargas (Fase 1 y Fase 2)");
@@ -596,12 +640,14 @@ mod tests {
                 used_mb: 512,
                 available_mb: 512,
                 swap_used_mb: 0,
+                measurable: true,
             },
             disk: DiskStatus {
                 path: "/workspace/comfyui-data".to_string(),
                 total_gb: 150.0,
                 used_gb: 30.0,
                 free_gb: 120.0,
+                measurable: true,
             },
             comfyui: ComfyUiStatus {
                 state: "running".to_string(),
@@ -637,6 +683,7 @@ mod tests {
             env_masked: BTreeMap::new(),
             weights: crate::collect::models::WeightStatus::default(),
             startup: None,
+            resources: crate::collect::ResourceBudget::default(),
             strict: None,
         }
     }

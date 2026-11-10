@@ -135,6 +135,10 @@ pub struct RuntimeConfig {
     pub strict_json_path: PathBuf,
     pub started_at_path: PathBuf,
     pub image_json_path: PathBuf,
+    /// `/etc/comfyui/storage-requirement.json`: el derivado de
+    /// `scripts/storage_requirement.py` que hornea la imagen (fuente única del
+    /// requerido de disco para el despacho de `Espacio y RAM/VRAM`).
+    pub storage_requirement_path: PathBuf,
     pub htpasswd_path: PathBuf,
     pub require_htpasswd: bool,
     pub nvidia_smi_bin: PathBuf,
@@ -401,6 +405,10 @@ impl RuntimeConfig {
             ),
             image_json_path: PathBuf::from(
                 get("COMFY_IMAGE_JSON").unwrap_or("/etc/comfyui/image.json"),
+            ),
+            storage_requirement_path: PathBuf::from(
+                get("COMFY_STORAGE_REQUIREMENT_JSON")
+                    .unwrap_or("/etc/comfyui/storage-requirement.json"),
             ),
             htpasswd_path: PathBuf::from(
                 get("COMFY_HTPASSWD_PATH").unwrap_or("/etc/nginx/.htpasswd"),
