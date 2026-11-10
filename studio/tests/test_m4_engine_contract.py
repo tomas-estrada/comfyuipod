@@ -47,7 +47,26 @@ def test_engine_result_public_dict_roundtrip() -> None:
         "exit_code",
         "stderr_tail",
         "simulated",
+        "reason",
     }
+
+
+def test_limitacion_tipada() -> None:
+    from comfy_studio.engines import EngineReason
+
+    res = EngineResult.limitation(
+        engine="demo",
+        verb="run",
+        reason=EngineReason.WEIGHTS_MISSING,
+        error="faltan pesos",
+        payload={"weights": "missing"},
+    )
+    assert res.ok is False
+    assert res.reason == "weights_missing"
+    assert res.payload == {"weights": "missing"}
+    pub = res.to_public_dict()
+    assert pub["reason"] == "weights_missing"
+    assert pub["simulated"] is False
 
 
 def test_run_spec_defaults() -> None:

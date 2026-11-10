@@ -1,140 +1,164 @@
 @startuml 01-components
-!pragma teoz true
 
 ' ============================================================================
 ' 01 — Vista estática de componentes (ComfyUIPod)
 ' Rama: docs/maad-architecture-2026-11-10 · Base: main b7f21de
 '
-' Todas las aristas carry file:line del código verificado. Confianza:
-'   [C] confirmado  ·  [I] inferido  ·  [H] hueco
-' No hay secretos ni valores de credenciales en este fichero.
+' Regla de legibilidad: las etiquetas del grafo llevan SOLO el nombre funcional
+' de la arista. La evidencia (archivo:línea + confianza) vive en el legend de
+' abajo, que PlantUML renderiza como bloque aparte y por tanto no se solapa con
+' los nodos ni con las flechas.
+'
+' NO usar `!pragma teoz true` (es de diagramas de secuencia) ni
+' `skinparam linetype ortho` (provoca cruces y solapes): ambas cosas hacían
+' ilegible la versión anterior de este diagrama.
 ' ============================================================================
+
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+skinparam wrapWidth 150
+skinparam nodesep 30
+skinparam ranksep 45
+skinparam padding 6
+skinparam shadowing false
 
 title ComfyUIPod — vista estática de componentes
 
-skinparam componentStyle rectangle
-skinparam linetype ortho
-skinparam wrapWidth 200
-
-actor "Operario" as op #LightBlue
+actor "Operario" as op
 
 package "Host / Vast.ai pod" {
 
     node "Contenedor (Ubuntu 24.04)" as container {
 
-        ' --- Única superficie pública -----------------------------------------
         rectangle "Nginx\n:8188 público" as nginx #FFD9A0 {
-            rectangle "auth_basic\n.htpasswd" as basicauth
-            rectangle "security headers\nHSTS + CSP" as hdrs
-            rectangle "rate limiting\nauth_limit" as rl
+            rectangle "auth_basic" as basicauth
+            rectangle "HSTS + CSP" as hdrs
+            rectangle "rate limiting" as rl
         }
 
-        ' --- Supervisor nativo -------------------------------------------------
         package "comfyctl (Rust)" as comfyctl #D9EAD3 {
-            rectangle "supervise\nbucle de procesos" as supervise
-            rectangle "HTTP server\n:18189" as ctlhttp
+            rectangle "supervise\nprocesos" as supervise
+            rectangle "HTTP :18189" as ctlhttp
             rectangle "strict-check\nS1..S17" as strict
-            rectangle "report / diag\ngeneradores" as report
-            rectangle "collect\nGPU/disco/mem" as collect
-            rectangle "redact\nSecretRedactor" as redact
-            rectangle "logtail\nlista blanca" as logtail
+            rectangle "report / diag" as report
+            rectangle "collect" as collect
+            rectangle "redact" as redact
+            rectangle "logtail" as logtail
         }
 
-        ' --- Servidor de aplicación -------------------------------------------
         package "studio-server (FastAPI)" as studio #CFE2F3 {
             rectangle "routers\n/studio/api/*" as routers
-            rectangle "edge_auth +\nredaction middleware" as mw
-            rectangle "orchestration\ngrafo de producción" as orch
-            rectangle "engines\ncomfyui/editor/upscaler/qa" as engines
-            rectangle "agent\n54 herramientas" as agent
-            rectangle "asset_acquire\nmanifiesto + sha256" as acquire
-            rectangle "perception\nCLIP + facial" as percep
+            rectangle "middleware\nauth + redacción" as mw
+            rectangle "orchestration" as orch
+            rectangle "engines" as engines
+            rectangle "agent" as agent
+            rectangle "asset_acquire" as acquire
+            rectangle "perception" as percep
         }
 
-        ' --- Motor de render ---------------------------------------------------
-        rectangle "ComfyUI\n:18188 loopback" as comfyui #FCE5CD
+        rectangle "ComfyUI\n:18188" as comfyui #FCE5CD
+        rectangle "ttyd\n:7681" as ttyd #EAD1DC
 
-        ' --- Terminal opcional -------------------------------------------------
-        rectangle "ttyd\n:7681 loopback" as ttyd #EAD1DC
-
-        ' --- Almacenamiento ----------------------------------------------------
         rectangle "COMFY_DATA_DIR\n/workspace/comfyui-data" as volume #FFF2CC
-        rectangle "COMFY_APP_DIR\n/opt/ComfyUI (inmutable)" as appdir #F3F3F3
+        rectangle "COMFY_APP_DIR\n/opt/ComfyUI" as appdir #F3F3F3
 
-        ' --- Scripts de arranque ----------------------------------------------
         rectangle "start.sh\n7 fases" as startsh
-        rectangle "download-models.sh\nfases 1/2/3/bootstrap" as dlmodels
+        rectangle "download-models.sh" as dlmodels
     }
 }
 
-cloud "Proveedor LLM\n(compatible-OpenAI)" as llm #E6E0EC
+cloud "Proveedor LLM" as llm #E6E0EC
 
-' ============================================================================
-' Aristas — cada una con file:line
-' ============================================================================
+' --- aristas: etiqueta corta, evidencia en el legend ---
+op --> nginx :        "HTTPS :8188"
+nginx --> supervise : "/status /report.md"
+nginx --> ctlhttp :   "/status/api /diag /logs"
+nginx --> studio :    "/studio/"
+nginx --> ttyd :      "/terminal/"
+nginx --> comfyui :   "/ y /ws"
 
-op --> nginx : "HTTPS/HTTP :8188\n[ C ] config/nginx.conf:54"
-nginx --> basicauth : "exige credenciales\n[ C ] config/nginx.conf:137"
-nginx --> supervise : "proxy /status, /report.md\n[ C ] config/nginx.conf:151"
-nginx --> ctlhttp : "proxy /status/api, /diag, /logs\n[ C ] config/nginx.conf:187"
-nginx --> studio : "proxy /studio/\n[ C ] config/nginx.conf:210"
-nginx --> ttyd : "proxy /terminal/\n[ C ] config/nginx.conf:161"
-nginx --> comfyui : "proxy / y /ws\n[ C ] config/nginx.conf:318"
+supervise --> comfyui :  "lanza y reinicia"
+supervise --> studio :   "lanza y espera sano"
+supervise --> dlmodels : "bootstrap 600 s"
+supervise --> logtail :  "trunca logs"
 
-supervise --> comfyui : "lanza y reinicia\n[ C ] comfyctl/src/supervisor.rs:1"
-supervise --> studio : "lanza y espera sano\n[ C ] comfyctl/src/supervisor.rs:336"
-supervise --> strict : "evalúa antes de servir\n[ C ] comfyctl/src/supervisor.rs:342"
-supervise --> dlmodels : "bootstrap con timeout 600\n[ C ] comfyctl/src/supervisor.rs:284"
-supervise --> logtail : "trunca logs\n[ C ] comfyctl/src/supervisor.rs:141"
+ctlhttp --> report :  "/report.md"
+ctlhttp --> collect : "/status/api"
+ctlhttp --> redact :  "redacta"
+ctlhttp --> logtail : "/logs/*"
 
-ctlhttp --> report : "sirve /report.md\n[ C ] comfyctl/src/http.rs:194"
-ctlhttp --> collect : "sirve /status/api\n[ C ] comfyctl/src/http.rs:180"
-ctlhttp --> redact : "redacta respuesta\n[ C ] comfyctl/src/http.rs:184"
-ctlhttp --> logtail : "sirve /logs/*\n[ C ] comfyctl/src/http.rs:231"
+strict --> collect : "lee GPU/RAM/disco"
+mw --> redact :      "redacta cuerpo"
 
-strict --> collect : "lee GPU/RAM/disco\n[ C ] comfyctl/src/strict.rs:90"
-strict --> comfyui : "S11 health\n[ C ] comfyctl/src/supervisor.rs:344"
+routers --> orch :    "plan / approve"
+routers --> engines : "ejecuta capas"
+orch --> engines :    "run_layer + lease"
+orch --> agent :      "planner + evaluación"
+agent --> llm :       "chat / visión"
 
-mw --> basicauth : "401 sin credencial\n[ C ] studio/comfy_studio/app.py:566"
-mw --> redact : "redacta cuerpo JSON\n[ C ] studio/comfy_studio/app.py:609"
+engines --> comfyui : "prompt + historial"
+percep --> volume :   "índice vectorial"
+acquire --> volume :  "descarga modelos"
+dlmodels --> acquire : "delega en el CLI"
 
-routers --> orch : "plan / approve / status\n[ C ] studio/comfy_studio/routers/productions.py:102"
-routers --> engines : "ejecuta capas\n[ C ] studio/comfy_studio/orchestration/adapters.py:377"
-orch --> engines : "run_layer con lease\n[ C ] studio/comfy_studio/orchestration/adapters.py:517"
-orch --> agent : "planner + evaluación\n[ C ] studio/comfy_studio/orchestration/adapters.py:900"
-agent --> llm : "chat / visión\n[ C ] studio/comfy_studio/agent/llm.py:441"
+startsh --> dlmodels : "fase 2"
+startsh --> nginx :    "fase 4"
+startsh --> supervise : "fase 5 (exec)"
 
-engines --> comfyui : "prompt + historial\n[ C ] studio/comfy_studio/comfyui_client.py:1"
-percep --> volume : "índice vectorial\n[ C ] studio/comfy_studio/perception/clip_index.py:1"
+comfyui --> volume : "modelos y salidas"
+comfyui --> appdir : "código inmutable"
+volume --> appdir :  "symlinks"
 
-acquire --> volume : "descarga modelos\n[ C ] studio/comfy_studio/asset_acquire.py:1"
-dlmodels --> acquire : "delega en el CLI\n[ I ] scripts/download-models.sh:231"
-
-startsh --> dlmodels : "fase 2\n[ C ] scripts/start.sh:176"
-startsh --> nginx : "fase 4\n[ C ] scripts/start.sh:377"
-startsh --> supervise : "fase 5 (exec)\n[ C ] scripts/start.sh:397"
-
-comfyui --> volume : "lee modelos y escribe salidas\n[ C ] scripts/start.sh:215"
-comfyui --> appdir : "código inmutable\n[ C ] scripts/start.sh:17"
-
-volume --> appdir : "symlink models/input/output/user\n[ C ] scripts/start.sh:215-220"
-
-note right of volume
-  El contrato núcleo: nada de datos vive en /opt/ComfyUI.
-  Los symlinks apuntan al volumen, así que los modelos y salidas
-  sobreviven al reinicio del pod.
-  [ C ] scripts/start.sh:215-220
+note right of nginx
+  Único punto de entrada público.
+  Todo lo demás escucha en 127.0.0.1.
 end note
 
-note bottom of strict
+note bottom of volume
+  Contrato núcleo: nada de datos vive en /opt/ComfyUI.
+  Los symlinks apuntan al volumen, así que modelos y
+  salidas sobreviven al reinicio del pod.
+end note
+
+note left of strict
   Si una comprobación fatal falla con STRICT_START=1,
   el contenedor termina con código 20.
-  [ C ] comfyctl/src/strict.rs:1568
 end note
 
-note left of nginx
-  Único punto de entrada. Todo lo demás escucha en 127.0.0.1.
-  [ C ] config/nginx.conf:53-366
-end note
+legend right
+  **Evidencia** (todas las aristas: confirmado)
+  |= arista |= archivo:línea |
+  | op → nginx | config/nginx.conf:54 |
+  | nginx → supervise | config/nginx.conf:151 |
+  | nginx → ctlhttp | config/nginx.conf:187 |
+  | nginx → studio | config/nginx.conf:210 |
+  | nginx → ttyd | config/nginx.conf:161 |
+  | nginx → comfyui | config/nginx.conf:318 |
+  | supervise → comfyui | comfyctl/src/supervisor.rs:1 |
+  | supervise → studio | comfyctl/src/supervisor.rs:336 |
+  | supervise → dlmodels | comfyctl/src/supervisor.rs:284 |
+  | supervise → logtail | comfyctl/src/supervisor.rs:141 |
+  | ctlhttp → report | comfyctl/src/http.rs:194 |
+  | ctlhttp → collect | comfyctl/src/http.rs:180 |
+  | ctlhttp → redact | comfyctl/src/http.rs:184 |
+  | ctlhttp → logtail | comfyctl/src/http.rs:231 |
+  | strict → collect | comfyctl/src/strict.rs:90 |
+  | mw → redact | studio/comfy_studio/app.py:609 |
+  | routers → orch | studio/comfy_studio/routers/productions.py:102 |
+  | routers → engines | studio/comfy_studio/orchestration/adapters.py:490 |
+  | orch → engines | studio/comfy_studio/orchestration/adapters.py:568 |
+  | orch → agent | studio/comfy_studio/orchestration/adapters.py:900 |
+  | agent → llm | studio/comfy_studio/agent/llm.py:441 |
+  | engines → comfyui | studio/comfy_studio/comfyui_client.py:1 |
+  | percep → volume | studio/comfy_studio/perception/clip_index.py:1 |
+  | acquire → volume | studio/comfy_studio/asset_acquire.py:1 |
+  | dlmodels → acquire | scripts/download-models.sh:231 _(inferido)_ |
+  | startsh → dlmodels | scripts/start.sh:176 |
+  | startsh → nginx | scripts/start.sh:377 |
+  | startsh → supervise | scripts/start.sh:397 |
+  | comfyui → volume | scripts/start.sh:215 |
+  | comfyui → appdir | scripts/start.sh:17 |
+  | volume → appdir | scripts/start.sh:215-220 |
+endlegend
 
 @enduml

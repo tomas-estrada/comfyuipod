@@ -16,8 +16,11 @@ Contrato de implementación:
 from __future__ import annotations
 
 import abc
+import inspect
+from typing import Any
 
 from comfy_studio.engines import (
+    ENGINE_VERBS,
     EngineResult,
     EngineRunSpec,
     EngineTier,
@@ -91,3 +94,136 @@ class Engine(abc.ABC):
         if baked or is_dynamic_enabled():
             return None
         return self._dynamic_blocked("install")
+
+    # -- helpers de verificación y degradación honesta ------------------------
+
+    def verify_result(
+        self,
+        *,
+        installed: bool = True,
+        weights: str = "not_required",
+        payload: dict[str, Any] | None = None,
+        error: str | None = None,
+        detail: str | None = None,
+    ) -> EngineResult:
+        """Resultado tipado de `verify`.
+
+        `weights` es uno de: `not_required|present|missing`. Distingue
+        instalado-pero-sin-pesos (`weights_missing`) de listo, sin red ni GPU.
+        """
+        from comfy_studio.engines import EngineReason
+
+        data = dict(payload or {})
+        if weights == "missing":
+            ready = False
+            reason = EngineReason.WEIGHTS_MISSING
+            msg = error or (
+                f"{self.name}: instalado pero pesos ausentes"
+                + (f" ({detail})" if detail else "")
+            )
+        elif not installed:
+            ready = False
+            reason = EngineReason.NOT_INSTALLED
+            msg = error or (
+                f"{self.name}: no instalado" + (f" ({detail})" if detail else "")
+            )
+        else:
+            ready = True
+            reason = None
+            msg = None
+        data.setdefault("weights", weights)
+        return EngineResult(
+            ok=ready,
+            engine=self.name,
+            verb="verify",
+            payload=data,
+            error=msg,
+            reason=str(reason) if reason is not None else None,
+        )
+
+    def run_limitation(
+        self,
+        *,
+        reason: str,
+        error: str,
+        payload: dict[str, Any] | None = None,
+    ) -> EngineResult:
+        """Limitación tipada de `run`: nunca un éxito simulado fuera de stub."""
+        return EngineResult.limitation(
+            engine=self.name,
+            verb="run",
+            reason=reason,
+            error=error,
+            payload=payload,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Contrato de 4 verbos: verificación estructural del roster
+# ---------------------------------------------------------------------------
+
+#: Firma esperada de cada verbo (nombre y orden de parámetros, incluido `self`).
+_EXPECTED_PARAMS: dict[str, tuple[tuple[str, Any], ...]] = {
+    "list": (("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),),
+    "install": (
+        ("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("submotor", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("ref", inspect.Parameter.KEYWORD_ONLY),
+    ),
+    "verify": (
+        ("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("submotor", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+    ),
+    "run": (
+        ("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("spec", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+    ),
+}
+
+
+def _returns_engine_result(fn: Any) -> bool:
+    """True si la anotación de retorno resuelve a `EngineResult`."""
+    annotation = inspect.signature(fn).return_annotation
+    if annotation is inspect.Signature.empty:
+        return False
+    if isinstance(annotation, str):
+        return annotation.strip() in ("EngineResult", "'EngineResult'", '"EngineResult"')
+    return annotation is EngineResult
+
+
+def engine_contract_violations(cls: type, *, name: str, tier: EngineTier) -> list[str]:
+    """Violaciones del contrato de 4 verbos de un adaptador de motor.
+
+    Chequeo estructural barato (sin instanciar): los cuatro verbos existen, con
+    la firma y el tipo de retorno esperados, y `name`/`tier` coinciden con el
+    roster. Es el barrido que falla si un motor rompe el contrato.
+    """
+    problems: list[str] = []
+    if not isinstance(cls, type):
+        return [f"{name}: no es una clase ({cls!r})"]
+    if getattr(cls, "name", None) != name:
+        problems.append(f"{name}: name={getattr(cls, 'name', None)!r}")
+    if getattr(cls, "tier", None) != tier:
+        problems.append(f"{name}: tier={getattr(cls, 'tier', None)!r} (roster={tier!r})")
+
+    for verb in sorted(ENGINE_VERBS):
+        fn = getattr(cls, verb, None)
+        if fn is None or not callable(fn):
+            problems.append(f"{name}: falta el verbo {verb!r}")
+            continue
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            problems.append(f"{name}.{verb}: firma no inspeccionable")
+            continue
+        actual = tuple((p.name, p.kind) for p in sig.parameters.values())
+        expected = _EXPECTED_PARAMS[verb]
+        if actual != expected:
+            problems.append(f"{name}.{verb}: firma {actual} != esperada {expected}")
+        if verb == "install":
+            ref = sig.parameters.get("ref")
+            if ref is None or ref.default is not None:
+                problems.append(f"{name}.install: 'ref' debe ser keyword-only sin valor")
+        if not _returns_engine_result(fn):
+            problems.append(f"{name}.{verb}: retorno no es EngineResult")
+    return problems

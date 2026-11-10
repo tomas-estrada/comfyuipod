@@ -71,6 +71,27 @@ class EngineRegistry:
             "engines": [self._entries[n].to_public_dict() for n in self.names()],
         }
 
+    def contract_violations(self) -> dict[str, list[str]]:
+        """Violaciones del contrato de 4 verbos por motor (barrido estructural).
+
+        Resuelve cada clase perezosamente y aplica `engine_contract_violations`;
+        un roster sano devuelve un dict vacío.
+        """
+        from comfy_studio.engines.base import engine_contract_violations
+
+        out: dict[str, list[str]] = {}
+        for name in self.names():
+            entry = self._entries[name]
+            try:
+                cls = resolve_engine_class(name)
+            except KeyError as exc:
+                out[name] = [f"{name}: {exc}"]
+                continue
+            problems = engine_contract_violations(cls, name=name, tier=entry.tier)
+            if problems:
+                out[name] = problems
+        return out
+
 
 def build_default_registry() -> EngineRegistry:
     """Roster caliente inicial del estudio (M4-SCR-002).

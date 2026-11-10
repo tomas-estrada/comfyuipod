@@ -183,6 +183,10 @@ def live_stack(tmp_path_factory: pytest.TempPathFactory):
                 "STUDIO_RESUME_JOBS": "0",
                 "STUDIO_SERVER_WORKERS": "1",
                 "MODEL_PROFILE": "studio",
+                # Desde #215, perfil studio exige motores reales por defecto y
+                # el server FALLA al arrancar sin GPU verificada. La simulación
+                # es elección explícita (igual que hace CI en el paso de smoke).
+                "STUDIO_ORCH_REAL_ENGINES": "0",
                 # Modo soportado por producto para entornos sin GPU/pesos: evita
                 # que el sondeo de percepción dispare workers ML de subprocess en
                 # cada arranque (la sonda puede tardar minutos en máquinas sin
