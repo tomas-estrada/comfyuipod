@@ -243,6 +243,7 @@ class SQLiteResearchStore:
                     run_id TEXT PRIMARY KEY,
                     hyp_id TEXT NOT NULL REFERENCES hypotheses(hyp_id),
                     payload TEXT NOT NULL,
+                    payload_sha256 TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE INDEX IF NOT EXISTS experiments_by_hypothesis
@@ -259,6 +260,18 @@ class SQLiteResearchStore:
                     ON adapter_proposals(hyp_id, created_at, proposal_id);
                 """
             )
+            experiment_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(experiments)")
+            }
+            if "payload_sha256" not in experiment_columns:
+                db.execute("ALTER TABLE experiments ADD COLUMN payload_sha256 TEXT")
+                legacy_runs = db.execute("SELECT run_id,payload FROM experiments").fetchall()
+                for run in legacy_runs:
+                    digest = hashlib.sha256(run["payload"].encode("utf-8")).hexdigest()
+                    db.execute(
+                        "UPDATE experiments SET payload_sha256=? WHERE run_id=?",
+                        (digest, run["run_id"]),
+                    )
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
@@ -309,8 +322,14 @@ class SQLiteResearchStore:
                     "una hipótesis negativa termina"
                 )
             db.execute(
-                "INSERT INTO experiments(run_id,hyp_id,payload) VALUES(?,?,?)",
-                (experiment.run_id, experiment.hyp_id, payload),
+                "INSERT INTO experiments(run_id,hyp_id,payload,payload_sha256) "
+                "VALUES(?,?,?,?)",
+                (
+                    experiment.run_id,
+                    experiment.hyp_id,
+                    payload,
+                    hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                ),
             )
             db.commit()
         except sqlite3.IntegrityError as exc:
@@ -337,13 +356,18 @@ class SQLiteResearchStore:
             ]:
                 raise ResearchError("preregistro corrupto: hash no coincide")
             hypothesis = Hypothesis(**json.loads(row["payload"]))
-            runs = [
-                Experiment(**json.loads(run["payload"]))
-                for run in db.execute(
-                    "SELECT payload FROM experiments WHERE hyp_id=? ORDER BY created_at,run_id",
-                    (hyp_id,),
-                )
-            ]
+            stored_runs = db.execute(
+                "SELECT run_id,payload,payload_sha256 FROM experiments "
+                "WHERE hyp_id=? ORDER BY created_at,run_id",
+                (hyp_id,),
+            ).fetchall()
+            runs = []
+            for run in stored_runs:
+                if hashlib.sha256(run["payload"].encode("utf-8")).hexdigest() != run[
+                    "payload_sha256"
+                ]:
+                    raise ResearchError(f"medición corrupta: hash no coincide ({run['run_id']})")
+                runs.append(Experiment(**json.loads(run["payload"])))
         return Registry(hypothesis=hypothesis, runs=runs)
 
     def pareto(self, hyp_id: str) -> list[Experiment]:
@@ -365,7 +389,8 @@ class SQLiteResearchStore:
         try:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT h.payload,h.payload_sha256,e.payload AS run_payload "
+                "SELECT h.payload,h.payload_sha256,e.payload AS run_payload, "
+                "e.payload_sha256 AS run_payload_sha256 "
                 "FROM hypotheses h JOIN experiments e ON e.hyp_id=h.hyp_id "
                 "WHERE h.hyp_id=? AND e.run_id=?",
                 (proposal.hyp_id, proposal.run_id),
@@ -376,6 +401,10 @@ class SQLiteResearchStore:
                 "payload_sha256"
             ]:
                 raise ResearchError("preregistro corrupto: hash no coincide")
+            if hashlib.sha256(row["run_payload"].encode("utf-8")).hexdigest() != row[
+                "run_payload_sha256"
+            ]:
+                raise ResearchError("medición corrupta: hash no coincide")
             hypothesis = Hypothesis(**json.loads(row["payload"]))
             experiment = Experiment(**json.loads(row["run_payload"]))
             if proposal.hyp_id != hypothesis.hyp_id:

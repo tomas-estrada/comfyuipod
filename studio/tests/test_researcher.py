@@ -6,6 +6,7 @@ mocks; hipótesis negativa termina; budget acotado. Puro CPU.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
@@ -294,3 +295,47 @@ def test_adapter_proposal_detects_tampered_persistent_payload(tmp_path) -> None:
         )
     with pytest.raises(ResearchError, match="propuesta corrupta"):
         SQLiteResearchStore(path).get_adapter_proposal("adapter-p1")
+
+
+def test_experiment_store_detects_tampered_measurement_payload(tmp_path) -> None:
+    path = tmp_path / "research.sqlite3"
+    store = SQLiteResearchStore(path)
+    store.register(_hyp())
+    store.record(_exp("run-1", 0.8))
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE experiments SET payload=? WHERE run_id=?", ("{}", "run-1"))
+    with pytest.raises(ResearchError, match="medición corrupta"):
+        SQLiteResearchStore(path).get_registry("h1")
+
+
+def test_sqlite_store_backfills_hashes_for_existing_experiments(tmp_path) -> None:
+    path = tmp_path / "legacy.sqlite3"
+    hyp_payload = {
+        "hyp_id": "h1", "intervention": "x", "metric": "vbench",
+        "higher_is_better": True, "criterion": 0.7, "budget_runs": 3,
+    }
+    run_payload = {
+        "run_id": "old-run", "hyp_id": "h1", "seed": 1,
+        "scores": {"vbench": 0.8}, "constraints_ok": True,
+        "cost": 1.0, "simulated": False,
+    }
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE hypotheses(hyp_id TEXT PRIMARY KEY,payload TEXT NOT NULL,"
+            "payload_sha256 TEXT NOT NULL,registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+            "CREATE TABLE experiments(run_id TEXT PRIMARY KEY,hyp_id TEXT NOT NULL,"
+            "payload TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+        )
+        encoded_hyp = json.dumps(hyp_payload, sort_keys=True, separators=(",", ":"))
+        import hashlib
+
+        db.execute(
+            "INSERT INTO hypotheses(hyp_id,payload,payload_sha256) VALUES(?,?,?)",
+            ("h1", encoded_hyp, hashlib.sha256(encoded_hyp.encode()).hexdigest()),
+        )
+        db.execute(
+            "INSERT INTO experiments(run_id,hyp_id,payload) VALUES(?,?,?)",
+            ("old-run", "h1", json.dumps(run_payload, sort_keys=True, separators=(",", ":"))),
+        )
+    registry = SQLiteResearchStore(path).get_registry("h1")
+    assert [run.run_id for run in registry.runs] == ["old-run"]
