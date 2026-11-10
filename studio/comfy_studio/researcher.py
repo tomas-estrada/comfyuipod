@@ -104,7 +104,7 @@ class Experiment:
     scores: dict[str, float]          # métrica -> valor
     constraints_ok: bool = True        # identidad/factualidad respetadas
     cost: float = 0.0
-    simulated: bool = False            # un simulado NUNCA promueve (A26)
+    simulated: bool = True             # solo un caller explícito puede declarar real (A26)
 
     def validate(self) -> None:
         if not self.run_id.strip() or not self.hyp_id.strip():

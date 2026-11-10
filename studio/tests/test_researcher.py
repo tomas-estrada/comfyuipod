@@ -75,6 +75,11 @@ def test_simulated_runs_never_accepted() -> None:
     assert reg.accepted() == []  # un simulado no se acepta ni promueve
 
 
+def test_experiment_defaults_to_simulated_until_proven_real() -> None:
+    experiment = Experiment(run_id="unknown", hyp_id="h1", seed=1, scores={"vbench": 0.9})
+    assert experiment.simulated is True
+
+
 def test_pareto_front_respects_constraints_as_hard() -> None:
     """A26: Pareto con identidad/factualidad como restriccion, no solo score."""
     exps = [
