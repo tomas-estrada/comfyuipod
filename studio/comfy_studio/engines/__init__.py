@@ -63,12 +63,33 @@ class EngineTier(StrEnum):
 # ---------------------------------------------------------------------------
 
 
+class EngineReason(StrEnum):
+    """Razón tipada de un fallo o limitación de motor.
+
+    Viaja en `EngineResult.reason` para que el agente y el panel no tengan que
+    parsear `error`: la limitación es legible por máquina y el mensaje sigue
+    siendo humano en `error`.
+    """
+
+    NOT_INSTALLED = "not_installed"
+    INTEGRATION_MISSING = "integration_missing"
+    WEIGHTS_MISSING = "weights_missing"
+    HARDWARE_UNAVAILABLE = "hardware_unavailable"
+    DYNAMIC_DISABLED = "dynamic_disabled"
+    BACKEND_MISSING = "backend_missing"
+    SPEC_INVALID = "spec_invalid"
+    TIMEOUT = "timeout"
+    EXECUTION_FAILED = "execution_failed"
+    EXECUTION_PENDING = "execution_pending"
+
+
 @dataclass(slots=True)
 class EngineResult:
     """Resultado tipado de cualquier verbo de motor.
 
     Nunca se lanza excepción por fallo del motor: todo se tipifica aquí, igual
-    que `MlWorkerResponse`. `stderr_tail` llega ya redactado.
+    que `MlWorkerResponse`. `stderr_tail` llega ya redactado. `reason` es la
+    limitación tipada; `error` el mensaje humano (redactado).
     """
 
     ok: bool
@@ -79,6 +100,7 @@ class EngineResult:
     exit_code: int | None = None
     stderr_tail: str | None = None
     simulated: bool = False
+    reason: str | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
         """Forma segura para exponer por el API (sin objetos internos)."""
@@ -91,7 +113,28 @@ class EngineResult:
             "exit_code": self.exit_code,
             "stderr_tail": self.stderr_tail,
             "simulated": self.simulated,
+            "reason": self.reason,
         }
+
+    @classmethod
+    def limitation(
+        cls,
+        *,
+        engine: str,
+        verb: str,
+        reason: EngineReason | str,
+        error: str,
+        payload: dict[str, Any] | None = None,
+    ) -> EngineResult:
+        """Resultado de limitación tipada (nunca un éxito simulado)."""
+        return cls(
+            ok=False,
+            engine=engine,
+            verb=verb,
+            payload=payload or {},
+            error=error,
+            reason=str(reason),
+        )
 
 
 @dataclass(slots=True)
