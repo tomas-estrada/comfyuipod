@@ -4,28 +4,36 @@
 
 use comfyctl::collect::procfs::parse_proc_meminfo;
 use std::fs;
+use std::path::Path;
 
 #[test]
-fn disco_en_ruta_inexistente_es_no_medible_no_cero() {
-    // La medición ausente se DECLARA (`measurable: false`), en disco cuando
-    // `statvfs` falla (Linux) y en RAM cuando `/proc/meminfo` no está.
+fn disco_inexistente_mide_el_primer_ancestro_real_y_la_ram_se_declara() {
+    // La ruta de datos puede no existir todavía (primer arranque): se mide su
+    // primer ancestro existente, que es el filesystem que lo alojará. Lo que no
+    // se puede medir se DECLARA (`measurable: false`), nunca 0 disfrazado.
     let tmp = std::env::temp_dir().join("comfyctl_res_disc_inexistente");
     let _ = fs::remove_dir_all(&tmp);
 
     let (mem, disk) = comfyctl::collect::procfs::collect_memory_and_disk(&tmp);
     fs::remove_dir_all(&tmp).ok();
 
+    // El ancestro existe, así que el disco SÍ es medible (y se dice qué ruta).
     assert!(
-        !mem.measurable,
-        "sin /proc/meminfo la RAM no está medida: no disponible, no 0"
+        disk.measurable,
+        "el ancestro existente sí se mide: {}",
+        disk.path
     );
-    if cfg!(unix) {
-        assert!(
-            !disk.measurable,
-            "statvfs sobre una ruta inexistente falla cerrado: {}",
-            disk.path
-        );
-    }
+    assert!(
+        Path::new(&disk.path).exists(),
+        "la ruta medida existe: {}",
+        disk.path
+    );
+    // La RAM se declara medible solo si `/proc/meminfo` se pudo leer.
+    assert_eq!(
+        mem.measurable,
+        cfg!(unix),
+        "la RAM es medible donde hay /proc/meminfo"
+    );
 }
 
 #[test]
