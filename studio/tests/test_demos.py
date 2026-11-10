@@ -41,6 +41,7 @@ def test_neural_stages_are_pending_gpu_not_done() -> None:
             if s.neural:
                 assert s.status is StageStatus.PENDING_GPU
                 assert s.status is not StageStatus.DONE
+                assert s.pending_reason
 
 
 def test_cpu_stages_are_ready() -> None:
@@ -100,6 +101,14 @@ def test_cpu_demo_runner_writes_hashed_fixture_evidence(tmp_path: Path, demo_id:
     assert manifest["claim_scope"].startswith("fixture consistency")
     assert all(stage["status"] == ("pending_gpu" if stage["neural"] else "done")
                for stage in manifest["stages"])
+    assert all(stage["pending_reason"] for stage in manifest["stages"] if stage["neural"])
+
+
+def test_pending_gpu_stage_requires_explanation() -> None:
+    stage = DemoStage(name="render", level=EvidenceLevel.L2,
+                      status=StageStatus.PENDING_GPU, neural=True)
+    with pytest.raises(DemoError, match="motivo explícito"):
+        stage.validate()
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
