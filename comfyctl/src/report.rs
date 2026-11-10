@@ -3,6 +3,7 @@
 use crate::collect::drift::DriftSummary;
 use crate::collect::phases::STATE_NOT_REQUIRED;
 use crate::collect::StatusApiPayload;
+use crate::collect::{RAM_RESERVE_MB, VRAM_RESERVE_MB};
 use crate::logtail::{resolve_log_path, tail_lines};
 use crate::redact::SecretRedactor;
 use crate::sys;
@@ -178,11 +179,27 @@ pub fn build_report_markdown(
     );
     if let Some(le) = &comfy.last_exit {
         let at_iso = sys::format_utc_iso8601(le.at);
+        let last_line = comfy
+            .last_log_line
+            .as_deref()
+            .or(le.last_log_line.as_deref())
+            .map_or_else(|| "no disponible".to_string(), ToString::to_string);
         let _ = writeln!(
             out,
-            "- **Última caída registrada**: `rc={}` a las `{at_iso}` — {}",
-            le.rc, le.reason
+            "- **Causa de la última salida**: proceso `{}` · `rc={}` a las `{at_iso}` — {} · Última línea útil del log: `{last_line}`",
+            if le.process.is_empty() { "ComfyUI (python3 main.py)" } else { &le.process },
+            le.rc,
+            le.reason
         );
+    }
+    if let Some(st) = &api.startup {
+        let _ = writeln!(
+            out,
+            "- **Arranque**: `onstart.log` = `{}` · `/run/comfyui-supervisor.json`: `{}` — {}",
+            st.onstart, st.supervisor_json, st.cause
+        );
+    } else {
+        let _ = writeln!(out, "- **Arranque**: `no disponible`.");
     }
     let sup_lines = resolve_log_path("supervisor", log_dir)
         .map(|p| tail_lines(&p, 140))
@@ -215,11 +232,54 @@ pub fn build_report_markdown(
         "- **Memoria RAM**: `{}` MB usados / `{}` MB totales (`{}` MB disponibles) · Swap usado: `{}` MB",
         mem.used_mb, mem.total_mb, mem.available_mb, mem.swap_used_mb
     );
+    if disk.measurable {
+        let _ = writeln!(
+            out,
+            "- **Disco (`{}`)**: `{}` GB usados / `{}` GB totales (`{}` GB libres)\n",
+            disk.path, disk.used_gb, disk.total_gb, disk.free_gb
+        );
+    } else {
+        let _ = writeln!(
+            out,
+            "- **Disco (`{}`)**: no disponible (sin medición de `statvfs`: no se puede afirmar que haya espacio ni que falte)\n",
+            disk.path
+        );
+    }
+    // Disponible vs requerido, VRAM y RAM por separado, con las reservas vigentes.
+    let r = &api.resources;
+    let opt_f: fn(Option<f64>) -> String =
+        |v| v.map_or_else(|| "no disponible".to_string(), |x| format!("{x:.1}"));
+    let opt_u: fn(Option<u64>) -> String =
+        |v| v.map_or_else(|| "no disponible".to_string(), |x| x.to_string());
     let _ = writeln!(
         out,
-        "- **Disco (`{}`)**: `{}` GB usados / `{}` GB totales (`{}` GB libres)\n",
-        disk.path, disk.used_gb, disk.total_gb, disk.free_gb
+        "### Disponible vs requerido (VRAM y RAM por separado; reservas vigentes)"
     );
+    let _ = writeln!(
+        out,
+        "- **Espacio en disco**: disponible `{}` GB · requerido (puerta de arranque) `{}` GB",
+        opt_f(r.disk_free_gb),
+        opt_f(r.disk_required_gb)
+    );
+    let _ = writeln!(
+        out,
+        "- **VRAM**: total `{}` MB · usado `{}` MB · usable (total − reserva de `{} MB`) = `{}` MB · requerido por el flujo actual: `{}`",
+        opt_u(r.vram_total_mb),
+        opt_u(r.vram_used_mb),
+        VRAM_RESERVE_MB,
+        opt_u(r.vram_usable_mb),
+        opt_u(r.vram_required_mb)
+    );
+    let _ = writeln!(
+        out,
+        "- **RAM**: total `{}` MB · disponible `{}` MB · usable (disponible − reserva de `{} MB`) = `{}` MB · requerido por el flujo actual: `{}`",
+        opt_u(r.ram_total_mb),
+        opt_u(r.ram_available_mb),
+        RAM_RESERVE_MB,
+        opt_u(r.ram_usable_mb),
+        opt_u(r.ram_required_mb)
+    );
+    let _ = writeln!(out);
 
     // 5. Descargas (Fase 1 y Fase 2)
     let _ = writeln!(out, "## 5. Descargas (Fase 1 y Fase 2)");
@@ -580,12 +640,14 @@ mod tests {
                 used_mb: 512,
                 available_mb: 512,
                 swap_used_mb: 0,
+                measurable: true,
             },
             disk: DiskStatus {
                 path: "/workspace/comfyui-data".to_string(),
                 total_gb: 150.0,
                 used_gb: 30.0,
                 free_gb: 120.0,
+                measurable: true,
             },
             comfyui: ComfyUiStatus {
                 state: "running".to_string(),
@@ -598,6 +660,7 @@ mod tests {
                 healthy_resets: 0,
                 max_restarts: 5,
                 last_exit: None,
+                last_log_line: None,
             },
             phases,
             phase_banner:
@@ -619,6 +682,8 @@ mod tests {
             triage: Vec::new(),
             env_masked: BTreeMap::new(),
             weights: crate::collect::models::WeightStatus::default(),
+            startup: None,
+            resources: crate::collect::ResourceBudget::default(),
             strict: None,
         }
     }

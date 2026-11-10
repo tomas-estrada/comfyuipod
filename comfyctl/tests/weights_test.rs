@@ -1,12 +1,12 @@
-﻿//! Estado de pesos del flujo pedido, leÃ­do de la verdad en disco (no del log de
-//! descarga) y mostrado en `/report.md` y en la pÃ¡gina de estado.
+//! Estado de pesos del flujo pedido, leído de la verdad en disco (no del log de
+//! descarga) y mostrado en `/report.md` y en la página de estado.
 
 use comfyctl::collect::models::{collect_weight_status, WeightStatus};
 use comfyctl::report::build_report_markdown;
 
 #[test]
 fn peso_status_lista_faltantes_y_llegados_desde_disco() {
-    // RaÃ­z de datos real en temp: dos ficheros de Fase 2 del perfil `anime`
+    // Raíz de datos real en temp: dos ficheros de Fase 2 del perfil `anime`
     // presentes (con bytes reales) y el resto ausentes.
     let tmp = std::env::temp_dir().join("comfyctl_weights_test_disco");
     let _ = std::fs::remove_dir_all(&tmp);
@@ -35,13 +35,13 @@ fn peso_status_lista_faltantes_y_llegados_desde_disco() {
     assert_eq!(
         st.present.iter().map(|w| w.bytes).sum::<u64>(),
         2048 + 1024,
-        "los bytes deben salir de los tamaÃ±os reales en disco"
+        "los bytes deben salir de los tamaños reales en disco"
     );
-    // Un fichero presente NO aparece en la lista de faltantes; uno ausente sÃ­.
+    // Un fichero presente NO aparece en la lista de faltantes; uno ausente sí.
     assert!(!st.missing.iter().any(|m| m.contains("4x-AnimeSharp")));
     let missing: Vec<&str> = st.missing.iter().map(String::as_str).collect();
     assert!(missing.iter().any(|m| m.contains("checkpoints/")));
-    // Los faltantes nombran el fichero y la fase, para saber quÃ© esperar.
+    // Los faltantes nombran el fichero y la fase, para saber qué esperar.
     assert!(missing
         .iter()
         .all(|m| m.contains("phase2") || m.contains("phase1")));
@@ -49,7 +49,7 @@ fn peso_status_lista_faltantes_y_llegados_desde_disco() {
 
 #[test]
 fn peso_status_sin_raiz_legible_declara_no_disponible() {
-    // La ruta NO existe: no hay mediciÃ³n, y el diagnÃ³stico no puede fingir datos.
+    // La ruta NO existe: no hay medición, y el diagnóstico no puede fingir datos.
     let tmp = std::env::temp_dir().join("comfyctl_weights_test_sin_raiz");
     let _ = std::fs::remove_dir_all(&tmp);
     let st = collect_weight_status(&tmp, "all");
@@ -58,7 +58,7 @@ fn peso_status_sin_raiz_legible_declara_no_disponible() {
     assert_eq!(st.source, "no disponible");
     assert!(
         st.present.is_empty() && st.missing.is_empty(),
-        "sin mediciÃ³n no hay lista de presente/faltante: 0 datos inventados"
+        "sin medición no hay lista de presente/faltante: 0 datos inventados"
     );
 }
 
@@ -93,7 +93,7 @@ fn report_seccion_11_pesos_nombra_lo_que_falta() {
 
     assert!(
         md.contains("## 11. Pesos del flujo pedido"),
-        "secciÃ³n nueva: {md}"
+        "sección nueva: {md}"
     );
     let section11 = md
         .split("## 11. Pesos del flujo pedido")
@@ -183,12 +183,14 @@ fn example_api_payload(weights: &WeightStatus) -> comfyctl::collect::StatusApiPa
             used_mb: 1024,
             available_mb: 1024,
             swap_used_mb: 0,
+            measurable: true,
         },
         disk: DiskStatus {
             path: "/workspace/comfyui-data".to_string(),
             total_gb: 100.0,
             used_gb: 20.0,
             free_gb: 80.0,
+            measurable: true,
         },
         comfyui: ComfyUiStatus {
             state: "running".to_string(),
@@ -201,6 +203,7 @@ fn example_api_payload(weights: &WeightStatus) -> comfyctl::collect::StatusApiPa
             healthy_resets: 0,
             max_restarts: 5,
             last_exit: None,
+            last_log_line: None,
         },
         phases: {
             use comfyctl::collect::phases::Phase1Info;
@@ -241,8 +244,10 @@ fn example_api_payload(weights: &WeightStatus) -> comfyctl::collect::StatusApiPa
         errors_recent: Vec::new(),
         triage: Vec::new(),
         env_masked: BTreeMap::new(),
-        strict: None,
         weights: weights.clone(),
+        startup: None,
+        resources: comfyctl::collect::ResourceBudget::default(),
+        strict: None,
     }
 }
 

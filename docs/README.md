@@ -28,6 +28,7 @@ Este índice orienta la documentación del repositorio y señala cuál es la fue
 - **Propuestas y backlog:** [`propuestas/`](propuestas/) contiene planes, opciones evaluadas e ideas. Una propuesta no implica que la función esté implementada; comprueba el estado del backlog y el código antes de tratarla como capacidad disponible.
 - **Auditorías:** [`auditorias/README.md`](auditorias/README.md) cataloga revisiones históricas. Las cifras de tests, listas de hallazgos y estados incluidos allí corresponden a la fecha de cada informe y no sustituyen la CI actual.
 - **Migraciones de stack:** [`upgrades/`](upgrades/) documenta cómo ejecutar las migraciones pendientes (CUDA/PyTorch, ComfyUI core). Son procedimientos, no estado: ninguna está aplicada salvo la de Node 22, que ya va en `main`.
+- **Arquitectura (MAAD):** [`architecture/`](architecture/) contiene el inventario, los diagramas PlantUML, las reglas y los informes ATAM y de desfases. **[`architecture/README.md`](architecture/README.md) es de lectura obligatoria antes de tocar un `.puml`**: recoge la regla de renderizar-y-ver, y los errores concretos que hicieron ilegible la primera versión.
 
 ## Guía de contribución y validación
 

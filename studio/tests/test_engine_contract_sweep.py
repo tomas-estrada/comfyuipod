@@ -56,12 +56,43 @@ def test_los_cuatro_verbos_con_firma_compatible() -> None:
     assert list(sig_run.parameters) == ["self", "spec"]
 
 
+def test_barrido_de_contrato_sin_violaciones() -> None:
+    """El roster entero pasa el contrato de 4 verbos (firmas y retornos)."""
+    violations = build_default_registry().contract_violations()
+    assert violations == {}, f"motores que rompen el contrato: {violations}"
+
+
+def test_el_barrido_detecta_motor_roto() -> None:
+    from comfy_studio.engines import EngineTier
+    from comfy_studio.engines.base import engine_contract_violations
+
+    class _Roto:
+        name = "rota"
+        tier = EngineTier.WARM
+
+        def list(self):  # noqa: ANN201
+            return None
+
+        def install(self, submotor, ref=None):  # noqa: ANN201, ANN001
+            return None
+
+        def verify(self, submotor):  # noqa: ANN201
+            return None
+
+        def run(self, spec):  # noqa: ANN201
+            return None
+
+    problems = engine_contract_violations(_Roto, name="rota", tier=EngineTier.WARM)
+    assert any("install" in p and "firma" in p for p in problems)
+    assert any("retorno no es EngineResult" in p for p in problems)
+
+
 def test_resultado_tipiado_siempre_serializable() -> None:
     res = EngineResult(ok=False, engine="x", verb="run", error="falla honesta")
     assert json.loads(json.dumps(res.to_public_dict()))["error"] == "falla honesta"
     assert set(res.to_public_dict()) == {
         "ok", "engine", "verb", "payload", "error",
-        "exit_code", "stderr_tail", "simulated",
+        "exit_code", "stderr_tail", "simulated", "reason",
     }
 
 

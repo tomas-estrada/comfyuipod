@@ -49,6 +49,36 @@ jobs:
         run: |
           shellcheck scripts/start.sh scripts/download-models.sh tools/mac/comfy
 
+      - name: Renderizar los diagramas PlantUML y fallar si no son legibles (MAAD)
+        # Un .puml que "parsea" pero nadie ha visto es inutil: la sintaxis puede
+        # ser valida y el render salir vacio (paso con Graphviz ausente) o con el
+        # texto solapado. Este paso renderiza de verdad y exige que la salida
+        # tenga tamano real, asi que un diagrama ilegible rompe la CI.
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends graphviz >/dev/null
+          curl -fsSL --retry 3 -o /tmp/plantuml.jar \
+            "https://github.com/plantuml/plantuml/releases/download/v1.2024.7/plantuml-1.2024.7.jar"
+          out="$(mktemp -d)"
+          java -DGRAPHVIZ_DOT="$(command -v dot)" -jar /tmp/plantuml.jar \
+            -tsvg -charset UTF-8 -o "$out" \
+            docs/architecture/01-components.puml docs/architecture/02-states.puml
+          for f in "$out"/*.svg; do
+            size="$(wc -c < "$f")"
+            if [ "$size" -lt 20000 ]; then
+              echo "::error::$(basename "$f") renderiza a ${size} bytes (<20000): salida vacia o truncada, no es legible."
+              exit 1
+            fi
+            shapes="$(grep -o '<path\|<rect\|<polygon\|<ellipse\|<line' "$f" | wc -l)"
+            if [ "$shapes" -lt 20 ]; then
+              echo "::error::$(basename "$f") solo dibuja ${shapes} formas: el diagrama esta vacio."
+              exit 1
+            fi
+            echo "[OK] $(basename "$f"): ${size} bytes, ${shapes} formas."
+          done
+          rm -rf "$out"
+
       - name: Validar sondas Python, esquema de triage_patterns.json, paridad O-11 y portal sin CDN (§9.1)
         run: |
           python3 -m py_compile config/probes/*.py scripts/check_models_manifest.py
