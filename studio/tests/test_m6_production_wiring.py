@@ -161,7 +161,7 @@ def test_normal_studio_project_flow_publishes_cpu_video_artifact(
     assert approved.status_code == 200, approved.text
     result = approved.json()
     assert result["phase"] == "done"
-    assert result["status"]["artifact_verified"] is True
+    assert result["status"]["artifact_ready"] is True
     assert len(result["output_asset_ids"]) == 2
 
     gallery = client.get(f"/studio/api/projects/{project_id}/assets?category=outputs")
@@ -227,21 +227,22 @@ def test_agent_cannot_approve_via_mcp(client: TestClient) -> None:
 
 
 def test_real_engines_flag_wires_live_collaborators(
-    monkeypatch, studio_config, stub_comfyui_transport
+    monkeypatch, tmp_path, studio_config, stub_comfyui_transport
 ) -> None:
     """Con STUDIO_ORCH_REAL_ENGINES=1 el servicio se arma con colaboradores reales.
 
     No toca GPU: los motores se instancian pero el test solo comprueba que el
     cableado ocurrió (collaborators no vacío con adaptadores reales).
     """
+    from types import SimpleNamespace
+
     from comfy_studio.app import create_app
     from comfy_studio.orchestration.adapters import (
         EngineAssembler,
         EngineRunnerAdapter,
         SemanticQaEvaluator,
     )
-
-    from types import SimpleNamespace
+    from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
 
     # This is a wiring fixture, not a claim that the CPU CI host has a GPU.
     # Supply verified detected resources explicitly so the live-adapter path is
@@ -260,11 +261,13 @@ def test_real_engines_flag_wires_live_collaborators(
         ),
     )
     monkeypatch.setattr("comfy_studio.app.effective_profile", lambda: profile)
+    monkeypatch.setenv("COMFY_DATA_DIR", str(tmp_path / "comfyui-data"))
     monkeypatch.setenv("STUDIO_ORCH_REAL_ENGINES", "1")
     app = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
     collab = app.state.production_service.collaborators
-    # planner, runner, evaluator y assembler deben ser los adaptadores reales.
-    assert isinstance(collab.runner, EngineRunnerAdapter)
+    # El runner real está envuelto por la exclusión global de GPU.
+    assert isinstance(collab.runner, LeasedEngineRunner)
+    assert isinstance(collab.runner._inner, EngineRunnerAdapter)  # noqa: SLF001
     assert isinstance(collab.evaluator, SemanticQaEvaluator)
     # la QA de contenido (visión) y la técnica viajan juntas
     assert collab.evaluator._vision is not None  # noqa: SLF001
