@@ -1926,6 +1926,10 @@ async def _handle_diarize(
         "speakers": result["speakers"],
         "by_speaker": result["by_speaker"],
         "diarization": result["diarization"],
+        # T3: el estado real/simulado viaja con el exito. Sin esto, una
+        # diarización heurística (simulada hasta que carguen los pesos de
+        # FunASR cam++) era un `diarized` indistinguible de uno real.
+        "simulated": bool(result.get("simulated", False)),
     }
 
 
