@@ -17,10 +17,13 @@ no tiene submotores dinámicos propios de momento) pero cumplen el contrato.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +45,7 @@ _TRANSITIONS = ("cut", "crossfade", "fade", "slide")
 # Backend Remotion (elegido: hardware Blackwell + muchos cores → capaz, no ligero).
 # El proyecto Remotion vive en la imagen; el agente solo pasa props y renderiza.
 _REMOTION_PROJECT_ENV = "STUDIO_REMOTION_PROJECT"  # dir del proyecto Remotion horneado
+_REMOTION_BROWSER_ENV = "STUDIO_REMOTION_BROWSER"  # ejecutable Chromium opcional
 _REMOTION_COMPOSITION = "Reel"  # id de composición en el proyecto
 _REMOTION_DEFAULT_TIMEOUT_S = 1800.0
 
@@ -53,12 +57,42 @@ class Clip:
     path: Path
     duration_s: float = 0.0  # 0 = usar la duración nativa del archivo
     transition_in: str = "cut"
+    transition_duration_s: float = 0.3
 
     def validate(self) -> None:
         if self.transition_in not in _TRANSITIONS:
             raise ValueError(f"transición desconocida: {self.transition_in!r}")
-        if self.duration_s < 0 or self.duration_s > 600:
+        if not math.isfinite(self.duration_s) or self.duration_s < 0 or self.duration_s > 600:
             raise ValueError("duration_s fuera de rango (0..600)")
+        if (
+            not math.isfinite(self.transition_duration_s)
+            or self.transition_duration_s < 0
+            or self.transition_duration_s > 5
+        ):
+            raise ValueError("transition_duration_s fuera de rango (0..5)")
+
+
+@dataclass(slots=True)
+class TextOverlay:
+    """Título o caption temporizado, renderizado localmente por Remotion."""
+
+    text: str
+    start_s: float
+    end_s: float
+    position: str = "bottom"
+
+    def validate(self) -> None:
+        if not self.text.strip() or len(self.text) > 1000:
+            raise ValueError("texto de overlay vacío o demasiado largo")
+        if (
+            not math.isfinite(self.start_s)
+            or not math.isfinite(self.end_s)
+            or self.start_s < 0
+            or self.end_s <= self.start_s
+        ):
+            raise ValueError("rango de overlay inválido")
+        if self.position not in {"top", "center", "bottom"}:
+            raise ValueError("posición de overlay desconocida")
 
 
 @dataclass(slots=True)
@@ -72,6 +106,8 @@ class TimelineSpec:
     fps: int = 30
     audio_path: Path | None = None
     timeout_s: float = 1800.0
+    titles: list[TextOverlay] = field(default_factory=list)
+    captions: list[TextOverlay] = field(default_factory=list)
 
     def validate(self) -> None:
         if not self.clips:
@@ -85,9 +121,22 @@ class TimelineSpec:
                 raise ValueError("width/height fuera de rango (16..8192)")
         for clip in self.clips:
             clip.validate()
+        duration = self.total_duration_s()
+        for overlay in [*self.titles, *self.captions]:
+            overlay.validate()
+            if overlay.end_s > duration + 0.001:
+                raise ValueError("overlay excede la duración de la línea de tiempo")
 
     def total_duration_s(self) -> float:
-        return float(sum(c.duration_s for c in self.clips))
+        duration = sum(c.duration_s for c in self.clips)
+        for index, clip in enumerate(self.clips[1:], start=1):
+            if clip.transition_in in {"crossfade", "slide"}:
+                duration -= min(
+                    clip.transition_duration_s,
+                    clip.duration_s,
+                    self.clips[index - 1].duration_s,
+                )
+        return float(duration)
 
 
 @dataclass(slots=True)
@@ -204,6 +253,7 @@ class EditorEngine(Engine):
                 path=Path(c["path"]),
                 duration_s=float(c.get("duration_s", 0.0)),
                 transition_in=str(c.get("transition_in", "cut")),
+                transition_duration_s=float(c.get("transition_duration_s", 0.3)),
             )
             for c in clips_raw
         ]
@@ -214,6 +264,8 @@ class EditorEngine(Engine):
             height=int(job.get("height", 1920)),
             fps=int(job.get("fps", 30)),
             audio_path=Path(job["audio_path"]) if job.get("audio_path") else None,
+            titles=[TextOverlay(**o) for o in job.get("titles", [])],
+            captions=[TextOverlay(**o) for o in job.get("captions", [])],
         )
 
     def _run_stub(self, timeline: TimelineSpec) -> EditorResult:
@@ -230,8 +282,31 @@ class EditorEngine(Engine):
                     "height": timeline.height,
                     "fps": timeline.fps,
                     "clips": [
-                        {"path": str(c.path), "duration_s": c.duration_s, "t": c.transition_in}
+                        {
+                            "path": str(c.path),
+                            "duration_s": c.duration_s,
+                            "transition_in": c.transition_in,
+                            "transition_duration_s": c.transition_duration_s,
+                        }
                         for c in timeline.clips
+                    ],
+                    "titles": [
+                        {
+                            "text": overlay.text,
+                            "start_s": overlay.start_s,
+                            "end_s": overlay.end_s,
+                            "position": overlay.position,
+                        }
+                        for overlay in timeline.titles
+                    ],
+                    "captions": [
+                        {
+                            "text": overlay.text,
+                            "start_s": overlay.start_s,
+                            "end_s": overlay.end_s,
+                            "position": overlay.position,
+                        }
+                        for overlay in timeline.captions
                     ],
                 },
                 ensure_ascii=False,
@@ -285,37 +360,43 @@ class EditorEngine(Engine):
 
         out = timeline.output_path
         out.parent.mkdir(parents=True, exist_ok=True)
-        props_path = out.with_suffix(out.suffix + ".props.json")
-        props_path.write_text(
-            json.dumps(self._remotion_props(timeline), ensure_ascii=False),
-            encoding="utf-8",
-        )
-
         timeout = spec.timeout_s or timeline.timeout_s or _REMOTION_DEFAULT_TIMEOUT_S
-        cmd = [
-            npx,
-            "remotion",
-            "render",
-            _REMOTION_COMPOSITION,
-            str(out),
-            f"--props={props_path}",
-            f"--width={timeline.width}",
-            f"--height={timeline.height}",
-            f"--fps={timeline.fps}",
-            "--log=error",
-        ]
         start = time.monotonic()
         try:
-            res = run_cancellable(
-                cmd,
-                cancel_event=spec.cancel_event,
-                cwd=project,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-            )
+            with tempfile.TemporaryDirectory(prefix="studio-remotion-") as public_dir:
+                staged = self._stage_remotion_assets(timeline, Path(public_dir))
+                props_path = Path(public_dir) / "props.json"
+                props_path.write_text(
+                    json.dumps(self._remotion_props(timeline, staged), ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                cmd = [
+                    npx,
+                    "remotion",
+                    "render",
+                    _REMOTION_COMPOSITION,
+                    str(out),
+                    f"--props={props_path}",
+                    f"--public-dir={public_dir}",
+                    f"--width={timeline.width}",
+                    f"--height={timeline.height}",
+                    f"--fps={timeline.fps}",
+                    "--timeout=120000",
+                    "--log=error",
+                ]
+                browser = (os.environ.get(_REMOTION_BROWSER_ENV) or "").strip()
+                if browser:
+                    cmd.extend(["--browser-executable", browser])
+                res = run_cancellable(
+                    cmd,
+                    cancel_event=spec.cancel_event,
+                    cwd=project,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout,
+                )
         except ProcessCancelled:
             return EditorResult(
                 exit_code=130,
@@ -336,6 +417,13 @@ class EditorEngine(Engine):
                 output=None,
                 log_tail=redactor.redact(f"no se pudo lanzar remotion: {exc}"),
             )
+        except ValueError as exc:
+            return EditorResult(
+                exit_code=1,
+                output=None,
+                log_tail=redactor.redact(f"medios de Remotion inválidos: {exc}"),
+                duration_s=time.monotonic() - start,
+            )
 
         tail = redactor.redact((res.stderr or res.stdout or "")[-4096:])
         if res.returncode != 0 or not out.exists():
@@ -354,19 +442,58 @@ class EditorEngine(Engine):
         )
 
     @staticmethod
-    def _remotion_props(timeline: TimelineSpec) -> dict:
+    def _stage_remotion_assets(timeline: TimelineSpec, public_dir: Path) -> dict[Path, str]:
+        """Copia medios verificados al public-dir que Remotion sirve al navegador."""
+        paths = [clip.path for clip in timeline.clips]
+        if timeline.audio_path is not None:
+            paths.append(timeline.audio_path)
+        staged: dict[Path, str] = {}
+        for source in paths:
+            resolved = source.resolve(strict=True)
+            if not resolved.is_file():
+                raise ValueError(f"medio de Remotion no es archivo regular: {source}")
+            digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+            name = f"asset-{digest}{resolved.suffix.lower()}"
+            target = public_dir / name
+            if not target.exists():
+                shutil.copy2(resolved, target)
+            staged[source] = name
+        return staged
+
+    @staticmethod
+    def _remotion_props(timeline: TimelineSpec, staged: dict[Path, str] | None = None) -> dict:
         """Input-props que consume la composición Remotion 'Reel'."""
+        resolve = (lambda path: staged[path]) if staged is not None else str
         return {
             "fps": timeline.fps,
             "width": timeline.width,
             "height": timeline.height,
-            "audio": str(timeline.audio_path) if timeline.audio_path else None,
+            "audio": resolve(timeline.audio_path) if timeline.audio_path else None,
             "clips": [
                 {
-                    "src": str(c.path),
+                    "src": resolve(c.path),
                     "durationInSeconds": c.duration_s,
                     "transitionIn": c.transition_in,
+                    "transitionDurationSeconds": c.transition_duration_s,
                 }
                 for c in timeline.clips
+            ],
+            "titles": [
+                {
+                    "text": overlay.text,
+                    "startInSeconds": overlay.start_s,
+                    "endInSeconds": overlay.end_s,
+                    "position": overlay.position,
+                }
+                for overlay in timeline.titles
+            ],
+            "captions": [
+                {
+                    "text": overlay.text,
+                    "startInSeconds": overlay.start_s,
+                    "endInSeconds": overlay.end_s,
+                    "position": overlay.position,
+                }
+                for overlay in timeline.captions
             ],
         }

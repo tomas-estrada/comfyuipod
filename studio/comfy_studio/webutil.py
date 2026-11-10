@@ -276,6 +276,36 @@ class EdlBuildRequest(BaseModel):
         return list(self.aspect_ratios)
 
 
+class ReelClipRequest(BaseModel):
+    asset_id: str = Field(..., min_length=1, max_length=64)
+    duration_s: float | None = Field(default=None, gt=0.0, le=600.0)
+    transition_in: Literal["cut", "crossfade", "fade", "slide"] = "cut"
+    transition_duration_s: float = Field(default=0.3, ge=0.0, le=5.0)
+
+
+class ReelTextOverlayRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+    start_s: float = Field(..., ge=0.0)
+    end_s: float = Field(..., gt=0.0, le=3600.0)
+    position: Literal["top", "center", "bottom"] = "bottom"
+
+    @model_validator(mode="after")
+    def _validate_time_window(self) -> ReelTextOverlayRequest:
+        if self.end_s <= self.start_s:
+            raise ValueError("end_s debe ser mayor que start_s")
+        return self
+
+
+class ReelRenderRequest(BaseModel):
+    clips: list[ReelClipRequest] = Field(..., min_length=1, max_length=100)
+    titles: list[ReelTextOverlayRequest] = Field(default_factory=list, max_length=100)
+    captions: list[ReelTextOverlayRequest] = Field(default_factory=list, max_length=100)
+    audio_asset_id: str | None = Field(default=None, max_length=64)
+    width: int = Field(default=1080, ge=16, le=8192)
+    height: int = Field(default=1920, ge=16, le=8192)
+    fps: int = Field(default=30, ge=1, le=120)
+
+
 class BriefUnderstandRequest(BaseModel):
     """Cuerpo para (re)construir la comprensión multimodal con evidencia (M7)."""
 

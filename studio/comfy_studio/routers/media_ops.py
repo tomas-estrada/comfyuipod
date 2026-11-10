@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -16,6 +17,8 @@ from comfy_studio.config import (
     StudioConfig,
 )
 from comfy_studio.edl import execute_edl_ffmpeg, generate_highlights_edl
+from comfy_studio.engines import EngineRunSpec
+from comfy_studio.engines.editor import EditorEngine
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
 from comfy_studio.subtitles import render_subtitles, subtitle_filename
@@ -24,6 +27,7 @@ from comfy_studio.webutil import (
     EdlBuildRequest,
     EdlCreateRequest,
     EdlHighlightsRequest,
+    ReelRenderRequest,
     TranscribeRequest,
     _publish_transcription_event,
 )
@@ -405,6 +409,164 @@ def register_routes(app: FastAPI) -> None:
             filename="comfyuipod-editable-delivery.zip",
             background=BackgroundTask(lambda: archive.unlink(missing_ok=True)),
         )
+
+    @app.post("/studio/api/projects/{project_id}/reels/render", status_code=201)
+    async def render_project_reel(
+        project_id: str,
+        body: ReelRenderRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Renderiza un reel local con clips, transiciones, títulos y captions."""
+        from comfy_studio.engines.editor import Clip, TextOverlay
+        from comfy_studio.perception.keyframes import probe_media_info
+        from comfy_studio.projects import MediaValidationError
+
+        active_store: ProjectStore = request.app.state.store
+        active_cfg: StudioConfig = request.app.state.config
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+
+        clips: list[Clip] = []
+        source_ids: list[str] = []
+        for index, request_clip in enumerate(body.clips, start=1):
+            asset = active_store.get_asset(project_id, request_clip.asset_id)
+            source = (
+                active_store.get_asset_path(project_id, request_clip.asset_id) if asset else None
+            )
+            if asset is None or source is None or asset.get("kind") != "video":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El medio del clip {index} no es un vídeo disponible del proyecto",
+                )
+            info = probe_media_info(
+                source,
+                timeout_s=active_cfg.studio_ffprobe_timeout_s,
+            )
+            native_duration = float(info.get("duration_sec") or 0.0)
+            if (
+                not info.get("probe_ok")
+                or not info.get("has_video")
+                or native_duration <= 0
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No se pudo verificar la duración del clip {index}",
+                )
+            duration = request_clip.duration_s or native_duration
+            if duration > native_duration + 0.05:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"La duración solicitada para el clip {index} excede su duración fuente",
+                )
+            clips.append(
+                Clip(
+                    path=source,
+                    duration_s=duration,
+                    transition_in=request_clip.transition_in,
+                    transition_duration_s=request_clip.transition_duration_s,
+                )
+            )
+            source_ids.append(request_clip.asset_id)
+
+        audio_path: Path | None = None
+        if body.audio_asset_id:
+            audio_asset = active_store.get_asset(project_id, body.audio_asset_id)
+            audio_path = (
+                active_store.get_asset_path(project_id, body.audio_asset_id)
+                if audio_asset
+                else None
+            )
+            if audio_asset is None or audio_path is None or audio_asset.get("kind") != "audio":
+                raise HTTPException(status_code=400, detail="La pista de audio no está disponible")
+
+        titles = [TextOverlay(**item.model_dump()) for item in body.titles]
+        captions = [TextOverlay(**item.model_dump()) for item in body.captions]
+        with tempfile.TemporaryDirectory(prefix="studio-reel-output-") as output_dir:
+            output_path = Path(output_dir) / "reel.mp4"
+            job = {
+                "clips": [
+                    {
+                        "path": str(clip.path),
+                        "duration_s": clip.duration_s,
+                        "transition_in": clip.transition_in,
+                        "transition_duration_s": clip.transition_duration_s,
+                    }
+                    for clip in clips
+                ],
+                "output_path": str(output_path),
+                "width": body.width,
+                "height": body.height,
+                "fps": body.fps,
+                "audio_path": str(audio_path) if audio_path else None,
+                "titles": [
+                    {"text": item.text, "start_s": item.start_s, "end_s": item.end_s,
+                     "position": item.position}
+                    for item in titles
+                ],
+                "captions": [
+                    {"text": item.text, "start_s": item.start_s, "end_s": item.end_s,
+                     "position": item.position}
+                    for item in captions
+                ],
+            }
+            result = await run_in_threadpool(
+                EditorEngine(backend="remotion").run,
+                EngineRunSpec(job=job, timeout_s=active_cfg.studio_ffmpeg_timeout_s),
+            )
+            rendered_path = Path(str(result.payload.get("output") or ""))
+            if not result.ok or result.simulated or not rendered_path.is_file():
+                raise HTTPException(
+                    status_code=503,
+                    detail="Falló el render Remotion; no se publicó una salida simulada",
+                )
+            output_info = probe_media_info(
+                rendered_path,
+                timeout_s=active_cfg.studio_ffprobe_timeout_s,
+            )
+            if (
+                not output_info.get("probe_ok")
+                or not output_info.get("has_video")
+                or int(output_info.get("width") or 0) != body.width
+                or int(output_info.get("height") or 0) != body.height
+                or float(output_info.get("duration_sec") or 0.0) <= 0
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail="La salida Remotion no pasó la verificación de vídeo",
+                )
+            if rendered_path.stat().st_size > active_cfg.max_upload_bytes:
+                raise HTTPException(status_code=413, detail="El reel renderizado supera el límite")
+            try:
+                output_asset = active_store.save_upload(
+                    project_id,
+                    filename="reel.mp4",
+                    content_type="video/mp4",
+                    data=rendered_path.read_bytes(),
+                    max_upload_bytes=active_cfg.max_upload_bytes,
+                    category="outputs",
+                    metadata={
+                        "engine": "remotion",
+                        "simulated": result.simulated,
+                        "source_asset_ids": source_ids,
+                        "audio_asset_id": body.audio_asset_id,
+                        "titles": [item.text for item in titles],
+                        "captions": [item.text for item in captions],
+                        "transitions": [clip.transition_in for clip in clips],
+                        "width": body.width,
+                        "height": body.height,
+                        "fps": body.fps,
+                    },
+                )
+            except (LookupError, MediaValidationError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "status": "rendered",
+            "project_id": project_id,
+            "output_asset": output_asset,
+            "engine": "remotion",
+            "simulated": result.simulated,
+        }
+
     @app.get("/studio/api/progress")
     async def sse_progress(
         request: Request,

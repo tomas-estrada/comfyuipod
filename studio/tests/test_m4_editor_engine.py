@@ -50,7 +50,7 @@ def test_stub_run_writes_mp4_and_sidecar(tmp_path: Path, monkeypatch: pytest.Mon
     assert out.read_bytes()[:4] == b"\x00\x00\x00\x18"  # ftyp box
     assert out.with_suffix(".mp4.timeline.json").exists()
     assert res.payload["clips"] == 3
-    assert res.payload["total_timeline_s"] == 9.0
+    assert res.payload["total_timeline_s"] == pytest.approx(8.4)
 
 
 def test_remotion_backend_fails_typed_without_project(
@@ -108,3 +108,21 @@ def test_timeline_total_duration() -> None:
     tl.validate()
     assert tl.total_duration_s() == 8.0
     assert tl.width == 1080 and tl.height == 1920  # vertical por defecto
+
+
+def test_timeline_subtracts_crossfade_overlap() -> None:
+    from comfy_studio.engines.editor import Clip
+
+    tl = TimelineSpec(
+        clips=[
+            Clip(path=Path("a.mp4"), duration_s=3.0),
+            Clip(
+                path=Path("b.mp4"),
+                duration_s=2.0,
+                transition_in="crossfade",
+                transition_duration_s=0.5,
+            ),
+        ],
+        output_path=Path("out.mp4"),
+    )
+    assert tl.total_duration_s() == 4.5
