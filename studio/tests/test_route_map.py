@@ -107,6 +107,7 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/edl",
     "POST /studio/api/projects/{project_id}/edl/build",
     "POST /studio/api/projects/{project_id}/edl/highlights",
+    "POST /studio/api/projects/{project_id}/edl/{version}/editable-package",
     "POST /studio/api/projects/{project_id}/edl/{version}/render",
     "POST /studio/api/projects/{project_id}/faces/index",
     "POST /studio/api/projects/{project_id}/identities",
