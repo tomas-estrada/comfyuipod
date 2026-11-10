@@ -151,14 +151,28 @@ fn diag_emite_el_contrato_con_probes_apuntados_y_redacta() {
         "gpu con binario inexistente: {texto}"
     );
 
-    // 5. Secciones siempre presentes (su valor si puede variar, su nivel no).
-    for prefijo in [
-        "[DIAG][OK] disk: total=",
-        "[DIAG][OK] ram: total=",
-        "[DIAG][OK] cpu: nproc=",
-        "[DIAG][OK] env: MODEL_PROFILE=",
-    ] {
+    // 5. Secciones siempre presentes. El nivel de disco/RAM depende ahora de si la
+    //    sonda pudo medir (measurable), que varía según el SO: se exige la sección y
+    //    que el nivel sea coherente con ese flag, no un nivel fijo.
+    for prefijo in ["[DIAG][OK] cpu: nproc=", "[DIAG][OK] env: MODEL_PROFILE="] {
         assert!(texto.contains(prefijo), "falta {prefijo:?} en: {texto}");
+    }
+    for clave in ["disk", "ram"] {
+        let linea = texto
+            .lines()
+            .find(|ln| ln.starts_with("[DIAG][") && ln.contains(&format!("] {clave}: ")));
+        assert!(linea.is_some(), "falta la sección {clave} en: {texto}");
+        let Some(linea) = linea else {
+            continue;
+        };
+        let nivel = linea
+            .strip_prefix("[DIAG][")
+            .and_then(|r| r.split(']').next())
+            .unwrap_or_default();
+        assert!(
+            nivel == "OK" || nivel == "FAIL",
+            "nivel fuera de contrato en {clave}: {linea}"
+        );
     }
 
     // 6. El secreto de configuracion jamas aparece en la salida de diag.
@@ -166,4 +180,84 @@ fn diag_emite_el_contrato_con_probes_apuntados_y_redacta() {
         !texto.contains(secreto),
         "fuga del secreto en la salida de diag: {texto}"
     );
+}
+
+// Una sonda que no midió nada no puede anunciarse como OK. `collect_memory_and_disk`
+// marca `measurable: false` cuando `/proc/meminfo` es ilegible o `statvfs` falla, y
+// antes `diag` emitía `[DIAG][OK]` sobre ceros: un diagnóstico que afirmaba un estado
+// no medido y que contradecía a S5.
+#[test]
+fn diag_marca_fail_cuando_la_sonda_no_midio_nada() {
+    use comfyctl::collect::procfs::{DiskStatus, MemoryStatus};
+    use comfyctl::diag::resource_diag_levels;
+
+    let mem_cero = MemoryStatus {
+        total_mb: 0,
+        used_mb: 0,
+        available_mb: 0,
+        swap_used_mb: 0,
+        measurable: false,
+    };
+    let disk_cero = DiskStatus {
+        path: "/".to_string(),
+        total_gb: 0.0,
+        used_gb: 0.0,
+        free_gb: 0.0,
+        measurable: false,
+    };
+
+    let (disk_level, ram_level) = resource_diag_levels(&mem_cero, &disk_cero);
+    assert_eq!(disk_level, "FAIL", "disco sin datos no puede ser OK");
+    assert_eq!(ram_level, "FAIL", "RAM sin datos no puede ser OK");
+
+    let (disk_level, ram_level) = resource_diag_levels(
+        &MemoryStatus {
+            total_mb: 65536,
+            used_mb: 32768,
+            available_mb: 32768,
+            swap_used_mb: 0,
+            measurable: true,
+        },
+        &disk_cero,
+    );
+    assert_eq!(disk_level, "FAIL");
+    assert_eq!(ram_level, "OK");
+
+    let (disk_level, ram_level) = resource_diag_levels(
+        &mem_cero,
+        &DiskStatus {
+            path: "/workspace".to_string(),
+            total_gb: 500.0,
+            used_gb: 250.0,
+            free_gb: 250.0,
+            measurable: true,
+        },
+    );
+    assert_eq!(disk_level, "OK");
+    assert_eq!(ram_level, "FAIL");
+}
+
+#[test]
+fn diag_marca_ok_cuando_las_sondas_devolvieron_datos() {
+    use comfyctl::collect::procfs::{DiskStatus, MemoryStatus};
+    use comfyctl::diag::resource_diag_levels;
+
+    let (disk_level, ram_level) = resource_diag_levels(
+        &MemoryStatus {
+            total_mb: 65536,
+            used_mb: 32768,
+            available_mb: 32768,
+            swap_used_mb: 0,
+            measurable: true,
+        },
+        &DiskStatus {
+            path: "/workspace".to_string(),
+            total_gb: 500.0,
+            used_gb: 250.0,
+            free_gb: 250.0,
+            measurable: true,
+        },
+    );
+    assert_eq!(disk_level, "OK");
+    assert_eq!(ram_level, "OK");
 }
