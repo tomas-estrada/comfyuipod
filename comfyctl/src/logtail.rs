@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 pub const MAX_TAIL_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Lista blanca estricta de nombres de log permitidos en `/logs/<name>` (§5.4 / O-04).
-pub const LOG_WHITELIST_NAMES: [&str; 10] = [
+pub const LOG_WHITELIST_NAMES: [&str; 11] = [
     "comfyui",
     "start",
     "download",
@@ -23,6 +23,7 @@ pub const LOG_WHITELIST_NAMES: [&str; 10] = [
     "container",
     "ttyd",
     "studio",
+    "onstart",
 ];
 
 /// Resuelve un nombre de log de la lista blanca a su ruta bajo `log_dir` (por defecto `/var/log`).
@@ -37,9 +38,25 @@ pub fn resolve_log_path(name: &str, log_dir: &Path) -> Option<PathBuf> {
         "diag" => "diag.txt",
         "ttyd" => "ttyd.log",
         "studio" => "studio-server.log",
+        "onstart" => "onstart.log",
         _ => return None,
     };
     Some(log_dir.join(rel))
+}
+
+/// Última línea útil de un log (no vacía y no sólo espacios), recortada a
+/// `max_chars`; `None` cuando el log no existe o no se pudo leer: «no disponible».
+pub fn last_useful_line(path: &Path, max_chars: usize) -> Option<String> {
+    if !path.is_file() {
+        return None;
+    }
+    let lines = tail_lines(path, 50);
+    lines
+        .iter()
+        .rev()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty())
+        .map(|l| l.chars().take(max_chars).collect())
 }
 
 /// Lee las últimas `n` líneas de un fichero buscando hacia atrás en bloques de 8 KiB (O(n), O-04).

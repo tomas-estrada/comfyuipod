@@ -72,6 +72,10 @@ pub struct ComfyUiStatus {
     pub healthy_resets: u32,
     pub max_restarts: u32,
     pub last_exit: Option<LastExitInfo>,
+    /// Última línea útil del log del proceso (ya redactada upstream en el
+    /// render). `None` = «no disponible» (sin log o ilegible).
+    #[serde(default)]
+    pub last_log_line: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -367,6 +371,7 @@ pub fn collect_comfyui_status(cfg: &RuntimeConfig) -> ComfyUiStatus {
         healthy_resets: sup.healthy_resets,
         max_restarts: sup.max,
         last_exit: sup.last_exit,
+        last_log_line: None,
     }
 }
 
