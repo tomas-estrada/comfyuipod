@@ -3442,7 +3442,7 @@ async def _handle_request_capability(
     job_id = (args.job_id or "").strip() or None
     _require_active_project_job(context.store, context.project_id, job_id)
 
-    if resolution.state == "assets_missing" and args.acquire:
+    if resolution.missing and args.acquire:
         report, should_cancel = await _run_acquisition(
             context,
             resolution.missing,
