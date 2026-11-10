@@ -191,6 +191,26 @@ def clean_demo_output(demo_id: str, output_root: Path) -> bool:
     return False
 
 
+def _prepare_demo_output(demo_id: str, output_root: Path) -> tuple[Path, Path]:
+    """Create a contained output directory and reject symlinked run files."""
+    root = output_root.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    out_dir = root / demo_id
+    if out_dir.is_symlink():
+        raise DemoError("refusing to write into a demo output symlink")
+    out_dir.mkdir(exist_ok=True)
+    if not out_dir.is_dir() or out_dir.resolve().parent != root:
+        raise DemoError("demo output directory escapes output root")
+
+    manifest = out_dir / "run_manifest.json"
+    generated = [manifest, out_dir / "editable_project.json"]
+    if demo_id == "D05":
+        generated.append(out_dir / "D05_cpu_fixture_4k.mp4")
+    if any(path.is_symlink() for path in generated):
+        raise DemoError("refusing to overwrite a demo output symlink")
+    return out_dir, manifest
+
+
 def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
     """Run small, explicit fixture integrity checks; these do not validate ML."""
     if demo_id == "D01":
@@ -287,9 +307,7 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
         raise DemoError(f"demo desconocida: {demo_id}; disponibles: {', '.join(demos)}")
     demo = demos[demo_id]
     fixture, fixture_data = _load_fixture(demo)
-    out_dir = output_root.expanduser().resolve() / demo_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = out_dir / "run_manifest.json"
+    out_dir, manifest_path = _prepare_demo_output(demo_id, output_root)
     input_hash = _sha256(fixture)
     if resume and manifest_path.is_file():
         def artifact_is_valid(item: dict[str, Any]) -> bool:
