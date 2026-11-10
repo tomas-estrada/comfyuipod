@@ -412,7 +412,7 @@ jobs:
           # stubs deterministas de LLM, ComfyUI y Blender para que ningún test dependa de
           # binarios externos (blender) ni de red (LLM/ComfyUI) en CI.
           STUDIO_STUB_LLM: "1"
-          STUDIO_STUB_COMFY: "1"
+          STUDIO_STUB_COMFYUI: "1"
           STUDIO_ORCH_REAL_ENGINES: "0"
           STUDIO_STUB_BLENDER: "1"
         run: |
@@ -446,7 +446,7 @@ jobs:
         # visible (health lo reporta como edge_auth=open).
         env:
           STUDIO_STUB_LLM: "1"
-          STUDIO_STUB_COMFY: "1"
+          STUDIO_STUB_COMFYUI: "1"
           STUDIO_ORCH_REAL_ENGINES: "0"
           STUDIO_STUB_BLENDER: "1"
           STUDIO_DATA_DIR: /tmp/studio-smoke-data

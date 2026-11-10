@@ -5,7 +5,7 @@
   "description": "Baked Remotion project for the studio editor engine. Composition 'Reel' consumes timeline input-props built by EditorEngine._remotion_props.",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=20 <23"
+    "node": ">=22 <23"
   },
   "scripts": {
     "render": "remotion render Reel"

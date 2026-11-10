@@ -259,7 +259,7 @@ def test_studio_profile_defaults_to_real_backend_through_production_api(
     monkeypatch.setenv("MODEL_PROFILE", "studio")
     monkeypatch.delenv("STUDIO_ORCH_REAL_ENGINES", raising=False)
     monkeypatch.setenv("STUDIO_STUB_LLM", "1")
-    monkeypatch.setenv("STUDIO_STUB_COMFY", "1")
+    monkeypatch.setenv("STUDIO_STUB_COMFYUI", "1")
     monkeypatch.setattr(
         "comfy_studio.app.effective_profile", _verified_hardware_profile
     )

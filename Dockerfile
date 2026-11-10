@@ -234,7 +234,9 @@ RUN mkdir -p /etc/comfyui/models_configs \
     fi \
     && ln -sfn /opt/ComfyUI /workspace/ComfyUI
 
-# 5b. Motor editor (M5): Node 20 LTS + proyecto Remotion horneado.
+# 5b. Motor editor (M5): Node 22 LTS + proyecto Remotion horneado.
+#     Node 20 llegó a EOL en abril de 2026; el runner de CI ya usaba 22 para los
+#     tests del panel, así que la imagen y la CI quedan alineadas.
 #     El binario `npx` queda en PATH y el proyecto (composición 'Reel') se instala
 #     en /opt/remotion con sus deps FIJADAS (package.json). El Chrome Headless Shell
 #     de Remotion se baja al build con `browser ensure` para que el primer render no
@@ -243,7 +245,7 @@ RUN mkdir -p /etc/comfyui/models_configs \
 ENV STUDIO_REMOTION_PROJECT=/opt/remotion \
     REMOTION_BROWSER_EXECUTABLE="" \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && node --version && npm --version \
     && rm -rf /var/lib/apt/lists/*
