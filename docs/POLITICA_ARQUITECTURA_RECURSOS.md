@@ -129,7 +129,7 @@ Se expone en:
 - `GET /studio/api/status` → `model_assets`;
 - `assert_production_prepared(registry, required)` para fail-closed en tests.
 
-Ejemplo real de por qué hacia falta: con el roster antiguo, los 16 motores
+Ejemplo real de por qué hacia falta: con el roster antiguo, los 21 motores
 informaban `ready`; con la taxonomía, en un pod sin pesos se ve qué motores
 están instalados, cuáles piden pesos y cuáles no tienen binario.
 
