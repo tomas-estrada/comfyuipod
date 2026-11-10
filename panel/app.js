@@ -492,6 +492,7 @@
                 llmBadge.className = "status-pill status-accent";
             }
             renderEnginePreparation(health.engines, engineBadge, engineCard);
+            refreshDownloadProgress();
             updateAuthBadge(
                 state.auth.password ? `Basic-Auth (${state.auth.username})` : "Sesión Loopback / Edge OK",
                 "status-ok"
@@ -567,6 +568,37 @@
             <p><strong>Preparación real de motores:</strong> alcanzable no significa listo; los pesos ausentes y los modos simulados se muestran explícitamente.</p>
             ${rows.join("")}
         `;
+    }
+
+    async function refreshDownloadProgress() {
+        const badge = document.getElementById("health-download-badge");
+        if (!badge) return;
+        try {
+            const resp = await fetch("/status/api", { cache: "no-store" });
+            if (!resp.ok) {
+                badge.textContent = "Descargas: sin estado";
+                badge.className = "status-pill status-neutral";
+                return;
+            }
+            const data = await resp.json();
+            const phases = (data && data.phases) || null;
+            if (!phases) {
+                badge.textContent = "Descargas: —";
+                badge.className = "status-pill status-neutral";
+                return;
+            }
+            const p1 = phases.phase1 || {};
+            const p2 = phases.phase2 || {};
+            const p1Text = `${Number(p1.done || 0)}/${Number(p1.total || 0)}`;
+            const p2Text = `${Number(p2.done || 0)}/${Number(p2.total || 0)}`;
+            const current = p2.current_file ? ` · ${String(p2.current_file).split("/").pop()}` : "";
+            badge.textContent = `Descargas: F1 ${p1Text} · F2 ${p2Text}${current}`;
+            const allDone = (p1.state === "done" || p1.state === "skipped") && (p2.state === "done" || p2.state === "skipped");
+            badge.className = `status-pill ${allDone ? "status-ok" : "status-warn"}`;
+        } catch (_err) {
+            badge.textContent = "Descargas: sin conexión";
+            badge.className = "status-pill status-err";
+        }
     }
 
     /* --- PROJECTS & ASSETS --- */
