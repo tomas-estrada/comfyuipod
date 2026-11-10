@@ -240,3 +240,115 @@ def test_graph_halts_on_max_steps():
 
 def test_langgraph_available_is_boolean():
     assert isinstance(langgraph_available(), bool)
+
+
+
+# --------------------------------------------------------------------------
+# El planner es un LLM: sus params no pueden falsificar la identidad del job
+# --------------------------------------------------------------------------
+
+
+class _CapturingRunner:
+    """EngineRunner que solo registra el job que recibió."""
+
+    def __init__(self) -> None:
+        self.jobs: list[dict] = []
+
+    def run_layer(
+        self,
+        engine: str,
+        job: dict,
+        *,
+        cost_cap: float | None = None,
+        cancel_event=None,
+    ) -> dict:
+        self.jobs.append(dict(job))
+        return {"ok": True, "engine": engine, "output_path": "/tmp/out.bin"}
+
+
+def _state_with_params(params: dict, *, project_id: str = "proj-real") -> ProductionState:
+    """Producción con un shot cuya capa lleva `params` (el planner es un LLM)."""
+    state = ProductionState(idea="prueba")
+    shot = Shot(id="shot-real", description="d", duration_s=1.0)
+    shot.status = ShotStatus.PLANNED
+    shot.layers = [
+        Layer(
+            kind="gen",
+            engine="comfyui",
+            template_id="tpl-real",
+            params=dict(params),
+        )
+    ]
+    state.sequences = [Sequence(title="s", shots=[shot])]
+    state.metadata["project_id"] = project_id
+    return state
+
+
+def test_planner_params_cannot_forge_orchestration_owned_job_keys():
+    """Un params del planner con kind/shot/job_id/... falsificados no debe
+    sobreescribir la identidad que la orquestación pone en el job."""
+    from comfy_studio.orchestration.executor import execute_next_shot
+
+    runner = _CapturingRunner()
+    state = _state_with_params(
+        {
+            "prompt": "un gato",          # legítimo: debe pasar
+            "seed": 7,                    # legítimo: debe pasar
+            "kind": "forged-kind",        # reservado: debe ignorarse
+            "shot": "forged-shot",        # reservado: debe ignorarse
+            "job_id": "forged-job",       # reservado: debe ignorarse
+            "idempotency_key": "forged-idem",
+            "project_id": "forged-proj",  # reservado: debe ignorarse
+            "template_id": "forged-tpl",  # reservado: debe ignorarse
+        }
+    )
+
+    execute_next_shot(state, runner=runner)
+
+    assert runner.jobs, "no se ejecutó ninguna capa"
+    job = runner.jobs[0]
+    # Identidad real de la orquestación.
+    assert job["kind"] == "gen"
+    assert job["shot"] == "shot-real"
+    assert job["project_id"] == "proj-real"
+    assert job["template_id"] == "tpl-real"
+    # Ningún valor falsificado sobrevivió.
+    for key in ("kind", "shot", "job_id", "idempotency_key", "project_id", "template_id"):
+        assert "forged" not in str(job.get(key)), f"{key} falsificada: {job.get(key)!r}"
+    # Los params legítimos sí pasaron.
+    assert job["prompt"] == "un gato"
+    assert job["seed"] == 7
+
+
+def test_planner_params_pass_through_unchanged_when_not_reserved():
+    """El filtro solo descarta las claves reservadas; lo demás pasa intacto."""
+    from comfy_studio.orchestration.executor import _RESERVED_JOB_KEYS, execute_next_shot
+
+    legit = {
+        "prompt": "un perro",
+        "seed": 42,
+        "steps": 30,
+        "output_path": "out/video.mp4",
+        "negative_prompt": "borroso",
+        "cfg": 7.5,
+    }
+    runner = _CapturingRunner()
+    state = _state_with_params(legit)
+
+    execute_next_shot(state, runner=runner)
+
+    job = runner.jobs[0]
+    for key, value in legit.items():
+        assert job[key] == value, f"{key} alterado: {job[key]!r} != {value!r}"
+    # Las reservadas siguen siendo las de la orquestación.
+    assert job["kind"] == "gen"
+    assert job["shot"] == "shot-real"
+    assert "forged" not in str(job["job_id"])
+    assert set(_RESERVED_JOB_KEYS) == {
+        "kind",
+        "shot",
+        "job_id",
+        "idempotency_key",
+        "project_id",
+        "template_id",
+    }
