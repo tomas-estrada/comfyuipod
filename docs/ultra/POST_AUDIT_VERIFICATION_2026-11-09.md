@@ -445,20 +445,48 @@ preexistentes y de entorno, no regresiones.
 
 ### ✅ APTO PARA PRODUCCIÓN
 
-con una condición: **mergear solo cuando la CI de la PR #255 esté en verde**, incluido el job
-de Rust (los edits de `comfyctl` no se compilaron en este host).
+Mergeado en `main` (`9609e5a`) y con la CI completa en verde sobre el HEAD final
+(ejecución `42707644366`: los tres jobs, incluido el build de imagen y toda la
+suite de smoke). La imagen quedó publicada en
+`ghcr.io/tomas-estrada/comfyuipod:latest` (ejecución `42715693828`).
 
-**Qué queda pendiente, en orden de valor:**
+**Los contratos núcleo del proyecto quedan intactos**: separación `/opt` vs
+`/workspace`, Basic Auth en el borde, seguridad del arranque estricto y
+compatibilidad con el perfil de hardware documentado.
 
-1. **Verde en CI** → merge de #255.
-2. **CSP con nonce/hash** para `/home` y `/status` (externalizar el script inline del portal).
-3. **`approve_plan` asíncrono** (202 + job-id) para no retener la petición HTTP — requiere
-   decisión de producto por el cambio de contrato.
-4. **Endurecimientos de `comfyctl`** — **ya aplicados** en el commit `d491f65`
-   (supervisor readiness, `keep_bytes`, etiqueta de perfil).
-5. **Ramas de upgrade** ya creadas: `upgrade/cuda-13-torch-2.15`, `upgrade/comfyui-v0.25`,
-   `upgrade/nodejs-22`.
+### Hecho después del merge (sobre `main`)
 
-**Los contratos núcleo del proyecto quedan intactos**: separación `/opt` vs `/workspace`,
-Basic Auth en el borde, seguridad del arranque estricto y compatibilidad con el perfil de
-hardware documentado (RTX PRO 6000 Blackwell, 96 GB VRAM, 128/256 GB RAM).
+| Commit | Qué |
+|---|---|
+| `1d00bec` | **CSP sin `'unsafe-inline'`**: `/home` y `/status` usan el hash sha256 de sus bloques inline. `'unsafe-inline'` eliminado de todas las CSP. Guardado por tres vías: `scripts/update_csp_hashes.py --check` en CI, dos tests nuevos, y el propio script. |
+| `2311def` | **Corregida una afirmación falsa**: dos comentarios decían que `run_in_threadpool` evitaba el 504 de Nginx. No es así; lo que lo evita es `proxy_read_timeout 3600s`. Documentado el límite real (1 h) y por qué **no** se convirtió `approve` en 202 + job-id. |
+| `64a25a2` | **Node 22 LTS** en la imagen (Node 20 estaba en EOL desde abril de 2026) y **corregido un flag de CI que no hacía nada**: el workflow ponía `STUDIO_STUB_COMFY`, que ningún código lee; el real es `STUDIO_STUB_COMFYUI`. |
+
+### Pendiente, con procedimiento escrito
+
+| Migración | Documento | Riesgo | Por qué no está aplicada |
+|---|---|---|---|
+| CUDA 13.0 + PyTorch 2.15 | [`upgrades/CUDA13_PYTORCH_2.15.md`](../upgrades/CUDA13_PYTORCH_2.15.md) | ALTO | Requiere Docker + GPU. Un fallo solo se manifiesta con `sm_120` presente. |
+| ComfyUI core v0.25.x | [`upgrades/COMFYUI_V0.25.md`](../upgrades/COMFYUI_V0.25.md) | MEDIO-ALTO | Requiere build + warm-up + smoke E2E con GPU. |
+
+Ambos documentos enumeran la **superficie completa de pines** (9 puntos para
+PyTorch, repartidos entre `constraints.txt`, el `Dockerfile`, los cuatro
+ficheros de constraints de custom nodes, `triage_patterns.json` y el snapshot de
+tests), el procedimiento de validación y el rollback. Las ramas
+`upgrade/cuda-13-torch-2.15` y `upgrade/comfyui-v0.25` siguen vacías a propósito:
+son el lugar donde aplicar el procedimiento, no un trabajo a medias.
+
+**Node 22 sí está hecho**: la rama `upgrade/nodejs-22` quedó obsoleta porque el
+cambio entró directamente en `main`.
+
+### Decisión de producto pendiente
+
+`POST /studio/api/productions/{id}/approve` es sincrónico a propósito: dos tests
+E2E se apoyan en ese contrato para verificar la canalización entera, incluido
+que el MP4 final existe y es válido. Convertirlo en 202 + job-id liberaría la
+conexión HTTP, pero rompería esa garantía. El análisis completo está en la nota
+de gobernanza de `studio/comfy_studio/routers/productions.py`.
+
+---
+
+*Informe de la pasada de verificación original: §1-§8 de este documento.*

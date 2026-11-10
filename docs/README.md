@@ -27,6 +27,7 @@ Este índice orienta la documentación del repositorio y señala cuál es la fue
 - **API de estado y supervisor:** la arquitectura, el README y `docs/decisiones.md` acompañan a los contratos JSON de [`contratos/`](contratos/) y a la implementación Rust de `comfyctl/`.
 - **Propuestas y backlog:** [`propuestas/`](propuestas/) contiene planes, opciones evaluadas e ideas. Una propuesta no implica que la función esté implementada; comprueba el estado del backlog y el código antes de tratarla como capacidad disponible.
 - **Auditorías:** [`auditorias/README.md`](auditorias/README.md) cataloga revisiones históricas. Las cifras de tests, listas de hallazgos y estados incluidos allí corresponden a la fecha de cada informe y no sustituyen la CI actual.
+- **Migraciones de stack:** [`upgrades/`](upgrades/) documenta cómo ejecutar las migraciones pendientes (CUDA/PyTorch, ComfyUI core). Son procedimientos, no estado: ninguna está aplicada salvo la de Node 22, que ya va en `main`.
 
 ## Guía de contribución y validación
 
