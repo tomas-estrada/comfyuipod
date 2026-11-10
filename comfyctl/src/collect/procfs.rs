@@ -50,6 +50,9 @@ pub struct MemoryStatus {
     pub used_mb: u64,
     pub available_mb: u64,
     pub swap_used_mb: u64,
+    /// `/proc/meminfo` se pudo leer; `false` = sin medición (0s, no «cero real»).
+    #[serde(default = "default_measurable")]
+    pub measurable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +61,13 @@ pub struct DiskStatus {
     pub total_gb: f64,
     pub used_gb: f64,
     pub free_gb: f64,
+    /// `statvfs` respondió; `false` = sin medición (0s, no «sin espacio»).
+    #[serde(default = "default_measurable")]
+    pub measurable: bool,
+}
+
+fn default_measurable() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +197,7 @@ pub fn parse_proc_meminfo(txt: &str) -> MemoryStatus {
         used_mb,
         available_mb,
         swap_used_mb,
+        measurable: true,
     }
 }
 
@@ -197,6 +208,7 @@ pub fn collect_memory_and_disk(comfy_data_dir: &Path) -> (MemoryStatus, DiskStat
             used_mb: 0,
             available_mb: 0,
             swap_used_mb: 0,
+            measurable: false,
         },
         |txt| parse_proc_meminfo(&txt),
     );
@@ -205,12 +217,17 @@ pub fn collect_memory_and_disk(comfy_data_dir: &Path) -> (MemoryStatus, DiskStat
     // primer ancestro existente, que es el filesystem que lo alojará.
     let target_dir = sys::first_existing_ancestor(comfy_data_dir);
 
-    let (total_gb, used_gb, free_gb) = sys::disk_stats_gb(&target_dir).unwrap_or((0.0, 0.0, 0.0));
+    // Sin medición (`statvfs` falló) se declaran 0s pero `measurable: false`:
+    // el consumer debe decir "no disponible", nunca "0 GB libres" (= sin espacio).
+    let stat = sys::disk_stats_gb(&target_dir);
+    let measurable = stat.is_ok();
+    let (total_gb, used_gb, free_gb) = stat.unwrap_or((0.0, 0.0, 0.0));
     let disk = DiskStatus {
         path: target_dir.to_string_lossy().into_owned(),
         total_gb,
         used_gb,
         free_gb,
+        measurable,
     };
 
     (memory, disk)

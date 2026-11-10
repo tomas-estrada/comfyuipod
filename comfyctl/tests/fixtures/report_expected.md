@@ -30,6 +30,11 @@ Sin caídas registradas en `/var/log/supervisor.log`.
 - **Memoria RAM**: `11410` MB usados / `64340` MB totales (`52930` MB disponibles) · Swap usado: `0` MB
 - **Disco (`/workspace/comfyui-data`)**: `30` GB usados / `150` GB totales (`120` GB libres)
 
+### Disponible vs requerido (VRAM y RAM por separado; reservas vigentes)
+- **Espacio en disco**: disponible `no disponible` GB · requerido (puerta de arranque) `no disponible` GB
+- **VRAM**: total `no disponible` MB · usado `no disponible` MB · usable (total − reserva de `2048 MB`) = `no disponible` MB · requerido por el flujo actual: `no disponible`
+- **RAM**: total `no disponible` MB · disponible `no disponible` MB · usable (disponible − reserva de `8192 MB`) = `no disponible` MB · requerido por el flujo actual: `no disponible`
+
 ## 5. Descargas (Fase 1 y Fase 2)
 - **Fase 1**: `done` (`12/12` completados, `0` fallidos) · avance: `no disponible`
 - **Fase 2**: `done` (`6/6` completados, `0` fallidos) · Archivo actual: `ninguno` · Proceso `hf`: PID `None` (`0` MB RSS)

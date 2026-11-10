@@ -139,12 +139,14 @@ fn report_nombra_proceso_rc_y_ultima_linea_ja_redactados() {
                 used_mb: 512,
                 available_mb: 1536,
                 swap_used_mb: 0,
+                measurable: true,
             },
             disk: DiskStatus {
                 path: "/workspace/comfyui-data".to_string(),
                 total_gb: 100.0,
                 used_gb: 10.0,
                 free_gb: 90.0,
+                measurable: true,
             },
             comfyui: ComfyUiStatus {
                 state: "down".to_string(),
@@ -187,6 +189,7 @@ fn report_nombra_proceso_rc_y_ultima_linea_ja_redactados() {
             env_masked: BTreeMap::new(),
             weights: WeightStatus::default(),
             startup: Some(startup),
+            resources: comfyctl::collect::ResourceBudget::default(),
             strict: None,
         };
         let redactor = SecretRedactor::new(None, None);

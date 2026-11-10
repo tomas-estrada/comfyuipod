@@ -13,6 +13,132 @@ use comfyctl::report::{build_report_markdown, HeavyCacheData};
 use comfyctl::strict::{StrictCheckItem, StrictReport};
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::Path;
+
+/// Payload de referencia del informe (sección 3/4/5 y snapshot).
+fn reference_api() -> StatusApiPayload {
+    let mut env_masked = BTreeMap::new();
+    env_masked.insert("MODEL_PROFILE".to_string(), "anime".to_string());
+    env_masked.insert("COMFY_USER".to_string(), "admin".to_string());
+    env_masked.insert(
+        "COMFY_PASS".to_string(),
+        "<definida por el usuario>".to_string(),
+    );
+    env_masked.insert("HF_TOKEN".to_string(), "<no definido>".to_string());
+    env_masked.insert("COMFYUI_EXTRA_ARGS".to_string(), String::new());
+    env_masked.insert(
+        "HF_HUB_DISABLE_XET".to_string(),
+        "<no definido>".to_string(),
+    );
+    env_masked.insert("ENABLE_WEB_TERMINAL".to_string(), "0".to_string());
+
+    StatusApiPayload {
+        generated_at: "2026-10-19T12:00:00Z".to_string(),
+        image: ImageMeta {
+            tag: "sha-512e485".to_string(),
+            built_at: "2026-10-19T11:00:00Z".to_string(),
+            comfyui_sha: "4c62a84068a0".to_string(),
+            pytorch: "2.9.1+cu128".to_string(),
+            cuda: "12.8".to_string(),
+            ubuntu: "24.04".to_string(),
+        },
+        instance: InstanceInfo {
+            hostname: "vast-pro6000-node".to_string(),
+            uptime_s: 120,
+            vast_instance_id: "C.998877".to_string(),
+            external_port_8188: "41888".to_string(),
+        },
+        gpu: GpuStatus {
+            available: true,
+            name: "NVIDIA GeForce RTX PRO 6000 Blackwell".to_string(),
+            driver: "570.124.06".to_string(),
+            vram_total_mb: 98304,
+            vram_used_mb: 1024,
+            util_pct: 10,
+            temp_c: 42,
+            processes: Vec::new(),
+            reason: None,
+        },
+        memory: MemoryStatus {
+            total_mb: 64340,
+            used_mb: 11410,
+            available_mb: 52930,
+            swap_used_mb: 0,
+            measurable: true,
+        },
+        disk: DiskStatus {
+            path: "/workspace/comfyui-data".to_string(),
+            total_gb: 150.0,
+            used_gb: 30.0,
+            free_gb: 120.0,
+            measurable: true,
+        },
+        comfyui: ComfyUiStatus {
+            state: "running".to_string(),
+            supervisor_state: "running".to_string(),
+            pid: Some(1234),
+            rss_mb: 2048,
+            uptime_s: 110,
+            port_open: true,
+            restarts: 0,
+            healthy_resets: 0,
+            max_restarts: 5,
+            last_exit: None,
+            last_log_line: None,
+        },
+        phases: PhasesStatus {
+            phase1: Phase1Info {
+                state: "done".to_string(),
+                done: 12,
+                total: 12,
+                failed: Vec::new(),
+                elapsed_s: 0,
+                ..Phase1Info::default()
+            },
+            phase2: Phase2Info {
+                state: "done".to_string(),
+                done: 6,
+                total: 6,
+                failed: Vec::new(),
+                current_file: None,
+                hf_pid: None,
+                hf_rss_mb: 0,
+                ..Phase2Info::default()
+            },
+        },
+        phase_banner: "ComfyUI listo · Fase 2 completada".to_string(),
+        services: ServicesStatus {
+            nginx: NginxServiceStatus {
+                running: true,
+                workers_user: "www-data".to_string(),
+            },
+            status_server: StatusServerServiceStatus { running: true },
+            terminal: TerminalServiceStatus {
+                enabled: false,
+                running: false,
+            },
+            studio_server: None,
+        },
+        errors_recent: Vec::new(),
+        triage: Vec::new(),
+        env_masked,
+        weights: comfyctl::collect::models::WeightStatus::default(),
+        startup: None,
+        resources: comfyctl::collect::ResourceBudget::default(),
+        strict: Some(StrictReport {
+            checked_at: "2026-10-19T11:58:00Z".to_string(),
+            strict_start: true,
+            result: "ok".to_string(),
+            checks: vec![StrictCheckItem {
+                id: "driver_cuda128".to_string(),
+                name: "Driver NVIDIA >= 570 (CUDA 12.8)".to_string(),
+                status: "ok".to_string(),
+                detail: "Driver NVIDIA 570.124.06 compatible con CUDA 12.8".to_string(),
+                remediation: None,
+            }],
+        }),
+    }
+}
 
 #[test]
 fn report_markdown_matches_snapshot_and_redacts_secrets() {
@@ -66,109 +192,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
     );
     env_masked.insert("ENABLE_WEB_TERMINAL".to_string(), "0".to_string());
 
-    let api = StatusApiPayload {
-        generated_at: "2026-10-19T12:00:00Z".to_string(),
-        image: ImageMeta {
-            tag: "sha-512e485".to_string(),
-            built_at: "2026-10-19T11:00:00Z".to_string(),
-            comfyui_sha: "4c62a84068a0".to_string(),
-            pytorch: "2.9.1+cu128".to_string(),
-            cuda: "12.8".to_string(),
-            ubuntu: "24.04".to_string(),
-        },
-        instance: InstanceInfo {
-            hostname: "vast-pro6000-node".to_string(),
-            uptime_s: 120,
-            vast_instance_id: "C.998877".to_string(),
-            external_port_8188: "41888".to_string(),
-        },
-        gpu: GpuStatus {
-            available: true,
-            name: "NVIDIA GeForce RTX PRO 6000 Blackwell".to_string(),
-            driver: "570.124.06".to_string(),
-            vram_total_mb: 98304,
-            vram_used_mb: 1024,
-            util_pct: 10,
-            temp_c: 42,
-            processes: Vec::new(),
-            reason: None,
-        },
-        memory: MemoryStatus {
-            total_mb: 64340,
-            used_mb: 11410,
-            available_mb: 52930,
-            swap_used_mb: 0,
-        },
-        disk: DiskStatus {
-            path: "/workspace/comfyui-data".to_string(),
-            total_gb: 150.0,
-            used_gb: 30.0,
-            free_gb: 120.0,
-        },
-        comfyui: ComfyUiStatus {
-            state: "running".to_string(),
-            supervisor_state: "running".to_string(),
-            pid: Some(1234),
-            rss_mb: 2048,
-            uptime_s: 110,
-            port_open: true,
-            restarts: 0,
-            healthy_resets: 0,
-            max_restarts: 5,
-            last_exit: None,
-            last_log_line: None,
-        },
-        phases: PhasesStatus {
-            phase1: Phase1Info {
-                state: "done".to_string(),
-                done: 12,
-                total: 12,
-                failed: Vec::new(),
-                elapsed_s: 0,
-                ..Phase1Info::default()
-            },
-            phase2: Phase2Info {
-                state: "done".to_string(),
-                done: 6,
-                total: 6,
-                failed: Vec::new(),
-                current_file: None,
-                hf_pid: None,
-                hf_rss_mb: 0,
-                ..Phase2Info::default()
-            },
-        },
-        phase_banner: "ComfyUI listo · Fase 2 completada".to_string(),
-        services: ServicesStatus {
-            nginx: NginxServiceStatus {
-                running: true,
-                workers_user: "www-data".to_string(),
-            },
-            status_server: StatusServerServiceStatus { running: true },
-            terminal: TerminalServiceStatus {
-                enabled: false,
-                running: false,
-            },
-            studio_server: None,
-        },
-        errors_recent: Vec::new(),
-        triage: Vec::new(),
-        env_masked,
-        weights: comfyctl::collect::models::WeightStatus::default(),
-        startup: None,
-        strict: Some(StrictReport {
-            checked_at: "2026-10-19T11:58:00Z".to_string(),
-            strict_start: true,
-            result: "ok".to_string(),
-            checks: vec![StrictCheckItem {
-                id: "driver_cuda128".to_string(),
-                name: "Driver NVIDIA >= 570 (CUDA 12.8)".to_string(),
-                status: "ok".to_string(),
-                detail: "Driver NVIDIA 570.124.06 compatible con CUDA 12.8".to_string(),
-                remediation: None,
-            }],
-        }),
-    };
+    let api = reference_api();
 
     let heavy = HeavyCacheData {
         drift: DriftSummary::default(),
@@ -181,6 +205,13 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
     let redactor = SecretRedactor::new(Some("secret-pass-123"), None);
     let md = build_report_markdown(&api, &heavy, &redactor, &tmp_log_dir);
     let _ = fs::remove_dir_all(&tmp_log_dir);
+
+    // Regeneración del snapshot: `COMFYCTL_UPDATE_FIXTURE=1 cargo test --test report_test`.
+    if std::env::var("COMFYCTL_UPDATE_FIXTURE").is_ok() {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/report_expected.md");
+        fs::write(&fixture, md.as_bytes()).unwrap_or_else(|_| std::process::abort());
+    }
 
     assert!(!md.contains("secret-pass-123"));
     assert!(md.contains("[REDACTED]"));

@@ -234,9 +234,19 @@
             `<p>VRAM: <code>${g.vram_used_mb} / ${g.vram_total_mb} MB</code> · Uso: <code>${g.util_pct}%</code> · Temp: <code>${g.temp_c}°C</code></p>`
           : `<p><span class="badge b-warn">Modo CPU</span> ${esc(g.reason || "Sin GPU")}</p>`;
 
+        const memDisk = d.disk.measurable
+          ? `<p>Disco (${esc(d.disk.path)}): <code>${d.disk.free_gb} GB libres / ${d.disk.total_gb} GB total</code></p>`
+          : `<p>Disco (${esc(d.disk.path)}): <span class="badge b-warn">no disponible</span> (sin medición: no se puede afirmar que falte espacio)</p>`;
+        const r = d.resources || {};
+        const optU = (v) => (v === null || v === undefined ? "no disponible" : `${v} MB`);
+        const optF = (v) => (v === null || v === undefined ? "no disponible" : `${v} GB`);
+        const budget =
+          `<p>Espacio: disponible <code>${esc(optF(r.disk_free_gb))}</code> · requerido <code>${esc(optF(r.disk_required_gb))}</code></p>` +
+          `<p>VRAM: total <code>${esc(optU(r.vram_total_mb))}</code> · usable <code>${esc(optU(r.vram_usable_mb))}</code> (reserva ${esc(r.vram_reserve_mb ?? 2048)} MB)</p>` +
+          `<p>RAM: disponible <code>${esc(optU(r.ram_available_mb))}</code> · usable <code>${esc(optU(r.ram_usable_mb))}</code> (reserva ${esc(r.ram_reserve_mb ?? 8192)} MB)</p>`;
         document.getElementById("mem-body").innerHTML =
           `<p>RAM: <code>${d.memory.available_mb} MB libres / ${d.memory.total_mb} MB total</code> (Swap: <code>${d.memory.swap_used_mb} MB</code>)</p>` +
-          `<p>Disco (${esc(d.disk.path)}): <code>${d.disk.free_gb} GB libres / ${d.disk.total_gb} GB total</code></p>`;
+          memDisk + budget;
 
         const p1 = d.phases.phase1, p2 = d.phases.phase2;
         // Sin denominador no hay porcentaje que mostrar: 0% es honesto, 100% no.
