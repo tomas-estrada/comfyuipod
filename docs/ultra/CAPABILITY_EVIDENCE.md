@@ -41,7 +41,7 @@ This records the highest evidence level actually demonstrated for each capabilit
 | C31 | Montaje y efectos programables | L0 | W20 acceptance is not complete. |
 | C32 | Entregables reproducibles | L1 partial | Main has production-output gallery registration code, project-to-artifact CPU coverage, and real CPU 3840×2160 / 2160×3840 EDL encodes verified with ffprobe. PR #284 adds a Studio EDL download for a versioned editable JSON project, bundles project-owned source clips, verifies copied media by SHA-256, and records licenses plus color/range, safe-area, caption, and audio delivery policies. This still does not implement title/transition editing in the connected EDL path, separate/retain audio stems, apply or measure the declared audio/color policies, integrate a prepared rendering engine through this package flow, or validate target-GPU output. |
 | C33 | Investigador Pareto de recetas | L1 partial | `researcher.py` supplies preregistered hypothesis/Pareto contracts and tests. The W23 candidate below adds transactional SQLite persistence and durable budget enforcement. Model-backed recipe scoring, judges, hardware profiles, and held-out evidence remain unproven. |
-| C34 | Aprendizaje de adaptadores | L0 | W23 acceptance is not complete. |
+| C34 | Aprendizaje de adaptadores | L1 partial | PR #285 adds a durable, hash-verified proposal contract tied to an accepted real run, with pinned base-model/code revisions, authorized train/validation/test samples, leakage checks, hyperparameters, and rollback reference. Training and artifact promotion remain deliberately unexecuted; dataset authorization is recorded as evidence supplied by the caller, and engine-backed adapter quality remains unproven. |
 
 ## Non-capability evidence
 
