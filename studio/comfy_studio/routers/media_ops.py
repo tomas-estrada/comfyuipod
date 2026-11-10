@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from comfy_studio.asr import diarize_project_asset, transcribe_project_asset
@@ -306,6 +309,101 @@ def register_routes(app: FastAPI) -> None:
             project_id=project_id,
             body=req_body,
             request=request,
+        )
+
+    @app.post("/studio/api/projects/{project_id}/edl/{version}/editable-package")
+    async def export_editable_edl_package(
+        project_id: str,
+        version: int,
+        request: Request,
+    ) -> FileResponse:
+        """Descarga un proyecto editable con fuentes incluidas desde un EDL guardado."""
+        from comfy_studio.delivery_4k import (
+            ASPECT_4K,
+            Clip,
+            TimelineSpec,
+            write_editable_package_archive,
+        )
+        from comfy_studio.perception.keyframes import probe_media_info
+
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        record = active_store.get_edl_version(project_id, version=version)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Versión de EDL no encontrada")
+        edl = record.get("edl") or {}
+        aspect = str(edl.get("aspect_ratio") or "16:9")
+        if aspect not in ASPECT_4K:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No hay perfil 4K editable para el aspecto {aspect!r}",
+            )
+        cuts = edl.get("cuts")
+        if not isinstance(cuts, list) or not cuts:
+            raise HTTPException(status_code=400, detail="El EDL no contiene cortes")
+
+        clips: list[Clip] = []
+        dimensions: dict[str, tuple[int, int]] = {}
+        for index, cut in enumerate(cuts, start=1):
+            if not isinstance(cut, dict):
+                raise HTTPException(status_code=400, detail="Corte de EDL inválido")
+            asset_id = str(cut.get("asset_id") or edl.get("source_asset_id") or "").strip()
+            asset = active_store.get_asset(project_id, asset_id) if asset_id else None
+            source = active_store.get_asset_path(project_id, asset_id) if asset else None
+            if asset is None or source is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No se puede resolver el medio fuente del corte {index}",
+                )
+            if asset_id not in dimensions:
+                info = probe_media_info(
+                    source,
+                    timeout_s=request.app.state.config.studio_ffprobe_timeout_s,
+                )
+                if not info.get("probe_ok"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No se pudieron verificar las dimensiones del medio {asset_id}",
+                    )
+                dimensions[asset_id] = (int(info["width"]), int(info["height"]))
+            try:
+                start, end = float(cut["in_sec"]), float(cut["out_sec"])
+                if start < 0 or end <= start:
+                    raise ValueError("rango inválido")
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"Rango inválido en el corte {index}"
+                ) from exc
+            metadata = asset.get("metadata") or {}
+            clips.append(
+                Clip(
+                    clip_id=f"cut-{index:04d}",
+                    source_path=str(source),
+                    in_s=start,
+                    out_s=end,
+                    license=str(metadata.get("license") or "unknown"),
+                    src_width=dimensions[asset_id][0],
+                    src_height=dimensions[asset_id][1],
+                    source_asset_id=asset_id,
+                    reason=str(cut.get("reason") or "cut"),
+                )
+            )
+
+        timeline = TimelineSpec(
+            name=str(edl.get("title") or f"EDL v{version}"),
+            aspect=aspect,
+            fps=24,
+            clips=clips,
+        )
+        fd, archive_name = tempfile.mkstemp(prefix="comfyuipod-editable-", suffix=".zip")
+        os.close(fd)
+        archive = await run_in_threadpool(write_editable_package_archive, timeline, archive_name)
+        return FileResponse(
+            archive,
+            media_type="application/zip",
+            filename="comfyuipod-editable-delivery.zip",
+            background=BackgroundTask(lambda: archive.unlink(missing_ok=True)),
         )
     @app.get("/studio/api/progress")
     async def sse_progress(

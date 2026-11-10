@@ -140,6 +140,56 @@ def test_edl_build_deduplicates_aspect_variants() -> None:
     assert EdlBuildRequest().resolved_aspect_ratios() == []
 
 
+def test_editable_package_download_uses_project_owned_edl_source(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La descarga empaqueta medios del proyecto y conserva el EDL editable."""
+    import json
+    import zipfile
+    from io import BytesIO
+
+    from comfy_studio.perception import keyframes
+
+    monkeypatch.setattr(
+        keyframes,
+        "probe_media_info",
+        lambda *_args, **_kwargs: {
+            "probe_ok": True,
+            "width": 640,
+            "height": 360,
+            "has_video": True,
+        },
+    )
+    project_id = client.post("/studio/api/projects", json={"name": "Editable"}).json()["id"]
+    uploaded = client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("source.mp4", b"\x00\x00\x00\x18ftypmp42synthetic", "video/mp4")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    asset_id = uploaded.json()["id"]
+    edl = client.post(
+        f"/studio/api/projects/{project_id}/edl",
+        json={
+            "title": "Prueba editable",
+            "source_asset_id": asset_id,
+            "cuts": [{"asset_id": asset_id, "in_sec": 1.0, "out_sec": 3.0}],
+        },
+    )
+    assert edl.status_code == 201, edl.text
+    response = client.post(
+        f"/studio/api/projects/{project_id}/edl/{edl.json()['version']}/editable-package"
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("application/zip")
+    with zipfile.ZipFile(BytesIO(response.content)) as package:
+        project = json.loads(package.read("project.json"))
+        manifest = json.loads(package.read("delivery-manifest.json"))
+    assert project["name"] == "Prueba editable"
+    assert project["clips"][0]["in_s"] == 1.0
+    assert project["clips"][0]["source_path"].startswith("assets/")
+    assert manifest["sources"][0]["kind"] == "clip"
+
+
 @pytest.mark.skipif(
     pytest.importorskip("shutil").which("ffmpeg") is None,
     reason="ffmpeg no disponible en este runner",

@@ -32,6 +32,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from zipfile import ZIP_STORED, ZipFile
 
 #: dimensiones 4K exactas por aspecto de entrega.
 ASPECT_4K = {
@@ -56,6 +57,8 @@ class Clip:
     license: str = "unknown"   # viaja con el proyecto (A22)
     src_width: int = 1920
     src_height: int = 1080
+    source_asset_id: str | None = None
+    reason: str = "cut"
 
     @property
     def duration_s(self) -> float:
@@ -134,6 +137,7 @@ class TimelineSpec:
             not all(math.isfinite(v) for v in (c.in_s, c.out_s))
             or c.src_width <= 0
             or c.src_height <= 0
+            or not c.reason
             for c in self.clips
         ):
             raise DeliveryError("tiempos o dimensiones de clip inválidos")
@@ -171,7 +175,8 @@ class TimelineSpec:
             "clips": [
                 {"clip_id": c.clip_id, "source_path": c.source_path, "in_s": c.in_s,
                  "out_s": c.out_s, "license": c.license, "src_width": c.src_width,
-                 "src_height": c.src_height}
+                 "src_height": c.src_height, "source_asset_id": c.source_asset_id,
+                 "reason": c.reason}
                 for c in self.clips
             ],
             "titles": [
@@ -333,6 +338,19 @@ def load_editable_package(directory: str | Path) -> TimelineSpec:
     return spec
 
 
+def write_editable_package_archive(spec: TimelineSpec, archive_path: str | Path) -> Path:
+    """Escribe un ZIP portable con el proyecto, sus fuentes y el manifiesto."""
+    archive = Path(archive_path).expanduser().resolve()
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="editable-delivery-") as workdir:
+        package = write_editable_package(spec, Path(workdir) / "package")
+        with ZipFile(archive, "w", compression=ZIP_STORED) as bundle:
+            for path in sorted(package.rglob("*")):
+                if path.is_file():
+                    bundle.write(path, path.relative_to(package).as_posix())
+    return archive
+
+
 def edit_text(spec: TimelineSpec, title_id: str, new_text: str) -> set[str]:
     """Cambia el texto de un título SIN regenerar los clips (A22)."""
     title = next((t for t in spec.titles if t.title_id == title_id), None)
@@ -408,7 +426,15 @@ def build_delivery_manifest(spec: TimelineSpec, *, captions: bool = True) -> Del
     spec.validate()
     w, h = target_dimensions(spec.aspect)
     credits = [
-        {"clip": c.clip_id, "source": c.source_path, "license": c.license}
+        {
+            "clip": c.clip_id,
+            "source": c.source_path,
+            "source_asset_id": c.source_asset_id,
+            "in_s": c.in_s,
+            "out_s": c.out_s,
+            "reason": c.reason,
+            "license": c.license,
+        }
         for c in spec.clips
     ]
     return DeliveryManifest(
@@ -446,4 +472,5 @@ __all__ = [
     "load_editable_package",
     "target_dimensions",
     "write_editable_package",
+    "write_editable_package_archive",
 ]
