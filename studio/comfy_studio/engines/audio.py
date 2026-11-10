@@ -123,24 +123,36 @@ class AudioEngine:
                 ok=False,
                 engine=self.name,
                 verb="verify",
-                payload={"op": submotor, "wired": False, "stub": False},
+                payload={"op": submotor, "wired": False, "stub": False, "weights": "not_required"},
                 error=f"op '{submotor}' aún sin backend (F6)",
+                reason="backend_missing",
             )
+        weights_state = "not_required"
         weights_ok = True
         if submotor == "stt" and not self.is_stub():
             # STT necesita faster-whisper en disco: instalado no es listo.
             weights_ok = stt_weights_available()
+            weights_state = "present" if weights_ok else "missing"
         ready = self.is_stub() or weights_ok
+        reason = None
+        if not ready and weights_state == "missing":
+            reason = "weights_missing"
         return EngineResult(
             ok=ready,
             engine=self.name,
             verb="verify",
-            payload={"op": submotor, "wired": submotor in _WIRED_OPS,
-                     "weights_ok": weights_ok, "stub": self.is_stub()},
+            payload={
+                "op": submotor,
+                "wired": submotor in _WIRED_OPS,
+                "weights_ok": weights_ok,
+                "stub": self.is_stub(),
+                "weights": weights_state,
+            },
             error=None if ready else (
                 "pesos faster-whisper ausentes "
                 "(COMFY_DATA_DIR/models/whisper/faster-whisper-large-v3)"
             ),
+            reason=reason,
         )
 
     def run(self, spec: EngineRunSpec) -> EngineResult:

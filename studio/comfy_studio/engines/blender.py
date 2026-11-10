@@ -171,8 +171,15 @@ class BlenderEngine(Engine):
         """El binario manda: sin Blender instalado no hay nada que verificar."""
         if self.is_stub():
             return EngineResult(
-                ok=True, engine=self.name, verb="verify",
-                payload={"capability": submotor, "binary": None, "stub": True},
+                ok=True,
+                engine=self.name,
+                verb="verify",
+                payload={
+                    "capability": submotor,
+                    "binary": None,
+                    "stub": True,
+                    "weights": "not_required",
+                },
             )
         from comfy_studio.blender import find_blender_bin
 
@@ -182,10 +189,16 @@ class BlenderEngine(Engine):
             ok=ready,
             engine=self.name,
             verb="verify",
-            payload={"capability": submotor, "binary": binary, "stub": False},
+            payload={
+                "capability": submotor,
+                "binary": binary,
+                "stub": False,
+                "weights": "not_required",
+            },
             error=None if ready else (
                 "binario de Blender ausente (STUDIO_BLENDER_BIN, PATH o /opt/blender)"
             ),
+            reason=None if ready else "not_installed",
         )
 
     async def run(self, spec: EngineRunSpec) -> EngineResult:
