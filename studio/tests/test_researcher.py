@@ -275,6 +275,10 @@ def test_adapter_proposal_requires_authorized_disjoint_splits_and_no_training() 
         ]).validate()
     with pytest.raises(ResearchError, match="training"):
         _adapter_proposal(training_executed=True).validate()
+    proposal = _adapter_proposal()
+    proposal.datasets[0].authorized = "true"  # type: ignore[assignment]
+    with pytest.raises(ResearchError, match="autorización"):
+        proposal.validate()
 
 
 def test_adapter_proposal_detects_tampered_persistent_payload(tmp_path) -> None:

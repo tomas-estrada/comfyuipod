@@ -39,11 +39,19 @@ class ResearchError(ValueError):
 
 
 def _is_sha256(value: str) -> bool:
-    return len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
 
 
 def _is_git_revision(value: str) -> bool:
-    return len(value) in {40, 64} and all(char in "0123456789abcdef" for char in value)
+    return (
+        isinstance(value, str)
+        and len(value) in {40, 64}
+        and all(char in "0123456789abcdef" for char in value)
+    )
 
 
 @dataclass(slots=True)
@@ -512,25 +520,33 @@ class AdapterProposal:
             raise ResearchError("A26 prohíbe ejecutar training durante la propuesta")
         if self.artifact_sha256 is not None and not _is_sha256(self.artifact_sha256):
             raise ResearchError("artifact_sha256 debe ser SHA-256 válido")
+        if not isinstance(self.hyperparameters, dict) or not self.hyperparameters:
+            raise ResearchError("la propuesta requiere hyperparameters como objeto JSON")
         try:
             json.dumps(self.hyperparameters, allow_nan=False, sort_keys=True)
         except (TypeError, ValueError) as exc:
             raise ResearchError("hyperparameters deben ser JSON finito") from exc
-        if not self.hyperparameters:
-            raise ResearchError("la propuesta requiere hyperparameters")
         if not self.datasets:
             raise ResearchError("la propuesta requiere dataset y holdout")
         sample_ids: set[str] = set()
         sample_hashes: set[str] = set()
         splits: set[str] = set()
         for sample in self.datasets:
+            if not all(
+                isinstance(value, str)
+                for value in (sample.sample_id, sample.sha256, sample.license, sample.split)
+            ):
+                raise ResearchError("campos de muestra deben ser texto")
             if not sample.sample_id.strip() or not _is_sha256(sample.sha256):
                 raise ResearchError("cada muestra requiere id y SHA-256")
             if not sample.license.strip() or sample.license.casefold() == "unknown":
                 raise ResearchError("cada muestra requiere licencia conocida")
-            if not sample.authorized:
+            if sample.authorized is not True:
                 raise ResearchError("dataset sin autorización no puede usarse en la propuesta")
-            if not sample.authorization_reference.strip():
+            if (
+                not isinstance(sample.authorization_reference, str)
+                or not sample.authorization_reference.strip()
+            ):
                 raise ResearchError("cada muestra requiere referencia de autorización")
             if sample.split not in {"train", "validation", "test"}:
                 raise ResearchError("split debe ser train, validation o test")
