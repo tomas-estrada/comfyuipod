@@ -45,7 +45,12 @@ def test_health_report_serializable_with_counts(monkeypatch: pytest.MonkeyPatch)
     assert sum(rep["counts"].values()) == len(rep["engines"])
 
 
-def test_assert_passes_for_ready_engine() -> None:
+def test_assert_passes_for_ready_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    # El stub debe estar APAGADO para que `comfyui` cuente como `ready`. Sin este
+    # delenv el test dependía del entorno ambiente: pasaba en CI solo porque el
+    # workflow ponía `STUDIO_STUB_COMFY` (un nombre que ningún código lee) en
+    # lugar del real `STUDIO_STUB_COMFYUI`.
+    monkeypatch.delenv("STUDIO_STUB_COMFYUI", raising=False)
     reg = build_default_registry()
     # comfyui está cableado → no lanza.
     assert_production_ready(reg, required=["comfyui"])
