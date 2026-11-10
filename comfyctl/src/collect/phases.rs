@@ -557,6 +557,7 @@ mod tests {
             healthy_resets: 0,
             max_restarts: 5,
             last_exit: None,
+            last_log_line: None,
         }
     }
 
