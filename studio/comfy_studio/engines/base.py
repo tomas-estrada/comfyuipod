@@ -141,6 +141,22 @@ class Engine(abc.ABC):
             reason=str(reason) if reason is not None else None,
         )
 
+    def run_limitation(
+        self,
+        *,
+        reason: str,
+        error: str,
+        payload: dict[str, Any] | None = None,
+    ) -> EngineResult:
+        """Limitación tipada de `run`: nunca un éxito simulado fuera de stub."""
+        return EngineResult.limitation(
+            engine=self.name,
+            verb="run",
+            reason=reason,
+            error=error,
+            payload=payload,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Contrato de 4 verbos: verificación estructural del roster

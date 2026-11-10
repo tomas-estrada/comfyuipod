@@ -136,7 +136,11 @@ class IndexttsEngine:
             m.validate()
         except (KeyError, ValueError, TypeError) as exc:
             return EngineResult(
-                ok=False, engine=self.name, verb="run", error=f"spec inválido: {exc}"
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec inválido: {exc}",
+                reason="spec_invalid",
             )
 
         start = time.monotonic()
@@ -166,6 +170,7 @@ class IndexttsEngine:
                     "descárgalos con la fase indextts de download-models.sh "
                     "o usa STUDIO_STUB_INDEXTTS=1"
                 ),
+                reason="weights_missing",
             )
         return self._run_model(m, start)
 

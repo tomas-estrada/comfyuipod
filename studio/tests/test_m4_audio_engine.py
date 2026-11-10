@@ -90,6 +90,10 @@ def test_bad_op_rejected(tmp_path: Path) -> None:
 def test_real_stt_delegates_to_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Fuera de stub, STT delega en el worker ASR; escribimos la transcripción.
     monkeypatch.delenv("STUDIO_STUB_AUDIO", raising=False)
+    weights = tmp_path / "data" / "models" / "whisper" / "faster-whisper-large-v3"
+    weights.mkdir(parents=True)
+    (weights / "model.bin").write_bytes(b"fake")
+    monkeypatch.setenv("COMFY_DATA_DIR", str(tmp_path / "data"))
     import comfy_studio.ml.runner as runner
     from comfy_studio.ml import MlWorkerResponse
 

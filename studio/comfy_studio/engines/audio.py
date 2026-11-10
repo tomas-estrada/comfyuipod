@@ -161,7 +161,11 @@ class AudioEngine:
             audio.validate()
         except (KeyError, ValueError, TypeError) as exc:
             return EngineResult(
-                ok=False, engine=self.name, verb="run", error=f"spec inválido: {exc}"
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec inválido: {exc}",
+                reason="spec_invalid",
             )
 
         start = time.monotonic()
@@ -182,6 +186,17 @@ class AudioEngine:
         # STT real: delegar al worker de ML existente (faster-whisper,
         # asr_transcribe). Escribe la transcripción en output_path.
         if audio.op == "stt":
+            if not stt_weights_available():
+                return EngineResult(
+                    ok=False,
+                    engine=self.name,
+                    verb="run",
+                    error=(
+                        "pesos faster-whisper ausentes "
+                        "(COMFY_DATA_DIR/models/whisper/faster-whisper-large-v3)"
+                    ),
+                    reason="weights_missing",
+                )
             from comfy_studio.ml.runner import run_worker
 
             resp = run_worker(
