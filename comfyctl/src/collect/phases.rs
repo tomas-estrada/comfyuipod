@@ -552,7 +552,6 @@ mod tests {
             rss_mb: 2048,
             uptime_s: 60,
             port_open: true,
-            last_log_line: None,
             restarts: 0,
             healthy_resets: 0,
             max_restarts: 5,
