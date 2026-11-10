@@ -33,6 +33,19 @@ from comfy_studio.webutil import (
 )
 
 
+def _simulation_fields(request: Request) -> dict[str, Any]:
+    """Estado real/simulado del backend que sirvió la búsqueda.
+
+    Las respuestas de búsqueda fijaban `simulated: True`: en modo `real` un
+    índice real se anunciaba como simulado y arrastraba un aviso que no
+    aplicaba. La fuente es `app.state.perception_backend`, que `create_app`
+    resuelve desde `STUDIO_PERCEPTION_BACKEND` y el probe de arranque.
+    """
+    if getattr(request.app.state, "perception_backend", "sim") == "sim":
+        return {"simulated": True, "simulation_notice": SIMULATED_ML_NOTICE}
+    return {"simulated": False}
+
+
 def register_routes(app: FastAPI) -> None:
     """Registra las rutas de este módulo directamente sobre `app` (mismo route_class)."""
     @app.get("/studio/api/projects/{project_id}/keyframes")
@@ -247,8 +260,7 @@ def register_routes(app: FastAPI) -> None:
                 "count": 0,
                 "shots": [],
                 "stale": True,
-                "simulated": True,
-                "simulation_notice": SIMULATED_ML_NOTICE,
+                **_simulation_fields(request),
                 "message": (
                     "Índice de percepción desactualizado (dims no coinciden). "
                     "Ejecuta POST /studio/api/perception/reindex."
@@ -276,8 +288,7 @@ def register_routes(app: FastAPI) -> None:
                 "count": len(shots),
                 "shots": shots,
                 "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
-                "simulated": True,
-                "simulation_notice": SIMULATED_ML_NOTICE,
+                **_simulation_fields(request),
             }
 
         shots = active_clip.find_shots_text(
@@ -292,8 +303,7 @@ def register_routes(app: FastAPI) -> None:
             "query": query or "",
             "count": len(shots),
             "shots": shots,
-            "simulated": True,
-            "simulation_notice": SIMULATED_ML_NOTICE,
+            **_simulation_fields(request),
         }
     @app.post("/studio/api/projects/{project_id}/perception/search")
     async def search_project_perception_post(
@@ -333,8 +343,7 @@ def register_routes(app: FastAPI) -> None:
                 "count": 0,
                 "shots": [],
                 "stale": True,
-                "simulated": True,
-                "simulation_notice": SIMULATED_ML_NOTICE,
+                **_simulation_fields(request),
                 "message": (
                     "Índice de percepción desactualizado (dims no coinciden). "
                     "Ejecuta POST /studio/api/perception/reindex."
@@ -359,8 +368,7 @@ def register_routes(app: FastAPI) -> None:
             "count": len(shots),
             "shots": shots,
             "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
-            "simulated": True,
-            "simulation_notice": SIMULATED_ML_NOTICE,
+            **_simulation_fields(request),
         }
     @app.post("/studio/api/projects/{project_id}/search/combined")
     async def search_project_combined_endpoint(
@@ -383,8 +391,7 @@ def register_routes(app: FastAPI) -> None:
                 "count": 0,
                 "shots": [],
                 "stale": True,
-                "simulated": True,
-                "simulation_notice": SIMULATED_ML_NOTICE,
+                **_simulation_fields(request),
                 "message": (
                     "Índice de percepción desactualizado (dims no coinciden). "
                     "Ejecuta POST /studio/api/perception/reindex."
@@ -412,8 +419,7 @@ def register_routes(app: FastAPI) -> None:
             "count": len(shots),
             "shots": shots,
             "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
-            "simulated": True,
-            "simulation_notice": SIMULATED_ML_NOTICE,
+            **_simulation_fields(request),
         }
     @app.post("/studio/api/perception/reindex")
     async def perception_reindex(request: Request) -> dict[str, Any]:
