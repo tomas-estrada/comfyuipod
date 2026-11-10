@@ -41,6 +41,7 @@ def test_neural_stages_are_pending_gpu_not_done() -> None:
             if s.neural:
                 assert s.status is StageStatus.PENDING_GPU
                 assert s.status is not StageStatus.DONE
+                assert s.pending_reason
 
 
 def test_cpu_stages_are_ready() -> None:
@@ -100,6 +101,14 @@ def test_cpu_demo_runner_writes_hashed_fixture_evidence(tmp_path: Path, demo_id:
     assert manifest["claim_scope"].startswith("fixture consistency")
     assert all(stage["status"] == ("pending_gpu" if stage["neural"] else "done")
                for stage in manifest["stages"])
+    assert all(stage["pending_reason"] for stage in manifest["stages"] if stage["neural"])
+
+
+def test_pending_gpu_stage_requires_explanation() -> None:
+    stage = DemoStage(name="render", level=EvidenceLevel.L2,
+                      status=StageStatus.PENDING_GPU, neural=True)
+    with pytest.raises(DemoError, match="motivo explícito"):
+        stage.validate()
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
@@ -141,3 +150,31 @@ def test_cleanup_refuses_symlinked_demo_directory(tmp_path: Path) -> None:
     with pytest.raises(DemoError, match="symlink"):
         clean_demo_output("D01", output_root)
     assert protected.read_text(encoding="utf-8") == "keep"
+
+
+def test_runner_refuses_symlinked_demo_directory(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    output_root = tmp_path / "runs"
+    output_root.mkdir()
+    (output_root / "D01").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(DemoError, match="output symlink"):
+        run_demo("D01", output_root)
+    assert list(outside.iterdir()) == []
+
+
+def test_runner_refuses_symlinked_manifest_and_d05_artifacts(tmp_path: Path) -> None:
+    outside = tmp_path / "protected.json"
+    outside.write_text("protected", encoding="utf-8")
+    output_root = tmp_path / "runs"
+    (output_root / "D01").mkdir(parents=True)
+    (output_root / "D01" / "run_manifest.json").symlink_to(outside)
+    with pytest.raises(DemoError, match="output symlink"):
+        run_demo("D01", output_root)
+    assert outside.read_text(encoding="utf-8") == "protected"
+
+    (output_root / "D05").mkdir()
+    (output_root / "D05" / "editable_project.json").symlink_to(outside)
+    with pytest.raises(DemoError, match="output symlink"):
+        run_demo("D05", output_root)
+    assert outside.read_text(encoding="utf-8") == "protected"

@@ -40,6 +40,9 @@ class StageStatus(StrEnum):
     DONE = "done"
 
 
+_GPU_PENDING_REASON = "requiere hardware GPU objetivo y pesos disponibles; no ejecutado en CPU"
+
+
 class DemoError(ValueError):
     """Invalid demo definition or failed CPU fixture check."""
 
@@ -50,8 +53,11 @@ class DemoStage:
     level: EvidenceLevel
     status: StageStatus
     neural: bool = False
+    pending_reason: str | None = None
 
     def validate(self) -> None:
+        if self.status is StageStatus.PENDING_GPU and not self.pending_reason:
+            raise DemoError(f"paso {self.name} pendiente sin motivo explícito")
         if self.neural and self.status is StageStatus.DONE and self.level not in (
             EvidenceLevel.L3,
             EvidenceLevel.L4,
@@ -92,7 +98,13 @@ class Demo:
             "splits": list(self.splits),
             "budget_runs": self.budget_runs,
             "stages": [
-                {"name": s.name, "level": str(s.level), "status": str(s.status), "neural": s.neural}
+                {
+                    "name": s.name,
+                    "level": str(s.level),
+                    "status": str(s.status),
+                    "neural": s.neural,
+                    "pending_reason": s.pending_reason,
+                }
                 for s in self.stages
             ],
             "cpu_ready": len(self.cpu_ready()),
@@ -106,6 +118,7 @@ def _stage(name: str, neural: bool) -> DemoStage:
         level=EvidenceLevel.L2 if neural else EvidenceLevel.L1,
         status=StageStatus.PENDING_GPU if neural else StageStatus.READY_CPU,
         neural=neural,
+        pending_reason=_GPU_PENDING_REASON if neural else None,
     )
 
 
@@ -189,6 +202,26 @@ def clean_demo_output(demo_id: str, output_root: Path) -> bool:
         shutil.rmtree(target)
         return True
     return False
+
+
+def _prepare_demo_output(demo_id: str, output_root: Path) -> tuple[Path, Path]:
+    """Create a contained output directory and reject symlinked run files."""
+    root = output_root.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    out_dir = root / demo_id
+    if out_dir.is_symlink():
+        raise DemoError("refusing to write into a demo output symlink")
+    out_dir.mkdir(exist_ok=True)
+    if not out_dir.is_dir() or out_dir.resolve().parent != root:
+        raise DemoError("demo output directory escapes output root")
+
+    manifest = out_dir / "run_manifest.json"
+    generated = [manifest, out_dir / "editable_project.json"]
+    if demo_id == "D05":
+        generated.append(out_dir / "D05_cpu_fixture_4k.mp4")
+    if any(path.is_symlink() for path in generated):
+        raise DemoError("refusing to overwrite a demo output symlink")
+    return out_dir, manifest
 
 
 def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -287,9 +320,7 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
         raise DemoError(f"demo desconocida: {demo_id}; disponibles: {', '.join(demos)}")
     demo = demos[demo_id]
     fixture, fixture_data = _load_fixture(demo)
-    out_dir = output_root.expanduser().resolve() / demo_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = out_dir / "run_manifest.json"
+    out_dir, manifest_path = _prepare_demo_output(demo_id, output_root)
     input_hash = _sha256(fixture)
     if resume and manifest_path.is_file():
         def artifact_is_valid(item: dict[str, Any]) -> bool:
@@ -360,6 +391,7 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
                 ),
                 "level": str(s.level),
                 "neural": s.neural,
+                "pending_reason": s.pending_reason,
                 "evidence": "CPU fixture check only"
                 if s.status is StageStatus.READY_CPU
                 else None,
