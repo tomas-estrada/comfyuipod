@@ -22,6 +22,7 @@ Imagen: `tag=sha-512e485` · `built_at=2026-10-19T11:00:00Z` · `comfyui_sha=4c6
 
 ## 3. ComfyUI y supervisor
 - **Estado**: `running` (supervisor: `running`) · **PID**: `1234` · **RSS**: `2048 MB` · **Uptime proceso**: `110s` · **Reinicios**: `0/5` · **Resets por uptime sano**: `0`
+- **Arranque**: `no disponible`.
 Sin caídas registradas en `/var/log/supervisor.log`.
 
 ## 4. GPU, memoria y disco

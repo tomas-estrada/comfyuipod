@@ -23,6 +23,12 @@ pub struct LastExitInfo {
     pub code: i32,
     pub reason: String,
     pub at: i64,
+    /// Proceso que murió (el hijo supervisado de este supervisor).
+    #[serde(default)]
+    pub process: String,
+    /// Última línea útil del log del proceso muerto, ya redactada upstream.
+    #[serde(default)]
+    pub last_log_line: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,8 +86,10 @@ impl SupervisorState {
         self.last_exit = Some(LastExitInfo {
             rc,
             code: rc,
-            reason,
+            reason: reason.clone(),
             at: exit_at,
+            process: "ComfyUI (python3 main.py)".to_string(),
+            last_log_line: None,
         });
 
         // O-02: rc=143 (SIGTERM manual) no consume presupuesto de reinicios
@@ -801,6 +809,8 @@ pub fn run_supervise_cmd(cfg: &RuntimeConfig) -> Result<i32, String> {
             reason: "Fallo fatal en comfyctl strict-check (ver /run/comfyui-strict.json)"
                 .to_string(),
             at: now,
+            process: "comfyctl supervise (strict-check)".to_string(),
+            last_log_line: None,
         });
         write_supervisor_json(&cfg.supervisor_json_path, &sup_state)?;
         log_sup(&format!(

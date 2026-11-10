@@ -94,6 +94,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
             healthy_resets: 0,
             max_restarts: 5,
             last_exit: None,
+            last_log_line: None,
         },
         phases: PhasesStatus {
             phase1: Phase1Info {
@@ -132,6 +133,7 @@ fn report_markdown_matches_snapshot_and_redacts_secrets() {
         triage: Vec::new(),
         env_masked,
         weights: comfyctl::collect::models::WeightStatus::default(),
+        startup: None,
         strict: Some(StrictReport {
             checked_at: "2026-10-19T11:58:00Z".to_string(),
             strict_start: true,

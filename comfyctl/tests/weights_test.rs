@@ -201,6 +201,7 @@ fn example_api_payload(weights: &WeightStatus) -> comfyctl::collect::StatusApiPa
             healthy_resets: 0,
             max_restarts: 5,
             last_exit: None,
+            last_log_line: None,
         },
         phases: {
             use comfyctl::collect::phases::Phase1Info;
@@ -241,8 +242,9 @@ fn example_api_payload(weights: &WeightStatus) -> comfyctl::collect::StatusApiPa
         errors_recent: Vec::new(),
         triage: Vec::new(),
         env_masked: BTreeMap::new(),
-        strict: None,
         weights: weights.clone(),
+        startup: None,
+        strict: None,
     }
 }
 
