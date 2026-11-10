@@ -21,6 +21,7 @@ Requiere STUDIO_DYNAMIC=1: en pod determinista, instalar un motor se rechaza.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,8 +55,18 @@ class InstallDecision:
         }
 
 
-def decide_install(req: InstallRequest, registry: EngineRegistry) -> InstallDecision:
-    """Aplica las cuatro preguntas del §6. Fail-closed: duda ⇒ no instalar."""
+def decide_install(
+    req: InstallRequest,
+    registry: EngineRegistry,
+    *,
+    preps: Mapping[str, Any] | None = None,
+) -> InstallDecision:
+    """Aplica las cuatro preguntas del §6. Fail-closed: duda ⇒ no instalar.
+
+    Decisión PURA: nunca ejecuta instalación ni toca subprocesos/red/disco. Si
+    `preps` indica que el motor ya está preparado (o su estado no requiere
+    instalación), se rechaza: instalar lo que ya funciona desperdicia GPU ociosa.
+    """
     reasons: list[str] = []
 
     if not is_dynamic_enabled():
@@ -66,6 +77,17 @@ def decide_install(req: InstallRequest, registry: EngineRegistry) -> InstallDeci
         return InstallDecision(
             False, [f"'{req.engine_name}' ya está en el roster caliente: úsalo, no lo instales"]
         )
+
+    # 0b. Estado de preparación: si ya está listo, no hay nada que instalar.
+    if preps is not None:
+        prep = preps.get(req.engine_name)
+        if prep is not None:
+            state = prep.state if hasattr(prep, "state") else str(prep.get("state", ""))
+            if state == "ready":
+                return InstallDecision(
+                    False,
+                    [f"'{req.engine_name}' ya está preparado ({state}): no requiere instalación"],
+                )
 
     # 1. ¿El set caliente realmente falló?
     if not req.warm_attempted:
@@ -98,6 +120,21 @@ def decide_install(req: InstallRequest, registry: EngineRegistry) -> InstallDeci
     if promote:
         reasons.append("valor >= 2x coste: candidato a hornear caliente en el próximo build")
     return InstallDecision(True, reasons, promote_candidate=promote)
+
+
+def install_engine(
+    req: InstallRequest,
+    registry: EngineRegistry,
+    *,
+    preps: Mapping[str, Any] | None = None,
+) -> InstallDecision:
+    """API canónica: decide si instalar un motor. NUNCA ejecuta instalación.
+
+    Es un alias explícito de `decide_install`: el agente pide instalar y esta
+    función solo devuelve la decisión razonada. La instalación real (si alguna
+    vez se habilita) queda fuera de esta puerta.
+    """
+    return decide_install(req, registry, preps=preps)
 
 
 @dataclass(slots=True)
