@@ -97,6 +97,13 @@ class Capture3dEngine:
             cand = Path(bin_dir) / tool
             if cand.is_file():
                 return str(cand)
+            # En Windows un CLI se instala con sufijo (`ns-train.cmd`, `.bat`,
+            # `.exe`); sin esto el binario existe y el motor no lo encuentra.
+            if os.name == "nt":
+                for suffix in (".cmd", ".bat", ".exe"):
+                    alt = Path(bin_dir) / f"{tool}{suffix}"
+                    if alt.is_file():
+                        return str(alt)
         return shutil.which(tool) or ""
 
     def _available(self, tool: str | None = None) -> bool:

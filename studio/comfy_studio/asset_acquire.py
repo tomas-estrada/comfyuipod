@@ -365,6 +365,43 @@ def _partial_pid(name: str) -> int | None:
         return None
 
 
+def _pid_alive(pid: int) -> bool:
+    """`True` si el proceso `pid` existe. No envía ninguna señal.
+
+    `os.kill(pid, 0)` **no** es una sonda de vida en Windows: CPython acaba en
+    `TerminateProcess` (podría matar al dueño real) y un PID inexistente lanza
+    un `OSError` genérico que se leía como «vivo», así que los
+    `*.partial-<pid>-<seq>` huérfanos no se barrían nunca y la caché de staging
+    crecía sin límite. En Windows se pregunta al kernel con
+    `OpenProcess`+`WaitForSingleObject(0)`, que solo espera.
+    """
+    if os.name == "nt":
+        import ctypes
+
+        synchronize = 0x0010_0000  # PROCESS_SYNCHRONIZE
+        wait_timeout = 0x0000_0102
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(synchronize, False, int(pid))
+        if not handle:
+            # ERROR_INVALID_PARAMETER (87) = ese PID no existe. Acceso denegado
+            # significa que existe pero es de otro usuario: está vivo.
+            return kernel32.GetLastError() == 5
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            kernel32.CloseHandle(handle)
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
 def _partial_is_in_flight(partial: Path) -> bool:
     """True si el temporal puede estar en uso por un proceso vivo.
 
@@ -393,12 +430,8 @@ def _partial_is_in_flight(partial: Path) -> bool:
         return True
     if owner is None:
         return age < STALE_PARTIAL_AGE_S
-    try:
-        os.kill(owner, 0)
-    except ProcessLookupError:
+    if not _pid_alive(owner):
         return False
-    except OSError:
-        return True
     # A live owner's copy can run longer than the stale threshold. mtime is
     # not a liveness signal: a slow or blocked cross-filesystem copy may leave
     # it unchanged while the process still owns the install temp.

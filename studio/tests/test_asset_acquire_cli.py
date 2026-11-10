@@ -134,7 +134,7 @@ def test_find_need_rejects_manifest_path_traversal(tmp_path: Path, monkeypatch) 
 
 
 def test_resolve_dest_allows_shared_data_symlink_for_custom_node_assets(
-    tmp_path: Path,
+    tmp_path: Path, symlink_or_skip
 ) -> None:
     app = tmp_path / "app"
     data = tmp_path / "data"
@@ -142,7 +142,7 @@ def test_resolve_dest_allows_shared_data_symlink_for_custom_node_assets(
     shared_checkpoints = data / "models/latentsync_checkpoints"
     checkpoints.parent.mkdir(parents=True)
     shared_checkpoints.mkdir(parents=True)
-    checkpoints.symlink_to(shared_checkpoints, target_is_directory=True)
+    symlink_or_skip(checkpoints, shared_checkpoints)
 
     destination = "custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/latentsync_unet.pt"
     resolved = model_assets.resolve_dest(
@@ -157,14 +157,14 @@ def test_resolve_dest_allows_shared_data_symlink_for_custom_node_assets(
 
 
 def test_find_need_rejects_symlinked_destination_parent_outside_data_root(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, symlink_or_skip
 ) -> None:
     data = tmp_path / "data"
     checkpoints = data / "models" / "checkpoints"
     checkpoints.parent.mkdir(parents=True)
     outside = tmp_path / "outside"
     outside.mkdir()
-    checkpoints.symlink_to(outside, target_is_directory=True)
+    symlink_or_skip(checkpoints, outside)
     manifest = tmp_path / "manifest.json"
     _write_manifest(manifest)
     monkeypatch.setenv("COMFY_DATA_DIR", str(data))

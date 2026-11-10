@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import httpx
@@ -11,6 +12,31 @@ from fastapi.testclient import TestClient
 from comfy_studio.app import create_app
 from comfy_studio.config import StudioConfig
 from comfy_studio.stubs.comfyui import ComfyUIStubState, create_stub_comfyui_app
+
+
+@pytest.fixture()
+def symlink_or_skip():
+    """Crea un symlink de directorio, o salta el test si el SO no lo permite.
+
+    En Windows `os.symlink` exige `SeCreateSymbolicLinkPrivilege` (Developer
+    Mode o elevación). El comportamiento bajo prueba —rechazar un destino que
+    escapa de la raíz aprobada— es el mismo sin ese privilegio, así que el test
+    se salta con motivo en vez de fallar por el entorno. En Linux/macOS (el CI
+    que manda) siempre corre.
+    """
+
+    def _make(link: Path, target: Path, *, directory: bool = True) -> None:
+        try:
+            link.symlink_to(target, target_is_directory=directory)
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                pytest.skip(
+                    "symlink requiere Developer Mode o Administrador en Windows "
+                    "(WinError 1314); el caso se cubre en Linux/macOS"
+                )
+            raise
+
+    return _make
 
 
 @pytest.fixture()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 import struct
 import uuid
@@ -237,6 +238,39 @@ class PerceptionVectorStore:
                         (key, val),
                     )
                 conn.commit()
+            # La meta puede mentir: un `index.db` creado cuando el índice era
+            # 64-d conserva su tabla `vec_*` aunque `schema_meta` se reescriba
+            # con las dims nuevas. Sin comprobar la DDL real, el primer insert
+            # fallaba con "Dimension mismatch ... Expected 64 ... received 512",
+            # un error de sqlite que no dice qué hacer. Se valida la tabla tal
+            # como existe y se falla cerrado con la acción concreta.
+            self._reject_legacy_vector_tables(conn)
+
+    def _reject_legacy_vector_tables(self, conn: sqlite3.Connection) -> None:
+        """Falla con un motivo accionable si las tablas `vec_*` no son las activas."""
+        active = {
+            "vec_clip_shots": CLIP_EMBED_DIM,
+            "vec_face_identities": FACE_EMBED_DIM,
+            "vec_face_detections": FACE_EMBED_DIM,
+        }
+        for table, expected in active.items():
+            row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = ?", (table,)
+            ).fetchone()
+            if row is None:
+                continue
+            ddl = str(row["sql"] or "")
+            match = re.search(r"float\[(\d+)\]", ddl)
+            if match is None:
+                continue
+            stored = int(match.group(1))
+            if stored != expected:
+                raise PerceptionUnavailableError(
+                    f"`index.db` con dimensiones antiguas en `{table}` "
+                    f"(float[{stored}], se esperan float[{expected}]): el índice "
+                    "se construyó con otro extractor. Reindexa desde los assets "
+                    "(`POST /studio/api/perception/reindex`) o borra `index.db`."
+                )
 
     def vec_version(self) -> str:
         with self._connection() as conn:

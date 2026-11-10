@@ -32,6 +32,37 @@ def _extract_disk_functions() -> str:
     return "\n\n".join(blocks)
 
 
+def _posix_bash() -> str:
+    """Ruta a un bash POSIX que ejecuta de verdad, o `pytest.skip`.
+
+    El `bash` del PATH en Windows es el lanzador de WSL: si WSL no está
+    instalado o está desactualizado responde "WSL must be updated" y el test
+    fallaba por el entorno, no por el guard. Se prueban primero los bash
+    nativos (Git Bash/MSYS2) y se comprueba con `bash -c true`.
+    """
+    candidates = [
+        shutil.which("bash"),
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        r"C:\msys64\usr\bin\bash.exe",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            probe = subprocess.run(
+                [candidate, "-c", "true"],
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0:
+            return candidate
+    pytest.skip("bash POSIX no disponible (WSL sin actualizar / sin Git Bash)")
+
+
 def _run_disk_guard(
     func_call: str, *, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
@@ -59,7 +90,7 @@ HF_DISK_GUARD="${{HF_DISK_GUARD:-1}}"
 {func_call}
 """
     return subprocess.run(
-        ["bash", "-c", snippet],
+        [_posix_bash(), "-c", snippet],
         capture_output=True,
         text=True,
         env=run_env,
@@ -79,6 +110,10 @@ def test_require_disk_space_succeeds_when_staging_path_missing_under_existing_pa
     assert result.returncode == 0, result.stderr + result.stdout
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="sombra un `df` POSIX por PATH (shebang); el fail-closed se cubre en Linux CI",
+)
 def test_require_disk_space_fails_closed_when_space_unmeasurable() -> None:
     fake_bin = Path(tempfile.mkdtemp())
     try:

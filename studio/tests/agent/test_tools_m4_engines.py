@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -499,7 +501,21 @@ async def test_download_model_honours_an_embedder_supplied_cancel_callable(
 
 
 def _fake_blocking_hf_cli(tmp_path: Path) -> Path:
-    """Cliente `hf` de mentira que se queda colgado: una «descarga» larga."""
+    """Cliente `hf` de mentira que se queda colgado: una «descarga» larga.
+
+    Windows no ejecuta `#!/bin/sh` (`WinError 193`), así que allí el fake es un
+    `.cmd` que lanza el intérprete actual con el mismo `sleep`. `Popen` ejecuta
+    los `.cmd` sin `shell=True`, y el `HF_CLI` explícito se usa tal cual.
+    """
+    if os.name == "nt":
+        script = tmp_path / "hf.cmd"
+        script.write_text(
+            '@echo off\r\n"'
+            + sys.executable
+            + '" -c "import time; time.sleep(60)"\r\n',
+            encoding="ascii",
+        )
+        return script
     script = tmp_path / "hf_falso.sh"
     script.write_text("#!/bin/sh\nsleep 60\n", encoding="utf-8")
     script.chmod(0o755)

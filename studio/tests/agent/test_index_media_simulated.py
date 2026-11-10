@@ -23,7 +23,11 @@ from comfy_studio.projects import ProjectStore
 
 
 @pytest.fixture()
-def index_tool_context(tmp_path: Path) -> ToolContext:
+def index_tool_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ToolContext:
+    # Aísla el índice vectorial en `tmp_path`: el `STUDIO_DATA_DIR` por defecto
+    # puede traer un `index.db` de otra versión (otras dimensiones) y el test
+    # fallaría por el entorno en vez de por su lógica.
+    monkeypatch.setenv("STUDIO_DATA_DIR", str(tmp_path / "studio_data"))
     cfg = StudioConfig.from_env()
     store = ProjectStore(studio_data_dir=tmp_path / "studio_data")
     broker = ProgressBroker()

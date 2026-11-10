@@ -8,7 +8,9 @@ run rc=0 sin artefactos reales falla tipado.
 
 from __future__ import annotations
 
+import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -51,13 +53,66 @@ _FAKE_NS_EMPTY = """#!/bin/bash
 exit 0
 """
 
+# Equivalente Python del fake bash: Windows no ejecuta `#!/bin/bash`, así que
+# los binarios se materializan como `.cmd` que llaman a este shim. El motor los
+# encuentra por el sufijo (capture3d._bin) y la lógica es la misma.
+_FAKE_NS_PY = """import pathlib
+import sys
+
+tool = sys.argv[1]
+args = sys.argv[2:]
+with open(NS_FAKE_LOG, "a", encoding="utf-8") as fh:
+    fh.write(tool + " " + " ".join(args) + "\\n")
+if NS_FAKE_EMPTY:
+    raise SystemExit(0)
+out = ""
+prev = ""
+for a in args:
+    if prev == "--output-dir":
+        out = a
+    prev = a
+outp = pathlib.Path(out)
+if tool == "ns-process-data":
+    (outp / "images").mkdir(parents=True, exist_ok=True)
+    (outp / "colmap").mkdir(parents=True, exist_ok=True)
+elif tool == "ns-train":
+    run = outp / "run" / "splatfacto" / "2026-01-01_000000"
+    run.mkdir(parents=True, exist_ok=True)
+    (run / "config.yml").write_text("pipeline: {}\\n", encoding="utf-8")
+elif tool == "ns-render":
+    rgb = outp / "rgb"
+    rgb.mkdir(parents=True, exist_ok=True)
+    (rgb / "0001.png").write_bytes(b"fake")
+elif tool == "ns-export":
+    outp.mkdir(parents=True, exist_ok=True)
+    (outp / "splat.ply").write_text(
+        "ply\\nformat ascii 1.0\\nelement vertex 1\\nend_header\\n0 0 0\\n",
+        encoding="utf-8",
+    )
+"""
+
 
 def _make_bins(tmp_path: Path, *, empty: bool = False) -> Path:
     bin_dir = tmp_path / "nsbin"
     bin_dir.mkdir(exist_ok=True)
     log = tmp_path / "ns_calls.log"
+    tools = ("ns-process-data", "ns-train", "ns-render", "ns-export")
+    if os.name == "nt":
+        helper = bin_dir / "ns_fake.py"
+        helper.write_text(
+            "import os\nNS_FAKE_LOG = " + repr(str(log)) + "\n"
+            "NS_FAKE_EMPTY = " + repr(bool(empty)) + "\n" + _FAKE_NS_PY,
+            encoding="utf-8",
+        )
+        for tool in tools:
+            cmd = bin_dir / f"{tool}.cmd"
+            cmd.write_text(
+                f'@echo off\r\n"{sys.executable}" "%~dp0ns_fake.py" "{tool}" %*\r\n',
+                encoding="ascii",
+            )
+        return bin_dir
     script = _FAKE_NS_EMPTY if empty else _FAKE_NS.replace("{log}", str(log))
-    for tool in ("ns-process-data", "ns-train", "ns-render", "ns-export"):
+    for tool in tools:
         p = bin_dir / tool
         p.write_text(script, encoding="utf-8")
         p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

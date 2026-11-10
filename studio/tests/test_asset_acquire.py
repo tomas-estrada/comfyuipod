@@ -789,14 +789,22 @@ def test_a_plain_failure_with_an_unremovable_staged_file_still_reports(
         sha256=_digest(),
     )
 
+    open_handles: list[object] = []
+
     def _download_then_fail(argv, *, timeout, should_cancel):
         target = Path(argv[argv.index("--local-dir") + 1]) / argv[3]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"parcial")
-        target.with_name(target.name + ".incomplete").write_bytes(b"parcial")
+        incomplete = target.with_name(target.name + ".incomplete")
+        incomplete.write_bytes(b"parcial")
         # D1: el stageado vive en el subárbol de esta adquisición, así que es
-        # ese directorio el que hay que dejar sin escritura.
-        target.parent.chmod(0o500)  # ni el stageado ni su `.incomplete` se borran
+        # ese directorio el que hay que dejar sin escritura. En Windows `chmod`
+        # no impide borrar: se mantiene abierto el fichero (sin
+        # FILE_SHARE_DELETE), que es lo que hace fallar el `unlink`.
+        if os.name == "nt":
+            open_handles.extend([open(target, "rb"), open(incomplete, "rb")])
+        else:
+            target.parent.chmod(0o500)  # ni el stageado ni su `.incomplete` se borran
         return 1
 
     monkeypatch.setattr(asset_acquire, "_run_hf_download", _download_then_fail)
@@ -809,8 +817,11 @@ def test_a_plain_failure_with_an_unremovable_staged_file_still_reports(
             max_attempts=1,
         )
     finally:
-        for locked in stage.rglob("job-*"):
-            locked.chmod(0o700)
+        for handle in open_handles:
+            handle.close()
+        if os.name != "nt":
+            for locked in stage.rglob("job-*"):
+                locked.chmod(0o700)
 
     entry = report.entries[0]
     assert entry.status == "failed", "hay informe, no una excepción"
@@ -1125,11 +1136,26 @@ def test_a_pidless_partial_ages_out_only_past_the_stale_threshold(
     old.write_bytes(b"parcial")
     when = time.time() - asset_acquire.STALE_PARTIAL_AGE_S - 60
     os.utime(old, (when, when))
-    # Un pid vivo: este proceso. Y uno muerto, de un hijo ya terminado.
-    alive = tmp_path / "vivo.partial-1-1"
+    # Un pid vivo de verdad: un hijo real (el PID 1 no existe en Windows).
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    alive = tmp_path / f"vivo.partial-{child.pid}-1"
     alive.write_bytes(b"parcial")
-    dead_pid = tmp_path / f"muerto.partial-{os.getpid()}-1"
-    dead_pid.write_bytes(b"parcial")
+    try:
+        assert asset_acquire._partial_is_in_flight(alive) is True, (
+            "el temporal de un proceso vivo se conserva aunque el mtime sea viejo"
+        )
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+    deceased = tmp_path / f"muerto.partial-{child.pid}-1"
+    deceased.write_bytes(b"parcial")
+    # El pid propio siempre es «en vuelo»: es el temporal de esta adquisición.
+    own = tmp_path / f"propio.partial-{os.getpid()}-1"
+    own.write_bytes(b"parcial")
 
     assert asset_acquire._partial_is_in_flight(young) is True, (
         "un huérfano sin pid reciente puede ser una copia en curso"
@@ -1137,10 +1163,10 @@ def test_a_pidless_partial_ages_out_only_past_the_stale_threshold(
     assert asset_acquire._partial_is_in_flight(old) is False, (
         "uno inactivo más de STALE_PARTIAL_AGE_S es basura"
     )
-    assert asset_acquire._partial_is_in_flight(alive) is True
-    # El pid propio siempre es «en vuelo»: es el temporal de esta adquisición.
-    assert asset_acquire._partial_pid(dead_pid.name) == os.getpid()
-    assert asset_acquire._partial_is_in_flight(dead_pid) is True
+    assert asset_acquire._partial_is_in_flight(deceased) is False, (
+        "el temporal de un proceso que ya no existe se barre"
+    )
+    assert asset_acquire._partial_is_in_flight(own) is True
 
 
 # --- R25: una copia staged que sobrevive a la instalación se ve ---------------
@@ -4503,7 +4529,10 @@ def test_the_same_filesystem_rename_fsyncs_the_content_before_renaming(
     assert events.index("fsync:staged") < events.index("replace"), (
         f"el contenido se sincroniza antes de publicar el nombre: {events}"
     )
-    assert events[-1] == "fsync:dir", "y la entrada del directorio después"
+    # Windows no permite abrir un directorio para `fsync`: allí el último
+    # evento es el `replace` (la publicación atómica sigue garantizada).
+    expected_last = "replace" if os.name == "nt" else "fsync:dir"
+    assert events[-1] == expected_last, events
     assert dest.read_bytes() == b"contenido" * 1000
     assert not src.exists(), "el stageado se consume al instalar"
 
@@ -4536,7 +4565,8 @@ def test_an_unsupported_fsync_on_the_staged_file_does_not_break_the_install(
     asset_acquire._move(src, dest)
 
     assert dest.read_bytes() == b"contenido"
-    assert calls["n"] >= 2, "el fsync del directorio se intenta igual"
+    # El `fsync` del directorio no existe en Windows; el del fichero sí.
+    assert calls["n"] >= (1 if os.name == "nt" else 2), calls
 
 
 # --- R78: los datos del manifiesto no pueden abortar el plan -------------------

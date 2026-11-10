@@ -246,16 +246,24 @@ def test_two_real_processes_contend_only_one_wins(
             ),
             encoding="utf-8",
         )
+    # Barrera de arranque: sin ella, en Windows (spawn más lento) los últimos
+    # contendientes podían aparecer después de que el primero soltara el lease y
+    # ganaba un segundo, rompiendo «exactamente uno». Todos esperan a que el
+    # padre cree `go`, así que la carrera ocurre de verdad a la vez.
     script = (
-        "import sys, time\n"
+        "import pathlib, sys, time\n"
         "from comfy_studio.orchestration.gpu_lease import (\n"
         "    GpuLease, AdmissionBudget, LeaseUnavailable)\n"
+        "go = pathlib.Path(sys.argv[3])\n"
+        "deadline = time.time() + 60\n"
+        "while not go.exists() and time.time() < deadline:\n"
+        "    time.sleep(0.01)\n"
         "lease = GpuLease(lock_dir=sys.argv[1], budget=AdmissionBudget(98304, 262144),\n"
         "    recover_orphan=lambda _grant: True)\n"
         "try:\n"
         "    g = lease.acquire(owner=sys.argv[2], engine='e', vram_mb=1000, ram_mb=1000)\n"
         "    print('ACQUIRED' if g else 'NONE')\n"
-        "    time.sleep(1.5)\n"  # mantener el lease para que el otro choque
+        "    time.sleep(5.0)\n"  # mantenerlo mientras el resto (imports lentos) intenta
         "except LeaseUnavailable:\n"
         "    print('BLOCKED')\n"
     )
@@ -265,9 +273,10 @@ def test_two_real_processes_contend_only_one_wins(
     # Varios contendientes a la vez exponen la carrera de forma fiable (en CI
     # Linux, dos no bastaban para que el timing la revelara siempre).
     n = 4
+    go = tmp_path / "go"
     procs = [
         subprocess.Popen(
-            [sys.executable, "-c", script, str(lock_dir), f"owner{i}"],
+            [sys.executable, "-c", script, str(lock_dir), f"owner{i}", str(go)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -275,6 +284,7 @@ def test_two_real_processes_contend_only_one_wins(
         )
         for i in range(n)
     ]
+    go.write_text("go", encoding="utf-8")
     results = []
     for p in procs:
         out, err = p.communicate(timeout=60)
