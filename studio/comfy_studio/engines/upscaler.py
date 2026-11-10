@@ -110,7 +110,11 @@ class UpscalerEngine:
             u.validate()
         except (KeyError, ValueError, TypeError) as exc:
             return EngineResult(
-                ok=False, engine=self.name, verb="run", error=f"spec inválido: {exc}"
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec inválido: {exc}",
+                reason="spec_invalid",
             )
 
         start = time.monotonic()
@@ -158,6 +162,7 @@ class UpscalerEngine:
                     f"modelo de upscaler no disponible ({_MODEL_DIR_ENV}); "
                     "hornear el modelo pinned o usar STUDIO_STUB_UPSCALER=1"
                 ),
+                reason="weights_missing",
             )
         return self._run_model(u, start, cancel_event=spec.cancel_event)
 

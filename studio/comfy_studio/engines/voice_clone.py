@@ -125,7 +125,11 @@ class VoiceCloneEngine:
             v.validate()
         except (KeyError, ValueError, TypeError) as exc:
             return EngineResult(
-                ok=False, engine=self.name, verb="run", error=f"spec inválido: {exc}"
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec inválido: {exc}",
+                reason="spec_invalid",
             )
 
         start = time.monotonic()
@@ -154,6 +158,7 @@ class VoiceCloneEngine:
                     f"modelo RVC no disponible ({_MODEL_DIR_ENV}); "
                     "hornear el modelo pinned o usar STUDIO_STUB_VOICE_CLONE=1"
                 ),
+                reason="weights_missing",
             )
         return self._run_rvc(v, start)
 

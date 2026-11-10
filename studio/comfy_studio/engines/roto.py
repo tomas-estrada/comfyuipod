@@ -125,7 +125,11 @@ class RotoEngine:
             r.validate()
         except (KeyError, ValueError, TypeError) as exc:
             return EngineResult(
-                ok=False, engine=self.name, verb="run", error=f"spec inválido: {exc}"
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec inválido: {exc}",
+                reason="spec_invalid",
             )
 
         start = time.monotonic()
@@ -159,6 +163,7 @@ class RotoEngine:
                     "paquete SAM 3 no disponible; hornear `sam3` en la imagen o usar "
                     "STUDIO_STUB_ROTO=1"
                 ),
+                reason="not_installed",
             )
         if not self._weights_available():
             return EngineResult(
@@ -169,6 +174,7 @@ class RotoEngine:
                     f"pesos de SAM 3 ausentes ({_MODEL_DIR_ENV}); son HF-gated "
                     "(facebook/sam3): acepta la licencia y bájalos en runtime con tu token HF"
                 ),
+                reason="weights_missing",
             )
         # El cableado de inferencia real (cargar el predictor SAM 3 y propagar las
         # frases nominales por el vídeo) se completa cuando los pesos estén en la

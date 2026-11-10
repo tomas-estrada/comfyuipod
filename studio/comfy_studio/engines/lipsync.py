@@ -96,7 +96,11 @@ class LipsyncEngine:
             ls.validate()
         except (KeyError, ValueError, TypeError) as exc:
             return EngineResult(
-                ok=False, engine=self.name, verb="run", error=f"spec inválido: {exc}"
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec inválido: {exc}",
+                reason="spec_invalid",
             )
 
         start = time.monotonic()
@@ -124,6 +128,7 @@ class LipsyncEngine:
                     f"modelo de lipsync no disponible ({_MODEL_DIR_ENV}); "
                     "hornear el modelo pinned o usar STUDIO_STUB_LIPSYNC=1"
                 ),
+                reason="weights_missing",
             )
         return self._run_model(ls, start)
 
