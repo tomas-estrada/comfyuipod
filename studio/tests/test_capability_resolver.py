@@ -151,7 +151,11 @@ def test_resolution_reports_engine_prep_and_assets(data_dir: Path) -> None:
     # El motor no está instalado en el host de tests.
     assert resolution.engine == "comfyui"
     assert resolution.engine_prep["state"] == "not_installed"
-    assert resolution.state == "engine_unprepared"
+    # Los activos que faltan tienen prioridad sobre el estado del motor: es lo
+    # primero que hay que poder hacer, y no depende de tener GPU. El detalle del
+    # motor sigue disponible en `engine_prep`.
+    assert resolution.state == "assets_missing"
+    assert resolution.engine_prep["state"] == "not_installed"
     # Los activos se resuelven igual: es información independiente del motor.
     assert len(resolution.assets) == 4
     assert all(not a.present for a in resolution.assets)
@@ -1271,11 +1275,21 @@ def test_request_capability_tool_acquires_and_plans(
     )
     assert result["capability"] == "video.face_restore"
     assert result["downloaded"], "debe adquirir los activos que faltaban"
-    # Motor preparado + activos en disco = listo para encolar.
-    assert result["state"] == "ready"
-    assert result["state"] == "ready"
-    assert "enqueue_render" in result["next_step"]
     assert result["selected_template"] == "face_fix"
+    # Los activos ya están en disco, así que el estado ya NO es `assets_missing`.
+    # Lo que viene después depende del hardware real del host: con GPU el motor
+    # queda `ready` y el siguiente paso es encolar; sin GPU (CI, desarrollo) la
+    # preparación es `hardware_unavailable` y el estado `engine_unprepared`. El
+    # test no puede exigir `ready` en un host sin GPU, así que afirma las dos
+    # caras de la relación en vez de una sola.
+    prep_state = result["engine_prep"]["state"]
+    if prep_state == "ready":
+        assert result["state"] == "ready"
+        assert "enqueue_render" in result["next_step"]
+    else:
+        assert result["state"] == "engine_unprepared"
+        assert "no está preparado" in result["next_step"]
+        assert result["engine_prep"]["hardware"] != "available"
 
     # Sin acquire: no descarga nada, solo informa.
     again = asyncio.run(
