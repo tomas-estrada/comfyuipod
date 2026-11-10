@@ -1,7 +1,7 @@
 //! `diag` — Implementación en Rust de `comfyctl diag` que reemplaza `scripts/diag.sh` (§4.1 / §10.2).
 //! Conserva el contrato exacto `[DIAG][OK|WARN|FAIL] <key>: <detail>` y `[DIAG] resumen: X ok, Y warn, Z fail`.
 
-use crate::collect::procfs::collect_memory_and_disk;
+use crate::collect::procfs::{collect_memory_and_disk, DiskStatus, MemoryStatus};
 use crate::config::RuntimeConfig;
 use crate::redact::SecretRedactor;
 use crate::sys;
@@ -118,6 +118,29 @@ fn run_python_probe(script_name: &str, default_timeout_s: u64) -> String {
             txt
         }
         Err(e) => format!("FAIL|No se pudo ejecutar {}: {e}", script_path.display()),
+    }
+}
+
+/// Nivel (`OK` / `FAIL`) que les corresponde a las sondas de disco y RAM en `diag`.
+///
+/// `collect_memory_and_disk` marca `measurable: false` cuando la sonda no devolvió
+/// datos reales (`/proc/meminfo` ilegible o `statvfs` con error). Anunciar esos
+/// ceros como `[DIAG][OK]` es informar de un estado no medido y contradice a S5,
+/// que marca `fatal` justamente por esos 0 GB libres. Cada sonda se juzga por
+/// separado.
+///
+/// Devuelve `(nivel_disco, nivel_ram)`.
+pub fn resource_diag_levels(mem: &MemoryStatus, disk: &DiskStatus) -> (&'static str, &'static str) {
+    let disk_level = if disk.measurable { "OK" } else { "FAIL" };
+    let ram_level = if mem.measurable { "OK" } else { "FAIL" };
+    (disk_level, ram_level)
+}
+
+fn probe_failed_suffix(level: &str, what: &str) -> String {
+    if level == "OK" {
+        String::new()
+    } else {
+        format!(" — la sonda de {what} no devolvió datos (¿/proc montado? ¿statvfs permitido?)")
     }
 }
 
@@ -281,20 +304,28 @@ pub fn run_diag_cmd(cfg: &RuntimeConfig, output_path: Option<&Path>) -> Result<i
 
     // 7. Disco, RAM y CPU
     let (mem, disk) = collect_memory_and_disk(&cfg.comfy_data_dir);
+    let (disk_level, ram_level) = resource_diag_levels(&mem, &disk);
     agg.emit(
-        "OK",
+        disk_level,
         "disk",
         &format!(
-            "total={}GB usado={}GB libre={}GB ({})",
-            disk.total_gb, disk.used_gb, disk.free_gb, disk.path
+            "total={}GB usado={}GB libre={}GB ({}){}",
+            disk.total_gb,
+            disk.used_gb,
+            disk.free_gb,
+            disk.path,
+            probe_failed_suffix(disk_level, "disco")
         ),
     );
     agg.emit(
-        "OK",
+        ram_level,
         "ram",
         &format!(
-            "total={}MB usado={}MB disponible={}MB",
-            mem.total_mb, mem.used_mb, mem.available_mb
+            "total={}MB usado={}MB disponible={}MB{}",
+            mem.total_mb,
+            mem.used_mb,
+            mem.available_mb,
+            probe_failed_suffix(ram_level, "RAM")
         ),
     );
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
