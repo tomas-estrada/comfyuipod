@@ -13,6 +13,7 @@ from comfy_studio.engines.install_gate import (
     InstallRequest,
     PromotionLedger,
     decide_install,
+    install_engine,
 )
 from comfy_studio.engines.registry import build_default_registry, resolve_engine_class
 
@@ -59,6 +60,37 @@ def test_decidir_no_ejecuta_nada(monkeypatch: pytest.MonkeyPatch) -> None:
     _explotar(monkeypatch)
     d = decide_install(_req(), build_default_registry())
     assert d.allowed is False
+
+
+def test_install_engine_nunca_intenta_instalar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Con dinámico apagado, `install_engine` solo decide y no ejecuta nada."""
+    monkeypatch.delenv("STUDIO_DYNAMIC", raising=False)
+    called = {"run": 0, "popen": 0}
+
+    def _run(*a, **k):  # noqa: ANN001, ANN002
+        called["run"] += 1
+        raise AssertionError("install_engine no debe ejecutar subprocesos")
+
+    def _popen(*a, **k):  # noqa: ANN001, ANN002
+        called["popen"] += 1
+        raise AssertionError("install_engine no debe ejecutar subprocesos")
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    monkeypatch.setattr(subprocess, "Popen", _popen)
+    d = install_engine(_req(), build_default_registry())
+    assert d.allowed is False
+    assert any("STUDIO_DYNAMIC off" in r for r in d.reasons)
+    assert called == {"run": 0, "popen": 0}
+
+
+def test_decide_install_rechaza_motor_ya_preparado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Si el estado de preparación indica `ready`, no se instala."""
+    monkeypatch.setenv("STUDIO_DYNAMIC", "1")
+    _explotar(monkeypatch)
+    preps = {"motor_nuevo": {"state": "ready"}}
+    d = install_engine(_req(), build_default_registry(), preps=preps)
+    assert d.allowed is False
+    assert any("preparado" in r for r in d.reasons)
 
 
 def test_fronteras_exacto_igual_y_doble(monkeypatch: pytest.MonkeyPatch) -> None:

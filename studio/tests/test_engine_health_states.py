@@ -3,7 +3,7 @@
 Pines deterministas sobre un árbol sintético en tmp (sin GPU, sin red):
 un árbol completo deja a los 21 en `ready` (prueba que cada spec es
 satisfacible y documenta qué necesita cada motor); sin pesos el estado es
-`weights_required` y nunca `loaded`/validado; cada hueco reporta su prefijo.
+`weights_missing` y nunca `loaded`/validado; cada hueco reporta su prefijo.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]
         "STUDIO_HEAVY_VIDEO_KEY": "x" * 8,
         "STUDIO_ATLAS_ROOT": str(tmp_path / "atlas"),
     }
-    for name in ("blender", "node", "npx", "ns-train", "ffmpeg"):
+    for name in ("blender", "node", "npx", "ns-train", "ffmpeg", "nvidia-smi"):
         _exe(bin_dir / name)
     Path(env["STUDIO_REMOTION_PROJECT"]).mkdir(parents=True, exist_ok=True)
     Path(env["STUDIO_ATLAS_ROOT"]).mkdir(parents=True, exist_ok=True)
@@ -90,10 +90,14 @@ def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]
         wdir.mkdir(parents=True, exist_ok=True)
         (wdir / "weights.bin").write_bytes(b"fake-weights")
     (Path(env["STUDIO_LIPSYNC_MODEL_DIR"]) / "wav2lip_gan.pth").write_bytes(b"fake")
+    indextts_dir = data / "models" / "indextts"
+    (indextts_dir / "config.yaml").write_text("fake: true\n", encoding="utf-8")
+    (indextts_dir / "gpt.pth").write_bytes(b"fake-gpt")
     llm_model = Path(env["STUDIO_LLM_SERVER_MODEL"])
     llm_model.parent.mkdir(parents=True, exist_ok=True)
     llm_model.write_bytes(b"fake-gguf")
-    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+    env["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+    monkeypatch.setenv("PATH", env["PATH"])
     return env
 
 
@@ -105,14 +109,15 @@ def test_arbol_completo_deja_todos_ready(
     assert len(report.engines) == 21
     not_ready = {n: p.state for n, p in report.engines.items() if p.state != "ready"}
     assert not_ready == {}, f"motores no listos con árbol completo: {not_ready}"
-    assert report.counts() == {"ready": 21, "weights_required": 0,
-                               "not_installed": 0, "integration_missing": 0}
+    assert report.counts() == {"ready": 21, "weights_missing": 0,
+                               "not_installed": 0, "integration_missing": 0,
+                               "hardware_unavailable": 0}
 
 
-def test_sin_pesos_weights_required_nunca_loaded(
+def test_sin_pesos_weights_missing_nunca_loaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Pesos ausentes => `weights_required`; jamás `loaded`/validado sin GPU."""
+    """Pesos ausentes => `weights_missing`; jamás `loaded`/validado sin GPU."""
     env = _full_env(tmp_path, monkeypatch)
     specs = build_default_prep_specs()
     with_weights = [s for s in specs.values() if s.weights_required]
@@ -126,12 +131,12 @@ def test_sin_pesos_weights_required_nunca_loaded(
             elif target.is_dir():
                 shutil.rmtree(target)
         prep = probe_preparedness(spec, env=pruned, module_finder=lambda m: True)
-        assert prep.state == "weights_required", spec.name
+        assert prep.state == "weights_missing", spec.name
         assert prep.installed is True
         assert prep.weights_present is False
         assert prep.model_loaded is False
         assert prep.execution_validated is False
-        assert prep.hardware == "unchecked"
+        assert prep.hardware != "unavailable", "el árbol completo provee GPU"
 
 
 def test_cada_hueco_reporta_su_prefijo(tmp_path: Path) -> None:

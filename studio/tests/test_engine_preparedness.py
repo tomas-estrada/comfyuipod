@@ -61,7 +61,7 @@ def test_ready_when_binary_and_integration_present(tmp_path) -> None:
     assert prep.weights_present is None
     assert prep.model_loaded is False
     assert prep.execution_validated is False
-    assert prep.hardware == "unchecked"
+    assert prep.hardware == "not_required"
 
 
 def test_missing_binary_is_not_installed(tmp_path) -> None:
@@ -86,7 +86,7 @@ def test_missing_config_is_integration_missing(tmp_path) -> None:
     assert prep.integration is False
 
 
-def test_installed_but_weights_required(tmp_path) -> None:
+def test_installed_but_weights_missing(tmp_path) -> None:
     """Un motor correctamente instalado puede seguir pidiendo pesos de tarea."""
     binary = tmp_path / "engine"
     binary.write_text("#!/bin/sh\n")
@@ -99,7 +99,7 @@ def test_installed_but_weights_required(tmp_path) -> None:
         weights_required=True,
     )
     missing = probe_preparedness(spec, env=_env(tmp_path))
-    assert missing.state == "weights_required"
+    assert missing.state == "weights_missing"
     assert missing.installed is True
     assert missing.weights_present is False
 
@@ -108,6 +108,50 @@ def test_installed_but_weights_required(tmp_path) -> None:
     present = probe_preparedness(spec, env=_env(tmp_path))
     assert present.state == "ready"
     assert present.weights_present is True
+
+
+def test_directorio_vacio_no_cuenta_como_pesos(tmp_path) -> None:
+    """Un directorio de pesos vacío es ausente, no presente."""
+    binary = tmp_path / "engine"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    weights = tmp_path / "models" / "thing"
+    weights.mkdir(parents=True)
+    spec = EnginePrepSpec(
+        name="fake",
+        binaries=(str(binary),),
+        weight_paths=(str(weights),),
+        weights_required=True,
+    )
+    prep = probe_preparedness(spec, env=_env(tmp_path))
+    assert prep.state == "weights_missing"
+    assert prep.weights_present is False
+
+
+def test_hardware_es_un_hecho_de_disco(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sin binario NVIDIA ni /dev/nvidia0, el hardware no está disponible."""
+    binary = tmp_path / "engine"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    spec = EnginePrepSpec(
+        name="fake",
+        binaries=(str(binary),),
+        hardware_required=True,
+    )
+    env = _env(tmp_path, PATH=str(tmp_path / "vacio"))
+    prep = probe_preparedness(spec, env=env)
+    assert prep.hardware == "unavailable"
+    assert prep.state == "hardware_unavailable"
+    assert any(m.startswith("hardware:") for m in prep.missing)
+
+    fake = tmp_path / "bin" / "nvidia-smi"
+    fake.parent.mkdir(parents=True, exist_ok=True)
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    env2 = _env(tmp_path, PATH=str(fake.parent))
+    ready = probe_preparedness(spec, env=env2)
+    assert ready.hardware == "ready"
+    assert ready.state == "ready"
 
 
 def test_module_probe_uses_find_spec_without_importing() -> None:
@@ -142,9 +186,10 @@ def test_probe_never_touches_the_network_or_gpu() -> None:
     assert sum(report.counts().values()) == 21
     assert set(report.counts()) == {
         "ready",
-        "weights_required",
+        "weights_missing",
         "not_installed",
         "integration_missing",
+        "hardware_unavailable",
     }
 
 
@@ -207,7 +252,7 @@ def test_preparedness_is_serializable() -> None:
         integration=True,
         weights_required=False,
         weights_present=None,
-        hardware="unchecked",
+        hardware="not_required",
         model_loaded=False,
         execution_validated=False,
         missing=(),

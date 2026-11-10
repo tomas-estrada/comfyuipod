@@ -77,7 +77,12 @@ class VoiceCloneEngine:
 
     def _model_available(self) -> bool:
         model_dir = (os.environ.get(_MODEL_DIR_ENV) or "").strip()
-        return bool(model_dir) and Path(model_dir).is_dir()
+        if model_dir:
+            target = Path(model_dir)
+            return target.is_file() or (target.is_dir() and any(target.iterdir()))
+        from comfy_studio.engines.preparedness import weights_status
+
+        return bool(weights_status(self.name).present)
 
     # -- contrato ------------------------------------------------------------
 
@@ -102,13 +107,16 @@ class VoiceCloneEngine:
         )
 
     def verify(self, submotor: str) -> EngineResult:
-        ready = self._model_available() or self.is_stub()
+        available = self._model_available()
+        ready = available or self.is_stub()
+        weights = "present" if available else "missing"
         return EngineResult(
             ok=ready,
             engine=self.name,
             verb="verify",
-            payload={"model_available": self._model_available(), "stub": self.is_stub()},
+            payload={"model_available": available, "stub": self.is_stub(), "weights": weights},
             error=None if ready else f"modelo RVC ausente ({_MODEL_DIR_ENV})",
+            reason=None if ready else "weights_missing",
         )
 
     def run(self, spec: EngineRunSpec) -> EngineResult:
@@ -117,7 +125,11 @@ class VoiceCloneEngine:
             v.validate()
         except (KeyError, ValueError, TypeError) as exc:
             return EngineResult(
-                ok=False, engine=self.name, verb="run", error=f"spec inválido: {exc}"
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec inválido: {exc}",
+                reason="spec_invalid",
             )
 
         start = time.monotonic()
@@ -146,6 +158,7 @@ class VoiceCloneEngine:
                     f"modelo RVC no disponible ({_MODEL_DIR_ENV}); "
                     "hornear el modelo pinned o usar STUDIO_STUB_VOICE_CLONE=1"
                 ),
+                reason="weights_missing",
             )
         return self._run_rvc(v, start)
 

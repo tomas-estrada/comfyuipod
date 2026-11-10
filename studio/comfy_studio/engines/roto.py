@@ -60,7 +60,12 @@ class RotoEngine:
 
     def _weights_available(self) -> bool:
         md = (os.environ.get(_MODEL_DIR_ENV) or "").strip()
-        return bool(md) and Path(md).is_dir()
+        if md:
+            target = Path(md)
+            return target.is_file() or (target.is_dir() and any(target.iterdir()))
+        from comfy_studio.engines.preparedness import weights_status
+
+        return bool(weights_status(self.name).present)
 
     def list(self) -> EngineResult:
         return EngineResult(
@@ -87,14 +92,23 @@ class RotoEngine:
         )
 
     def verify(self, submotor: str) -> EngineResult:
-        ready = (self._package_available() and self._weights_available()) or self.is_stub()
+        pkg = self._package_available()
+        w = self._weights_available()
+        ready = (pkg and w) or self.is_stub()
+        reason = None
+        if not ready and not self.is_stub():
+            if not pkg:
+                reason = "not_installed"
+            elif not w:
+                reason = "weights_missing"
         return EngineResult(
             ok=ready,
             engine=self.name,
             verb="verify",
             payload={
-                "package": self._package_available(),
-                "weights": self._weights_available(),
+                "package": pkg,
+                "weights": w,
+                "weights_state": "present" if w else "missing",
                 "stub": self.is_stub(),
             },
             error=(
@@ -102,6 +116,7 @@ class RotoEngine:
                 if ready
                 else "SAM 3 no listo: falta el paquete o los pesos (STUDIO_ROTO_MODEL_DIR)"
             ),
+            reason=reason,
         )
 
     def run(self, spec: EngineRunSpec) -> EngineResult:
@@ -110,7 +125,11 @@ class RotoEngine:
             r.validate()
         except (KeyError, ValueError, TypeError) as exc:
             return EngineResult(
-                ok=False, engine=self.name, verb="run", error=f"spec inválido: {exc}"
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec inválido: {exc}",
+                reason="spec_invalid",
             )
 
         start = time.monotonic()
@@ -144,6 +163,7 @@ class RotoEngine:
                     "paquete SAM 3 no disponible; hornear `sam3` en la imagen o usar "
                     "STUDIO_STUB_ROTO=1"
                 ),
+                reason="not_installed",
             )
         if not self._weights_available():
             return EngineResult(
@@ -154,6 +174,7 @@ class RotoEngine:
                     f"pesos de SAM 3 ausentes ({_MODEL_DIR_ENV}); son HF-gated "
                     "(facebook/sam3): acepta la licencia y bájalos en runtime con tu token HF"
                 ),
+                reason="weights_missing",
             )
         # El cableado de inferencia real (cargar el predictor SAM 3 y propagar las
         # frases nominales por el vídeo) se completa cuando los pesos estén en la

@@ -5,6 +5,7 @@ pub mod gpu;
 pub mod models;
 pub mod phases;
 pub mod procfs;
+pub mod startup;
 
 use crate::collect::gpu::{collect_gpu_status, GpuStatus};
 use crate::collect::models::{collect_weight_status, WeightStatus};
@@ -45,6 +46,10 @@ pub struct StatusApiPayload {
     pub env_masked: BTreeMap<String, String>,
     /// Estado de pesos del perfil medido en disco (qué falta y qué llegó).
     pub weights: WeightStatus,
+    /// Causa de arranque/salida observable sin entrar al pod. `None` = no medido
+    /// (el informe dice «no disponible», no inventa).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub startup: Option<crate::collect::startup::StartupStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub strict: Option<StrictReport>,
 }
@@ -118,6 +123,21 @@ pub fn build_status_api_payload(
     log_buffers.insert("api".to_string(), api_lines);
 
     let comfy_running = comfyui.state == "running";
+    // Última línea útil del log del proceso: primero comfyui.log (el traceback
+    // real) y como respaldo supervisor.log; el render viaja ya redactado.
+    let last_log_line = crate::logtail::last_useful_line(
+        &resolve_log_path("comfyui", log_dir).unwrap_or_else(|| log_dir.join("comfyui.log")),
+        300,
+    )
+    .or_else(|| {
+        crate::logtail::last_useful_line(
+            &resolve_log_path("supervisor", log_dir)
+                .unwrap_or_else(|| log_dir.join("supervisor.log")),
+            300,
+        )
+    });
+    let mut comfyui = comfyui;
+    comfyui.last_log_line = last_log_line;
     let (triage, errors_recent) = triage_engine.evaluate(&log_buffers, comfy_running);
     let env_masked = build_masked_env(cfg);
 
@@ -141,6 +161,10 @@ pub fn build_status_api_payload(
         triage,
         env_masked,
         weights,
+        startup: Some(crate::collect::startup::collect_startup_status(
+            log_dir,
+            &cfg.supervisor_json_path,
+        )),
         strict,
     }
 }

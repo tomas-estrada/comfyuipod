@@ -562,10 +562,17 @@ def resolve(
             except Exception:  # noqa: BLE001 - la receta medida nunca rompe la resolución
                 recipe = None
 
-    if prep.get("state") not in (None, "", "ready"):
-        state = "engine_unprepared"
-    elif missing:
+    # Los activos que faltan tienen PRIORIDAD sobre el estado del motor. Antes
+    # se comprobaba primero `engine_unprepared`, y como la preparación depende de
+    # hechos de hardware (commit d4ae298), en cualquier host sin GPU el estado
+    # era `engine_unprepared` y la rama de adquisición de `request_capability`
+    # quedaba inalcanzable: no se podían descargar los modelos de una capacidad
+    # sin tener ya la GPU. Adquirir es lo primero que hay que poder hacer.
+    # El detalle del motor sigue en `engine_prep`.
+    if missing:
         state = "assets_missing"
+    elif prep.get("state") not in (None, "", "ready"):
+        state = "engine_unprepared"
     else:
         state = "ready"
 

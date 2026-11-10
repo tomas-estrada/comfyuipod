@@ -217,10 +217,16 @@
         const c = d.comfyui;
         const cBadge = c.state === "running" ? "b-ok" : (c.state === "starting" ? "b-warn" : "b-err");
         const cLabel = c.state === "running" ? "Activo" : (c.state === "starting" ? "Arrancando" : "Caído");
-        const lastEx = c.last_exit ? `rc=${esc(c.last_exit.rc)} (${esc(c.last_exit.reason)})` : "ninguna";
+        const lastLine = c.last_log_line ? `<code>${esc(c.last_log_line)}</code>` : "<code>no disponible</code>";
+        const lastEx = c.last_exit
+          ? `proceso <code>${esc(c.last_exit.process || "ComfyUI (python3 main.py)")}</code>, rc=<code>${esc(c.last_exit.rc)}</code> (${esc(c.last_exit.reason)})`
+          : "ninguna";
+        const startup = d.startup ? `Arranque: ${esc(d.startup.cause)}` : "Arranque: no disponible";
         document.getElementById("comfy-body").innerHTML =
           `<p><span class="badge ${cBadge}">${cLabel}</span> · PID: <code>${esc(c.pid ?? "-")}</code> · RSS: <code>${c.rss_mb} MB</code></p>` +
-          `<p>Reinicios: <code>${c.restarts}/${c.max_restarts}</code> · Última caída: ${lastEx}</p>`;
+          `<p>Reinicios: <code>${c.restarts}/${c.max_restarts}</code> · Última salida: ${lastEx}</p>` +
+          `<p>Última línea útil del log: ${lastLine}</p>` +
+          `<p style="font-size:13px;">${startup}</p>`;
 
         const g = d.gpu;
         document.getElementById("gpu-body").innerHTML = g.available

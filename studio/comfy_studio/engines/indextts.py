@@ -75,10 +75,12 @@ class IndexttsEngine:
 
     def _model_available(self) -> bool:
         model_dir = (os.environ.get(_MODEL_DIR_ENV) or "").strip()
-        if not model_dir:
-            return False
-        p = Path(model_dir)
-        return (p / "config.yaml").is_file() and (p / "gpt.pth").is_file()
+        if model_dir:
+            p = Path(model_dir)
+            return (p / "config.yaml").is_file() and (p / "gpt.pth").is_file()
+        from comfy_studio.engines.preparedness import weights_status
+
+        return bool(weights_status(self.name).present)
 
     def list(self) -> EngineResult:
         stub = self.is_stub()
@@ -108,13 +110,16 @@ class IndexttsEngine:
         )
 
     def verify(self, submotor: str) -> EngineResult:
-        present = self.is_stub() or self._model_available()
+        available = self._model_available()
+        present = self.is_stub() or available
+        weights = "present" if available else "missing"
         return EngineResult(
             ok=present,
             engine=self.name,
             verb="verify",
-            payload={"weights_ok": present, "stub": self.is_stub()},
+            payload={"weights_ok": present, "stub": self.is_stub(), "weights": weights},
             error=None if present else f"pesos ausentes ({_MODEL_DIR_ENV})",
+            reason=None if present else "weights_missing",
         )
 
     def run(self, spec: EngineRunSpec) -> EngineResult:
@@ -131,7 +136,11 @@ class IndexttsEngine:
             m.validate()
         except (KeyError, ValueError, TypeError) as exc:
             return EngineResult(
-                ok=False, engine=self.name, verb="run", error=f"spec inválido: {exc}"
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec inválido: {exc}",
+                reason="spec_invalid",
             )
 
         start = time.monotonic()
@@ -161,6 +170,7 @@ class IndexttsEngine:
                     "descárgalos con la fase indextts de download-models.sh "
                     "o usa STUDIO_STUB_INDEXTTS=1"
                 ),
+                reason="weights_missing",
             )
         return self._run_model(m, start)
 
