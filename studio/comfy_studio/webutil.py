@@ -297,13 +297,14 @@ class ReelTextOverlayRequest(BaseModel):
 
 
 class ReelRenderRequest(BaseModel):
-    clips: list[ReelClipRequest] = Field(..., min_length=1, max_length=100)
-    titles: list[ReelTextOverlayRequest] = Field(default_factory=list, max_length=100)
-    captions: list[ReelTextOverlayRequest] = Field(default_factory=list, max_length=100)
+    preset_id: str = Field(default="social-vertical-v1", min_length=1, max_length=64)
+    clips: list[ReelClipRequest] = Field(..., min_length=1, max_length=50)
+    titles: list[ReelTextOverlayRequest] = Field(default_factory=list, max_length=50)
+    captions: list[ReelTextOverlayRequest] = Field(default_factory=list, max_length=50)
     audio_asset_id: str | None = Field(default=None, max_length=64)
-    width: int = Field(default=1080, ge=16, le=8192)
-    height: int = Field(default=1920, ge=16, le=8192)
-    fps: int = Field(default=30, ge=1, le=120)
+    width: int | None = Field(default=None, ge=16, le=3840)
+    height: int | None = Field(default=None, ge=16, le=3840)
+    fps: int | None = Field(default=None, ge=1, le=60)
 
 
 class BriefUnderstandRequest(BaseModel):

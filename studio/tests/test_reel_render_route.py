@@ -32,6 +32,9 @@ def test_reel_render_resolves_project_assets_and_persists_output(
         }
 
     def fake_render(_engine: EditorEngine, spec: EngineRunSpec) -> EngineResult:
+        assert spec.job["render_concurrency"] == 1
+        assert spec.job["offthread_cache_bytes"] == 134_217_728
+        assert spec.job["memory_efficient"] is True
         output = Path(spec.job["output_path"])
         output.write_bytes(b"\x00\x00\x00\x18ftypmp42")
         return EngineResult(
@@ -52,6 +55,7 @@ def test_reel_render_resolves_project_assets_and_persists_output(
             "width": 320,
             "height": 240,
             "fps": 15,
+            "preset_id": "custom-preview-v1",
         },
     )
     assert response.status_code == 201, response.text
@@ -63,6 +67,47 @@ def test_reel_render_resolves_project_assets_and_persists_output(
     assert output.status_code == 200
     assert output.json()["category"] == "outputs"
     assert output.json()["metadata"]["engine"] == "remotion"
+    assert output.json()["metadata"]["preset_id"] == "custom-preview-v1"
+
+
+def test_reel_preset_catalog_is_versioned_and_exposes_resource_limits(
+    client: TestClient,
+) -> None:
+    response = client.get("/studio/api/reels/presets")
+    assert response.status_code == 200
+    presets = response.json()["presets"]
+    vertical = next(item for item in presets if item["preset_id"] == "social-vertical-v1")
+    assert vertical["max_duration_s"] == 60
+    assert vertical["concurrency"] == 2
+    assert vertical["offthread_cache_bytes"] == 268_435_456
+
+
+def test_reel_render_rejects_duration_over_preset_ceiling(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    project = client.post("/studio/api/projects", json={"name": "too long"}).json()
+    uploaded = client.post(
+        f"/studio/api/projects/{project['id']}/assets",
+        files={"file": ("clip.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4")},
+    )
+    asset_id = uploaded.json()["id"]
+    monkeypatch.setattr(
+        "comfy_studio.perception.keyframes.probe_media_info",
+        lambda *_args, **_kwargs: {
+            "probe_ok": True,
+            "has_video": True,
+            "duration_sec": 61.0,
+            "width": 320,
+            "height": 240,
+        },
+    )
+    response = client.post(
+        f"/studio/api/projects/{project['id']}/reels/render",
+        json={"clips": [{"asset_id": asset_id}]},
+    )
+    assert response.status_code == 422
+    assert "60 s" in response.json()["detail"]
 
 
 def test_reel_render_rejects_asset_from_another_project(client: TestClient) -> None:

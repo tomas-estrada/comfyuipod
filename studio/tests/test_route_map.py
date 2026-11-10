@@ -46,6 +46,7 @@ EXPECTED_ROUTES: list[str] = [
     "GET /studio/api/productions/{production_id}",
     "GET /studio/api/productions/{production_id}/status",
     "GET /studio/api/progress",
+    "GET /studio/api/reels/presets",
     "GET /studio/api/projects",
     "GET /studio/api/projects/{project_id}",
     "GET /studio/api/projects/{project_id}/ads",

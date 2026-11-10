@@ -420,6 +420,7 @@ def register_routes(app: FastAPI) -> None:
         from comfy_studio.engines.editor import Clip, TextOverlay
         from comfy_studio.perception.keyframes import probe_media_info
         from comfy_studio.projects import MediaValidationError
+        from comfy_studio.reel_presets import resolve_reel_preset
 
         active_store: ProjectStore = request.app.state.store
         active_cfg: StudioConfig = request.app.state.config
@@ -468,6 +469,34 @@ def register_routes(app: FastAPI) -> None:
             )
             source_ids.append(request_clip.asset_id)
 
+        requested_duration = 0.0
+        previous_duration = 0.0
+        for index, clip in enumerate(clips):
+            overlap = (
+                min(clip.transition_duration_s, clip.duration_s, previous_duration)
+                if index > 0 and clip.transition_in in {"crossfade", "slide"}
+                else 0.0
+            )
+            requested_duration += clip.duration_s - overlap
+            previous_duration = clip.duration_s
+        try:
+            preset, output_width, output_height, output_fps = resolve_reel_preset(
+                body.preset_id,
+                width=body.width,
+                height=body.height,
+                fps=body.fps,
+                duration_s=requested_duration,
+                clip_count=len(clips),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        for overlay in [*body.titles, *body.captions]:
+            if overlay.end_s > requested_duration:
+                raise HTTPException(
+                    status_code=422,
+                    detail="El texto del reel no puede extenderse más allá de la duración final",
+                )
+
         audio_path: Path | None = None
         if body.audio_asset_id:
             audio_asset = active_store.get_asset(project_id, body.audio_asset_id)
@@ -494,9 +523,12 @@ def register_routes(app: FastAPI) -> None:
                     for clip in clips
                 ],
                 "output_path": str(output_path),
-                "width": body.width,
-                "height": body.height,
-                "fps": body.fps,
+                "width": output_width,
+                "height": output_height,
+                "fps": output_fps,
+                "render_concurrency": preset.concurrency,
+                "offthread_cache_bytes": preset.offthread_cache_bytes,
+                "memory_efficient": True,
                 "audio_path": str(audio_path) if audio_path else None,
                 "titles": [
                     {"text": item.text, "start_s": item.start_s, "end_s": item.end_s,
@@ -526,9 +558,11 @@ def register_routes(app: FastAPI) -> None:
             if (
                 not output_info.get("probe_ok")
                 or not output_info.get("has_video")
-                or int(output_info.get("width") or 0) != body.width
-                or int(output_info.get("height") or 0) != body.height
-                or float(output_info.get("duration_sec") or 0.0) <= 0
+                or int(output_info.get("width") or 0) != output_width
+                or int(output_info.get("height") or 0) != output_height
+                or abs(
+                    float(output_info.get("duration_sec") or 0.0) - requested_duration
+                ) > (1 / output_fps + 0.05)
             ):
                 raise HTTPException(
                     status_code=503,
@@ -546,15 +580,18 @@ def register_routes(app: FastAPI) -> None:
                     category="outputs",
                     metadata={
                         "engine": "remotion",
+                        "preset_id": preset.preset_id,
+                        "preset_version": 1,
+                        "timeline_duration_s": round(requested_duration, 3),
                         "simulated": result.simulated,
                         "source_asset_ids": source_ids,
                         "audio_asset_id": body.audio_asset_id,
                         "titles": [item.text for item in titles],
                         "captions": [item.text for item in captions],
                         "transitions": [clip.transition_in for clip in clips],
-                        "width": body.width,
-                        "height": body.height,
-                        "fps": body.fps,
+                        "width": output_width,
+                        "height": output_height,
+                        "fps": output_fps,
                     },
                 )
             except (LookupError, MediaValidationError) as exc:
@@ -566,6 +603,13 @@ def register_routes(app: FastAPI) -> None:
             "engine": "remotion",
             "simulated": result.simulated,
         }
+
+    @app.get("/studio/api/reels/presets")
+    async def list_project_reel_presets() -> dict[str, Any]:
+        """Lista presets inmutables, versionados y con límites de render."""
+        from comfy_studio.reel_presets import list_reel_presets
+
+        return {"presets": list_reel_presets()}
 
     @app.get("/studio/api/progress")
     async def sse_progress(
