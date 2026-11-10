@@ -26,6 +26,20 @@ from comfy_studio.orchestration.state import (
     ShotStatus,
 )
 
+#: Claves del job que son de la orquestación, no del motor. `layer.params` viene del
+#: planner (un LLM), así que no puede fijarlas: falsearían la identidad del job
+#: (dedupe por idempotency_key, ownership del checkpoint y proyecto activo).
+_RESERVED_JOB_KEYS = frozenset(
+    {
+        "kind",
+        "shot",
+        "job_id",
+        "idempotency_key",
+        "project_id",
+        "template_id",
+    }
+)
+
 
 class EngineRunner(Protocol):
     """Contrato mínimo para ejecutar una capa en un motor (síncrono).
@@ -181,7 +195,15 @@ def execute_next_shot(
             }
             if checkpoint is not None:
                 checkpoint(state)
-            job = {"kind": layer.kind, "shot": shot.id, **layer.params}
+            job = {"kind": layer.kind, "shot": shot.id}
+            # Las claves que la orquestación posee no pueden venir de `layer.params`.
+            # El planner es un LLM: sin este filtro un params con `kind`, `shot`,
+            # `job_id`, `idempotency_key`, `project_id` o `template_id` falsificados
+            # se colaba por el splat y falseaba la identidad del job (dedupe,
+            # ownership del checkpoint y proyecto activo).
+            job.update(
+                {k: v for k, v in layer.params.items() if k not in _RESERVED_JOB_KEYS}
+            )
             # Engine adapters receive a stable operation id. Retries after a
             # process restart must reconcile or deduplicate this same layer,
             # rather than creating an unrelated paid/render job.
