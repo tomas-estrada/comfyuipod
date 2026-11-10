@@ -1243,6 +1243,17 @@ def test_request_capability_tool_acquires_and_plans(
     app_dir.mkdir()
     (app_dir / "main.py").write_text("# stub\n", encoding="utf-8")
     os.environ["COMFY_APP_DIR"] = str(app_dir)
+    # #263 hizo del hardware un hecho más de la preparación del motor: en CI no
+    # hay GPU y `comfyui` quedaría `hardware_unavailable`, así que la resolución
+    # nunca llegaría a `assets_missing`. Este test cubre el cableado de la
+    # herramienta, no la sonda de hardware (que tiene tests propios), así que se
+    # simula una GPU con el mismo patrón que test_engine_preparedness.py.
+    gpu_bin = tmp_path / "bin"
+    gpu_bin.mkdir()
+    fake_smi = gpu_bin / "nvidia-smi"
+    fake_smi.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_smi.chmod(0o755)
+    monkeypatch.setenv("PATH", str(gpu_bin) + os.pathsep + os.environ.get("PATH", ""))
     store = ProjectStore(str(tmp_path / "studio.db"))
     project = store.create_project("test-capability")
     cfg = StudioConfig.from_env({"STUDIO_DATA_DIR": str(data_dir)})
