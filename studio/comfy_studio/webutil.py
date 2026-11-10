@@ -207,6 +207,19 @@ class DiarizeRequest(BaseModel):
     expected_speakers: int | None = Field(default=None, ge=1, le=6)
 
 
+class EdlOverlayRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+    start_s: float = Field(..., ge=0.0)
+    end_s: float = Field(..., gt=0.0, le=3600.0)
+    position: Literal["top", "center", "bottom"] = "bottom"
+
+    @model_validator(mode="after")
+    def _validate_time_window(self) -> EdlOverlayRequest:
+        if self.end_s <= self.start_s:
+            raise ValueError("end_s debe ser mayor que start_s")
+        return self
+
+
 class EdlCreateRequest(BaseModel):
     title: str = Field(default="Propuesta EDL", min_length=1, max_length=200)
     aspect_ratio: str = Field(default="16:9", pattern=r"^(16:9|9:16|1:1|4:5)$")
@@ -214,6 +227,9 @@ class EdlCreateRequest(BaseModel):
     # M3-SCR-005: cota dura de cortes para no desencadenar cadenas ilimitadas de
     # subprocess ffmpeg (un corte = 1 recorte + 1 concat)
     cuts: list[EdlCutItem] = Field(..., min_length=1, max_length=200)
+    titles: list[EdlOverlayRequest] = Field(default_factory=list, max_length=50)
+    captions: list[EdlOverlayRequest] = Field(default_factory=list, max_length=50)
+    audio_asset_id: str | None = Field(default=None, max_length=64)
     notes: str = Field(default="", max_length=2000)
 
 
@@ -278,6 +294,7 @@ class EdlBuildRequest(BaseModel):
 
 class ReelClipRequest(BaseModel):
     asset_id: str = Field(..., min_length=1, max_length=64)
+    start_s: float = Field(default=0.0, ge=0.0, le=3600.0)
     duration_s: float | None = Field(default=None, gt=0.0, le=600.0)
     transition_in: Literal["cut", "crossfade", "fade", "slide"] = "cut"
     transition_duration_s: float = Field(default=0.3, ge=0.0, le=5.0)
@@ -302,6 +319,13 @@ class ReelRenderRequest(BaseModel):
     titles: list[ReelTextOverlayRequest] = Field(default_factory=list, max_length=50)
     captions: list[ReelTextOverlayRequest] = Field(default_factory=list, max_length=50)
     audio_asset_id: str | None = Field(default=None, max_length=64)
+    width: int | None = Field(default=None, ge=16, le=3840)
+    height: int | None = Field(default=None, ge=16, le=3840)
+    fps: int | None = Field(default=None, ge=1, le=60)
+
+
+class EdlProgrammedRenderRequest(BaseModel):
+    preset_id: str = Field(default="social-vertical-v1", min_length=1, max_length=64)
     width: int | None = Field(default=None, ge=16, le=3840)
     height: int | None = Field(default=None, ge=16, le=3840)
     fps: int | None = Field(default=None, ge=1, le=60)
