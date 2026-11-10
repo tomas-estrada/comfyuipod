@@ -31,6 +31,8 @@
         perceptionNotice: "",
         montageData: null,
         editedCuts: null,
+        editedProgramTitle: null,
+        editedProgramCaption: null,
         reviewPins: [],
         toolEvents: [],
         selectedKeyframeIds: new Set(),
@@ -759,6 +761,8 @@
             state.identities = [];
             state.perceptionResults = null;
             state.editedCuts = null;
+            state.editedProgramTitle = null;
+            state.editedProgramCaption = null;
             const searchInputEl = document.getElementById("perception-search-input");
             if (searchInputEl) searchInputEl.value = "";
             const searchStatusEl = document.getElementById("perception-search-status");
@@ -2756,6 +2760,7 @@
         const summaryEl = document.getElementById("edl-summary-box");
         const trackEl = document.getElementById("edl-timeline-track");
         const cutsListEl = document.getElementById("edl-cuts-list");
+        const programmedControlsEl = document.getElementById("edl-programmed-controls");
         const trListEl = document.getElementById("edl-transcription-list");
 
         const latestTr =
@@ -2790,6 +2795,7 @@
         const latest = state.edlData && (state.edlData.latest || state.edlData.edl);
         if (!latest) {
             if (badgeEl) badgeEl.textContent = "Sin versión EDL";
+            if (programmedControlsEl) programmedControlsEl.innerHTML = "";
             if (trackEl) {
                 trackEl.innerHTML =
                     '<span class="track-empty">Sin cortes definidos aún. Pulsa «Generar EDL de Highlights con Agente».</span>';
@@ -2812,6 +2818,35 @@
                 <p><strong>Duración estimada:</strong> <code>${escapeHtml(edlPayload.total_duration_sec || 0)}s</code> · <strong>Formato:</strong> <code>${escapeHtml(edlPayload.aspect_ratio || "16:9")}</code></p>
                 <p><strong>Notas editoriales:</strong> ${escapeHtml(edlPayload.notes || "Sin notas adicionales")}</p>
             `;
+        }
+        if (programmedControlsEl) {
+            const title = (state.editedProgramTitle || (edlPayload.titles || [])[0] || {});
+            const caption = (state.editedProgramCaption || (edlPayload.captions || [])[0] || {});
+            programmedControlsEl.innerHTML = `
+                <div class="form-group flex-1">
+                    <label for="edl-program-title">Título del montaje</label>
+                    <input id="edl-program-title" maxlength="1000" value="${escapeHtml(title.text || "")}" placeholder="Título opcional">
+                </div>
+                <div class="form-group">
+                    <label for="edl-program-title-start">Desde (s)</label>
+                    <input id="edl-program-title-start" type="number" min="0" step="0.1" value="${Number(title.start_s || 0)}">
+                </div>
+                <div class="form-group">
+                    <label for="edl-program-title-end">Hasta (s)</label>
+                    <input id="edl-program-title-end" type="number" min="0" step="0.1" value="${Number(title.end_s || 3)}">
+                </div>
+                <div class="form-group flex-1">
+                    <label for="edl-program-caption">Caption opcional</label>
+                    <input id="edl-program-caption" maxlength="1000" value="${escapeHtml(caption.text || "")}" placeholder="Caption opcional">
+                </div>
+                <div class="form-group">
+                    <label for="edl-program-caption-start">Desde (s)</label>
+                    <input id="edl-program-caption-start" type="number" min="0" step="0.1" value="${Number(caption.start_s || 0)}">
+                </div>
+                <div class="form-group">
+                    <label for="edl-program-caption-end">Hasta (s)</label>
+                    <input id="edl-program-caption-end" type="number" min="0" step="0.1" value="${Number(caption.end_s || 3)}">
+                </div>`;
         }
 
         if (trackEl) {
@@ -2862,6 +2897,20 @@
                                         value="${Number(cut.out_sec).toFixed(2)}">
                                 </div>
                             </div>
+                            <div class="form-row mt-04">
+                                <div class="form-group flex-1">
+                                    <label for="cut-transition-${idx}">Transición</label>
+                                    <select id="cut-transition-${idx}" data-cut-field="transition_in" data-cut-index="${idx}">
+                                        ${["cut", "crossfade", "fade", "slide"].map((mode) => `<option value="${mode}" ${String(cut.transition_in || "cut") === mode ? "selected" : ""}>${mode}</option>`).join("")}
+                                    </select>
+                                </div>
+                                <div class="form-group flex-1">
+                                    <label for="cut-transition-duration-${idx}">Duración de transición (s)</label>
+                                    <input type="number" id="cut-transition-duration-${idx}" min="0" max="5" step="0.1"
+                                        data-cut-field="transition_duration_s" data-cut-index="${idx}"
+                                        value="${Number(cut.transition_duration_s ?? 0.3)}">
+                                </div>
+                            </div>
                         </div>
                     </div>
                 `
@@ -2880,6 +2929,12 @@
         }
         const target = state.editedCuts[index];
         if (!target) return;
+        if (field === "transition_in") {
+            if (["cut", "crossfade", "fade", "slide"].includes(rawValue)) {
+                target[field] = rawValue;
+            }
+            return;
+        }
         const value = Number(rawValue);
         if (!Number.isFinite(value) || value < 0) return;
         target[field] = value;
@@ -2895,9 +2950,12 @@
         const sourceCuts =
             latest.edl && Array.isArray(latest.edl.cuts) ? latest.edl.cuts : [];
         const cuts = (state.editedCuts || sourceCuts).map((cut) => ({
+            ...(cut.asset_id ? { asset_id: cut.asset_id } : {}),
             in_sec: Number(cut.in_sec),
             out_sec: Number(cut.out_sec),
             reason: cut.reason || "Ajuste manual",
+            transition_in: cut.transition_in || "cut",
+            transition_duration_s: Number(cut.transition_duration_s ?? 0.3),
             ...(cut.speaker ? { speaker: cut.speaker } : {}),
             ...(cut.text ? { text: cut.text } : {}),
         }));
@@ -2908,6 +2966,28 @@
             }
             if (cut.out_sec <= cut.in_sec) {
                 setToast("Cada corte debe terminar después de empezar.", "error");
+                return;
+            }
+            if (!Number.isFinite(cut.transition_duration_s) || cut.transition_duration_s < 0 || cut.transition_duration_s > 5) {
+                setToast("La duración de transición debe estar entre 0 y 5 segundos.", "error");
+                return;
+            }
+        }
+        const readOverlay = (kind) => {
+            const text = document.getElementById(`edl-program-${kind}`)?.value.trim() || "";
+            if (!text) return [];
+            return [{
+                text,
+                start_s: Number(document.getElementById(`edl-program-${kind}-start`)?.value || 0),
+                end_s: Number(document.getElementById(`edl-program-${kind}-end`)?.value || 0),
+                position: "bottom",
+            }];
+        };
+        const titles = readOverlay("title");
+        const captions = readOverlay("caption");
+        for (const overlay of [...titles, ...captions]) {
+            if (!Number.isFinite(overlay.start_s) || !Number.isFinite(overlay.end_s) || overlay.start_s < 0 || overlay.end_s <= overlay.start_s) {
+                setToast("Revisa los tiempos del título y caption.", "error");
                 return;
             }
         }
@@ -2923,6 +3003,9 @@
                         source_asset_id:
                             (latest.edl && latest.edl.source_asset_id) || undefined,
                         cuts,
+                        titles,
+                        captions,
+                        audio_asset_id: (latest.edl && latest.edl.audio_asset_id) || undefined,
                         notes: "Cortes ajustados manualmente desde el timeline.",
                     }),
                 }
@@ -2939,6 +3022,8 @@
             }
             const saved = await resp.json();
             state.editedCuts = null;
+            state.editedProgramTitle = null;
+            state.editedProgramCaption = null;
             setToast(`EDL v${saved.version} guardado con los cortes ajustados.`, "success");
             await refreshEdl();
         } catch (err) {
@@ -3382,6 +3467,15 @@
                     cutInput.value
                 );
             }
+            const overlayMatch = /^edl-program-(title|caption)(?:-(start|end))?$/.exec(event.target.id || "");
+            if (overlayMatch) {
+                const target = overlayMatch[1] === "title" ? "editedProgramTitle" : "editedProgramCaption";
+                const field = overlayMatch[2] === "start" ? "start_s" : overlayMatch[2] === "end" ? "end_s" : "text";
+                state[target] = {
+                    ...(state[target] || {}),
+                    [field]: field === "text" ? event.target.value : Number(event.target.value),
+                };
+            }
         });
 
         const perceptionForm = document.getElementById("perception-search-form");
@@ -3408,6 +3502,31 @@
         if (saveCutsBtn) {
             saveCutsBtn.addEventListener("click", async () => {
                 await saveEditedCuts();
+            });
+        }
+        const programmedRenderBtn = document.getElementById("edl-render-programmed-btn");
+        if (programmedRenderBtn) {
+            programmedRenderBtn.addEventListener("click", async () => {
+                const latest = state.edlData && (state.edlData.latest || state.edlData.edl);
+                const projectId = state.activeProjectId;
+                if (!projectId || !latest || !latest.version) {
+                    setToast("Guarda una versión EDL antes de renderizarla con Remotion.", "error");
+                    return;
+                }
+                try {
+                    const resp = await apiFetch(
+                        `/studio/api/projects/${encodeURIComponent(projectId)}/edl/${latest.version}/programmed-render`,
+                        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
+                    );
+                    if (!resp.ok) {
+                        const body = await resp.json().catch(() => ({}));
+                        throw new Error(body.detail || `Error al renderizar (${resp.status})`);
+                    }
+                    await refreshGallery();
+                    setToast(`EDL v${latest.version} renderizado con Remotion.`, "success");
+                } catch (err) {
+                    setToast(`Error al renderizar el EDL programado: ${err.message}`, "error");
+                }
             });
         }
         const batchBuildBtn = document.getElementById("edl-build-batch-btn");

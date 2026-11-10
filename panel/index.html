@@ -577,7 +577,7 @@
                 <div class="card-header">
                     <div>
                         <h2 id="heading-edl">Timeline EDL (Edit Decision List) y Transcripción</h2>
-                        <p class="card-subtitle">Visor y editor de versiones EDL, transcripción WhisperX con diarización FunASR cam++ y render determinista ffmpeg (16:9 / 9:16).</p>
+                        <p class="card-subtitle">Visor y editor de versiones EDL, transcripción y dos rutas de entrega: FFmpeg determinista o Remotion con títulos y transiciones editables.</p>
                     </div>
                     <div class="header-actions">
                         <span id="edl-version-badge" class="code-badge">Sin versión EDL</span>
@@ -597,7 +597,10 @@
                             Renderizar lote 16:9 + 9:16
                         </button>
                         <button type="button" id="edl-save-cuts-btn" class="btn btn-primary btn-sm">
-                            Guardar cortes editados
+                            Guardar edición EDL
+                        </button>
+                        <button type="button" id="edl-render-programmed-btn" class="btn btn-accent btn-sm">
+                            Render Remotion con títulos y transiciones
                         </button>
                         <button type="button" id="refresh-edl-btn" class="btn btn-secondary btn-sm">
                             Actualizar EDL
@@ -730,6 +733,7 @@
                 <div id="edl-cuts-list" class="items-list" aria-live="polite">
                     <p class="empty-hint">No hay cortes registrados en el proyecto activo.</p>
                 </div>
+                <div id="edl-programmed-controls" class="form-row mt-04"></div>
 
                 <!-- M3-RVP-001: pins de revisión anclados a la versión del EDL -->
                 <div class="divider"></div>

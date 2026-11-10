@@ -56,6 +56,7 @@ class Clip:
 
     path: Path
     duration_s: float = 0.0  # 0 = usar la duración nativa del archivo
+    start_s: float = 0.0
     transition_in: str = "cut"
     transition_duration_s: float = 0.3
 
@@ -64,6 +65,8 @@ class Clip:
             raise ValueError(f"transición desconocida: {self.transition_in!r}")
         if not math.isfinite(self.duration_s) or self.duration_s < 0 or self.duration_s > 600:
             raise ValueError("duration_s fuera de rango (0..600)")
+        if not math.isfinite(self.start_s) or self.start_s < 0 or self.start_s > 3600:
+            raise ValueError("start_s fuera de rango (0..3600)")
         if (
             not math.isfinite(self.transition_duration_s)
             or self.transition_duration_s < 0
@@ -252,6 +255,7 @@ class EditorEngine(Engine):
             Clip(
                 path=Path(c["path"]),
                 duration_s=float(c.get("duration_s", 0.0)),
+                start_s=float(c.get("start_s", 0.0)),
                 transition_in=str(c.get("transition_in", "cut")),
                 transition_duration_s=float(c.get("transition_duration_s", 0.3)),
             )
@@ -284,6 +288,7 @@ class EditorEngine(Engine):
                     "clips": [
                         {
                             "path": str(c.path),
+                            "start_s": c.start_s,
                             "duration_s": c.duration_s,
                             "transition_in": c.transition_in,
                             "transition_duration_s": c.transition_duration_s,
@@ -493,6 +498,7 @@ class EditorEngine(Engine):
                 {
                     "src": resolve(c.path),
                     "durationInSeconds": c.duration_s,
+                    "startFrom": round(c.start_s * timeline.fps),
                     "transitionIn": c.transition_in,
                     "transitionDurationSeconds": c.transition_duration_s,
                 }

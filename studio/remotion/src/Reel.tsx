@@ -17,6 +17,7 @@ import { z } from "zod";
 const clipSchema = z.object({
   src: z.string(),
   durationInSeconds: z.number(),
+  startFrom: z.number().int().nonnegative().default(0),
   transitionIn: z.enum(["cut", "crossfade", "fade", "slide"]).default("cut"),
   transitionDurationSeconds: z.number().min(0).max(5).default(0.3),
 });
@@ -56,7 +57,8 @@ const Clip: React.FC<{
   src: string;
   transitionIn: ReelProps["clips"][number]["transitionIn"];
   transitionFrames: number;
-}> = ({ src, transitionIn, transitionFrames }) => {
+  startFrom: number;
+}> = ({ src, transitionIn, transitionFrames, startFrom }) => {
   const frame = useCurrentFrame();
   const fade =
     transitionIn === "cut" || transitionFrames <= 0
@@ -84,6 +86,7 @@ const Clip: React.FC<{
       {isVideo(src) ? (
         <OffthreadVideo
           src={staticFile(src)}
+          startFrom={startFrom}
           style={{ width: "100%", height: "100%", objectFit: "cover" }}
         />
       ) : (
@@ -121,6 +124,7 @@ export const Reel: React.FC<ReelProps> = ({ audio, clips, titles, captions }) =>
               src={clip.src}
               transitionIn={clip.transitionIn}
               transitionFrames={transitionFrames}
+              startFrom={clip.startFrom}
             />
           </Sequence>
         );

@@ -69,7 +69,7 @@ def test_remotion_props_shape() -> None:
     from comfy_studio.engines.editor import Clip, EditorEngine, TimelineSpec
 
     tl = TimelineSpec(
-        clips=[Clip(path=Path("a.mp4"), duration_s=3.0, transition_in="crossfade")],
+        clips=[Clip(path=Path("a.mp4"), duration_s=3.0, start_s=1.25, transition_in="crossfade")],
         output_path=Path("reel.mp4"),
         fps=30,
         width=1080,
@@ -79,6 +79,7 @@ def test_remotion_props_shape() -> None:
     assert props["fps"] == 30 and props["width"] == 1080 and props["height"] == 1920
     assert props["clips"][0]["src"] == "a.mp4"
     assert props["clips"][0]["durationInSeconds"] == 3.0
+    assert props["clips"][0]["startFrom"] == 38
     assert props["clips"][0]["transitionIn"] == "crossfade"
 
 

@@ -27,6 +27,7 @@ from comfy_studio.webutil import (
     EdlBuildRequest,
     EdlCreateRequest,
     EdlHighlightsRequest,
+    EdlProgrammedRenderRequest,
     ReelRenderRequest,
     TranscribeRequest,
     _publish_transcription_event,
@@ -35,6 +36,7 @@ from comfy_studio.webutil import (
 
 def register_routes(app: FastAPI) -> None:
     """Registra las rutas de este módulo directamente sobre `app` (mismo route_class)."""
+
     @app.get("/studio/api/projects/{project_id}/transcriptions")
     async def list_project_transcriptions(
         project_id: str,
@@ -52,6 +54,7 @@ def register_routes(app: FastAPI) -> None:
             "latest": latest,
             "transcriptions": items,
         }
+
     @app.get("/studio/api/projects/{project_id}/transcriptions/{transcription_id}/subtitles")
     async def export_project_subtitles(
         project_id: str,
@@ -90,6 +93,7 @@ def register_routes(app: FastAPI) -> None:
             media_type=f"{media_type}; charset=utf-8",
             headers=headers,
         )
+
     @app.post("/studio/api/projects/{project_id}/transcribe")
     async def transcribe_project_endpoint(
         project_id: str,
@@ -117,6 +121,7 @@ def register_routes(app: FastAPI) -> None:
             "project_id": project_id,
             "transcription": result,
         }
+
     @app.post("/studio/api/projects/{project_id}/diarize")
     async def diarize_project_endpoint(
         project_id: str,
@@ -145,6 +150,7 @@ def register_routes(app: FastAPI) -> None:
             "project_id": project_id,
             **result,
         }
+
     @app.get("/studio/api/projects/{project_id}/edl")
     async def list_project_edls(
         project_id: str,
@@ -160,6 +166,7 @@ def register_routes(app: FastAPI) -> None:
             "latest": latest,
             "edl": latest,
         }
+
     @app.post("/studio/api/projects/{project_id}/edl", status_code=201)
     async def save_project_edl_endpoint(
         project_id: str,
@@ -171,7 +178,29 @@ def register_routes(app: FastAPI) -> None:
         if active_store.get_project(project_id) is None:
             raise HTTPException(status_code=404, detail="Proyecto no encontrado")
         cuts_dicts = [c.model_dump(exclude_none=True) for c in body.cuts]
-        total_dur = round(sum(c.out_sec - c.in_sec for c in body.cuts), 3)
+        total_dur_raw = 0.0
+        previous_duration = 0.0
+        for index, cut in enumerate(body.cuts):
+            duration = cut.out_sec - cut.in_sec
+            overlap = (
+                min(cut.transition_duration_s, duration, previous_duration)
+                if index > 0 and cut.transition_in in {"crossfade", "slide"}
+                else 0.0
+            )
+            total_dur_raw += duration - overlap
+            previous_duration = duration
+        total_dur = round(total_dur_raw, 3)
+        if any(item.end_s > total_dur_raw for item in [*body.titles, *body.captions]):
+            raise HTTPException(
+                status_code=422,
+                detail="El título o caption no puede superar la duración final del EDL",
+            )
+        if body.audio_asset_id:
+            audio = active_store.get_asset(project_id, body.audio_asset_id)
+            if audio is None or audio.get("kind") != "audio":
+                raise HTTPException(
+                    status_code=400, detail="La pista de audio EDL no está disponible"
+                )
         edl_doc: dict[str, Any] = {
             "schema": "comfy_studio.edl.v1",
             "title": body.title,
@@ -179,6 +208,9 @@ def register_routes(app: FastAPI) -> None:
             "source_asset_id": body.source_asset_id,
             "total_duration_sec": total_dur,
             "cuts": cuts_dicts,
+            "titles": [item.model_dump() for item in body.titles],
+            "captions": [item.model_dump() for item in body.captions],
+            "audio_asset_id": body.audio_asset_id,
             "notes": body.notes,
         }
         saved = active_store.save_edl_version(project_id, edl=edl_doc)
@@ -196,6 +228,7 @@ def register_routes(app: FastAPI) -> None:
             },
         )
         return saved
+
     @app.post("/studio/api/projects/{project_id}/edl/highlights")
     async def generate_project_edl_highlights_endpoint(
         project_id: str,
@@ -236,6 +269,7 @@ def register_routes(app: FastAPI) -> None:
             },
         )
         return saved
+
     @app.post("/studio/api/projects/{project_id}/edl/build")
     async def build_project_edl_endpoint(
         project_id: str,
@@ -300,6 +334,7 @@ def register_routes(app: FastAPI) -> None:
             "variant_count": len(results),
             "aspect_ratios": [r["aspect_ratio"] for r in results],
         }
+
     @app.post("/studio/api/projects/{project_id}/edl/{version}/render")
     async def render_project_edl_version_endpoint(
         project_id: str,
@@ -314,6 +349,207 @@ def register_routes(app: FastAPI) -> None:
             body=req_body,
             request=request,
         )
+
+    @app.post("/studio/api/projects/{project_id}/edl/{version}/programmed-render", status_code=201)
+    async def render_programmed_edl_version(
+        project_id: str,
+        version: int,
+        body: EdlProgrammedRenderRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Renderiza con Remotion una versión EDL editada y persistida."""
+        from comfy_studio.engines.editor import Clip, TextOverlay
+        from comfy_studio.perception.keyframes import probe_media_info
+        from comfy_studio.projects import MediaValidationError
+        from comfy_studio.reel_presets import resolve_reel_preset
+
+        store: ProjectStore = request.app.state.store
+        config: StudioConfig = request.app.state.config
+        if store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        record = store.get_edl_version(project_id, version=version)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Versión de EDL no encontrada")
+        edl = record.get("edl") or {}
+        cuts = edl.get("cuts")
+        if not isinstance(cuts, list) or not cuts:
+            raise HTTPException(status_code=400, detail="El EDL no contiene cortes")
+        if len(cuts) > 50:
+            raise HTTPException(
+                status_code=422, detail="Remotion admite hasta 50 cortes por preset"
+            )
+
+        clips: list[Clip] = []
+        source_ids: list[str] = []
+        for index, cut in enumerate(cuts, start=1):
+            if not isinstance(cut, dict):
+                raise HTTPException(status_code=400, detail=f"Corte #{index} inválido")
+            asset_id = str(cut.get("asset_id") or edl.get("source_asset_id") or "").strip()
+            asset = store.get_asset(project_id, asset_id) if asset_id else None
+            source = store.get_asset_path(project_id, asset_id) if asset else None
+            try:
+                start_s, end_s = float(cut["in_sec"]), float(cut["out_sec"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"Rango inválido en el corte #{index}"
+                ) from exc
+            if asset is None or asset.get("kind") != "video" or source is None:
+                raise HTTPException(
+                    status_code=400, detail=f"El corte #{index} no tiene vídeo fuente del proyecto"
+                )
+            if start_s < 0 or end_s <= start_s:
+                raise HTTPException(status_code=400, detail=f"Rango inválido en el corte #{index}")
+            info = probe_media_info(source, timeout_s=config.studio_ffprobe_timeout_s)
+            duration = end_s - start_s
+            if (
+                not info.get("probe_ok")
+                or not info.get("has_video")
+                or end_s > float(info.get("duration_sec") or 0) + 0.05
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El corte #{index} excede o no verifica el vídeo fuente",
+                )
+            clips.append(
+                Clip(
+                    path=source,
+                    duration_s=duration,
+                    start_s=start_s,
+                    transition_in=str(cut.get("transition_in") or "cut"),
+                    transition_duration_s=float(cut.get("transition_duration_s", 0.3)),
+                )
+            )
+            source_ids.append(asset_id)
+
+        total_s = 0.0
+        previous_duration = 0.0
+        for index, clip in enumerate(clips):
+            overlap = (
+                min(clip.transition_duration_s, clip.duration_s, previous_duration)
+                if index and clip.transition_in in {"crossfade", "slide"}
+                else 0.0
+            )
+            total_s += clip.duration_s - overlap
+            previous_duration = clip.duration_s
+        try:
+            preset, width, height, fps = resolve_reel_preset(
+                body.preset_id,
+                width=body.width,
+                height=body.height,
+                fps=body.fps,
+                duration_s=total_s,
+                clip_count=len(clips),
+            )
+            titles = [TextOverlay(**item) for item in edl.get("titles", [])]
+            captions = [TextOverlay(**item) for item in edl.get("captions", [])]
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"EDL programado inválido: {exc}") from exc
+        if any(item.end_s > total_s for item in [*titles, *captions]):
+            raise HTTPException(
+                status_code=422, detail="Un título o caption supera la duración final"
+            )
+
+        audio_id = str(edl.get("audio_asset_id") or "").strip() or None
+        audio_path = store.get_asset_path(project_id, audio_id) if audio_id else None
+        if audio_id:
+            audio_asset = store.get_asset(project_id, audio_id)
+            if audio_asset is None or audio_asset.get("kind") != "audio" or audio_path is None:
+                raise HTTPException(
+                    status_code=400, detail="La pista de audio EDL no está disponible"
+                )
+
+        with tempfile.TemporaryDirectory(prefix="studio-edl-remotion-") as output_dir:
+            output_path = Path(output_dir) / "edl-reel.mp4"
+            job = {
+                "clips": [
+                    {
+                        "path": str(item.path),
+                        "start_s": item.start_s,
+                        "duration_s": item.duration_s,
+                        "transition_in": item.transition_in,
+                        "transition_duration_s": item.transition_duration_s,
+                    }
+                    for item in clips
+                ],
+                "output_path": str(output_path),
+                "width": width,
+                "height": height,
+                "fps": fps,
+                "audio_path": str(audio_path) if audio_path else None,
+                "titles": [
+                    {
+                        "text": item.text,
+                        "start_s": item.start_s,
+                        "end_s": item.end_s,
+                        "position": item.position,
+                    }
+                    for item in titles
+                ],
+                "captions": [
+                    {
+                        "text": item.text,
+                        "start_s": item.start_s,
+                        "end_s": item.end_s,
+                        "position": item.position,
+                    }
+                    for item in captions
+                ],
+                "render_concurrency": preset.concurrency,
+                "offthread_cache_bytes": preset.offthread_cache_bytes,
+                "memory_efficient": True,
+            }
+            result = await run_in_threadpool(
+                EditorEngine(backend="remotion").run,
+                EngineRunSpec(job=job, timeout_s=config.studio_ffmpeg_timeout_s),
+            )
+            rendered = Path(str(result.payload.get("output") or ""))
+            if not result.ok or result.simulated or not rendered.is_file():
+                raise HTTPException(
+                    status_code=503, detail="Falló Remotion; no se publicó una salida simulada"
+                )
+            output_info = probe_media_info(rendered, timeout_s=config.studio_ffprobe_timeout_s)
+            if (
+                not output_info.get("probe_ok")
+                or not output_info.get("has_video")
+                or int(output_info.get("width") or 0) != width
+                or int(output_info.get("height") or 0) != height
+                or abs(float(output_info.get("duration_sec") or 0) - total_s) > (1 / fps + 0.05)
+            ):
+                raise HTTPException(
+                    status_code=503, detail="La salida Remotion no verificó dimensiones/duración"
+                )
+            if rendered.stat().st_size > config.max_upload_bytes:
+                raise HTTPException(status_code=413, detail="El reel renderizado supera el límite")
+            try:
+                output_asset = store.save_upload(
+                    project_id,
+                    filename=f"edl-v{version}-programmed.mp4",
+                    content_type="video/mp4",
+                    data=rendered.read_bytes(),
+                    max_upload_bytes=config.max_upload_bytes,
+                    category="outputs",
+                    metadata={
+                        "engine": "remotion",
+                        "edl_version": version,
+                        "preset_id": preset.preset_id,
+                        "source_asset_ids": source_ids,
+                        "audio_asset_id": audio_id,
+                        "width": width,
+                        "height": height,
+                        "fps": fps,
+                        "duration_s": round(total_s, 3),
+                    },
+                )
+            except (LookupError, MediaValidationError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "status": "rendered",
+            "project_id": project_id,
+            "edl_version": version,
+            "engine": "remotion",
+            "simulated": False,
+            "output_asset": output_asset,
+        }
 
     @app.post("/studio/api/projects/{project_id}/edl/{version}/editable-package")
     async def export_editable_edl_package(
@@ -444,17 +680,16 @@ def register_routes(app: FastAPI) -> None:
                 timeout_s=active_cfg.studio_ffprobe_timeout_s,
             )
             native_duration = float(info.get("duration_sec") or 0.0)
-            if (
-                not info.get("probe_ok")
-                or not info.get("has_video")
-                or native_duration <= 0
-            ):
+            if not info.get("probe_ok") or not info.get("has_video") or native_duration <= 0:
                 raise HTTPException(
                     status_code=400,
                     detail=f"No se pudo verificar la duración del clip {index}",
                 )
-            duration = request_clip.duration_s or native_duration
-            if duration > native_duration + 0.05:
+            duration = request_clip.duration_s or (native_duration - request_clip.start_s)
+            if (
+                request_clip.start_s >= native_duration
+                or request_clip.start_s + duration > native_duration + 0.05
+            ):
                 raise HTTPException(
                     status_code=400,
                     detail=f"La duración solicitada para el clip {index} excede su duración fuente",
@@ -463,6 +698,7 @@ def register_routes(app: FastAPI) -> None:
                 Clip(
                     path=source,
                     duration_s=duration,
+                    start_s=request_clip.start_s,
                     transition_in=request_clip.transition_in,
                     transition_duration_s=request_clip.transition_duration_s,
                 )
@@ -516,6 +752,7 @@ def register_routes(app: FastAPI) -> None:
                 "clips": [
                     {
                         "path": str(clip.path),
+                        "start_s": clip.start_s,
                         "duration_s": clip.duration_s,
                         "transition_in": clip.transition_in,
                         "transition_duration_s": clip.transition_duration_s,
@@ -531,13 +768,21 @@ def register_routes(app: FastAPI) -> None:
                 "memory_efficient": True,
                 "audio_path": str(audio_path) if audio_path else None,
                 "titles": [
-                    {"text": item.text, "start_s": item.start_s, "end_s": item.end_s,
-                     "position": item.position}
+                    {
+                        "text": item.text,
+                        "start_s": item.start_s,
+                        "end_s": item.end_s,
+                        "position": item.position,
+                    }
                     for item in titles
                 ],
                 "captions": [
-                    {"text": item.text, "start_s": item.start_s, "end_s": item.end_s,
-                     "position": item.position}
+                    {
+                        "text": item.text,
+                        "start_s": item.start_s,
+                        "end_s": item.end_s,
+                        "position": item.position,
+                    }
                     for item in captions
                 ],
             }
@@ -560,9 +805,8 @@ def register_routes(app: FastAPI) -> None:
                 or not output_info.get("has_video")
                 or int(output_info.get("width") or 0) != output_width
                 or int(output_info.get("height") or 0) != output_height
-                or abs(
-                    float(output_info.get("duration_sec") or 0.0) - requested_duration
-                ) > (1 / output_fps + 0.05)
+                or abs(float(output_info.get("duration_sec") or 0.0) - requested_duration)
+                > (1 / output_fps + 0.05)
             ):
                 raise HTTPException(
                     status_code=503,

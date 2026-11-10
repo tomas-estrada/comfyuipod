@@ -341,6 +341,8 @@ class EdlCutItem(BaseModel):
         default=None,
         description="Fragmento opcional de transcripción asociado al corte.",
     )
+    transition_in: Literal["cut", "crossfade", "fade", "slide"] = "cut"
+    transition_duration_s: float = Field(default=0.3, ge=0.0, le=5.0)
 
     @model_validator(mode="after")
     def _check_interval(self) -> EdlCutItem:
