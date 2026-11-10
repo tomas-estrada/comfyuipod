@@ -592,3 +592,32 @@ def test_env_assign_regex_leaves_benign_assignments_alone():
     redactor = SecretRedactor.from_env({})
     benign = "MODEL_PROFILE=studio COMFY_USER=admin COMFY_DATA_DIR=/workspace/comfyui-data"
     assert redactor.redact(benign) == benign
+
+
+def test_env_assign_regex_requires_a_word_boundary():
+    """Regresión: sin `\\b`, `requires_hf_token` contiene `hf_token` y el
+    booleano `false` acababa enmascarado, rompiendo el JSON de /status/api."""
+    import json
+
+    redactor = SecretRedactor.from_env({})
+    body = json.dumps({"requires_hf_token": False, "attempted_chain": ["whisperx:cpu:int8"]})
+    out = redactor.redact(body)
+    parsed = json.loads(out)
+    assert parsed["requires_hf_token"] is False
+    assert parsed["attempted_chain"] == ["whisperx:cpu:int8"]
+    # Y el nombre real sí se sigue enmascarando.
+    assert "[REDACTED]" in redactor.redact("HF_TOKEN=hf_abcdefghijklmnop")
+
+
+@pytest.mark.parametrize(
+    "benign",
+    [
+        "requires_hf_token=false",
+        "my_hf_token=x",
+        "STUDIO_LLM_KEYRING=abc",
+        "prefix_COMFY_PASS=y",
+    ],
+)
+def test_env_assign_regex_does_not_match_inside_longer_identifiers(benign: str):
+    redactor = SecretRedactor.from_env({})
+    assert redactor.redact(benign) == benign, benign
