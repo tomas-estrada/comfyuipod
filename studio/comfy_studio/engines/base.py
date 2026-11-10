@@ -95,6 +95,52 @@ class Engine(abc.ABC):
             return None
         return self._dynamic_blocked("install")
 
+    # -- helpers de verificación y degradación honesta ------------------------
+
+    def verify_result(
+        self,
+        *,
+        installed: bool = True,
+        weights: str = "not_required",
+        payload: dict[str, Any] | None = None,
+        error: str | None = None,
+        detail: str | None = None,
+    ) -> EngineResult:
+        """Resultado tipado de `verify`.
+
+        `weights` es uno de: `not_required|present|missing`. Distingue
+        instalado-pero-sin-pesos (`weights_missing`) de listo, sin red ni GPU.
+        """
+        from comfy_studio.engines import EngineReason
+
+        data = dict(payload or {})
+        if weights == "missing":
+            ready = False
+            reason = EngineReason.WEIGHTS_MISSING
+            msg = error or (
+                f"{self.name}: instalado pero pesos ausentes"
+                + (f" ({detail})" if detail else "")
+            )
+        elif not installed:
+            ready = False
+            reason = EngineReason.NOT_INSTALLED
+            msg = error or (
+                f"{self.name}: no instalado" + (f" ({detail})" if detail else "")
+            )
+        else:
+            ready = True
+            reason = None
+            msg = None
+        data.setdefault("weights", weights)
+        return EngineResult(
+            ok=ready,
+            engine=self.name,
+            verb="verify",
+            payload=data,
+            error=msg,
+            reason=str(reason) if reason is not None else None,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Contrato de 4 verbos: verificación estructural del roster
