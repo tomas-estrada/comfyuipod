@@ -16,7 +16,7 @@ El supervisor nativo Rust `comfyctl` es el proceso de control. Nginx es la únic
 | Frontal y autenticación | Entrada web, proxy de rutas, WebSockets/SSE, límites y cabeceras de seguridad | `config/nginx.conf` |
 | Studio API | Configuración, ciclo de vida de app, auth de borde, observabilidad, conexión con ComfyUI | `studio/comfy_studio/app.py`, `server.py`, `routers/`, `webutil.py` |
 | Studio UI | Panel de proyectos, chat del agente, jobs, plantillas, galería, timeline EDL, anuncios y eventos en vivo | `panel/` |
-| Motores y orquestación | Contrato uniforme de 16 motores (`list`/`install`/`verify`/`run`), puerta de instalación y grafo de producción con checkpoints | `studio/comfy_studio/engines/`, `orchestration/`, `ads/`, `montage/`, `creative/` |
+| Motores y orquestación | Contrato uniforme de 21 motores (`list`/`install`/`verify`/`run`), puerta de instalación y grafo de producción con checkpoints | `studio/comfy_studio/engines/`, `orchestration/`, `ads/`, `montage/`, `creative/` |
 | Catálogo de plantillas | Validación de parámetros y creación/encolado de workflows | `studio/comfy_studio/templates/` |
 | Percepción y media | Keyframes, metadata/probe multimedia, búsqueda visual/facial, ASR/diarización y EDL | `studio/comfy_studio/perception/`, `asr/`, `edl/`, `media_bins.py` |
 | Herramientas ML | Descubrimiento de capacidades y llamadas aisladas a backends reales; cada operación ML se declara simulada cuando corresponde | `studio/comfy_studio/ml/` |
