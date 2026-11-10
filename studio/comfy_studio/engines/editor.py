@@ -384,6 +384,26 @@ class EditorEngine(Engine):
                     "--timeout=120000",
                     "--log=error",
                 ]
+                # Fixed caps keep the renderer from defaulting the decoded
+                # video cache to half of all host memory. Preset values are
+                # provided by the project route; generic callers get the
+                # same conservative defaults.
+                concurrency = int(spec.job.get("render_concurrency", 2))
+                cache_bytes = int(spec.job.get("offthread_cache_bytes", 268_435_456))
+                if not 1 <= concurrency <= 4 or not 16_777_216 <= cache_bytes <= 536_870_912:
+                    return EditorResult(
+                        exit_code=1,
+                        output=None,
+                        log_tail="límites de recursos Remotion fuera del rango permitido",
+                    )
+                cmd.extend(
+                    [
+                        f"--concurrency={concurrency}",
+                        f"--offthreadvideo-cache-size-in-bytes={cache_bytes}",
+                    ]
+                )
+                if spec.job.get("memory_efficient", True):
+                    cmd.append("--disallow-parallel-encoding")
                 browser = (os.environ.get(_REMOTION_BROWSER_ENV) or "").strip()
                 if browser:
                     cmd.extend(["--browser-executable", browser])
