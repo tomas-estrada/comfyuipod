@@ -28,6 +28,7 @@ import os
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 #: Defaults de rutas cuando el entorno no las define (coinciden con la imagen).
@@ -59,8 +60,13 @@ class EnginePrepSpec:
     config_env: tuple[str, ...] = ()
     #: Rutas de pesos; si faltan, el motor está instalado pero «sin pesos».
     weight_paths: tuple[str, ...] = ()
+    #: Ficheros que deben existir dentro de cada `weight_paths` (vacío = contenido
+    #: no vacío). Permite exigir los archivos exactos de un grupo de pesos.
+    weight_files: tuple[str, ...] = ()
     #: True si el motor declara que necesita pesos para ejecutar.
     weights_required: bool = False
+    #: True si el motor necesita hardware (GPU) presente para ejecutar.
+    hardware_required: bool = False
     #: Nota corta sobre qué falta o qué es opcional.
     note: str = ""
 
@@ -74,7 +80,9 @@ class Preparedness:
     weights_required: bool
     #: None cuando el motor no declara pesos (no aplica).
     weights_present: bool | None
-    #: «unchecked» desde salud: lo posee `comfyctl strict-check` (S1–S10).
+    #: «not_required» | «ready» | «unavailable»: hecho barato (binario NVIDIA
+    #: en PATH o `/dev/nvidia0`). La validación profunda de hardware es de
+    #: `comfyctl strict-check` (S1–S10).
     hardware: str
     model_loaded: bool
     execution_validated: bool
@@ -156,6 +164,87 @@ def _module_available(name: str) -> bool:
         return False
 
 
+def _path_has_content(path: str) -> bool:
+    """Un fichero con bytes o un directorio con al menos una entrada.
+
+    La disponibilidad de pesos es un hecho del sistema de archivos: un
+    directorio vacío o un fichero de 0 bytes NO cuentan como presente.
+    """
+    try:
+        target = Path(path)
+        if target.is_file():
+            return target.stat().st_size > 0
+        if target.is_dir():
+            return any(target.iterdir())
+    except OSError:  # pragma: no cover - carrera de permisos
+        return False
+    return False
+
+
+def _hardware_available(env: Mapping[str, str]) -> bool:
+    """Hecho barato y determinista: binario NVIDIA en PATH o `/dev/nvidia0`.
+
+    Sin GPU no hay GPU: la sonda nunca afirma hardware que no está en disco.
+    """
+    if os.path.exists("/dev/nvidia0"):
+        return True
+    for directory in env.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        candidate = os.path.join(directory, "nvidia-smi")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return True
+    return False
+
+
+@dataclass(frozen=True, slots=True)
+class WeightsStatus:
+    """Estado de pesos de un motor: un hecho de disco, nunca una env var."""
+
+    required: bool
+    #: None cuando el motor no declara pesos (no aplica).
+    present: bool | None
+    missing: tuple[str, ...]
+
+    @property
+    def state(self) -> str:
+        if not self.required:
+            return "not_required"
+        return "present" if self.present else "missing"
+
+
+def probe_weights(
+    spec: EnginePrepSpec, *, env: Mapping[str, str] | None = None
+) -> WeightsStatus:
+    """Sonda de pesos: fichero no vacío, directorio con contenido o archivos
+    concretos (`weight_files`) dentro de cada ruta declarada."""
+    if not spec.weights_required:
+        return WeightsStatus(required=False, present=None, missing=())
+    environment = os.environ if env is None else env
+    missing: list[str] = []
+    for weight in spec.weight_paths:
+        target = _expand(weight, environment)
+        if spec.weight_files:
+            base = Path(target)
+            if not base.is_dir() or any(
+                not (base / name).is_file() for name in spec.weight_files
+            ):
+                missing.append(weight)
+        elif not _path_has_content(target):
+            missing.append(weight)
+    return WeightsStatus(required=True, present=not missing, missing=tuple(missing))
+
+
+def weights_status(
+    name: str, *, env: Mapping[str, str] | None = None
+) -> WeightsStatus:
+    """Estado de pesos de un motor del roster (para los adaptadores)."""
+    spec = build_default_prep_specs().get(name)
+    if spec is None:
+        return WeightsStatus(required=False, present=None, missing=())
+    return probe_weights(spec, env=env)
+
+
 def probe_preparedness(
     spec: EnginePrepSpec,
     *,
@@ -204,25 +293,24 @@ def probe_preparedness(
             integration_ok = False
             missing.append(f"config:{var}")
 
-    weights_present: bool | None = None
-    if spec.weights_required:
-        weights_present = True
-        for weight in spec.weight_paths:
-            target = _expand(weight, environment)
-            present = os.path.exists(target)
-            if not present and os.path.isdir(os.path.dirname(target) or "/"):
-                # Un directorio existente con contenido cuenta como presente.
-                present = os.path.isdir(target) and any(os.scandir(target))
-            if not present:
-                weights_present = False
-                missing.append(f"pesos:{weight}")
+    weights = probe_weights(spec, env=environment)
+    weights_present = weights.present
+    missing.extend(f"pesos:{weight}" for weight in weights.missing)
+
+    hardware = "not_required"
+    if spec.hardware_required:
+        hardware = "ready" if _hardware_available(environment) else "unavailable"
+        if hardware == "unavailable":
+            missing.append("hardware:gpu")
 
     if not installed:
         state = "not_installed"
     elif not integration_ok:
         state = "integration_missing"
     elif weights_present is False:
-        state = "weights_required"
+        state = "weights_missing"
+    elif hardware == "unavailable":
+        state = "hardware_unavailable"
     else:
         state = "ready"
 
@@ -231,7 +319,7 @@ def probe_preparedness(
         integration=integration_ok,
         weights_required=spec.weights_required,
         weights_present=weights_present,
-        hardware="unchecked",
+        hardware=hardware,
         model_loaded=False,
         execution_validated=execution_validated(spec.name),
         missing=tuple(missing),
@@ -246,7 +334,13 @@ class PrepReport:
     engines: dict[str, Preparedness] = field(default_factory=dict)
 
     def counts(self) -> dict[str, int]:
-        out = {"ready": 0, "weights_required": 0, "not_installed": 0, "integration_missing": 0}
+        out = {
+            "ready": 0,
+            "weights_missing": 0,
+            "not_installed": 0,
+            "integration_missing": 0,
+            "hardware_unavailable": 0,
+        }
         for prep in self.engines.values():
             out[prep.state] = out.get(prep.state, 0) + 1
         return out
@@ -259,11 +353,11 @@ class PrepReport:
 
 
 def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
-    """Declaración de preparación de los 17 motores del roster.
+    """Declaración de preparación de los 21 motores del roster.
 
     Refleja lo que la imagen hornea realmente (`Dockerfile`) y lo que
     `download-models.sh` trae como activo de tarea. Un motor puede estar
-    `installed` y a la vez `weights_required`: es el caso normal de un motor
+    `installed` y a la vez `weights_missing`: es el caso normal de un motor
     correctamente preparado cuyos pesos son dependencia de tarea.
     """
     specs = [
@@ -271,6 +365,7 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
             name="comfyui",
             files=("{COMFY_APP_DIR}/main.py",),
             config_env=("COMFY_APP_DIR",),
+            hardware_required=True,
             note="núcleo + 12 custom nodes fijados por SHA en nodes.lock",
         ),
         EnginePrepSpec(
@@ -282,6 +377,7 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
                 "/usr/local/bin/blender",
                 "/usr/bin/blender",
             ),
+            hardware_required=True,
             note="sin binario en la imagen: modo 3D requiere Blender instalado",
         ),
         EnginePrepSpec(
@@ -325,7 +421,9 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
             binaries=("{STUDIO_INDEXTTS_BIN}",),
             venvs=("{COMFY_DATA_DIR}/venvs/indextts",),
             weight_paths=("{STUDIO_INDEXTTS_MODEL_DIR}",),
+            weight_files=("config.yaml", "gpt.pth"),
             weights_required=True,
+            hardware_required=True,
             note="adaptador horneado; el venv aislado se crea en el volumen",
         ),
         EnginePrepSpec(
@@ -334,6 +432,7 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
             modules=("audiocraft",),
             weight_paths=("{COMFY_DATA_DIR}/models/musicgen",),
             weights_required=True,
+            hardware_required=True,
             note="audiocraft horneado --no-deps; deps pesadas y pesos en runtime",
         ),
         EnginePrepSpec(
@@ -341,18 +440,22 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
             binaries=("{STUDIO_LIPSYNC_BIN}",),
             weight_paths=("{STUDIO_LIPSYNC_MODEL_DIR}/wav2lip_gan.pth",),
             weights_required=True,
+            hardware_required=True,
             note="repo horneado por SHA; el checkpoint no está en la imagen",
         ),
         EnginePrepSpec(
             name="upscaler",
             binaries=("{STUDIO_UPSCALER_BIN}",),
             weight_paths=("{STUDIO_UPSCALER_MODEL_DIR}",),
+            weights_required=True,
+            hardware_required=True,
             note="Real-ESRGAN ncnn-vulkan + modelos horneados en la imagen",
         ),
         EnginePrepSpec(
             name="capture3d",
             binaries=("ns-train",),
             modules=("nerfstudio", "tinycudann"),
+            hardware_required=True,
             note="nerfstudio horneado; tiny-cuda-nn se compila en el volumen",
         ),
         EnginePrepSpec(
@@ -370,6 +473,7 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
             modules=("sam3",),
             weight_paths=("{STUDIO_ROTO_MODEL_DIR}",),
             weights_required=True,
+            hardware_required=True,
             note="paquete sam3 horneado; pesos HF-gated y inferencia pendiente",
         ),
         EnginePrepSpec(
