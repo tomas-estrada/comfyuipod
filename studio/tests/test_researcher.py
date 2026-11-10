@@ -6,12 +6,15 @@ mocks; hipótesis negativa termina; budget acotado. Puro CPU.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from comfy_studio.researcher import (
+    AdapterDataset,
+    AdapterProposal,
     Experiment,
     Hypothesis,
     PromotionProposal,
@@ -40,7 +43,32 @@ def _exp(run_id: str, vbench: float, **kw) -> Experiment:
     return Experiment(run_id=run_id, hyp_id="h1", seed=kw.get("seed", 1),
                       scores={"vbench": vbench}, cost=kw.get("cost", 1.0),
                       constraints_ok=kw.get("constraints_ok", True),
-                      simulated=kw.get("simulated", False))
+                      simulated=kw.get("simulated", False),
+                      dataset_sha256s=kw.get("dataset_sha256s", []))
+
+
+def _adapter_proposal(**kw) -> AdapterProposal:
+    defaults = {
+        "proposal_id": "adapter-p1",
+        "hyp_id": "h1",
+        "run_id": "winning-run",
+        "name": "style-adapter-v1",
+        "kind": "lora",
+        "base_model": "model-x",
+        "base_model_revision": "b" * 40,
+        "code_revision": "a" * 40,
+        "datasets": [
+            AdapterDataset("train-a", "1" * 64, "CC0-1.0", "train", True, "license-record"),
+            AdapterDataset(
+                "validation-a", "2" * 64, "CC-BY-4.0", "validation", True, "license-record"
+            ),
+            AdapterDataset("holdout-a", "3" * 64, "CC0-1.0", "test", True, "license-record"),
+        ],
+        "hyperparameters": {"rank": 16, "alpha": 16, "learning_rate": 0.0001},
+        "rollback_reference": "revert PR and restore adapter manifest v0",
+    }
+    defaults.update(kw)
+    return AdapterProposal(**defaults)
 
 
 def test_criterion_frozen_after_first_result() -> None:
@@ -195,3 +223,119 @@ def test_hypothesis_rejects_non_finite_criterion_and_experiment_cost() -> None:
         _hyp(criterion=float("nan")).validate()
     with pytest.raises(ResearchError, match="no negativo"):
         _exp("bad-cost", 0.8, cost=-1).validate()
+
+
+def test_adapter_proposal_persists_only_with_accepted_real_holdout_evidence(tmp_path) -> None:
+    path = tmp_path / "research.sqlite3"
+    store = SQLiteResearchStore(path)
+    store.register(_hyp())
+    store.record(
+        _exp("winning-run", 0.9, dataset_sha256s=["3" * 64])
+    )
+    proposal = _adapter_proposal()
+    store.propose_adapter(proposal)
+    reopened = SQLiteResearchStore(path).get_adapter_proposal("adapter-p1")
+    assert reopened.to_dict() == proposal.to_dict()
+    assert reopened.training_executed is False
+    assert reopened.to_dict()["status"] == "proposed"
+
+
+@pytest.mark.parametrize(
+    ("run_options", "error"),
+    [
+        ({"simulated": True, "dataset_sha256s": ["3" * 64]}, "evidencia no es aceptable"),
+        ({"constraints_ok": False, "dataset_sha256s": ["3" * 64]}, "evidencia no es aceptable"),
+        ({"vbench": 0.4, "dataset_sha256s": ["3" * 64]}, "evidencia no es aceptable"),
+        ({"dataset_sha256s": ["4" * 64]}, "no acredita el holdout"),
+    ],
+)
+def test_adapter_proposal_rejects_unacceptable_or_unmatched_evidence(
+    tmp_path, run_options: dict, error: str
+) -> None:
+    store = SQLiteResearchStore(tmp_path / "research.sqlite3")
+    store.register(_hyp())
+    values = {"run_id": "winning-run", **run_options}
+    score = values.pop("vbench", 0.9)
+    store.record(_exp(vbench=score, **values))
+    with pytest.raises(ResearchError, match=error):
+        store.propose_adapter(_adapter_proposal())
+
+
+def test_adapter_proposal_requires_authorized_disjoint_splits_and_no_training() -> None:
+    with pytest.raises(ResearchError, match="autorización"):
+        _adapter_proposal(datasets=[
+            AdapterDataset("train", "1" * 64, "CC0", "train", False, "license record"),
+            AdapterDataset("valid", "2" * 64, "CC0", "validation", True, "license record"),
+            AdapterDataset("test", "3" * 64, "CC0", "test", True, "license record"),
+        ]).validate()
+    with pytest.raises(ResearchError, match="filtradas"):
+        _adapter_proposal(datasets=[
+            AdapterDataset("train", "1" * 64, "CC0", "train", True, "license record"),
+            AdapterDataset("valid", "2" * 64, "CC0", "validation", True, "license record"),
+            AdapterDataset("test", "1" * 64, "CC0", "test", True, "license record"),
+        ]).validate()
+    with pytest.raises(ResearchError, match="training"):
+        _adapter_proposal(training_executed=True).validate()
+    proposal = _adapter_proposal()
+    proposal.datasets[0].authorized = "true"  # type: ignore[assignment]
+    with pytest.raises(ResearchError, match="autorización"):
+        proposal.validate()
+
+
+def test_adapter_proposal_detects_tampered_persistent_payload(tmp_path) -> None:
+    path = tmp_path / "research.sqlite3"
+    store = SQLiteResearchStore(path)
+    store.register(_hyp())
+    store.record(_exp("winning-run", 0.9, dataset_sha256s=["3" * 64]))
+    store.propose_adapter(_adapter_proposal())
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "UPDATE adapter_proposals SET payload=? WHERE proposal_id=?",
+            ("{}", "adapter-p1"),
+        )
+    with pytest.raises(ResearchError, match="propuesta corrupta"):
+        SQLiteResearchStore(path).get_adapter_proposal("adapter-p1")
+
+
+def test_experiment_store_detects_tampered_measurement_payload(tmp_path) -> None:
+    path = tmp_path / "research.sqlite3"
+    store = SQLiteResearchStore(path)
+    store.register(_hyp())
+    store.record(_exp("run-1", 0.8))
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE experiments SET payload=? WHERE run_id=?", ("{}", "run-1"))
+    with pytest.raises(ResearchError, match="medición corrupta"):
+        SQLiteResearchStore(path).get_registry("h1")
+
+
+def test_sqlite_store_backfills_hashes_for_existing_experiments(tmp_path) -> None:
+    path = tmp_path / "legacy.sqlite3"
+    hyp_payload = {
+        "hyp_id": "h1", "intervention": "x", "metric": "vbench",
+        "higher_is_better": True, "criterion": 0.7, "budget_runs": 3,
+    }
+    run_payload = {
+        "run_id": "old-run", "hyp_id": "h1", "seed": 1,
+        "scores": {"vbench": 0.8}, "constraints_ok": True,
+        "cost": 1.0, "simulated": False,
+    }
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "CREATE TABLE hypotheses(hyp_id TEXT PRIMARY KEY,payload TEXT NOT NULL,"
+            "payload_sha256 TEXT NOT NULL,registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+            "CREATE TABLE experiments(run_id TEXT PRIMARY KEY,hyp_id TEXT NOT NULL,"
+            "payload TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+        )
+        encoded_hyp = json.dumps(hyp_payload, sort_keys=True, separators=(",", ":"))
+        import hashlib
+
+        db.execute(
+            "INSERT INTO hypotheses(hyp_id,payload,payload_sha256) VALUES(?,?,?)",
+            ("h1", encoded_hyp, hashlib.sha256(encoded_hyp.encode()).hexdigest()),
+        )
+        db.execute(
+            "INSERT INTO experiments(run_id,hyp_id,payload) VALUES(?,?,?)",
+            ("old-run", "h1", json.dumps(run_payload, sort_keys=True, separators=(",", ":"))),
+        )
+    registry = SQLiteResearchStore(path).get_registry("h1")
+    assert [run.run_id for run in registry.runs] == ["old-run"]

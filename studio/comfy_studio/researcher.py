@@ -38,6 +38,22 @@ class ResearchError(ValueError):
     """Contrato de investigación inválido."""
 
 
+def _is_sha256(value: str) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
+def _is_git_revision(value: str) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) in {40, 64}
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
 @dataclass(slots=True)
 class Hypothesis:
     """Preregistro: fijado ANTES de ver resultados (A26)."""
@@ -105,6 +121,7 @@ class Experiment:
     constraints_ok: bool = True        # identidad/factualidad respetadas
     cost: float = 0.0
     simulated: bool = True             # solo un caller explícito puede declarar real (A26)
+    dataset_sha256s: list[str] = field(default_factory=list)
 
     def validate(self) -> None:
         if not self.run_id.strip() or not self.hyp_id.strip():
@@ -115,6 +132,10 @@ class Experiment:
             raise ResearchError("scores deben contener solo medidas finitas")
         if not math.isfinite(self.cost) or self.cost < 0:
             raise ResearchError("cost debe ser finito y no negativo")
+        if len(self.dataset_sha256s) != len(set(self.dataset_sha256s)):
+            raise ResearchError("dataset_sha256s contiene duplicados")
+        if any(not _is_sha256(digest) for digest in self.dataset_sha256s):
+            raise ResearchError("dataset_sha256s requiere hashes SHA-256 válidos")
 
     def meets(self, hyp: Hypothesis) -> bool:
         val = self.scores.get(hyp.metric)
@@ -194,6 +215,7 @@ def _experiment_payload(experiment: Experiment) -> dict[str, Any]:
         "constraints_ok": experiment.constraints_ok,
         "cost": experiment.cost,
         "simulated": experiment.simulated,
+        "dataset_sha256s": experiment.dataset_sha256s,
     }
 
 
@@ -221,12 +243,35 @@ class SQLiteResearchStore:
                     run_id TEXT PRIMARY KEY,
                     hyp_id TEXT NOT NULL REFERENCES hypotheses(hyp_id),
                     payload TEXT NOT NULL,
+                    payload_sha256 TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE INDEX IF NOT EXISTS experiments_by_hypothesis
                     ON experiments(hyp_id, created_at, run_id);
+                CREATE TABLE IF NOT EXISTS adapter_proposals (
+                    proposal_id TEXT PRIMARY KEY,
+                    hyp_id TEXT NOT NULL REFERENCES hypotheses(hyp_id),
+                    run_id TEXT NOT NULL REFERENCES experiments(run_id),
+                    payload TEXT NOT NULL,
+                    payload_sha256 TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS adapter_proposals_by_hypothesis
+                    ON adapter_proposals(hyp_id, created_at, proposal_id);
                 """
             )
+            experiment_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(experiments)")
+            }
+            if "payload_sha256" not in experiment_columns:
+                db.execute("ALTER TABLE experiments ADD COLUMN payload_sha256 TEXT")
+                legacy_runs = db.execute("SELECT run_id,payload FROM experiments").fetchall()
+                for run in legacy_runs:
+                    digest = hashlib.sha256(run["payload"].encode("utf-8")).hexdigest()
+                    db.execute(
+                        "UPDATE experiments SET payload_sha256=? WHERE run_id=?",
+                        (digest, run["run_id"]),
+                    )
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
@@ -277,8 +322,14 @@ class SQLiteResearchStore:
                     "una hipótesis negativa termina"
                 )
             db.execute(
-                "INSERT INTO experiments(run_id,hyp_id,payload) VALUES(?,?,?)",
-                (experiment.run_id, experiment.hyp_id, payload),
+                "INSERT INTO experiments(run_id,hyp_id,payload,payload_sha256) "
+                "VALUES(?,?,?,?)",
+                (
+                    experiment.run_id,
+                    experiment.hyp_id,
+                    payload,
+                    hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                ),
             )
             db.commit()
         except sqlite3.IntegrityError as exc:
@@ -305,13 +356,18 @@ class SQLiteResearchStore:
             ]:
                 raise ResearchError("preregistro corrupto: hash no coincide")
             hypothesis = Hypothesis(**json.loads(row["payload"]))
-            runs = [
-                Experiment(**json.loads(run["payload"]))
-                for run in db.execute(
-                    "SELECT payload FROM experiments WHERE hyp_id=? ORDER BY created_at,run_id",
-                    (hyp_id,),
-                )
-            ]
+            stored_runs = db.execute(
+                "SELECT run_id,payload,payload_sha256 FROM experiments "
+                "WHERE hyp_id=? ORDER BY created_at,run_id",
+                (hyp_id,),
+            ).fetchall()
+            runs = []
+            for run in stored_runs:
+                if hashlib.sha256(run["payload"].encode("utf-8")).hexdigest() != run[
+                    "payload_sha256"
+                ]:
+                    raise ResearchError(f"medición corrupta: hash no coincide ({run['run_id']})")
+                runs.append(Experiment(**json.loads(run["payload"])))
         return Registry(hypothesis=hypothesis, runs=runs)
 
     def pareto(self, hyp_id: str) -> list[Experiment]:
@@ -323,6 +379,80 @@ class SQLiteResearchStore:
             metric=registry.hypothesis.metric,
             higher_is_better=registry.hypothesis.higher_is_better,
         )
+
+    def propose_adapter(self, proposal: AdapterProposal) -> None:
+        """Persist an authorized, holdout-backed adapter proposal; never trains it."""
+        proposal.validate()
+        payload = _canonical_json(proposal.to_dict())
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT h.payload,h.payload_sha256,e.payload AS run_payload, "
+                "e.payload_sha256 AS run_payload_sha256 "
+                "FROM hypotheses h JOIN experiments e ON e.hyp_id=h.hyp_id "
+                "WHERE h.hyp_id=? AND e.run_id=?",
+                (proposal.hyp_id, proposal.run_id),
+            ).fetchone()
+            if row is None:
+                raise ResearchError("la propuesta requiere hipótesis y corrida registradas")
+            if hashlib.sha256(row["payload"].encode("utf-8")).hexdigest() != row[
+                "payload_sha256"
+            ]:
+                raise ResearchError("preregistro corrupto: hash no coincide")
+            if hashlib.sha256(row["run_payload"].encode("utf-8")).hexdigest() != row[
+                "run_payload_sha256"
+            ]:
+                raise ResearchError("medición corrupta: hash no coincide")
+            hypothesis = Hypothesis(**json.loads(row["payload"]))
+            experiment = Experiment(**json.loads(row["run_payload"]))
+            if proposal.hyp_id != hypothesis.hyp_id:
+                raise ResearchError("la propuesta refiere otra hipótesis")
+            if (
+                experiment.simulated
+                or not experiment.constraints_ok
+                or not experiment.meets(hypothesis)
+            ):
+                raise ResearchError("la evidencia no es aceptable para proponer un adaptador")
+            test_hashes = {
+                dataset.sha256 for dataset in proposal.datasets if dataset.split == "test"
+            }
+            if not experiment.dataset_sha256s or not set(experiment.dataset_sha256s) <= test_hashes:
+                raise ResearchError("la corrida ganadora no acredita el holdout declarado")
+            db.execute(
+                "INSERT INTO adapter_proposals "
+                "(proposal_id,hyp_id,run_id,payload,payload_sha256) VALUES(?,?,?,?,?)",
+                (proposal.proposal_id, proposal.hyp_id, proposal.run_id, payload, digest),
+            )
+            db.commit()
+        except sqlite3.IntegrityError as exc:
+            if db.in_transaction:
+                db.rollback()
+            raise ResearchError(
+                f"propuesta duplicada o corrida inválida: {proposal.proposal_id}"
+            ) from exc
+        except Exception:
+            if db.in_transaction:
+                db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def get_adapter_proposal(self, proposal_id: str) -> AdapterProposal:
+        """Rehydrate a durable proposal only after verifying its stored hash."""
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT payload,payload_sha256 FROM adapter_proposals WHERE proposal_id=?",
+                (proposal_id,),
+            ).fetchone()
+        if row is None:
+            raise ResearchError(f"propuesta desconocida: {proposal_id}")
+        if hashlib.sha256(row["payload"].encode("utf-8")).hexdigest() != row[
+            "payload_sha256"
+        ]:
+            raise ResearchError("propuesta corrupta: hash no coincide")
+        return AdapterProposal.from_dict(json.loads(row["payload"]))
 
 
 def pareto_front(
@@ -370,6 +500,138 @@ class PromotionProposal:
     rollback: str          # cómo revertir si falla en producción
 
 
+@dataclass(slots=True)
+class AdapterDataset:
+    """Muestra concreta, autorizada y asignada a un split antes del experimento."""
+
+    sample_id: str
+    sha256: str
+    license: str
+    split: str
+    authorized: bool
+    authorization_reference: str
+
+
+@dataclass(slots=True)
+class AdapterProposal:
+    """Propuesta reproducible que prepara promoción por PR, sin ejecutar training."""
+
+    proposal_id: str
+    hyp_id: str
+    run_id: str
+    name: str
+    kind: str
+    base_model: str
+    base_model_revision: str
+    code_revision: str
+    datasets: list[AdapterDataset]
+    hyperparameters: dict[str, Any]
+    rollback_reference: str
+    training_executed: bool = False
+    artifact_sha256: str | None = None
+
+    def validate(self) -> None:
+        if not all(
+            value.strip()
+            for value in (
+                self.proposal_id, self.hyp_id, self.run_id, self.name,
+                self.base_model, self.base_model_revision, self.rollback_reference,
+            )
+        ):
+            raise ResearchError("propuesta requiere identidad, modelo base y rollback")
+        if self.kind not in {"lora", "adapter", "preset"}:
+            raise ResearchError("kind debe ser lora, adapter o preset")
+        if not _is_git_revision(self.base_model_revision):
+            raise ResearchError("base_model_revision debe ser una revisión fijada")
+        if not _is_git_revision(self.code_revision):
+            raise ResearchError("code_revision debe ser un commit SHA fijado")
+        if self.training_executed:
+            raise ResearchError("A26 prohíbe ejecutar training durante la propuesta")
+        if self.artifact_sha256 is not None and not _is_sha256(self.artifact_sha256):
+            raise ResearchError("artifact_sha256 debe ser SHA-256 válido")
+        if not isinstance(self.hyperparameters, dict) or not self.hyperparameters:
+            raise ResearchError("la propuesta requiere hyperparameters como objeto JSON")
+        try:
+            json.dumps(self.hyperparameters, allow_nan=False, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            raise ResearchError("hyperparameters deben ser JSON finito") from exc
+        if not self.datasets:
+            raise ResearchError("la propuesta requiere dataset y holdout")
+        sample_ids: set[str] = set()
+        sample_hashes: set[str] = set()
+        splits: set[str] = set()
+        for sample in self.datasets:
+            if not all(
+                isinstance(value, str)
+                for value in (sample.sample_id, sample.sha256, sample.license, sample.split)
+            ):
+                raise ResearchError("campos de muestra deben ser texto")
+            if not sample.sample_id.strip() or not _is_sha256(sample.sha256):
+                raise ResearchError("cada muestra requiere id y SHA-256")
+            if not sample.license.strip() or sample.license.casefold() == "unknown":
+                raise ResearchError("cada muestra requiere licencia conocida")
+            if sample.authorized is not True:
+                raise ResearchError("dataset sin autorización no puede usarse en la propuesta")
+            if (
+                not isinstance(sample.authorization_reference, str)
+                or not sample.authorization_reference.strip()
+            ):
+                raise ResearchError("cada muestra requiere referencia de autorización")
+            if sample.split not in {"train", "validation", "test"}:
+                raise ResearchError("split debe ser train, validation o test")
+            if sample.sample_id in sample_ids or sample.sha256 in sample_hashes:
+                raise ResearchError("muestras duplicadas o filtradas entre splits")
+            sample_ids.add(sample.sample_id)
+            sample_hashes.add(sample.sha256)
+            splits.add(sample.split)
+        if splits != {"train", "validation", "test"}:
+            raise ResearchError("se requieren splits train, validation y test")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "schema": "comfyuipod.adapter-proposal",
+            "schema_version": 1,
+            "proposal_id": self.proposal_id,
+            "hyp_id": self.hyp_id,
+            "run_id": self.run_id,
+            "name": self.name,
+            "kind": self.kind,
+            "base_model": self.base_model,
+            "base_model_revision": self.base_model_revision,
+            "code_revision": self.code_revision,
+            "datasets": [
+                {
+                    "sample_id": sample.sample_id,
+                    "sha256": sample.sha256,
+                    "license": sample.license,
+                    "split": sample.split,
+                    "authorized": sample.authorized,
+                    "authorization_reference": sample.authorization_reference,
+                }
+                for sample in self.datasets
+            ],
+            "hyperparameters": self.hyperparameters,
+            "rollback_reference": self.rollback_reference,
+            "training_executed": self.training_executed,
+            "artifact_sha256": self.artifact_sha256,
+            "status": "proposed",
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> AdapterProposal:
+        data = dict(value)
+        if data.pop("schema", None) != "comfyuipod.adapter-proposal":
+            raise ResearchError("schema de propuesta de adaptador desconocido")
+        if data.pop("schema_version", None) != 1:
+            raise ResearchError("schema_version de propuesta no soportado")
+        data.pop("status", None)
+        data["datasets"] = [AdapterDataset(**sample) for sample in data["datasets"]]
+        proposal = cls(**data)
+        proposal.validate()
+        return proposal
+
+
 def can_promote(proposal: PromotionProposal, winning: Experiment, hyp: Hypothesis) -> bool:
     """¿Se puede promover? Solo con evidencia REAL que cumple el criterio (A26)."""
     if winning.simulated:
@@ -384,6 +646,8 @@ def can_promote(proposal: PromotionProposal, winning: Experiment, hyp: Hypothesi
 
 
 __all__ = [
+    "AdapterDataset",
+    "AdapterProposal",
     "Experiment",
     "Hypothesis",
     "PromotionProposal",
