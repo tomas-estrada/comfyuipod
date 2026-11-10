@@ -164,7 +164,11 @@ def resolve_dest(dest: str, env: dict[str, str] | None = None) -> Path:
 
     # Absolute paths are an explicit manifest choice and keep their historical
     # behavior. Relative paths are confined to their corresponding root.
-    if raw.startswith("/"):
+    # `raw.startswith("/")` solo cubre POSIX: en Windows un destino explícito
+    # con unidad (`C:/...`) también es absoluto y debe respetarse tal cual, no
+    # confinarse contra COMFY_DATA_DIR (rompía el inventario con manifests que
+    # declaran rutas absolutas del host).
+    if raw.startswith("/") or os.path.isabs(raw):
         return Path(raw)
     if raw == "models" or raw.startswith("models/"):
         root = Path(comfy_data)
