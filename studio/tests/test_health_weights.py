@@ -17,26 +17,36 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
-def manifest_fixture(tmp_path, monkeypatch) -> dict[str, Any]:
-    """Manifiesto con dos entradas: una presente (bytes reales) y una ausente."""
+def data_root(tmp_path, monkeypatch) -> Any:
+    """Raíz de datos aprobada (`COMFY_DATA_DIR`) con los pesos del fixture.
+
+    Los destinos del manifiesto se confinan a las raíces aprobadas
+    (`model_assets.resolve_dest`): el fixture usa `{COMFY_DATA_DIR}` para no
+    depender de una ruta absoluta ni de la plataforma.
+    """
     data = tmp_path / "comfyui-data"
     (data / "checkpoints").mkdir(parents=True, exist_ok=True)
     (data / "checkpoints" / "limpio.safetensors").write_bytes(b"x" * 4096)
-    present = str(data / "checkpoints" / "limpio.safetensors")
-    missing = str(data / "checkpoints" / "que-no-llego.safetensors")
+    monkeypatch.setenv("COMFY_DATA_DIR", str(data))
+    return data
+
+
+@pytest.fixture()
+def manifest_fixture(data_root, tmp_path, monkeypatch) -> dict[str, Any]:
+    """Manifiesto con dos entradas: una presente (bytes reales) y una ausente."""
     manifest = {
         "version": 1,
         "meta": {"default_entries": 2, "default_bytes": 0},
         "models": [
             {
                 "filename": "limpio.safetensors",
-                "dest_path": present,
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/limpio.safetensors",
                 "class": "task",
                 "bytes": 4096,
             },
             {
                 "filename": "que-no-llego.safetensors",
-                "dest_path": missing,
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/que-no-llego.safetensors",
                 "class": "task",
                 "bytes": 8192,
             },
@@ -74,31 +84,36 @@ def test_health_publica_el_estado_de_pesos_requeridos(client: TestClient, manife
     assert weights["required_missing"] == []
 
 
-def test_health_reporta_no_disponible_sin_manifiesto(
-    client: TestClient, monkeypatch, tmp_path
-) -> None:
+def test_health_reporta_no_disponible_sin_manifiesto(client: TestClient, tmp_path) -> None:
     # Manifiesto sin entradas: no hay medición que mostrar, y no se puede
     # afirmar que los pesos requeridos están («no disponible»).
     path = tmp_path / "models-vacio.json"
     path.write_text(json.dumps({"version": 1, "models": []}), encoding="utf-8")
-    monkeypatch.setenv("STUDIO_MANIFEST", str(path))
-    resp = client.get("/studio/api/health")
+    import os
+
+    os.environ["STUDIO_MANIFEST"] = str(path)
+    try:
+        resp = client.get("/studio/api/health")
+    finally:
+        os.environ.pop("STUDIO_MANIFEST", None)
     assert resp.status_code == 200, resp.text
     weights = resp.json()["weights"]
     assert weights["required_ok"] is None
     assert weights["required_missing"] == []
 
 
-def test_campos_nuevos_salen_redactados(client: TestClient, monkeypatch, tmp_path) -> None:
+def test_campos_nuevos_salen_redactados(
+    client: TestClient, data_root, tmp_path, monkeypatch
+) -> None:
     """Un secreto en el nombre/ruta del activo no puede atravesar la API."""
     token = "hf_ABCDEFGHIJKLMNOP12"
-    missing_file = tmp_path / f"falta-hf-{token}.safetensors"
+    missing_file = data_root / "checkpoints" / f"falta-hf-{token}.safetensors"
     manifest = {
         "version": 1,
         "models": [
             {
                 "filename": missing_file.name,
-                "dest_path": str(missing_file),
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/" + missing_file.name,
                 "class": "bootstrap",
                 "bytes": 128,
             },
