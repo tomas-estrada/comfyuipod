@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import pathlib
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from comfy_studio.config import (
@@ -473,3 +475,149 @@ def test_log_redaction_covers_lastresort_with_the_real_uvicorn_boot_order() -> N
     assert emitted, "el registro no pasó por lastResort; el test no ejercita el camino real"
     assert secret not in emitted, emitted
     assert SECRET_PLACEHOLDER in emitted, emitted
+
+
+# --------------------------------------------------------------------------
+# Paridad con el redactor de Rust (brecha X-03 de 03-rules.md)
+# --------------------------------------------------------------------------
+
+
+def test_env_assign_regex_covers_every_name_the_rust_redactor_covers():
+    """La lista de nombres debe coincidir con `rx_studio_env` de redact.rs.
+
+    Es un test de paridad, no de gusto: si alguien añade una credencial al
+    redactor de Rust y se olvida del de Python, esto falla. Antes pasaba con
+    `AWS_SECRET_ACCESS_KEY` sin cubrir.
+    """
+    import re as _re
+
+    from comfy_studio.config import _ENV_ASSIGN_RE
+
+    rust = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "comfyctl"
+        / "src"
+        / "redact.rs"
+    ).read_text(encoding="utf-8")
+    m = _re.search(r'rx_studio_env: Regex::new\(\s*r#"(.*?)"#', rust, _re.S)
+    assert m, "no se encontró rx_studio_env en comfyctl/src/redact.rs"
+    rust_names = {
+        n.replace("(?:FALLBACK_)?", "")
+        for n in _re.findall(r"[A-Z][A-Z0-9_]+", m.group(1))
+        if n not in {"KEY", "TOKEN", "SECRET", "PASS", "ID"}
+    }
+    # Nombres con partes opcionales: se normalizan a la forma larga.
+    rust_names = {
+        "STUDIO_LLM_KEY" if n == "STUDIO_LLM" else n for n in rust_names
+    }
+
+    py_names = {
+        n.replace("(?:FALLBACK_)?", "")
+        for n in _re.findall(r"[A-Z][A-Z0-9_]+", _ENV_ASSIGN_RE.pattern)
+        if n not in {"KEY", "TOKEN", "SECRET", "PASS", "ID"}
+    }
+    missing = rust_names - py_names
+    assert not missing, f"nombres cubiertos en Rust pero no en Python: {sorted(missing)}"
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        "AWS_SECRET_KEY=wJalrXUtnFEMI/K7MDENG",
+        "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+        "GITHUB_TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "SLACK_TOKEN=xoxb-1234567890-abcdefghij",
+        "OPENAI_API_KEY=sk-proj-abc123def456",
+        "GOOGLE_API_KEY=AIzaSyA1234567890abcdefghijklmnopqrstuv",
+        "ANTHROPIC_API_KEY=sk-ant-api03-XXXX",
+        "HF_TOKEN=hf_abcdefghijklmnop",
+        "COMFY_PASS=supersecret123",
+        "STUDIO_API_TOKEN=" + "a" * 48,
+        "STUDIO_WEBHOOK_SECRET=" + "b" * 32,
+        "VAST_API_KEY=vk_" + "c" * 24,
+        "STUDIO_AUTH_PASS=otra-clave-secreta",
+        "STUDIO_LLM_KEY=sk-llm-abcdef",
+        "STUDIO_LLM_FALLBACK_KEY=sk-fb-abcdef",
+    ],
+)
+def test_env_assign_regex_masks_every_credential_name(assignment: str):
+    """Cada nombre de credencial debe quedar enmascarado, con su valor intacto
+    solo en el nombre (para que el log siga siendo legible)."""
+    redactor = SecretRedactor.from_env({})
+    out = redactor.redact(assignment)
+    assert SECRET_PLACEHOLDER in out, f"no se enmascaró: {assignment!r} -> {out!r}"
+    name = assignment.split("=", 1)[0].split(":", 1)[0]
+    assert out.startswith(name), f"se perdió el nombre: {assignment!r} -> {out!r}"
+    # El valor no debe sobrevivir.
+    value = assignment.split("=", 1)[1]
+    assert value not in out, f"el valor sobrevivió: {assignment!r} -> {out!r}"
+
+
+def test_env_assign_regex_does_not_break_the_json_body_it_runs_on():
+    r"""Regresión: con `\S+` como clase del valor, `KEY=abc",` se comía el cierre
+    de la cadena y json.loads revienta. El redactor de Rust puede usar `\S+`
+    porque solo corre sobre texto de log; este no."""
+    import json
+
+    redactor = SecretRedactor.from_env({})
+    body = json.dumps(
+        {
+            "a": "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7",
+            "nested": {"k": [1, 2, 3]},
+            "url": "http://127.0.0.1:18188",
+        }
+    )
+    out = redactor.redact(body)
+    parsed = json.loads(out)  # no debe lanzar
+    assert parsed["nested"]["k"] == [1, 2, 3]
+    assert SECRET_PLACEHOLDER in out
+
+
+def test_env_assign_regex_preserves_quoted_values_for_json():
+    """La rama entre comillas se re-emite entre comillas (criterio de Rust)."""
+    import json
+
+    redactor = SecretRedactor.from_env({})
+    body = json.dumps({"key": "OPENAI_API_KEY=sk-abc123def"})
+    out = redactor.redact(body)
+    parsed = json.loads(out)
+    assert parsed["key"].startswith("OPENAI_API_KEY=")
+    assert "sk-abc123def" not in parsed["key"]
+    assert SECRET_PLACEHOLDER in parsed["key"]
+
+
+def test_env_assign_regex_leaves_benign_assignments_alone():
+    """No debe enmascarar asignaciones que no son credenciales."""
+    redactor = SecretRedactor.from_env({})
+    benign = "MODEL_PROFILE=studio COMFY_USER=admin COMFY_DATA_DIR=/workspace/comfyui-data"
+    assert redactor.redact(benign) == benign
+
+
+def test_env_assign_regex_requires_a_word_boundary():
+    """Regresión: sin `\\b`, `requires_hf_token` contiene `hf_token` y el
+    booleano `false` acababa enmascarado, rompiendo el JSON de /status/api."""
+    import json
+
+    redactor = SecretRedactor.from_env({})
+    body = json.dumps({"requires_hf_token": False, "attempted_chain": ["whisperx:cpu:int8"]})
+    out = redactor.redact(body)
+    parsed = json.loads(out)
+    assert parsed["requires_hf_token"] is False
+    assert parsed["attempted_chain"] == ["whisperx:cpu:int8"]
+    # Y el nombre real sí se sigue enmascarando.
+    assert "[REDACTED]" in redactor.redact("HF_TOKEN=hf_abcdefghijklmnop")
+
+
+@pytest.mark.parametrize(
+    "benign",
+    [
+        "requires_hf_token=false",
+        "my_hf_token=x",
+        "STUDIO_LLM_KEYRING=abc",
+        "prefix_COMFY_PASS=y",
+    ],
+)
+def test_env_assign_regex_does_not_match_inside_longer_identifiers(benign: str):
+    redactor = SecretRedactor.from_env({})
+    assert redactor.redact(benign) == benign, benign

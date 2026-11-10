@@ -45,19 +45,47 @@ DEFAULT_MAX_CONCURRENT_RENDERS = 2
 
 _HF_TOKEN_RE = re.compile(r"hf_[A-Za-z0-9]{12,}")
 _SK_TOKEN_RE = re.compile(r"sk-[A-Za-z0-9._\-]{8,}")
-_STUDIO_LLM_KEY_ASSIGN_RE = re.compile(r"(?i)(STUDIO_LLM_(?:FALLBACK_)?KEY\s*[:=]\s*)(\S+)")
-_COMFY_PASS_ASSIGN_RE = re.compile(r"(?i)(COMFY_PASS\s*[:=]\s*)(\S+)")
-_STUDIO_AUTH_PASS_ASSIGN_RE = re.compile(r"(?i)(STUDIO_AUTH_PASS\s*[:=]\s*)(\S+)")
-_HF_TOKEN_ASSIGN_RE = re.compile(r"(?i)(HF_TOKEN\s*[:=]\s*)(\S+)")
-_STUDIO_API_TOKEN_ASSIGN_RE = re.compile(r"(?i)(STUDIO_API_TOKEN\s*[:=]\s*)(\S+)")
-# Credencial real del motor heavy_video (engines/heavy_video.py: KEY_ENV). Sin este
-# patrón ni literal, un proveedor que haga eco de la clave en su cuerpo de error la
-# devuelve tal cual al cliente y al log.
-_STUDIO_HEAVY_VIDEO_KEY_ASSIGN_RE = re.compile(
-    r"(?i)(STUDIO_HEAVY_VIDEO_KEY\s*[:=]\s*)(\S+)"
+# Asignacion de credencial por NOMBRE de variable. Espejo de rx_studio_env en
+# comfyctl/src/redact.rs: misma lista de nombres, mismo separador flexible
+# (opcional comilla, luego : o =) y mismo valor (entre comillas con escapes,
+# o corrida sin espacios). Antes habia 9 regex sueltas que solo cubrian los
+# nombres de Studio: AWS_SECRET_ACCESS_KEY=... salia EN CLARO porque su valor
+# contiene / y no casa con ninguna forma de clave. Una sola regex evita que
+# las dos implementaciones vuelvan a divergir.
+# OJO con la clase del valor sin comillas: excluye comillas, coma y
+# delimitadores JSON. Con \S+ (lo que usa el redactor de Rust) el valor se
+# come el cierre de la cadena y json.loads revienta con "Expecting ','
+# delimiter". Rust puede permitirse \S+ porque solo corre sobre texto de
+# log; aqui no, porque se aplica al cuerpo JSON serializado.
+_ENV_ASSIGN_RE = re.compile(
+    r"(?i)(?:\b)((?:STUDIO_LLM_(?:FALLBACK_)?KEY|STUDIO_API_TOKEN|STUDIO_WEBHOOK_SECRET|VAST_API_KEY|COMFY_PASS|STUDIO_AUTH_PASS|HF_TOKEN|STUDIO_HEAVY_VIDEO_KEY|AWS_SECRET_ACCESS_KEY|AWS_SECRET_KEY|AWS_ACCESS_KEY_ID|GITHUB_TOKEN|SLACK_TOKEN|OPENAI_API_KEY|GOOGLE_API_KEY|ANTHROPIC_API_KEY)"
+    r"\s*\"?\s*[:=]\s*)(\"(?:[^\"\\]|\\.)*\"|[^@\s\"'\[\]{},]*)"
 )
-_STUDIO_WEBHOOK_SECRET_ASSIGN_RE = re.compile(r"(?i)(STUDIO_WEBHOOK_SECRET\s*[:=]\s*)(\S+)")
-_VAST_API_KEY_ASSIGN_RE = re.compile(r"(?i)(VAST_API_KEY\s*[:=]\s*)(\S+)")
+
+
+#: Placeholders que el propio redactor y to_public_dict emiten. No deben
+#: enmascararse a si mismos: /status/api publica STUDIO_LLM_KEY: "<definida>" y
+#: el contrato exige que ese marcador sobreviva.
+_REDACTION_PLACEHOLDERS = frozenset(
+    {"<definida>", "<no definida>", "<definido>", "<no definido>"}
+)
+
+
+def _mask_env_assign(match):
+    """Re-emite el nombre y enmascara el valor, preservando las comillas.
+
+    La rama entre comillas se re-emite entre comillas para no romper el JSON
+    de /status/api (mismo criterio que el redactor de Rust). Los placeholders
+    propios se dejan intactos.
+    """
+    value = match.group(2)
+    if value.strip('"') in _REDACTION_PLACEHOLDERS:
+        return match.group(0)
+    if value.startswith('"'):
+        return f'{match.group(1)}"[REDACTED]"'
+    return f"{match.group(1)}[REDACTED]"
+
+
 _BEARER_RE = re.compile(r"(?i)(Bearer\s+)[A-Za-z0-9._\-]{6,}")
 # Paridad con `comfyctl/src/redact.rs`: sin estos, una credencial en una cadena de
 # excepción o en un cuerpo de error de proveedor llegaba al cliente. El redactor de
@@ -249,14 +277,7 @@ class SecretRedactor:
             out = out.replace(secret, SECRET_PLACEHOLDER)
         out = _HF_TOKEN_RE.sub(SECRET_PLACEHOLDER, out)
         out = _SK_TOKEN_RE.sub(SECRET_PLACEHOLDER, out)
-        out = _STUDIO_LLM_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
-        out = _COMFY_PASS_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
-        out = _STUDIO_AUTH_PASS_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
-        out = _HF_TOKEN_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
-        out = _STUDIO_API_TOKEN_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
-        out = _STUDIO_HEAVY_VIDEO_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
-        out = _STUDIO_WEBHOOK_SECRET_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
-        out = _VAST_API_KEY_ASSIGN_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
+        out = _ENV_ASSIGN_RE.sub(_mask_env_assign, out)
         out = _BEARER_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _AUTHORIZATION_RE.sub(rf"\1{SECRET_PLACEHOLDER}", out)
         out = _URL_AUTH_RE.sub(rf"\1{SECRET_PLACEHOLDER}\3", out)
