@@ -1781,6 +1781,10 @@ async def _handle_index_media(
                 "shots_indexed": clip_res["shots_indexed"],
                 "faces_detected": face_count,
                 "shots": clip_res["shots"],
+                # T3: el estado real/simulado viaja con el exito. Sin esto,
+                # un indexado simulado era un `indexed` indistinguible de
+                # uno real para el agente.
+                "simulated": bool(clip_res.get("simulated", False)),
             }
 
         proj_res = clip_idx.index_project_media(
@@ -1806,6 +1810,8 @@ async def _handle_index_media(
             "assets_indexed": proj_res["assets_indexed"],
             "shots_indexed": proj_res["shots_indexed"],
             "faces_detected": face_count,
+            # T3: ver nota del camino por asset_id (misma razon).
+            "simulated": bool(proj_res.get("simulated", False)),
         }
 
     try:
