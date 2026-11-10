@@ -42,6 +42,14 @@ ASPECT_4K = {
 }
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 class DeliveryError(ValueError):
     """Contrato de entrega inválido."""
 
@@ -272,12 +280,12 @@ def write_editable_package(spec: TimelineSpec, destination: str | Path) -> Path:
                 relative = seen[src]
                 set_path(relative)
                 continue
-            digest = hashlib.sha256(src.read_bytes()).hexdigest()
+            digest = _sha256_file(src)
             safe_id = hashlib.sha256(media_id.encode("utf-8")).hexdigest()[:12]
             relative = f"assets/{kind}-{safe_id}-{src.name}"
             out = stage / relative
             shutil.copy2(src, out)
-            if hashlib.sha256(out.read_bytes()).hexdigest() != digest:
+            if _sha256_file(out) != digest:
                 raise DeliveryError(f"falló la verificación SHA-256 de {src}")
             seen[src] = relative
             set_path(relative)
@@ -332,7 +340,7 @@ def load_editable_package(directory: str | Path) -> TimelineSpec:
         asset = (root / relative).resolve()
         if relative.is_absolute() or not asset.is_relative_to(root) or not asset.is_file():
             raise DeliveryError(f"ruta de medio insegura o inexistente: {relative}")
-        actual = hashlib.sha256(asset.read_bytes()).hexdigest()
+        actual = _sha256_file(asset)
         if actual != record.get("sha256"):
             raise DeliveryError(f"hash de medio no coincide: {relative}")
     return spec
