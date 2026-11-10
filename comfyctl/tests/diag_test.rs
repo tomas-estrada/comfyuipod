@@ -151,14 +151,40 @@ fn diag_emite_el_contrato_con_probes_apuntados_y_redacta() {
         "gpu con binario inexistente: {texto}"
     );
 
-    // 5. Secciones siempre presentes (su valor si puede variar, su nivel no).
-    for prefijo in [
-        "[DIAG][OK] disk: total=",
-        "[DIAG][OK] ram: total=",
-        "[DIAG][OK] cpu: nproc=",
-        "[DIAG][OK] env: MODEL_PROFILE=",
-    ] {
+    // 5. Secciones siempre presentes. El nivel de disco/RAM depende ahora de si la
+    //    sonda pudo medir (0 => FAIL), que varía según el SO: se exige la sección y
+    //    que el nivel sea COHERENTE con el valor que acompaña, no un nivel fijo.
+    for prefijo in ["[DIAG][OK] cpu: nproc=", "[DIAG][OK] env: MODEL_PROFILE="] {
         assert!(texto.contains(prefijo), "falta {prefijo:?} en: {texto}");
+    }
+    for (clave, unidad) in [("disk", "GB"), ("ram", "MB")] {
+        let linea = texto
+            .lines()
+            .find(|ln| ln.starts_with("[DIAG][") && ln.contains(&format!("] {clave}: total=")));
+        assert!(linea.is_some(), "falta la sección {clave} en: {texto}");
+        let Some(linea) = linea else {
+            continue;
+        };
+        let nivel = linea
+            .strip_prefix("[DIAG][")
+            .and_then(|r| r.split(']').next())
+            .unwrap_or_default();
+        assert!(
+            nivel == "OK" || nivel == "FAIL",
+            "nivel fuera de contrato en {clave}: {linea}"
+        );
+        // Coherencia nivel/valor: un total medido (>0) es OK; un total 0 es FAIL.
+        let total: f64 = linea
+            .split("total=")
+            .nth(1)
+            .and_then(|rest| rest.split(unidad).next())
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(-1.0);
+        let esperado = if total > 0.0 { "OK" } else { "FAIL" };
+        assert_eq!(
+            nivel, esperado,
+            "el nivel de {clave} debe reflejar si la sonda midió algo: {linea}"
+        );
     }
 
     // 6. El secreto de configuracion jamas aparece en la salida de diag.
@@ -166,4 +192,100 @@ fn diag_emite_el_contrato_con_probes_apuntados_y_redacta() {
         !texto.contains(secreto),
         "fuga del secreto en la salida de diag: {texto}"
     );
+}
+
+// Una sonda que no midió nada no puede anunciarse como OK. `collect_memory_and_disk`
+// devuelve ceros cuando `/proc/meminfo` es ilegible o `statvfs` falla, y antes `diag`
+// emitía `[DIAG][OK] disk: total=0GB ...` / `[DIAG][OK] ram: total=0MB ...`: un
+// diagnóstico que afirmaba un estado no medido y que contradecía a S5, la cual marca
+// `fatal` justamente por esos 0 GB libres. El operario veía entonces dos verdades
+// opuestas sobre la misma máquina y perdía la pista de si el disco estaba lleno o si
+// la sonda no había podido medir.
+#[test]
+fn diag_marca_fail_cuando_la_sonda_no_midio_nada() {
+    use comfyctl::collect::procfs::{DiskStatus, MemoryStatus};
+    use comfyctl::diag::resource_diag_levels;
+
+    let mem_cero = MemoryStatus {
+        total_mb: 0,
+        used_mb: 0,
+        available_mb: 0,
+        swap_used_mb: 0,
+    };
+    let disk_cero = DiskStatus {
+        path: "/".to_string(),
+        total_gb: 0.0,
+        used_gb: 0.0,
+        free_gb: 0.0,
+    };
+
+    let (disk_level, ram_level) = resource_diag_levels(&mem_cero, &disk_cero);
+    assert_eq!(disk_level, "FAIL", "disco sin datos no puede ser OK");
+    assert_eq!(ram_level, "FAIL", "RAM sin datos no puede ser OK");
+
+    // Cero en un campo y dato real en el otro: cada sonda se juzga por separado.
+    let (disk_level, ram_level) = resource_diag_levels(
+        &MemoryStatus {
+            total_mb: 65536,
+            used_mb: 32768,
+            available_mb: 32768,
+            swap_used_mb: 0,
+        },
+        &disk_cero,
+    );
+    assert_eq!(disk_level, "FAIL");
+    assert_eq!(ram_level, "OK");
+
+    let (disk_level, ram_level) = resource_diag_levels(
+        &mem_cero,
+        &DiskStatus {
+            path: "/workspace".to_string(),
+            total_gb: 500.0,
+            used_gb: 250.0,
+            free_gb: 250.0,
+        },
+    );
+    assert_eq!(disk_level, "OK");
+    assert_eq!(ram_level, "FAIL");
+}
+
+#[test]
+fn diag_marca_ok_cuando_las_sondas_devolvieron_datos() {
+    use comfyctl::collect::procfs::{DiskStatus, MemoryStatus};
+    use comfyctl::diag::resource_diag_levels;
+
+    let (disk_level, ram_level) = resource_diag_levels(
+        &MemoryStatus {
+            total_mb: 65536,
+            used_mb: 32768,
+            available_mb: 32768,
+            swap_used_mb: 0,
+        },
+        &DiskStatus {
+            path: "/workspace".to_string(),
+            total_gb: 500.0,
+            used_gb: 250.0,
+            free_gb: 250.0,
+        },
+    );
+    assert_eq!(disk_level, "OK");
+    assert_eq!(ram_level, "OK");
+
+    // Un disco genuinamente pequeño sigue siendo una medición válida: OK.
+    let (disk_level, ram_level) = resource_diag_levels(
+        &MemoryStatus {
+            total_mb: 2048,
+            used_mb: 1024,
+            available_mb: 1024,
+            swap_used_mb: 0,
+        },
+        &DiskStatus {
+            path: "/workspace".to_string(),
+            total_gb: 0.5,
+            used_gb: 0.25,
+            free_gb: 0.25,
+        },
+    );
+    assert_eq!(disk_level, "OK");
+    assert_eq!(ram_level, "OK");
 }
