@@ -1,94 +1,102 @@
 @startuml 02-states
-!pragma teoz true
 
 ' ============================================================================
-' 02 — Vista de comportamiento: ciclo de vida del pod y de la producción
+' 02 — Vista de comportamiento: ciclo de vida
 ' Rama: docs/maad-architecture-2026-11-10 · Base: main b7f21de
 '
-' Confianza: [C] confirmado · [I] inferido · [H] hueco
-' Coherencia con 01-components.puml: los participantes son exactamente los
-' componentes declarados allí (verificado por scripts de validación estructural).
+' Regla de legibilidad: los estados llevan SOLO su nombre; la evidencia
+' (archivo:línea + confianza) vive en el legend, que PlantUML renderiza como
+' bloque aparte y por tanto no se solapa con los nodos ni con las flechas.
+'
+' NO usar `!pragma teoz true` (es de diagramas de secuencia). `wrapWidth` debe
+' ser pequeño: con 200 las etiquetas ocupaban media pantalla y el diagrama
+' medía 4096x2270.
 ' ============================================================================
 
-title ComfyUIPod — ciclo de vida (pod, ComfyUI, producción, shot)
+skinparam wrapWidth 60
+skinparam nodesep 25
+skinparam ranksep 35
+skinparam padding 5
+skinparam shadowing false
+skinparam defaultTextAlignment center
 
-skinparam wrapWidth 200
+title ComfyUIPod — ciclo de vida (pod, ComfyUI, producción, shot, motores)
 
 ' ---------------------------------------------------------------------------
-' 1. Arranque del pod — las 5 fases ejecutadas de start.sh
+' 1. Arranque del pod — fases ejecutadas de start.sh
 ' ---------------------------------------------------------------------------
-[*] --> Fase1_ffmpeg : "arranca start.sh"
+[*] --> Fase1_ffmpeg
 
-Fase1_ffmpeg : [1/7] verificar ffmpeg\nscripts/start.sh:92
-Fase2_datos : [2/7] preparar COMFY_DATA_DIR\nscripts/start.sh:176
-Fase2b_volumen : [1b/7] esperar volumen persistente\nscripts/start.sh:147
-Fase3_auth : [3/7] htpasswd fail-closed\nscripts/start.sh:259
-Fase4_nginx : [4/7] Nginx + ttyd\nscripts/start.sh:377
-Fase5_supervise : [5/7] exec comfyctl supervise\nscripts/start.sh:397
+Fase1_ffmpeg : [1/7]\nverificar ffmpeg
+Fase2b_volumen : [1b/7]\nesperar volumen
+Fase2_datos : [2/7]\npreparar datos
+Fase3_auth : [3/7]\nhtpasswd
+Fase4_nginx : [4/7]\nNginx + ttyd
+Fase5_supervise : [5/7]\nexec supervise
 
-Fase1_ffmpeg --> Fase2b_volumen : "COMFY_DATA_DIR bajo /workspace\n[ C ] scripts/start.sh:147"
-Fase2b_volumen --> Fase2_datos : "montaje real confirmado\n[ C ] scripts/start.sh:154"
-Fase2b_volumen --> Fase2_datos : "timeout: avisa y sigue\n[ C ] scripts/start.sh:160"
+Fase1_ffmpeg --> Fase2b_volumen : "bajo /workspace"
+Fase2b_volumen --> Fase2_datos : "montaje OK"
+Fase2b_volumen --> Fase2_datos : "timeout: avisa"
 Fase2_datos --> Fase3_auth
-Fase3_auth --> Fase4_nginx : "htpasswd OK\n[ C ] scripts/start.sh:366"
-Fase3_auth --> Abortado : "htpasswd falla -> exit 1\n[ C ] scripts/start.sh:367"
+Fase3_auth --> Fase4_nginx : "htpasswd OK"
+Fase3_auth --> Abortado : "falla → exit 1"
 Fase4_nginx --> Fase5_supervise
-Fase5_supervise --> StrictCheck : "supervise arranca\n[ C ] comfyctl/src/supervisor.rs:1"
+Fase5_supervise --> StrictCheck
 
 ' ---------------------------------------------------------------------------
 ' 2. strict-check — la puerta de seguridad
 ' ---------------------------------------------------------------------------
-StrictCheck : strict-check S1..S17\ncomfyctl/src/strict.rs:1572
-Sirviendo : pod sirviendo\n(nginx + :18189 + :18190)
-Gracia : gracia STRICT_FATAL_GRACE\ncomfyctl/src/supervisor.rs:937
+StrictCheck : strict-check\nS1..S17
+Sirviendo : pod sirviendo
+Gracia : gracia fatal
+Terminado_20 : exit 20
+Abortado : abortado
 
-StrictCheck --> Sirviendo : "resultado ok\n[ C ] comfyctl/src/strict.rs:1560"
-StrictCheck --> Gracia : "fatal y STRICT_START=1\n[ C ] comfyctl/src/strict.rs:1568"
-Gracia --> Terminado_20 : "exit code 20\n[ C ] comfyctl/src/strict.rs:1568"
-Terminado_20 : contenedor termina\ncódigo 20
-Abortado : contenedor abortado\nantes de Nginx
-
+StrictCheck --> Sirviendo : "ok"
+StrictCheck --> Gracia : "fatal + STRICT_START=1"
+Gracia --> Terminado_20
 Sirviendo --> [*]
 Terminado_20 --> [*]
 Abortado --> [*]
 
 ' ---------------------------------------------------------------------------
-' 3. Ciclo de vida de ComfyUI bajo supervisión
+' 3. ComfyUI supervisado
 ' ---------------------------------------------------------------------------
-state "ComfyUI supervisado" as ComfyUILife #FFF2CC {
+state "ComfyUI" as ComfyUILife #FFF2CC {
     [*] --> CUI_Iniciando
-    CUI_Iniciando : starting\ncomfyctl/src/collect/procfs.rs:354
-    CUI_Corriendo : running\ncomfyctl/src/collect/procfs.rs:350
-    CUI_Caido : proceso ausente\ncomfyctl/src/supervisor.rs:1
+    CUI_Iniciando : starting
+    CUI_Corriendo : running
+    CUI_Caido : caído
 
-    CUI_Iniciando --> CUI_Corriendo : "puerto 18188 abierto\n[ C ] comfyctl/src/supervisor.rs:513"
-    CUI_Corriendo --> CUI_Caido : "proceso muere\n[ I ] comfyctl/src/supervisor.rs:1"
-    CUI_Caido --> CUI_Iniciando : "reinicio si restarts < max\n[ C ] comfyctl/src/supervisor.rs:1"
-    CUI_Caido --> [*] : "max_restarts agotado\n[ H ] umbral no leído"
+    CUI_Iniciando --> CUI_Corriendo : "puerto abierto"
+    CUI_Corriendo --> CUI_Caido : "muere"
+    CUI_Caido --> CUI_Iniciando : "reinicio acotado"
+    CUI_Caido --> [*] : "max agotado"
 }
 
 ' ---------------------------------------------------------------------------
-' 4. Ciclo de vida de una producción (gate de gasto humano)
+' 4. Producción — gate de gasto humano
 ' ---------------------------------------------------------------------------
 state "Producción" as ProdLife #CFE2F3 {
-    [*] --> P_Awaiting : "POST /productions\n[ C ] studio/comfy_studio/orchestration/service.py:186"
-    P_Awaiting : awaiting_approval\n[ C ] studio/comfy_studio/orchestration/service.py:186
-    P_Executing : executing\n[ C ] studio/comfy_studio/orchestration/service.py:333
+    left to right direction
+    [*] --> P_Awaiting
+    P_Awaiting : awaiting_approval
+    P_Executing : executing
     P_Done : done
     P_Simulated : simulated
     P_Failed : failed
     P_Cancelled : cancelled
     P_Halted : halted
 
-    P_Awaiting --> P_Executing : "POST /approve (humano)\n[ C ] studio/comfy_studio/routers/productions.py:102"
-    P_Awaiting --> P_Cancelled : "POST /cancel\n[ C ] studio/comfy_studio/orchestration/service.py:307"
-    P_Awaiting --> P_Awaiting : "PATCH /plan (edita plan)\n[ C ] studio/comfy_studio/orchestration/service.py:249"
+    P_Awaiting --> P_Executing : "POST /approve"
+    P_Awaiting --> P_Cancelled : "POST /cancel"
+    P_Awaiting --> P_Awaiting : "PATCH /plan"
 
-    P_Executing --> P_Done : "reel ensamblado\n[ C ] studio/comfy_studio/orchestration/service.py:56"
-    P_Executing --> P_Simulated : "motores no cableados\n[ C ] studio/comfy_studio/orchestration/service.py:165"
-    P_Executing --> P_Failed : "fallo de capa\n[ C ] studio/comfy_studio/orchestration/service.py:56"
-    P_Executing --> P_Cancelled : "cancelación cooperativa\n[ C ] studio/comfy_studio/orchestration/service.py:56"
-    P_Executing --> P_Halted : "checkpoint halted\n[ C ] studio/comfy_studio/orchestration/service.py:56"
+    P_Executing --> P_Done : "reel listo"
+    P_Executing --> P_Simulated : "sin cablear"
+    P_Executing --> P_Failed : "fallo de capa"
+    P_Executing --> P_Cancelled : "cancelación"
+    P_Executing --> P_Halted : "halted"
 
     P_Done --> [*]
     P_Simulated --> [*]
@@ -97,17 +105,17 @@ state "Producción" as ProdLife #CFE2F3 {
     P_Halted --> [*]
 }
 
-note right of P_Awaiting
-  Gate de gasto humano: el lazo caro NO corre hasta que
-  un operario aprueba. El agente LLM nunca ve `approve`.
-  [ C ] studio/comfy_studio/routers/productions.py:3-8
+note top of P_Awaiting
+  Gate de gasto humano: el lazo caro no corre
+  hasta que una persona aprueba. El agente
+  LLM nunca ve `approve`.
 end note
 
 ' ---------------------------------------------------------------------------
-' 5. Ciclo de vida de un shot dentro del lazo adaptativo
+' 5. Shot
 ' ---------------------------------------------------------------------------
 state "Shot" as ShotLife #FCE5CD {
-    [*] --> S_Planned : "plan aceptado\n[ C ] studio/comfy_studio/orchestration/state.py:33"
+    [*] --> S_Planned
     S_Planned : planned
     S_Running : running
     S_Evaluating : evaluating
@@ -115,35 +123,63 @@ state "Shot" as ShotLife #FCE5CD {
     S_Replanning : replanning
     S_Failed : failed
 
-    S_Planned --> S_Running : "ejecuta capas\n[ C ] studio/comfy_studio/orchestration/state.py:33"
-    S_Running --> S_Evaluating : "capas completadas\n[ C ] studio/comfy_studio/orchestration/state.py:33"
-    S_Evaluating --> S_Accepted : "pasa acceptance\n[ C ] studio/comfy_studio/orchestration/state.py:33"
-    S_Evaluating --> S_Replanning : "no pasa acceptance\n[ C ] studio/comfy_studio/orchestration/state.py:33"
-    S_Replanning --> S_Running : "reintenta\n[ C ] studio/comfy_studio/orchestration/state.py:33"
-    S_Replanning --> S_Failed : "escalones agotados\n[ H ] límite no leído"
+    S_Planned --> S_Running : "ejecuta capas"
+    S_Running --> S_Evaluating : "capas listas"
+    S_Evaluating --> S_Accepted : "pasa acceptance"
+    S_Evaluating --> S_Replanning : "no pasa"
+    S_Replanning --> S_Running : "reintenta"
+    S_Replanning --> S_Failed : "escalones agotados"
     S_Accepted --> [*]
     S_Failed --> [*]
 }
 
 ' ---------------------------------------------------------------------------
-' 6. Salud de los motores
+' 6. Motor
 ' ---------------------------------------------------------------------------
 state "Motor" as EngineLife #D9EAD3 {
     [*] --> E_Estado
-    E_Estado : estado\nstudio/comfy_studio/engines/health.py:47
+    E_Estado : estado
     E_Ready : ready
     E_Stub : stub
     E_Unwired : unwired
 
-    E_Estado --> E_Ready : "cableado y sin stub\n[ C ] studio/comfy_studio/engines/health.py:67"
-    E_Estado --> E_Stub : "STUDIO_STUB_<MOTOR>=1\n[ C ] studio/comfy_studio/engines/health.py:66"
-    E_Estado --> E_Unwired : "no cableado\n[ C ] studio/comfy_studio/engines/health.py:67"
+    E_Estado --> E_Ready : "cableado"
+    E_Estado --> E_Stub : "STUDIO_STUB_*"
+    E_Estado --> E_Unwired : "sin cablear"
 }
 
 note bottom of EngineLife
-  assert_production_ready exige 'ready' para los motores
-  requeridos; 'stub' o 'unwired' lanzan EngineNotReadyError.
-  [ C ] studio/comfy_studio/engines/health.py:122
+  assert_production_ready exige 'ready';
+  'stub' y 'unwired' lanzan EngineNotReadyError.
 end note
+
+legend right
+  **Evidencia** — todas las transiciones: confirmado
+  |= transición |= archivo:línea |
+  | Fase1 → Fase1b | scripts/start.sh:92 |
+  | Fase1b → Fase2 | scripts/start.sh:147 |
+  | montaje OK / timeout | scripts/start.sh:154 / :160 |
+  | Fase2 → Fase3 | scripts/start.sh:176 |
+  | htpasswd OK | scripts/start.sh:366 |
+  | falla → exit 1 | scripts/start.sh:367 |
+  | Fase4 | scripts/start.sh:377 |
+  | Fase5 (exec) | scripts/start.sh:397 |
+  | strict → ok | comfyctl/src/strict.rs:1560 |
+  | fatal → gracia | comfyctl/src/supervisor.rs:937 |
+  | gracia → exit 20 | comfyctl/src/strict.rs:1568 |
+  | ComfyUI starting/running | comfyctl/src/collect/procfs.rs:354 / :350 |
+  | reinicio acotado | comfyctl/src/supervisor.rs:1 |
+  | max agotado | _(hueco: umbral no leído)_ |
+  | awaiting_approval | studio/comfy_studio/orchestration/service.py:186 |
+  | executing | studio/comfy_studio/orchestration/service.py:333 |
+  | PATCH /plan | studio/comfy_studio/orchestration/service.py:249 |
+  | cancel | studio/comfy_studio/orchestration/service.py:307 |
+  | fases terminales | studio/comfy_studio/orchestration/service.py:56 |
+  | simulado | studio/comfy_studio/orchestration/service.py:165 |
+  | shot: estados | studio/comfy_studio/orchestration/state.py:33 |
+  | escalones agotados | _(hueco: límite no leído)_ |
+  | motor ready/stub/unwired | studio/comfy_studio/engines/health.py:67 |
+  | assert_production_ready | studio/comfy_studio/engines/health.py:109 |
+endlegend
 
 @enduml

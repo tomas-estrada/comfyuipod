@@ -42,6 +42,12 @@
 ## Validation Commands
 Always run these before submitting changes:
 
+> **Diagramas: renderizar antes de commitear.** Un `.puml` cuya sintaxis es
+> valida puede renderizar vacio o con el texto solapado, y nadie lo nota hasta
+> que una persona lo abre. Regla obligatoria en
+> [`docs/architecture/README.md`](docs/architecture/README.md); la CI la hace
+> cumplir en el job `Validate`.
+
 1. **Python**:
 ```
 ruff check studio panel scripts config/probes
