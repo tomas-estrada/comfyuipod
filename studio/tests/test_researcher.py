@@ -6,6 +6,9 @@ mocks; hipótesis negativa termina; budget acotado. Puro CPU.
 
 from __future__ import annotations
 
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from comfy_studio.researcher import (
@@ -14,6 +17,7 @@ from comfy_studio.researcher import (
     PromotionProposal,
     Registry,
     ResearchError,
+    SQLiteResearchStore,
     can_promote,
     pareto_front,
 )
@@ -71,6 +75,11 @@ def test_simulated_runs_never_accepted() -> None:
     assert reg.accepted() == []  # un simulado no se acepta ni promueve
 
 
+def test_experiment_defaults_to_simulated_until_proven_real() -> None:
+    experiment = Experiment(run_id="unknown", hyp_id="h1", seed=1, scores={"vbench": 0.9})
+    assert experiment.simulated is True
+
+
 def test_pareto_front_respects_constraints_as_hard() -> None:
     """A26: Pareto con identidad/factualidad como restriccion, no solo score."""
     exps = [
@@ -112,3 +121,77 @@ def test_valid_real_promotion_passes() -> None:
     )
     real = _exp("real", 0.9)  # cumple criterio 0.7, real, constraints ok
     assert can_promote(prop, real, _hyp()) is True
+
+
+def test_direct_mutation_cannot_change_preregistered_criterion() -> None:
+    reg = Registry(hypothesis=_hyp())
+    reg.add_run(_exp("r1", 0.6))
+    reg.hypothesis.criterion = 0.5
+    with pytest.raises(ResearchError, match="preregistro está congelado"):
+        reg.accepted()
+
+
+def test_registry_rejects_duplicate_run_ids() -> None:
+    reg = Registry(hypothesis=_hyp())
+    reg.add_run(_exp("same", 0.8))
+    with pytest.raises(ResearchError, match="run_id duplicado"):
+        reg.add_run(_exp("same", 0.9))
+
+
+def test_sqlite_store_persists_preregistration_budget_and_pareto(tmp_path) -> None:
+    path = tmp_path / "research.sqlite3"
+    store = SQLiteResearchStore(path)
+    store.register(_hyp(budget_runs=4))
+    store.record(_exp("good-expensive", 0.8, cost=2.0))
+    store.record(_exp("good-cheap", 0.9, cost=1.0))
+    store.record(_exp("simulated", 1.0, cost=0.1, simulated=True))
+    store.record(_exp("constraint-fail", 1.0, cost=0.1, constraints_ok=False))
+
+    restarted = SQLiteResearchStore(path)
+    registry = restarted.get_registry("h1")
+    assert len(registry.runs) == 4
+    assert {run.run_id for run in restarted.pareto("h1")} == {"good-cheap"}
+    with pytest.raises(ResearchError, match="budget de corridas agotado"):
+        restarted.record(_exp("over-budget", 1.0))
+    with pytest.raises(ResearchError, match="ya preregistrada"):
+        restarted.register(_hyp(budget_runs=100))
+
+
+def test_sqlite_store_requires_preregistration_and_serializes_budget_writes(tmp_path) -> None:
+    path = tmp_path / "research.sqlite3"
+    store = SQLiteResearchStore(path)
+    with pytest.raises(ResearchError, match="preregistrarse antes"):
+        store.record(_exp("early", 0.8))
+    store.register(_hyp(budget_runs=1))
+
+    def record(run_id: str) -> str:
+        try:
+            SQLiteResearchStore(path).record(_exp(run_id, 0.8))
+        except ResearchError:
+            return "rejected"
+        return "recorded"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(record, ["r1", "r2"]))
+    assert sorted(outcomes) == ["recorded", "rejected"]
+    assert len(SQLiteResearchStore(path).get_registry("h1").runs) == 1
+
+
+def test_sqlite_store_detects_changed_preregistration_payload(tmp_path) -> None:
+    path = tmp_path / "research.sqlite3"
+    store = SQLiteResearchStore(path)
+    store.register(_hyp())
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "UPDATE hypotheses SET payload=? WHERE hyp_id=?",
+            ('{"hyp_id":"h1","criterion":0.1}', "h1"),
+        )
+    with pytest.raises(ResearchError, match="hash no coincide"):
+        store.get_registry("h1")
+
+
+def test_hypothesis_rejects_non_finite_criterion_and_experiment_cost() -> None:
+    with pytest.raises(ResearchError, match="finito"):
+        _hyp(criterion=float("nan")).validate()
+    with pytest.raises(ResearchError, match="no negativo"):
+        _exp("bad-cost", 0.8, cost=-1).validate()

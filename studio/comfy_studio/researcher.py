@@ -17,12 +17,20 @@ Este módulo implementa el CONTRATO:
 - `can_promote`: solo promueve una propuesta (LoRA/preset) con evidencia real
   (no simulada) que cumple el criterio preregistrado; exige rollback declarado.
 
-Puro cálculo determinista; no entrena nada (A26: training no se ejecuta ahora).
+The SQLite store persists preregistrations and measurements transactionally. It
+does not execute models or train adapters; those operations require their own
+engine and hardware evidence (A26).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
+import sqlite3
+from contextlib import closing
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -42,8 +50,37 @@ class Hypothesis:
     budget_runs: int     # nº máximo de corridas antes de concluir
     #: una vez registrada con resultados, el criterio queda CONGELADO.
     _locked: bool = False
+    _locked_values: tuple[str, str, bool, float, int] | None = field(
+        default=None, init=False, repr=False
+    )
+
+    def validate(self) -> None:
+        if not self.hyp_id.strip() or not self.intervention.strip() or not self.metric.strip():
+            raise ResearchError("hipótesis requiere id, intervención y métrica")
+        if not math.isfinite(self.criterion):
+            raise ResearchError("criterio debe ser un número finito")
+        if self.budget_runs <= 0:
+            raise ResearchError("budget_runs debe ser positivo")
+
+    def _values(self) -> tuple[str, str, bool, float, int]:
+        return (
+            self.intervention,
+            self.metric,
+            self.higher_is_better,
+            self.criterion,
+            self.budget_runs,
+        )
+
+    def assert_unchanged(self) -> None:
+        if self._locked and self._locked_values != self._values():
+            raise ResearchError(
+                f"{self.hyp_id}: el preregistro está congelado; no se cambia tras ver resultados"
+            )
 
     def lock(self) -> None:
+        self.validate()
+        if self._locked_values is None:
+            self._locked_values = self._values()
         self._locked = True
 
     def set_criterion(self, value: float) -> None:
@@ -51,7 +88,10 @@ class Hypothesis:
             raise ResearchError(
                 f"{self.hyp_id}: el criterio esta congelado; no se ajusta tras ver resultados"
             )
+        if not math.isfinite(value):
+            raise ResearchError("criterio debe ser un número finito")
         self.criterion = value
+        self.validate()
 
 
 @dataclass(slots=True)
@@ -64,7 +104,17 @@ class Experiment:
     scores: dict[str, float]          # métrica -> valor
     constraints_ok: bool = True        # identidad/factualidad respetadas
     cost: float = 0.0
-    simulated: bool = False            # un simulado NUNCA promueve (A26)
+    simulated: bool = True             # solo un caller explícito puede declarar real (A26)
+
+    def validate(self) -> None:
+        if not self.run_id.strip() or not self.hyp_id.strip():
+            raise ResearchError("experimento requiere run_id e hyp_id")
+        if self.seed < 0:
+            raise ResearchError("seed no puede ser negativo")
+        if not self.scores or any(not math.isfinite(value) for value in self.scores.values()):
+            raise ResearchError("scores deben contener solo medidas finitas")
+        if not math.isfinite(self.cost) or self.cost < 0:
+            raise ResearchError("cost debe ser finito y no negativo")
 
     def meets(self, hyp: Hypothesis) -> bool:
         val = self.scores.get(hyp.metric)
@@ -80,9 +130,30 @@ class Registry:
     hypothesis: Hypothesis
     runs: list[Experiment] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        self.hypothesis.validate()
+        seen: set[str] = set()
+        for run in self.runs:
+            run.validate()
+            if run.hyp_id != self.hypothesis.hyp_id or run.run_id in seen:
+                raise ResearchError("registro contiene experimento duplicado o de otra hipótesis")
+            seen.add(run.run_id)
+        if len(self.runs) > self.hypothesis.budget_runs:
+            raise ResearchError("registro supera el budget preregistrado")
+        if self.runs:
+            self.hypothesis.lock()
+
+    def _validate_frozen_preregistration(self) -> None:
+        self.hypothesis.assert_unchanged()
+
     def add_run(self, exp: Experiment) -> None:
+        self.hypothesis.validate()
+        self._validate_frozen_preregistration()
+        exp.validate()
         if exp.hyp_id != self.hypothesis.hyp_id:
             raise ResearchError("experimento de otra hipotesis")
+        if any(existing.run_id == exp.run_id for existing in self.runs):
+            raise ResearchError(f"run_id duplicado: {exp.run_id}")
         if len(self.runs) >= self.hypothesis.budget_runs:
             raise ResearchError(
                 f"budget de corridas agotado ({self.hypothesis.budget_runs}); "
@@ -96,10 +167,162 @@ class Registry:
 
     def accepted(self) -> list[Experiment]:
         """Corridas reales que cumplen criterio Y respetan las restricciones."""
+        self._validate_frozen_preregistration()
         return [
             r for r in self.real_runs()
             if r.constraints_ok and r.meets(self.hypothesis)
         ]
+
+
+def _hypothesis_payload(hypothesis: Hypothesis) -> dict[str, Any]:
+    return {
+        "hyp_id": hypothesis.hyp_id,
+        "intervention": hypothesis.intervention,
+        "metric": hypothesis.metric,
+        "higher_is_better": hypothesis.higher_is_better,
+        "criterion": hypothesis.criterion,
+        "budget_runs": hypothesis.budget_runs,
+    }
+
+
+def _experiment_payload(experiment: Experiment) -> dict[str, Any]:
+    return {
+        "run_id": experiment.run_id,
+        "hyp_id": experiment.hyp_id,
+        "seed": experiment.seed,
+        "scores": experiment.scores,
+        "constraints_ok": experiment.constraints_ok,
+        "cost": experiment.cost,
+        "simulated": experiment.simulated,
+    }
+
+
+def _canonical_json(value: dict[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+class SQLiteResearchStore:
+    """Durable preregistration and experiment registry with budget-safe writes."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path.expanduser().resolve()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(self._connect()) as db:
+            db.executescript(
+                """
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS hypotheses (
+                    hyp_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    payload_sha256 TEXT NOT NULL,
+                    registered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS experiments (
+                    run_id TEXT PRIMARY KEY,
+                    hyp_id TEXT NOT NULL REFERENCES hypotheses(hyp_id),
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS experiments_by_hypothesis
+                    ON experiments(hyp_id, created_at, run_id);
+                """
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute("PRAGMA busy_timeout=30000")
+        return db
+
+    def register(self, hypothesis: Hypothesis) -> None:
+        """Persist a hypothesis before any result; duplicate IDs never overwrite."""
+        hypothesis.validate()
+        payload = _canonical_json(_hypothesis_payload(hypothesis))
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        try:
+            with closing(self._connect()) as db:
+                db.execute(
+                    "INSERT INTO hypotheses(hyp_id,payload,payload_sha256) VALUES(?,?,?)",
+                    (hypothesis.hyp_id, payload, digest),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ResearchError(f"hipótesis ya preregistrada: {hypothesis.hyp_id}") from exc
+
+    def record(self, experiment: Experiment) -> None:
+        """Atomically enforce the immutable preregistration and run budget."""
+        experiment.validate()
+        payload = _canonical_json(_experiment_payload(experiment))
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT payload,payload_sha256 FROM hypotheses WHERE hyp_id=?",
+                (experiment.hyp_id,),
+            ).fetchone()
+            if row is None:
+                raise ResearchError("hipótesis debe preregistrarse antes de medir")
+            if hashlib.sha256(row["payload"].encode("utf-8")).hexdigest() != row[
+                "payload_sha256"
+            ]:
+                raise ResearchError("preregistro corrupto: hash no coincide")
+            hypothesis = Hypothesis(**json.loads(row["payload"]))
+            count = db.execute(
+                "SELECT COUNT(*) FROM experiments WHERE hyp_id=?",
+                (experiment.hyp_id,),
+            ).fetchone()[0]
+            if count >= hypothesis.budget_runs:
+                raise ResearchError(
+                    f"budget de corridas agotado ({hypothesis.budget_runs}); "
+                    "una hipótesis negativa termina"
+                )
+            db.execute(
+                "INSERT INTO experiments(run_id,hyp_id,payload) VALUES(?,?,?)",
+                (experiment.run_id, experiment.hyp_id, payload),
+            )
+            db.commit()
+        except sqlite3.IntegrityError as exc:
+            if db.in_transaction:
+                db.rollback()
+            raise ResearchError(f"run_id duplicado: {experiment.run_id}") from exc
+        except Exception:
+            if db.in_transaction:
+                db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def get_registry(self, hyp_id: str) -> Registry:
+        """Rehydrate an immutable hypothesis and all of its persisted runs."""
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT payload,payload_sha256 FROM hypotheses WHERE hyp_id=?", (hyp_id,)
+            ).fetchone()
+            if row is None:
+                raise ResearchError(f"hipótesis desconocida: {hyp_id}")
+            if hashlib.sha256(row["payload"].encode("utf-8")).hexdigest() != row[
+                "payload_sha256"
+            ]:
+                raise ResearchError("preregistro corrupto: hash no coincide")
+            hypothesis = Hypothesis(**json.loads(row["payload"]))
+            runs = [
+                Experiment(**json.loads(run["payload"]))
+                for run in db.execute(
+                    "SELECT payload FROM experiments WHERE hyp_id=? ORDER BY created_at,run_id",
+                    (hyp_id,),
+                )
+            ]
+        return Registry(hypothesis=hypothesis, runs=runs)
+
+    def pareto(self, hyp_id: str) -> list[Experiment]:
+        """Return only accepted real runs on the preregistered primary metric."""
+        registry = self.get_registry(hyp_id)
+        accepted = registry.accepted()
+        return pareto_front(
+            accepted,
+            metric=registry.hypothesis.metric,
+            higher_is_better=registry.hypothesis.higher_is_better,
+        )
 
 
 def pareto_front(
