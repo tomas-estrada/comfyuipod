@@ -841,7 +841,7 @@ def test_default_profile_is_blackwell_96() -> None:
     assert DEFAULT_PROFILE.gpu.startswith("NVIDIA RTX PRO 6000 Blackwell")
     assert DEFAULT_PROFILE.vram_gb == 96
     assert DEFAULT_PROFILE.ram_gb in RAM_OPTIONS_GB
-    assert RAM_OPTIONS_GB == (128, 256)
+    assert RAM_OPTIONS_GB == (128, 256)  # aliases históricos/preferencias de oferta
 
 
 def test_usable_targets_apply_the_operational_reserve() -> None:

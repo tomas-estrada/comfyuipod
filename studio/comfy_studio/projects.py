@@ -524,7 +524,8 @@ def assess_ram_fit(
         result["note"] = (
             f"la RAM de host no basta para esta carga: se midieron "
             f"{ram_peak_mb} MB contra {basis}; subir el perfil de RAM "
-            "(128 → 256 GB) o reducir la carga, no la VRAM"
+            "o reducir la carga; la RAM medida disponible puede variar por oferta, "
+            "no hay que asumir tamaños discretos de 128/256 GB"
         )
     return result
 

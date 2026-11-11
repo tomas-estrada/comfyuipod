@@ -517,8 +517,9 @@ class StudioConfig:
     # Política (puntos 3 y 5): descargar modelos de VRAM cuando no queda trabajo.
     unload_models_when_idle: bool = True
     # Arquitectura vigente: perfil de hardware (RTX PRO 6000 Blackwell, 96 GB de
-    # VRAM; RAM 128/256 GB). `target_vram_gb` se mantiene como proyección del
-    # perfil para no romper a quien lo lea, pero la fuente es el perfil.
+    # VRAM; 128/256 GB son preferencias de búsqueda de RAM, no límites de runtime).
+    # En orquestación real, app.py sustituye RAM por el límite medido del pod.
+    # `target_vram_gb` se mantiene como proyección del perfil por compatibilidad.
     hardware_profile: HardwareProfile = DEFAULT_PROFILE
     target_vram_gb: int = DEFAULT_PROFILE.vram_gb
     target_ram_gb: int = DEFAULT_PROFILE.ram_gb

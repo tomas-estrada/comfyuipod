@@ -173,7 +173,7 @@ def detect_hardware(env: dict[str, str] | None = None) -> DetectedHardware:
 
 @dataclass(frozen=True, slots=True)
 class EffectiveProfile:
-    """Perfil solicitado acotado por el hardware real."""
+    """Preferencia solicitada y capacidad efectiva medida del pod."""
 
     requested: HardwareProfile
     effective: HardwareProfile
@@ -200,9 +200,11 @@ def effective_profile(
 ) -> EffectiveProfile:
     """Intersecta el perfil pedido (env) con el hardware real detectado.
 
-    - La VRAM/RAM efectiva NUNCA supera lo detectado: una variable no inventa
-      memoria (A02). Si lo detectado es mayor o no medible, se conserva lo
-      pedido.
+    - La VRAM efectiva nunca supera lo detectado. Para RAM, el perfil pedido
+      es una preferencia de selección; una vez en el pod, el límite medido de
+      RAM (físico/cgroup) se convierte en la capacidad efectiva aunque sea
+      mayor que esa preferencia. Así una oferta de 200 GB no queda limitada al
+      perfil nominal de 128 GB.
     - `verified` es True solo si se pudo medir el hardware; si no, el perfil se
       devuelve tal cual pero marcado como no verificado — honesto en vez de
       afirmar una capacidad no comprobada.
@@ -220,11 +222,10 @@ def effective_profile(
             eff = replace(eff, vram_gb=detected_vram_gb)
             vram_capped = True
 
-    if hw.ram_limit_bytes is not None:
+    if hw.ram_limit_bytes is not None and hw.ram_limit_bytes > 0:
         detected_ram_gb = int(hw.ram_limit_bytes // GiB)
-        if detected_ram_gb < requested.ram_gb:
-            eff = replace(eff, ram_gb=detected_ram_gb)
-            ram_capped = True
+        eff = replace(eff, ram_gb=detected_ram_gb)
+        ram_capped = detected_ram_gb < requested.ram_gb
 
     verified = hw.source != "unknown"
     return EffectiveProfile(

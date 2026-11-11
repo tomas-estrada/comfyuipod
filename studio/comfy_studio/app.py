@@ -437,6 +437,12 @@ def create_app(
                 raise RuntimeError(
                     "hardware GPU/VRAM/RAM no verificado; ejecución real no admitida"
                 )
+            # La preferencia del perfil sirve para buscar una oferta; en el pod
+            # real propagamos la RAM detectada al resolvedor, las recetas y el
+            # estado público. Una oferta intermedia (p. ej. 200 GB) no queda así
+            # presupuestada como 128 GB ni se trata como si tuviera 256 GB.
+            cfg.hardware_profile = detected_profile.effective
+            cfg.target_ram_gb = detected_profile.effective.ram_gb
             budget = AdmissionBudget(
                 vram_mb=detected_profile.effective.vram_usable_mb,
                 ram_mb=detected_profile.effective.ram_usable_mb,

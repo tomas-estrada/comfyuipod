@@ -232,14 +232,15 @@ def _verified_hardware_profile():
     detected = SimpleNamespace(
         gpu_available=True,
         vram_total_mb=96 * 1024,
-        ram_limit_bytes=256 * 1024**3,
+        ram_limit_bytes=200 * 1024**3,
     )
     return SimpleNamespace(
         verified=True,
         detected=detected,
         effective=SimpleNamespace(
             vram_usable_mb=90 * 1024,
-            ram_usable_mb=240 * 1024,
+            ram_usable_mb=192 * 1024,
+            ram_gb=200,
         ),
     )
 
@@ -290,6 +291,8 @@ def test_studio_profile_defaults_to_real_backend_through_production_api(
     binding = plan["metadata"]["recipe_binding"]
     assert binding["vram_budget_mb"] == 90 * 1024
     assert binding["estimate_only"] is True
+    assert app.state.config.target_ram_gb == 200
+    assert app.state.config.hardware_profile.ram_gb == 200
 
 
 def test_studio_profile_fails_closed_without_verified_hardware(
