@@ -189,4 +189,55 @@ __all__ = [
     "CompositionReport",
     "assert_factual_camera",
     "check_composition",
+    "interpolate_camera",
+    "interpolate_camera_at",
+    "interpolate_camera_keys",
+    "sample_camera_path",
+    "check_animatic_preflight",
+    "render_animatic",
+    "render_animatic_preview",
 ]
+
+
+# --- Animatic (C05/C08/A13): delegación lazy para evitar import circular ----
+
+def interpolate_camera(*args, **kwargs):
+    from .animatic import interpolate_camera as _fn
+
+    return _fn(*args, **kwargs)
+
+
+def interpolate_camera_at(*args, **kwargs):
+    from .animatic import interpolate_camera_at as _fn
+
+    return _fn(*args, **kwargs)
+
+
+def interpolate_camera_keys(*args, **kwargs):
+    from .animatic import interpolate_camera_keys as _fn
+
+    return _fn(*args, **kwargs)
+
+
+def sample_camera_path(*args, **kwargs):
+    from .animatic import sample_camera_path as _fn
+
+    return _fn(*args, **kwargs)
+
+
+def check_animatic_preflight(*args, **kwargs):
+    from .animatic import check_animatic_preflight as _fn
+
+    return _fn(*args, **kwargs)
+
+
+def render_animatic(*args, **kwargs):
+    from .animatic import render_animatic as _fn
+
+    return _fn(*args, **kwargs)
+
+
+def render_animatic_preview(*args, **kwargs):
+    from .animatic import render_animatic_preview as _fn
+
+    return _fn(*args, **kwargs)

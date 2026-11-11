@@ -735,6 +735,31 @@ class AssembleLongVideoArgs(BaseModel):
     )
 
 
+class AnimaticKeyframeArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    t: float = Field(..., ge=0.0, le=1.0)
+    position: tuple[float, float, float]
+    target: tuple[float, float, float]
+
+
+class RenderAnimaticArgs(BaseModel):
+    """Argumentos de preview sintético de trayectoria de cámara."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    shot_id: str = Field(..., min_length=1, max_length=100)
+    keyframes: list[AnimaticKeyframeArgs] = Field(..., min_length=1, max_length=120)
+    duration_s: float = Field(default=5.0, gt=0.0, le=120.0)
+    focal_mm: float = Field(default=35.0, gt=0.0, le=1000.0)
+    sensor_mm: float = Field(default=36.0, gt=0.0, le=1000.0)
+    fps: float = Field(default=12.0, ge=1.0, le=60.0)
+    width: int = Field(default=640, ge=16, le=3840)
+    height: int = Field(default=360, ge=16, le=2160)
+    title: str | None = Field(default=None, max_length=200)
+    output_filename: str | None = Field(default=None, max_length=200)
+
+
 class LocalizedRepairArgs(BaseModel):
     """Argumentos para la herramienta `localized_repair`."""
 
@@ -2302,6 +2327,77 @@ async def _handle_localized_repair(
             raise ToolExecutionError(str(exc)) from exc
 
     return await run_in_threadpool(_do_repair)
+
+
+async def _handle_render_animatic(
+    args: RenderAnimaticArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..animatic import AnimaticError, render_animatic
+    from ..cinematography import CameraKeyframe, CameraPlan
+    from ..projects import sanitize_filename
+
+    def _do_render() -> dict[str, Any]:
+        import tempfile
+
+        plan = CameraPlan(
+            shot_id=args.shot_id,
+            keyframes=[
+                CameraKeyframe(t=k.t, position=k.position, target=k.target)
+                for k in args.keyframes
+            ],
+            focal_mm=args.focal_mm,
+            sensor_mm=args.sensor_mm,
+            duration_s=args.duration_s,
+            factual=False,
+        )
+        filename = sanitize_filename(args.output_filename or f"animatic_{args.shot_id}.mp4")
+        if Path(filename).suffix.lower() != ".mp4":
+            raise ToolExecutionError("El nombre del animatic debe terminar en .mp4.")
+        try:
+            with tempfile.TemporaryDirectory(prefix="comfy_animatic_tool_") as tmp:
+                output_path = Path(tmp) / filename
+                result = render_animatic(
+                    plan,
+                    output_path,
+                    fps=args.fps,
+                    width=args.width,
+                    height=args.height,
+                    duration_s=args.duration_s,
+                    title=args.title,
+                )
+                max_bytes = 128 * 1024 * 1024
+                if output_path.stat().st_size > max_bytes:
+                    raise ToolExecutionError("El animatic supera el límite de 128 MiB.")
+                asset = context.store.save_upload(
+                    context.project_id,
+                    filename=filename,
+                    content_type="video/mp4",
+                    data=output_path.read_bytes(),
+                    max_upload_bytes=max_bytes,
+                    category="outputs",
+                    metadata={
+                        "engine": "cpu_camera_path_animatic",
+                        "shot_id": args.shot_id,
+                        "synthetic": True,
+                        "quality_claim": False,
+                        "fps": result["fps"],
+                        "duration_s": result["duration_s"],
+                        "width": result["width"],
+                        "height": result["height"],
+                        "probe_ok": result["probe_ok"],
+                    },
+                )
+                return {
+                    "status": "generated",
+                    "project_id": context.project_id,
+                    "output_asset": asset,
+                    "preview": result,
+                }
+        except AnimaticError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+
+    return await run_in_threadpool(_do_render)
 
 
 async def _handle_ab_compare_models(
@@ -4562,6 +4658,20 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=LocalizedRepairArgs,
             handler=_handle_localized_repair,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="render_camera_animatic",
+            description=(
+                "Genera un MP4 sintético CPU con una vista esquemática superior de una "
+                "trayectoria de cámara interpolada. Lo guarda como asset del proyecto y "
+                "verifica el MP4 con ffprobe. Es una previsualización de trayectoria; "
+                "no renderiza una escena 3D ni demuestra calidad o exactitud factual."
+            ),
+            args_model=RenderAnimaticArgs,
+            handler=_handle_render_animatic,
             parallel_safe=False,
         )
     )
