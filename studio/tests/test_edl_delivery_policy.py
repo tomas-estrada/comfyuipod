@@ -36,16 +36,22 @@ def _make_video(path: Path, source: str = "testsrc") -> bytes:
             else "testsrc=duration=2:size=128x72:rate=24"
         )
     )
-    subprocess.run(
+    cmd = [
+        FFMPEG,
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        video_input,
+    ]
+    if source == "full-black":
+        # The color lavfi source emits limited-range black (Y=16). Convert its
+        # samples before signaling full range so the test source is valid (Y=0).
+        cmd.extend(["-vf", "scale=in_range=tv:out_range=pc"])
+    cmd.extend(
         [
-            FFMPEG,
-            "-y",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            video_input,
             "-c:v",
             "libx264",
             "-preset",
@@ -61,7 +67,10 @@ def _make_video(path: Path, source: str = "testsrc") -> bytes:
                 else "h264_metadata=video_full_range_flag=0"
             ),
             str(path),
-        ],
+        ]
+    )
+    subprocess.run(
+        cmd,
         check=True,
         capture_output=True,
         timeout=120,
@@ -95,6 +104,9 @@ def _save_edl(store: ProjectStore, project_id: str, asset_id: str) -> None:
 
 
 def _first_y(path: Path) -> int:
+    # Decode to a pixel format matching the stream's declared range; forcing
+    # limited yuv420p for full-range output silently remaps the black level.
+    pixel_format = "yuvj420p" if probe_media_info(path).get("color_range") == "pc" else "yuv420p"
     proc = subprocess.run(
         [
             FFMPEG,
@@ -107,7 +119,7 @@ def _first_y(path: Path) -> int:
             "-f",
             "rawvideo",
             "-pix_fmt",
-            "yuv420p",
+            pixel_format,
             "pipe:1",
         ],
         check=True,
