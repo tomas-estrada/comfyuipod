@@ -110,3 +110,26 @@ def test_verify_valid_spec() -> None:
     assert res.payload["is_proxy"] is True
     assert res.payload["proxy_note"]
     assert "frame_count" in res.payload
+
+
+def test_engine_exposes_and_runs_joint_cycle() -> None:
+    listed = _engine().list()
+    assert listed.ok
+    assert "joint_cycle" in listed.payload["maneuvers"]
+
+    result = _engine().run(
+        _spec(
+            op="simulate",
+            spec={
+                "maneuver": "joint_cycle",
+                "fps": 5,
+                "duration_s": 1.0,
+                "joints": [{"name": "hinge", "axis": "z", "min_deg": -30, "max_deg": 30}],
+            },
+        )
+    )
+    assert result.ok, result.error
+    frames = result.payload["frames"]
+    assert frames[0]["joint_angles_deg"]["hinge"] == frames[-1]["joint_angles_deg"]["hinge"]
+    assert frames[0]["joint_velocity_deg_s"]["hinge"] == 0.0
+    assert frames[-1]["joint_velocity_deg_s"]["hinge"] == 0.0

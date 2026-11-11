@@ -31,6 +31,7 @@ def _plan_kwargs(kf_pos=(5.0, 5.0, 5.0), focal=35.0) -> dict:
 
 # -- verify ------------------------------------------------------------------
 
+
 def test_verify_valid_plan() -> None:
     plan = _plan_kwargs(kf_pos=(10.0, 10.0, 10.0))
     res = _engine().verify(plan)
@@ -48,6 +49,7 @@ def test_verify_bad_focal_fails() -> None:
 
 
 # -- run ---------------------------------------------------------------------
+
 
 def test_check_plan_valid_returns_ok() -> None:
     """Plan válido, cámara fuera de la zona del sujeto → ok=True."""
@@ -79,6 +81,30 @@ def test_check_plan_inside_subject_radius_collision() -> None:
     assert res.simulated is False
     report = res.payload["report"]
     assert len(report["collisions"]) > 0
+
+
+def test_check_plan_reports_line_of_sight_occlusion() -> None:
+    job = {
+        "op": "check_plan",
+        "plan": {
+            "shot_id": "shot_occluded",
+            "keyframes": [
+                {
+                    "t": 0.0,
+                    "position": [0.0, 1.0, 5.0],
+                    "target": [0.0, 1.0, 0.0],
+                }
+            ],
+            "focal_mm": 35.0,
+            "sensor_mm": 36.0,
+        },
+        "subject_position": [0.0, 1.0, 0.0],
+        "subject_radius": 0.5,
+        "obstacles": [{"position": [0.0, 1.0, 2.5], "radius": 0.4}],
+    }
+    result = _engine().run(_spec(**job))
+    assert not result.ok
+    assert any("sujeto ocluido" in item for item in result.payload["report"]["occlusions"])
 
 
 def test_check_plan_bad_focal_typed_failure() -> None:

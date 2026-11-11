@@ -82,10 +82,21 @@ def test_zero_fps_rejected() -> None:
 
 
 def test_articulated_product_returns_to_initial_state() -> None:
-    """A14: joints/vuelta al estado inicial comprobados (reproducible)."""
-    a = simulate(_spec(seed=1))
-    b = simulate(_spec(seed=1))
-    assert_returns_to_initial(a, b)  # no lanza: mismo estado inicial
+    """A14: el ciclo compara el primer y último estado articulado."""
+    result = simulate(_spec(seed=1, maneuver="joint_cycle"))
+    assert_returns_to_initial(result)
+    assert result.frames[0].joint_angles_deg == result.frames[-1].joint_angles_deg
+
+
+def test_non_cyclic_maneuver_cannot_claim_return_to_initial() -> None:
+    result = simulate(_spec(maneuver="joint_sweep"))
+    with pytest.raises(PhysicsError, match="no vuelve"):
+        assert_returns_to_initial(result)
+
+
+def test_cycle_requires_at_least_two_frames() -> None:
+    with pytest.raises(PhysicsError, match="al menos dos"):
+        simulate(_spec(maneuver="joint_cycle", fps=1, duration_s=1.0))
 
 
 def test_incomparable_specs_rejected() -> None:

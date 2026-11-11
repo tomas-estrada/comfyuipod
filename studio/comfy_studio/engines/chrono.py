@@ -32,10 +32,7 @@ from comfy_studio.physics import (
 
 _OPS = ("simulate",)
 
-_PROXY_NOTE = (
-    "proxy cinemático CPU; la fidelidad tras render neural "
-    "NO se deduce de esto (A14)"
-)
+_PROXY_NOTE = "proxy cinemático CPU; la fidelidad tras render neural NO se deduce de esto (A14)"
 
 
 class ChronoEngine(Engine):
@@ -53,7 +50,7 @@ class ChronoEngine(Engine):
             verb="list",
             payload={
                 "ops": list(_OPS),
-                "maneuvers": ["free_fall", "joint_sweep"],
+                "maneuvers": ["free_fall", "joint_sweep", "joint_cycle"],
                 "is_proxy": True,
                 "proxy_note": _PROXY_NOTE,
                 "stub": self.is_stub(),

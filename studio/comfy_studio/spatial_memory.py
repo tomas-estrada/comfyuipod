@@ -69,13 +69,29 @@ class SpatialMemory:
     max_shots: int = 32
 
     def register(self, anchor: Anchor) -> None:
+        if not anchor.anchor_id.strip():
+            raise SpatialError("anchor_id vacío")
+        if not isinstance(anchor.provenance, Provenance):
+            raise SpatialError(f"procedencia inválida para ancla {anchor.anchor_id}")
+        existing = self.anchors.get(anchor.anchor_id)
+        if existing is not None and existing.provenance is not anchor.provenance:
+            raise SpatialError(f"procedencia inmutable para ancla {anchor.anchor_id}")
         self.anchors[anchor.anchor_id] = anchor
         self.visits.setdefault(anchor.anchor_id, [])
 
     def visit(self, anchor_id: str, shot_id: str, position: Vec3) -> None:
         if anchor_id not in self.anchors:
             raise SpatialError(f"ancla no registrada: {anchor_id}")
+        if not shot_id.strip() or len(position) != 3 or any(
+            not math.isfinite(value) for value in position
+        ):
+            raise SpatialError("visita requiere shot_id y posición 3D finita")
         visits = self.visits[anchor_id]
+        previous = next((visit for visit in visits if visit.shot_id == shot_id), None)
+        if previous is not None:
+            if previous.position == position:
+                return  # Retry of a persisted request is idempotent.
+            raise SpatialError(f"visita {shot_id!r} ya existe con otra posición")
         if len({v.shot_id for v in visits} | {shot_id}) > self.max_shots:
             raise SpatialError(
                 f"límite de contexto excedido ({self.max_shots} planos) para {anchor_id}"
@@ -104,12 +120,64 @@ class SpatialMemory:
         }
 
     def to_dict(self) -> dict[str, Any]:
+        self.validate()
         return {
+            "schema": "spatial-memory/1",
+            "max_shots": self.max_shots,
             "anchors": {
                 aid: {"provenance": str(a.provenance)} for aid, a in self.anchors.items()
             },
+            "visits": {
+                aid: [
+                    {"shot_id": visit.shot_id, "position": list(visit.position)}
+                    for visit in visits
+                ]
+                for aid, visits in self.visits.items()
+            },
             "drift": {aid: round(self.drift(aid), 6) for aid in self.anchors},
         }
+
+    def validate(self) -> None:
+        if self.max_shots <= 0:
+            raise SpatialError("max_shots debe ser > 0")
+        if set(self.anchors) != set(self.visits):
+            raise SpatialError("cada ancla debe tener su lista de visitas")
+        for anchor_id, anchor in self.anchors.items():
+            if not anchor_id or anchor.anchor_id != anchor_id:
+                raise SpatialError("anchor_id inconsistente")
+            if len({visit.shot_id for visit in self.visits[anchor_id]}) > self.max_shots:
+                raise SpatialError(f"límite de contexto excedido para {anchor_id}")
+            for visit in self.visits[anchor_id]:
+                if not visit.shot_id or len(visit.position) != 3 or any(
+                    not math.isfinite(value) for value in visit.position
+                ):
+                    raise SpatialError(f"visita inválida para ancla {anchor_id}")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SpatialMemory:
+        if data.get("schema") not in (None, "spatial-memory/1"):
+            raise SpatialError(f"schema desconocido: {data.get('schema')!r}")
+        try:
+            memory = cls(max_shots=int(data.get("max_shots", 32)))
+            for anchor_id, value in data.get("anchors", {}).items():
+                memory.register(
+                    Anchor(anchor_id=anchor_id, provenance=Provenance(value["provenance"]))
+                )
+            for anchor_id, visits in data.get("visits", {}).items():
+                if anchor_id not in memory.anchors:
+                    raise SpatialError(f"visitas para ancla no registrada: {anchor_id}")
+                for visit in visits:
+                    memory.visit(
+                        anchor_id,
+                        str(visit["shot_id"]),
+                        tuple(float(value) for value in visit["position"]),
+                    )
+            memory.validate()
+            return memory
+        except (KeyError, TypeError, ValueError) as exc:
+            if isinstance(exc, SpatialError):
+                raise
+            raise SpatialError(f"memoria espacial serializada inválida: {exc}") from exc
 
 
 def assert_not_atlas_evidence(memory: SpatialMemory, anchor_id: str) -> None:
