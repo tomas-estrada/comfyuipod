@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command -v ollama >/dev/null || {
+  echo "Install Ollama before configuring local OpenCode compaction." >&2
+  exit 1
+}
+
+ollama pull qwen3.5:2b-q4_K_M
+ollama create qwen3.5:2b-opencode64k -f .opencode/Modelfile.compaction
+ollama show qwen3.5:2b-opencode64k >/dev/null
+echo "Configured qwen3.5:2b-opencode64k. Confirm placement and memory with: ollama ps"
