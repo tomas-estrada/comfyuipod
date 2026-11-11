@@ -106,3 +106,34 @@ def test_raster_layers_reject_cycles_and_cross_project_assets(client: TestClient
         },
     )
     assert cycle.status_code == 422
+
+
+def test_raster_compositor_rejects_mismatched_canvas_sizes(client: TestClient) -> None:
+    project_id = client.post("/studio/api/projects", json={"name": "Dimensiones"}).json()[
+        "id"
+    ]
+    assets = []
+    for filename, pixels in (
+        ("small.png", [(0, 0, 0, 255)]),
+        ("wide.png", [(0, 0, 0, 255), (1, 1, 1, 255)]),
+    ):
+        response = client.post(
+            f"/studio/api/projects/{project_id}/uploads",
+            files={"file": (filename, _png(pixels), "image/png")},
+        )
+        assert response.status_code == 201
+        assets.append(response.json()["id"])
+    url = f"/studio/api/projects/{project_id}/raster-layers"
+    saved = client.put(
+        url,
+        json={
+            "layers": [
+                {"layer_id": "small", "asset_id": assets[0], "order": 0},
+                {"layer_id": "wide", "asset_id": assets[1], "order": 1},
+            ]
+        },
+    )
+    assert saved.status_code == 200
+    rendered = client.post(f"{url}/composite")
+    assert rendered.status_code == 422
+    assert "mismas dimensiones" in rendered.json()["detail"]

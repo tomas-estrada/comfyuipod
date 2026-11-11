@@ -160,7 +160,11 @@ def _open_rgba(
                 )
             source.load()
             return source.convert("RGBA"), _sha256_file(path)
-    except (OSError, UnidentifiedImageError) as exc:
+    except (
+        OSError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+    ) as exc:
         raise RasterLayerError(f"{asset_id}: PNG ilegible") from exc
 
 
