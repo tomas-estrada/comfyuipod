@@ -10,6 +10,7 @@ Cumple `VAL-PERC-006` y `VAL-PROD-001`:
 
 from __future__ import annotations
 
+import math
 import shutil
 import subprocess
 import tempfile
@@ -124,6 +125,8 @@ def execute_edl_ffmpeg(
     source_asset_id: str | None = None,
     cuts: list[dict[str, Any]] | None = None,
     fps: int = 24,
+    color_range: str = "limited",
+    picture_inset_percent: float = 0.0,
     ffmpeg_timeout_s: float = DEFAULT_FFMPEG_TIMEOUT_S,
     ffprobe_timeout_s: float = DEFAULT_FFPROBE_TIMEOUT_S,
 ) -> dict[str, Any]:
@@ -176,16 +179,35 @@ def execute_edl_ffmpeg(
         raise ValueError(
             f"El EDL tiene {len(raw_cuts)} cortes; máximo permitido: {MAX_EDL_CUTS} (M3-SCR-005)."
         )
+    if isinstance(fps, bool) or not isinstance(fps, int) or not 12 <= fps <= 60:
+        raise ValueError("fps debe estar entre 12 y 60.")
+    if color_range not in {"limited", "full"}:
+        raise ValueError("color_range debe ser 'limited' o 'full'.")
+    if not math.isfinite(float(picture_inset_percent)) or not 0 <= float(
+        picture_inset_percent
+    ) <= 25:
+        raise ValueError("picture_inset_percent debe estar entre 0 y 25.")
 
     ffmpeg_bin = find_ffmpeg()
     if not ffmpeg_bin:
         raise RuntimeError("No se encontró `ffmpeg` en el PATH para ejecutar el EDL.")
 
     target_w, target_h = resolve_aspect_dimensions(resolved_aspect, resolution)
+    inset = float(picture_inset_percent) / 100.0
+    if inset:
+        inner_w = max(2, int(target_w * (1.0 - 2.0 * inset)) & ~1)
+        inner_h = max(2, int(target_h * (1.0 - 2.0 * inset)) & ~1)
+    else:
+        inner_w, inner_h = target_w, target_h
+    output_range = "tv" if color_range == "limited" else "pc"
+    full_range_flag = "1" if color_range == "full" else "0"
     vf_chain = (
-        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+        f"scale={inner_w}:{inner_h}:force_original_aspect_ratio=decrease,"
         f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"setsar=1,fps={int(fps)}"
+        f"setsar=1,fps={int(fps)},"
+        f"scale={target_w}:{target_h}:out_range={output_range},"
+        f"format=yuv420p,"
+        f"setparams=range={output_range}"
     )
 
     expected_duration_sec = 0.0
@@ -259,6 +281,10 @@ def execute_edl_ffmpeg(
                     "ultrafast",
                     "-pix_fmt",
                     "yuv420p",
+                    "-color_range",
+                    output_range,
+                    "-bsf:v",
+                    f"h264_metadata=video_full_range_flag={full_range_flag}",
                     "-c:a",
                     "aac",
                     "-b:a",
@@ -300,6 +326,10 @@ def execute_edl_ffmpeg(
                     "ultrafast",
                     "-pix_fmt",
                     "yuv420p",
+                    "-color_range",
+                    output_range,
+                    "-bsf:v",
+                    f"h264_metadata=video_full_range_flag={full_range_flag}",
                     "-c:a",
                     "aac",
                     "-b:a",
@@ -327,6 +357,10 @@ def execute_edl_ffmpeg(
                     "ultrafast",
                     "-pix_fmt",
                     "yuv420p",
+                    "-color_range",
+                    output_range,
+                    "-bsf:v",
+                    f"h264_metadata=video_full_range_flag={full_range_flag}",
                     "-an",
                     str(seg_path),
                 ]
@@ -416,6 +450,19 @@ def execute_edl_ffmpeg(
                 f"esperadas {target_w}x{target_h}, obtenidas "
                 f"{actual_size[0]}x{actual_size[1]}."
             )
+        probed_fps = float(probe_info.get("fps") or 0.0)
+        if abs(probed_fps - fps) > 0.5:
+            raise RuntimeError(
+                "El MP4 renderizado no coincide con los FPS solicitados: "
+                f"esperados {fps}, obtenidos {probed_fps:g}."
+            )
+        expected_range = "pc" if color_range == "full" else "tv"
+        probed_range = probe_info.get("color_range")
+        if probed_range != expected_range:
+            raise RuntimeError(
+                "El MP4 renderizado no coincide con el rango de color solicitado: "
+                f"esperado {expected_range}, obtenido {probed_range!r}."
+            )
 
     aspect_slug = resolved_aspect.replace(":", "x")
     edl_ver = int(edl_record["version"])
@@ -441,6 +488,9 @@ def execute_edl_ffmpeg(
             "height": probe_info.get("height", target_h),
             "has_audio": bool(probe_info.get("has_audio")),
             "cuts_count": len(applied_cuts),
+            "fps": int(fps),
+            "color_range": color_range,
+            "picture_inset_percent": float(picture_inset_percent),
         },
     )
 
@@ -468,6 +518,11 @@ def execute_edl_ffmpeg(
             "codec_name": str(probe_info.get("codec_name") or "h264"),
             "has_audio": bool(probe_info.get("has_audio")),
             "audio_codec_name": probe_info.get("audio_codec_name"),
+            "fps": int(fps),
+            "probed_fps": probe_info.get("fps"),
+            "color_range": color_range,
+            "probed_color_range": probe_info.get("color_range"),
+            "picture_inset_percent": float(picture_inset_percent),
             # M1.7: llegar aquí implica probe_ok=True (si no, se lanzó RuntimeError antes);
             # se conserva el campo para consumidores que distingan render verificado.
             "probe_ok": True,
