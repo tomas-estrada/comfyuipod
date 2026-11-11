@@ -177,7 +177,16 @@ def probe_media_info(
             if st.get("avg_frame_rate"):
                 avg_frame_rate = str(st["avg_frame_rate"])
             if st.get("color_range"):
-                color_range = str(st["color_range"])
+                # ffprobe/codec combinations may use either canonical names or
+                # equivalent aliases. Keep a single representation for callers.
+                color_range = {
+                    "tv": "tv",
+                    "mpeg": "tv",
+                    "limited": "tv",
+                    "pc": "pc",
+                    "jpeg": "pc",
+                    "full": "pc",
+                }.get(str(st["color_range"]).strip().lower())
             if duration <= 0.0 and st.get("duration") is not None:
                 try:
                     duration = max(duration, float(st["duration"]))

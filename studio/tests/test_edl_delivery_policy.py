@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import re
+import json
 import subprocess
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from comfy_studio.edl.ffmpeg_edl import execute_edl_ffmpeg
 from comfy_studio.media_bins import find_ffmpeg
 from comfy_studio.perception.keyframes import probe_media_info
 from comfy_studio.projects import ProjectStore
+from comfy_studio.perception import keyframes
 
 FFMPEG = find_ffmpeg()
 pytestmark = pytest.mark.skipif(FFMPEG is None, reason="requiere ffmpeg")
@@ -50,6 +52,10 @@ def _make_video(path: Path, source: str = "testsrc") -> bytes:
             "ultrafast",
             "-pix_fmt",
             "yuv420p",
+            "-color_range",
+            "pc" if source == "full-black" else "tv",
+            "-bsf:v",
+            "h264_metadata=video_full_range_flag=1" if source == "full-black" else "h264_metadata=video_full_range_flag=0",
             str(path),
         ],
         check=True,
@@ -89,25 +95,23 @@ def _first_y(path: Path) -> int:
         [
             FFMPEG,
             "-v",
-            "info",
+            "error",
             "-i",
             str(path),
             "-frames:v",
             "1",
-            "-vf",
-            "signalstats,metadata=print:file=-",
             "-f",
-            "null",
-            "-",
+            "rawvideo",
+            "-pix_fmt",
+            "yuv420p",
+            "pipe:1",
         ],
         check=True,
         capture_output=True,
         timeout=120,
     )
-    output = proc.stdout + proc.stderr
-    match = re.search(rb"lavfi\.signalstats\.YMIN=(\d+(?:\.\d+)?)", output)
-    assert match, output.decode("utf-8", errors="replace")
-    return round(float(match.group(1)))
+    assert proc.stdout, proc.stderr.decode("utf-8", errors="replace")
+    return proc.stdout[0]
 
 
 def _rgb_at(path: Path, x: int, y: int) -> tuple[int, int, int]:
@@ -178,6 +182,46 @@ def test_color_range_converts_black_level_not_only_metadata(tmp_path, store_and_
     assert probe_media_info(full_path)["color_range"] == "pc"
     assert probe_media_info(limited_path)["color_range"] == "tv"
     assert _first_y(full_path) < _first_y(limited_path)
+
+
+def test_full_range_source_is_converted_to_limited_pixel_levels(tmp_path, store_and_project):
+    store, project_id = store_and_project
+    source_id = _upload_source(
+        store, project_id, _make_video(tmp_path / "full-black.mp4", source="full-black")
+    )
+    _save_edl(store, project_id, source_id)
+
+    limited = execute_edl_ffmpeg(store, project_id, color_range="limited")
+    output = Path(store.get_asset_path(project_id, limited["output_asset"]["id"]))
+
+    assert probe_media_info(output)["color_range"] == "tv"
+    assert _first_y(output) == pytest.approx(16, abs=2)
+
+
+@pytest.mark.parametrize(("alias", "canonical"), [("mpeg", "tv"), ("jpeg", "pc")])
+def test_probe_normalizes_equivalent_color_range_aliases(tmp_path, monkeypatch, alias, canonical):
+    media = tmp_path / "media.mp4"
+    media.write_bytes(b"probe fixture")
+    payload = {
+        "streams": [
+            {
+                "codec_type": "video",
+                "width": 128,
+                "height": 72,
+                "avg_frame_rate": "24/1",
+                "color_range": alias,
+            }
+        ],
+        "format": {"duration": "1.0"},
+    }
+    monkeypatch.setattr(keyframes, "find_ffprobe", lambda: "ffprobe")
+    monkeypatch.setattr(
+        keyframes.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(payload)),
+    )
+
+    assert keyframes.probe_media_info(media)["color_range"] == canonical
 
 
 def test_invalid_delivery_policy_is_rejected_before_render(store_and_project):

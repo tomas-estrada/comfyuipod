@@ -201,14 +201,19 @@ def execute_edl_ffmpeg(
         inner_w, inner_h = target_w, target_h
     output_range = "tv" if color_range == "limited" else "pc"
     full_range_flag = "1" if color_range == "full" else "0"
-    vf_chain = (
-        f"scale={inner_w}:{inner_h}:force_original_aspect_ratio=decrease,"
-        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"setsar=1,fps={int(fps)},"
-        f"scale={target_w}:{target_h}:out_range={output_range},"
-        f"format=yuv420p,"
-        f"setparams=range={output_range}"
-    )
+    def _vf_chain(input_range: str | None) -> str:
+        # ffprobe may not know the source range. Assume limited in that case,
+        # matching the conventional interpretation of ordinary yuv420p video.
+        source_range = input_range if input_range in {"tv", "pc"} else "tv"
+        return (
+            f"scale={inner_w}:{inner_h}:force_original_aspect_ratio=decrease:"
+            f"in_range={source_range}:out_range={source_range},"
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,"
+            f"setsar=1,fps={int(fps)},"
+            f"scale={target_w}:{target_h}:in_range={source_range}:out_range={output_range},"
+            f"format=yuv420p,"
+            f"setparams=range={output_range}"
+        )
 
     expected_duration_sec = 0.0
     applied_cuts: list[dict[str, Any]] = []
@@ -261,6 +266,7 @@ def execute_edl_ffmpeg(
             cut_dur = round(out_sec - in_sec, 3)
 
             seg_path = tmp_dir / f"seg_{idx:03d}.mp4"
+            vf_chain = _vf_chain(probed_sources[src_path].get("color_range"))
             if src_has_audio:
                 cmd_cut = [
                     ffmpeg_bin,
