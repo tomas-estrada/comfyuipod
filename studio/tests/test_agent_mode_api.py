@@ -327,7 +327,7 @@ def test_publish_threadsafe_from_threads_without_loop_is_safe() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Páginas estáticas del modo agente (CSP-safe, sin CDNs, disclaimer de marca)
+# Páginas estáticas del modo agente (CSP-safe, sin CDNs, atribución de marca)
 # ---------------------------------------------------------------------------
 
 
@@ -355,4 +355,16 @@ def test_main_panel_links_to_agent_mode() -> None:
 def test_agent_mode_page_is_served(client: TestClient) -> None:
     resp = client.get("/studio/agent.html")
     assert resp.status_code == 200
-    assert "Modo Agente" in resp.text
+    # Comprueba el flujo del producto, no el título visible que puede cambiar
+    # con una iteración de diseño.
+    for control_id in (
+        "agent-task-heading",
+        "agent-plan-form",
+        "agent-plan-idea",
+        "agent-plan-btn",
+        "agent-plan-container",
+        "agent-refresh-health",
+        "agent-dialog",
+    ):
+        assert f'id="{control_id}"' in resp.text
+    assert "¿Qué quieres crear?" in resp.text

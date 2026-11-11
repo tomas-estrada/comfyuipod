@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ComfyUIPod · Modo Agente (prototipo)</title>
+    <title>ComfyUIPod · Studio Agent</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231e293b'/%3E%3Cpath d='M10 9l14 7-14 7V9z' fill='%2338bdf8'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/studio/style.css">
     <link rel="stylesheet" href="/studio/agent.css">
@@ -11,115 +11,125 @@
 </head>
 <body class="agent-mode">
     <header class="agent-header">
+        <a class="agent-brand-link" href="/studio/" aria-label="Volver al Studio">CP</a>
         <div class="agent-brand">
-            <span class="brand-badge">PROTOTIPO</span>
             <div>
-                <h1 class="agent-title">Modo Agente</h1>
-                <p class="agent-subtitle">
-                    Sesiones, planes con aprobación humana y ejecución con progreso en vivo,
-                    sobre las APIs reales de ComfyUIPod Studio.
-                </p>
-                <p class="agent-disclaimer">
-                    Proyecto independiente inspirado en patrones de interacción tipo OpenCode.
-                    No está afiliado ni respaldado por el equipo de OpenCode (Anomaly / sst).
-                </p>
+                <h1 class="agent-title">Studio <span>Agent</span><span class="agent-title-context"> · Modo Agente</span></h1>
+                <p class="agent-subtitle">Define el resultado. Revisa el plan. Tú decides cuándo ejecutarlo.</p>
             </div>
         </div>
         <div class="agent-header-actions">
+            <span id="agent-session-badge" class="agent-session-context">Sesión: Ninguna</span>
             <a class="btn btn-secondary" href="/studio/">← Volver al Studio</a>
         </div>
     </header>
 
-    <div class="agent-status-strip" aria-label="Estado del sistema">
-        <span id="agent-health-server" class="status-pill status-neutral">Servidor: Conectando…</span>
-        <span id="agent-health-comfyui" class="status-pill status-neutral">ComfyUI: Verificando…</span>
-        <span id="agent-health-llm" class="status-pill status-neutral">Agente LLM: —</span>
-        <span id="agent-sse-badge" class="status-pill status-neutral">SSE: Iniciando…</span>
-        <span id="agent-session-badge" class="status-pill status-accent">Sesión: Ninguna</span>
-    </div>
-
     <main class="agent-layout">
-        <aside class="agent-sidebar" aria-label="Sesiones y producciones">
-            <section class="panel-card agent-card" aria-labelledby="agent-sessions-heading">
-                <div class="card-header">
-                    <h2 id="agent-sessions-heading">Sesiones</h2>
-                    <button type="button" id="agent-refresh-projects" class="btn btn-secondary btn-sm">Actualizar</button>
-                </div>
-                <p class="agent-hint">Una sesión es un proyecto del estudio: su conversación, medios y producciones.</p>
+        <aside class="agent-sidebar" aria-label="Espacios de trabajo">
+            <section class="panel-card agent-card agent-context-card" aria-labelledby="agent-context-heading">
+                <p class="agent-eyebrow">ESPACIO ACTIVO</p>
+                <h2 id="agent-context-heading">Tu proyecto</h2>
+                <p class="agent-hint">Cada plan queda asociado a una sesión y conserva sus medios e historial.</p>
                 <form id="agent-new-session-form" class="studio-form">
                     <div class="form-group">
-                        <label for="agent-session-name">Nombre de la sesión</label>
-                        <input type="text" id="agent-session-name" name="name" required maxlength="200"
-                               placeholder="Ej. Spot Astronauta 480p">
+                        <label for="agent-session-name">Nueva sesión</label>
+                        <input type="text" id="agent-session-name" name="name" required maxlength="200" placeholder="Ej. Campaña de verano">
                     </div>
-                    <button type="submit" class="btn btn-primary btn-sm">Crear sesión</button>
+                    <button type="submit" class="btn btn-secondary btn-sm">Crear sesión</button>
                 </form>
+                <div class="card-header agent-list-heading">
+                    <h3>Sesiones</h3>
+                    <button type="button" id="agent-refresh-projects" class="btn btn-secondary btn-sm">Actualizar</button>
+                </div>
                 <ul id="agent-session-list" class="agent-session-list" role="listbox" aria-label="Sesiones disponibles"></ul>
             </section>
 
             <section class="panel-card agent-card" aria-labelledby="agent-productions-heading">
                 <div class="card-header">
-                    <h2 id="agent-productions-heading">Producciones</h2>
-                    <button type="button" id="agent-refresh-productions" class="btn btn-secondary btn-sm">Actualizar</button>
+                    <h2 id="agent-productions-heading">Planes recientes</h2>
+                    <button type="button" id="agent-refresh-productions" class="btn btn-secondary btn-sm" aria-label="Actualizar planes">↻</button>
                 </div>
-                <p class="agent-hint">Planes de producción de la sesión seleccionada (estados: planificación, aprobación, ejecución, éxito, fallo, cancelación).</p>
                 <ul id="agent-production-list" class="agent-production-list"></ul>
             </section>
         </aside>
 
         <div class="agent-main">
-            <section class="panel-card agent-card" aria-labelledby="agent-chat-heading">
-                <div class="card-header">
-                    <h2 id="agent-chat-heading">Conversación con el agente</h2>
-                    <span id="agent-model-info" class="agent-model-info" title="Modelo LLM configurado en el servidor"></span>
-                </div>
-                <div id="agent-transcript" class="agent-transcript" role="log" aria-live="polite" aria-label="Conversación con el agente">
-                    <p class="agent-empty">Selecciona o crea una sesión para comenzar. Describe una tarea audiovisual y el agente usará sus herramientas registradas (render, EDL, percepción…).</p>
-                </div>
-                <form id="agent-composer-form" class="agent-composer">
-                    <label for="agent-composer-input" class="sr-only">Describe la tarea audiovisual</label>
-                    <textarea id="agent-composer-input" rows="3" required maxlength="20000"
-                              placeholder="Describe la tarea audiovisual… (Enter envía, Shift+Enter nueva línea)"></textarea>
-                    <div class="agent-composer-actions">
-                        <span class="agent-kbd-hint">Enter envía · Shift+Enter salto</span>
-                        <button type="submit" id="agent-send-btn" class="btn btn-primary">Enviar</button>
-                    </div>
-                </form>
-            </section>
-
-            <section class="panel-card agent-card" aria-labelledby="agent-task-heading">
-                <div class="card-header">
-                    <h2 id="agent-task-heading">Tarea → plan → aprobación → ejecución</h2>
-                </div>
+            <section class="agent-welcome" aria-labelledby="agent-task-heading">
+                <p class="agent-eyebrow">DE LA IDEA A UN PLAN REVISABLE</p>
+                <h2 id="agent-task-heading">¿Qué quieres crear?</h2>
+                <p class="agent-lede">Cuéntanos el resultado que imaginas. Prepararemos una propuesta para que la revises antes de usar recursos de generación.</p>
                 <form id="agent-plan-form" class="studio-form agent-plan-form">
                     <div class="form-group">
-                        <label for="agent-plan-idea">Describe la producción audiovisual</label>
-                        <textarea id="agent-plan-idea" rows="2" required maxlength="4000"
-                                  placeholder="Ej. un dron sobre la ciudad de noche con estilo neón, 3 planos"></textarea>
+                        <label class="sr-only" for="agent-plan-idea">Describe el resultado que quieres crear</label>
+                        <textarea id="agent-plan-idea" rows="4" required maxlength="4000" placeholder="Ej. Un video de 20 segundos para presentar una nueva cafetería: cálido, urbano y con tres escenas…"></textarea>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="agent-plan-cost">Límite de costo (USD, 0 = sin límite)</label>
-                            <input type="number" id="agent-plan-cost" min="0" max="1000" step="0.5" value="0">
+                    <div class="agent-prompt-footer">
+                        <div class="agent-cost-control form-group">
+                            <label for="agent-plan-cost">Presupuesto máximo (USD)</label>
+                            <input type="number" id="agent-plan-cost" min="0" max="1000" step="0.5" value="0" aria-describedby="agent-cost-help">
+                            <span id="agent-cost-help" class="agent-hint">0 = sin límite</span>
                         </div>
-                        <div class="form-group agent-plan-form-action">
-                            <button type="submit" id="agent-plan-btn" class="btn btn-primary">Planificar</button>
-                        </div>
+                        <button type="submit" id="agent-plan-btn" class="btn btn-primary agent-plan-submit">Preparar mi plan <span aria-hidden="true">→</span></button>
                     </div>
-                    <p class="agent-hint">Planificar es barato y no gasta GPU: la producción queda <strong>esperando tu aprobación</strong> y podrás editar el plan antes de ejecutar.</p>
+                    <p class="agent-plan-note"><span aria-hidden="true">✳</span> Preparar el plan no inicia una generación. Podrás editarlo y aprobarlo antes de ejecutar.</p>
                 </form>
-                <div id="agent-plan-container" aria-live="polite"></div>
             </section>
 
-            <section class="panel-card agent-card" aria-labelledby="agent-activity-heading">
-                <div class="card-header">
-                    <h2 id="agent-activity-heading">Actividad en vivo (SSE)</h2>
-                    <button type="button" id="agent-clear-activity" class="btn btn-secondary btn-sm">Limpiar</button>
+            <section class="agent-readiness panel-card" aria-labelledby="agent-readiness-heading">
+                <div class="agent-readiness-copy">
+                    <span class="agent-readiness-icon" aria-hidden="true">⌁</span>
+                    <div>
+                        <h2 id="agent-readiness-heading">Estado del sistema</h2>
+                        <p>Comprueba la conexión con el servidor, ComfyUI y el agente.</p>
+                    </div>
                 </div>
-                <ul id="agent-activity-feed" class="agent-activity-feed" aria-live="polite" aria-label="Eventos recientes"></ul>
+                <details class="agent-diagnostics">
+                    <summary>Ver diagnóstico</summary>
+                    <div class="agent-status-strip" aria-label="Diagnóstico del sistema">
+                        <span id="agent-health-server" class="status-pill status-neutral">Servidor: Conectando…</span>
+                        <span id="agent-health-comfyui" class="status-pill status-neutral">ComfyUI: Verificando…</span>
+                        <span id="agent-health-llm" class="status-pill status-neutral">Agente LLM: —</span>
+                        <span id="agent-sse-badge" class="status-pill status-neutral">SSE: Iniciando…</span>
+                    </div>
+                    <p id="agent-model-info" class="agent-model-info"></p>
+                    <button type="button" id="agent-refresh-health" class="btn btn-secondary btn-sm">Volver a comprobar</button>
+                </details>
             </section>
+
+            <section class="panel-card agent-card agent-plan-result" aria-label="Plan para revisar">
+                <div id="agent-plan-container" aria-live="polite">
+                    <div class="agent-empty-plan">
+                        <span aria-hidden="true">✦</span>
+                        <div><strong>Tu plan aparecerá aquí</strong><p>Primero describe el resultado que buscas.</p></div>
+                    </div>
+                </div>
+            </section>
+
+            <details class="agent-secondary panel-card agent-card">
+                <summary>Conversación con el agente <span id="agent-model-info-compact" aria-hidden="true"></span></summary>
+                <p class="agent-hint">Usa esta conversación como apoyo para explorar ideas. La aprobación de un plan sigue siendo manual.</p>
+                <div id="agent-transcript" class="agent-transcript" role="log" aria-live="polite" aria-label="Conversación con el agente">
+                    <p class="agent-empty">Selecciona o crea una sesión para comenzar.</p>
+                </div>
+                <form id="agent-composer-form" class="agent-composer">
+                    <label for="agent-composer-input" class="sr-only">Escribe un mensaje al agente</label>
+                    <textarea id="agent-composer-input" rows="3" required maxlength="20000" placeholder="Pregunta o explora una idea… (Enter envía, Shift+Enter nueva línea)"></textarea>
+                    <div class="agent-composer-actions">
+                        <span class="agent-kbd-hint">Enter envía · Shift+Enter salto</span>
+                        <button type="submit" id="agent-send-btn" class="btn btn-secondary">Enviar</button>
+                    </div>
+                </form>
+            </details>
+
+            <details class="agent-secondary panel-card agent-card">
+                <summary>Actividad reciente <span class="agent-live-indicator"><i></i> en vivo</span></summary>
+                <ul id="agent-activity-feed" class="agent-activity-feed" aria-live="polite" aria-label="Eventos recientes"></ul>
+                <button type="button" id="agent-clear-activity" class="btn btn-secondary btn-sm">Limpiar actividad</button>
+            </details>
         </div>
     </main>
+
+    <footer class="agent-footer-note">Modo Agente es una herramienta independiente; no está afiliado ni respaldado por OpenCode (Anomaly / sst).</footer>
 
     <dialog id="agent-dialog" class="agent-dialog" aria-labelledby="agent-dialog-title">
         <h2 id="agent-dialog-title">Confirmar</h2>
@@ -129,7 +139,6 @@
             <button type="button" id="agent-dialog-confirm" class="btn btn-danger">Confirmar</button>
         </div>
     </dialog>
-
     <div id="agent-toast" class="studio-toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
