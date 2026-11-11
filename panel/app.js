@@ -144,7 +144,8 @@
         document.querySelectorAll(".nav-tab[data-view]").forEach((btn) => {
             const isMatch = btn.getAttribute("data-view") === target;
             btn.classList.toggle("active", isMatch);
-            btn.setAttribute("aria-selected", isMatch ? "true" : "false");
+            if (isMatch) btn.setAttribute("aria-current", "page");
+            else btn.removeAttribute("aria-current");
         });
 
         document.querySelectorAll(".studio-view[data-view-panel]").forEach((sec) => {
@@ -156,6 +157,18 @@
                 sec.setAttribute("hidden", "");
             }
         });
+        const pageTitles = {
+            projects: "Proyectos y medios",
+            chat: "Agente creativo",
+            jobs: "Jobs y renders",
+            cinematic: "Estudio cinemático",
+            gallery: "Entregables",
+            edl: "Timeline de edición",
+            ads: "Estudio de anuncios",
+            atlas: "Atlas Aburrá",
+            login: "Cuenta y sistema",
+        };
+        document.title = `${pageTitles[target]} — ComfyUIPod Studio`;
 
         if (target === "jobs") {
             refreshJobs();
@@ -476,6 +489,7 @@
                     serverBadge.textContent = `Servidor: HTTP ${resp.status}`;
                     serverBadge.className = "status-pill status-err";
                 }
+                updateSystemHealthSummary();
                 return;
             }
             const health = await resp.json();
@@ -495,6 +509,7 @@
             }
             renderEnginePreparation(health.engines, engineBadge, engineCard);
             refreshDownloadProgress();
+            updateSystemHealthSummary();
             updateAuthBadge(
                 state.auth.password ? `Basic-Auth (${state.auth.username})` : "Sesión Loopback / Edge OK",
                 "status-ok"
@@ -516,7 +531,32 @@
             if (authCard) {
                 authCard.innerHTML = `<p>Error al conectar con <code>/studio/api/health</code>: ${escapeHtml(err.message)}</p>`;
             }
+            updateSystemHealthSummary();
         }
+    }
+
+    function updateSystemHealthSummary() {
+        const summary = document.getElementById("system-health-summary");
+        const dot = document.getElementById("system-status-dot");
+        if (!summary || !dot) return;
+        const engineBadge = document.getElementById("health-engine-badge");
+        const critical = ["health-server-badge", "health-comfyui-badge", "health-llm-badge", "health-engine-badge"]
+            .map((id) => document.getElementById(id))
+            .filter(Boolean);
+        const hasError = critical.some((badge) => badge.classList.contains("status-err"));
+        const hasWarning = critical.some((badge) => badge.classList.contains("status-warn")) ||
+            Boolean(engineBadge && engineBadge.textContent.includes("no disponible"));
+        const waiting = critical.some((badge) => badge.classList.contains("status-neutral"));
+        summary.textContent = hasError
+            ? "Sistema con errores"
+            : hasWarning
+              ? "Sistema requiere atención"
+              : waiting
+                ? "Verificando sistema…"
+                : "Sistema disponible";
+        dot.classList.toggle("is-error", hasError);
+        dot.classList.toggle("is-warning", !hasError && hasWarning);
+        dot.classList.toggle("is-ready", !hasError && !hasWarning && !waiting);
     }
 
     function renderEnginePreparation(engines, badge, card) {
@@ -658,11 +698,12 @@
         if (!container) return;
 
         const activeProj = state.projects.find((p) => p.id === state.activeProjectId);
+        const activeName = document.getElementById("active-project-name");
         if (activeBadge) {
-            activeBadge.textContent = activeProj
-                ? `Proyecto: ${activeProj.name}`
-                : "Proyecto: Ninguno";
             activeBadge.setAttribute("data-active-project-id", activeProj ? activeProj.id : "");
+        }
+        if (activeName) {
+            activeName.textContent = activeProj ? activeProj.name : "Ninguno seleccionado";
         }
 
         if (state.projects.length === 0) {

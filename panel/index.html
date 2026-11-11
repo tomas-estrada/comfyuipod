@@ -18,51 +18,72 @@
                     <p class="brand-subtitle">Estudio audiovisual agéntico en español sobre ComfyUI</p>
                 </div>
             </div>
-            <div class="status-strip" aria-label="Estado del sistema">
-                <span id="health-server-badge" class="status-pill status-ok">Servidor: Conectando…</span>
-                <span id="health-comfyui-badge" class="status-pill status-neutral">ComfyUI: Verificando…</span>
-                <span id="health-llm-badge" class="status-pill status-neutral">Agente LLM: —</span>
-                <span id="health-engine-badge" class="status-pill status-neutral">Motores: Verificando…</span>
-                <span id="health-download-badge" class="status-pill status-neutral">Descargas: —</span>
-                <span id="sse-status-badge" class="status-pill status-neutral">SSE: Iniciando…</span>
-                <span id="active-project-badge" class="status-pill status-accent">Proyecto: Ninguno</span>
+            <div class="header-context">
+                <button type="button" id="active-project-badge" class="project-context" data-goto-view="projects">
+                    <span class="context-copy">
+                        <span class="context-label">Proyecto activo</span>
+                        <span id="active-project-name">Ninguno seleccionado</span>
+                    </span>
+                    <span aria-hidden="true">⌄</span>
+                </button>
+                <details class="system-diagnostics">
+                    <summary>
+                    <span id="system-status-dot" class="system-status-dot" aria-hidden="true"></span>
+                        <span id="system-health-summary" aria-live="polite">Verificando sistema…</span>
+                    </summary>
+                    <div class="status-strip" aria-label="Detalle del estado del sistema">
+                        <span id="health-server-badge" class="status-pill status-ok">Servidor: Conectando…</span>
+                        <span id="health-comfyui-badge" class="status-pill status-neutral">ComfyUI: Verificando…</span>
+                        <span id="health-llm-badge" class="status-pill status-neutral">Agente LLM: —</span>
+                        <span id="health-engine-badge" class="status-pill status-neutral">Motores: Verificando…</span>
+                        <span id="health-download-badge" class="status-pill status-neutral">Descargas: —</span>
+                        <span id="sse-status-badge" class="status-pill status-neutral">SSE: Iniciando…</span>
+                    </div>
+                </details>
             </div>
         </div>
-
-        <nav class="studio-nav" aria-label="Navegación principal del estudio">
-            <button type="button" id="nav-projects" class="nav-tab active" data-view="projects" aria-selected="true">
-                1. Proyectos y Medios
-            </button>
-            <button type="button" id="nav-chat" class="nav-tab" data-view="chat" aria-selected="false">
-                2. Chat del Agente
-            </button>
-                <button type="button" id="nav-jobs" class="nav-tab" data-view="jobs" aria-selected="false">
-                    3. Jobs y Render
-                </button>
-                <button type="button" id="nav-cinematic" class="nav-tab" data-view="cinematic" aria-selected="false">
-                    Estudio Cinemático
-                </button>
-                <button type="button" id="nav-gallery" class="nav-tab" data-view="gallery" aria-selected="false">
-                    4. Galería y Descargas
-            </button>
-            <button type="button" id="nav-edl" class="nav-tab" data-view="edl" aria-selected="false">
-                5. Timeline EDL
-            </button>
-            <button type="button" id="nav-ads" class="nav-tab" data-view="ads" aria-selected="false">
-                6. Anuncios
-            </button>
-            <button type="button" id="nav-atlas" class="nav-tab" data-view="atlas" aria-selected="false">
-                7. Atlas Aburrá
-            </button>
-            <button type="button" id="nav-login" class="nav-tab" data-view="login" aria-selected="false">
-                Acceso / Login
-            </button>
-            <a class="nav-tab nav-tab-link" href="/studio/agent.html">
-                6. Modo Agente (prototipo)
-            </a>
-        </nav>
     </header>
 
+    <div class="studio-layout">
+        <aside class="studio-sidebar" aria-label="Navegación del estudio">
+            <nav class="studio-nav">
+                <span class="nav-group-label">Workspace</span>
+                <button type="button" id="nav-projects" class="nav-tab active" data-view="projects" aria-current="page">
+                    <span class="nav-icon" aria-hidden="true">⌂</span><span>Proyectos y medios</span>
+                </button>
+
+                <span class="nav-group-label">Crear</span>
+                <button type="button" id="nav-chat" class="nav-tab" data-view="chat">
+                    <span class="nav-icon" aria-hidden="true">✦</span><span>Agente creativo</span>
+                </button>
+                <button type="button" id="nav-cinematic" class="nav-tab" data-view="cinematic">
+                    <span class="nav-icon" aria-hidden="true">◉</span><span>Estudio cinemático</span>
+                </button>
+
+                <span class="nav-group-label">Revisar y entregar</span>
+                <button type="button" id="nav-edl" class="nav-tab" data-view="edl">
+                    <span class="nav-icon" aria-hidden="true">▤</span><span>Timeline de edición</span>
+                </button>
+                <button type="button" id="nav-jobs" class="nav-tab" data-view="jobs">
+                    <span class="nav-icon" aria-hidden="true">◷</span><span>Jobs y renders</span>
+                </button>
+                <button type="button" id="nav-gallery" class="nav-tab" data-view="gallery">
+                    <span class="nav-icon" aria-hidden="true">▣</span><span>Entregables</span>
+                </button>
+
+                <details class="nav-more">
+                    <summary><span class="nav-icon" aria-hidden="true">•••</span><span>Más herramientas</span></summary>
+                    <button type="button" id="nav-ads" class="nav-tab" data-view="ads">Estudio de anuncios</button>
+                    <button type="button" id="nav-atlas" class="nav-tab" data-view="atlas">Atlas Aburrá</button>
+                    <button type="button" id="nav-login" class="nav-tab" data-view="login">Cuenta y sistema</button>
+                    <a class="nav-tab agent-nav-link" href="/studio/agent.html">
+                        <span class="nav-icon" aria-hidden="true">↗</span><span>Consola de agente (experimental)</span>
+                    </a>
+                </details>
+            </nav>
+        </aside>
+
+        <div class="studio-workspace">
     <div id="studio-toast" class="studio-toast" role="status" aria-live="polite">
         Bienvenido a ComfyUIPod Studio. Selecciona o crea un proyecto para comenzar.
     </div>
@@ -73,7 +94,7 @@
             <div class="two-col-grid">
                 <div class="panel-card">
                     <div class="card-header">
-                        <h2 id="heading-projects">Proyectos del Estudio</h2>
+                        <h2 id="heading-projects">Crear un proyecto</h2>
                         <button type="button" id="refresh-projects-btn" class="btn btn-secondary btn-sm">
                             Actualizar lista
                         </button>
@@ -120,7 +141,7 @@
                     </form>
 
                     <div class="divider"></div>
-                    <h3 class="section-subtitle">Proyectos disponibles</h3>
+                    <h3 class="section-subtitle">Proyectos recientes</h3>
                     <div id="projects-list" class="items-list" aria-live="polite">
                         <p class="empty-hint">Cargando proyectos…</p>
                     </div>
@@ -1011,5 +1032,7 @@
             </div>
         </section>
     </main>
+        </div>
+    </div>
 </body>
 </html>
