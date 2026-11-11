@@ -146,16 +146,135 @@ def register_routes(app: FastAPI) -> None:
         # Trabajo síncrono pesado (ffmpeg/embeddings/sqlite): fuera del event loop para
         # no bloquear /health, el SSE de progreso ni el resto de peticiones.
         def _index_sync() -> dict[str, Any]:
+            from ..ingest import AssetStatus, ingest_assets
+            from ..ml import is_real_backend
+
+            candidates = (
+                [active_store.get_asset(project_id, body.asset_id)]
+                if body.asset_id
+                else active_store.list_assets(project_id)
+            )
+            candidates = [asset for asset in candidates if asset is not None]
+            paths_by_path: dict[str, dict[str, Any]] = {}
+            paths = []
+            for asset in candidates:
+                source_path = active_store.get_asset_path(project_id, asset["id"])
+                if source_path is not None:
+                    paths.append(source_path)
+                    paths_by_path[str(source_path)] = asset
+
+            ingest_report = ingest_assets(
+                paths,
+                project_id=project_id,
+                weights_available=is_real_backend(),
+                verify_media=True,
+                ffprobe_timeout_s=request.app.state.config.studio_ffprobe_timeout_s,
+            )
+            canonical_by_sha: dict[str, str] = {}
+            for item in ingest_report.assets:
+                candidate = paths_by_path.get(item.source_path)
+                if (
+                    candidate is not None
+                    and item.content_sha256
+                    and item.status in {AssetStatus.INDEXED, AssetStatus.PENDING_WEIGHTS}
+                ):
+                    canonical_by_sha.setdefault(item.content_sha256, candidate["id"])
+
+            index_asset_ids: list[str] = []
+            ingest_items: list[dict[str, Any]] = []
+            for item in ingest_report.assets:
+                candidate = paths_by_path.get(item.source_path)
+                if candidate is None:
+                    continue
+                canonical_id = (
+                    canonical_by_sha.get(item.content_sha256 or "")
+                    if item.status is AssetStatus.DUPLICATE
+                    else candidate["id"]
+                )
+                record = {
+                    "status": str(item.status),
+                    "content_sha256": item.content_sha256,
+                    "duplicate_of": canonical_id if item.status is AssetStatus.DUPLICATE else None,
+                    "segments": item.segments,
+                    "media_info": item.media_info,
+                    "media_validation": (
+                        "verified"
+                        if item.media_info is not None
+                        else "failed"
+                        if item.status is AssetStatus.CORRUPT
+                        else "unavailable"
+                    ),
+                    "error": item.error,
+                }
+                active_store.update_asset_metadata(
+                    project_id,
+                    candidate["id"],
+                    metadata={"ingest": record},
+                )
+                ingest_items.append({"asset_id": candidate["id"], **record})
+                if (
+                    canonical_id
+                    and candidate.get("kind") in {"video", "image"}
+                    and item.media_info is not None
+                    and item.status in {AssetStatus.INDEXED, AssetStatus.PENDING_WEIGHTS}
+                ):
+                    index_asset_ids.append(canonical_id)
+
+            index_asset_ids = list(dict.fromkeys(index_asset_ids))
+            unverified_visual_media = any(
+                item["media_validation"] == "unavailable"
+                and any(
+                    asset["id"] == item["asset_id"]
+                    and asset.get("kind") in {"video", "image"}
+                    for asset in candidates
+                )
+                for item in ingest_items
+            )
+            ingestion = {
+                "counts": ingest_report.counts(),
+                "assets": ingest_items,
+            }
+
             if body.asset_id:
+                requested = next(
+                    (item for item in ingest_items if item["asset_id"] == body.asset_id), None
+                )
+                target_id = (
+                    requested.get("duplicate_of")
+                    if requested and requested.get("status") == str(AssetStatus.DUPLICATE)
+                    else body.asset_id
+                )
+                if requested is None or requested.get("status") == str(AssetStatus.CORRUPT):
+                    return {
+                        "project_id": project_id,
+                        "status": "no_valid_media",
+                        "shots_indexed": 0,
+                        "faces_detected": 0,
+                        "ingestion": ingestion,
+                        "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+                    }
+                if not target_id or target_id not in index_asset_ids:
+                    return {
+                        "project_id": project_id,
+                        "status": (
+                            "validation_unavailable"
+                            if requested.get("media_validation") == "unavailable"
+                            else "no_visual_media"
+                        ),
+                        "shots_indexed": 0,
+                        "faces_detected": 0,
+                        "ingestion": ingestion,
+                        "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
+                    }
                 res = active_clip.index_asset(
                     project_id,
-                    body.asset_id,
+                    target_id,
                     interval_sec=body.interval_sec,
                 )
                 faces_count = 0
                 if body.detect_faces:
                     faces_count += len(
-                        active_face.detect_and_index_asset(project_id, body.asset_id)
+                        active_face.detect_and_index_asset(project_id, target_id)
                     )
                     for shot in res.get("shots", []):
                         kf_id = shot.get("keyframe_asset_id")
@@ -164,19 +283,32 @@ def register_routes(app: FastAPI) -> None:
                                 active_face.detect_and_index_asset(
                                     project_id,
                                     kf_id,
-                                    source_asset_id=body.asset_id,
+                                    source_asset_id=target_id,
                                     timestamp_sec=float(shot.get("timestamp_sec") or 0.0),
                                 )
                             )
                 return {
                     **res,
                     "faces_detected": faces_count,
+                    "ingestion": ingestion,
                     "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
                 }
-            res = active_clip.index_project_media(
-                project_id,
-                interval_sec=body.interval_sec,
-            )
+            if index_asset_ids:
+                res = active_clip.index_project_media(
+                    project_id,
+                    asset_ids=index_asset_ids,
+                    interval_sec=body.interval_sec,
+                )
+            else:
+                res = {
+                    "project_id": project_id,
+                    "assets_indexed": 0,
+                    "shots_indexed": 0,
+                    "results": [],
+                    "simulated": not is_real_backend(),
+                }
+                if unverified_visual_media:
+                    res["status"] = "validation_unavailable"
             faces_count = 0
             if body.detect_faces:
                 for item in res.get("results", []):
@@ -194,6 +326,7 @@ def register_routes(app: FastAPI) -> None:
             return {
                 **res,
                 "faces_detected": faces_count,
+                "ingestion": ingestion,
                 "license_notice": INSIGHTFACE_NC_LICENSE_NOTICE,
             }
 

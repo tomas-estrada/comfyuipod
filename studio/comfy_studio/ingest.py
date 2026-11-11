@@ -28,7 +28,9 @@ embedding inventado.
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
+import subprocess
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -104,6 +106,8 @@ class IngestedAsset:
     transforms: dict[str, Any] = field(default_factory=dict)
     #: segmentos planificados (intervalos en segundos) con su evidencia.
     segments: list[dict[str, Any]] = field(default_factory=list)
+    #: Metadatos medidos por ffprobe cuando se solicita validación real.
+    media_info: dict[str, Any] | None = None
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -117,6 +121,7 @@ class IngestedAsset:
             "duplicate_of": self.duplicate_of,
             "transforms": dict(self.transforms),
             "segments": list(self.segments),
+            "media_info": dict(self.media_info) if self.media_info is not None else None,
             "error": self.error,
         }
 
@@ -149,6 +154,12 @@ def _asset_id(kind: MediaKind, sha: str) -> str:
     return f"{kind.value}_{sha[:12]}"
 
 
+def _path_asset_id(prefix: str, path: Path) -> str:
+    """Identificador estable para diagnósticos que no tienen hash de contenido."""
+    path_key = hashlib.sha256(str(path).encode("utf-8", errors="replace")).hexdigest()[:10]
+    return f"{prefix}_{path_key}"
+
+
 def _probe_header(path: Path) -> bool:
     """Lectura mínima de cabecera: detecta un fichero vacío o ilegible.
 
@@ -162,6 +173,49 @@ def _probe_header(path: Path) -> bool:
             return bool(handle.read(16))
     except OSError:
         return False
+
+
+def _probe_media(path: Path, *, timeout_s: float) -> dict[str, Any] | None:
+    """Valida el contenedor/codec con ffprobe; `None` significa herramienta ausente."""
+    from .media_bins import find_ffprobe
+
+    ffprobe = find_ffprobe()
+    if not ffprobe:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration:stream=codec_type,codec_name,width,height,avg_frame_rate",
+                "-of",
+                "json",
+                str(path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=max(0.1, float(timeout_s)),
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return {}
+        payload = json.loads(proc.stdout)
+        if not isinstance(payload, dict):
+            return {}
+        streams = payload.get("streams")
+        if not isinstance(streams, list) or not streams or not all(
+            isinstance(stream, dict) for stream in streams
+        ):
+            return {}
+        info: dict[str, Any] = {"streams": streams}
+        duration = (payload.get("format") or {}).get("duration")
+        if duration is not None:
+            info["duration_sec"] = float(duration)
+        return info
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        return {}
 
 
 def _plan_segments(kind: MediaKind, weights_available: bool) -> list[dict[str, Any]]:
@@ -194,6 +248,8 @@ def ingest_assets(
     project_id: str | None = None,
     weights_available: bool = False,
     inflight: int = DEFAULT_INFLIGHT,
+    verify_media: bool = False,
+    ffprobe_timeout_s: float = 8.0,
 ) -> IngestReport:
     """Ingiere un lote de assets de forma determinista y tolerante a fallos.
 
@@ -212,7 +268,7 @@ def ingest_assets(
             if not _probe_header(path):
                 report.assets.append(
                     IngestedAsset(
-                        asset_id=f"corrupt_{abs(hash(str(path))) % (10**10):010d}",
+                        asset_id=_path_asset_id("corrupt", path),
                         source_path=str(path),
                         kind=kind,
                         status=AssetStatus.CORRUPT,
@@ -223,11 +279,36 @@ def ingest_assets(
             if kind is MediaKind.UNKNOWN:
                 report.assets.append(
                     IngestedAsset(
-                        asset_id=f"unsupported_{abs(hash(str(path))) % (10**10):010d}",
+                        asset_id=_path_asset_id("unsupported", path),
                         source_path=str(path),
                         kind=kind,
                         status=AssetStatus.UNSUPPORTED,
                         error=f"tipo no soportado: {path.suffix or 'sin extensión'}",
+                    )
+                )
+                continue
+
+            media_info = _probe_media(path, timeout_s=ffprobe_timeout_s) if verify_media else None
+            if media_info and kind is MediaKind.VIDEO and not any(
+                stream.get("codec_type") == "video"
+                for stream in media_info["streams"]
+                if isinstance(stream, dict)
+            ):
+                media_info = {}
+            elif media_info and kind is MediaKind.AUDIO and not any(
+                stream.get("codec_type") == "audio"
+                for stream in media_info["streams"]
+                if isinstance(stream, dict)
+            ):
+                media_info = {}
+            if verify_media and media_info == {}:
+                report.assets.append(
+                    IngestedAsset(
+                        asset_id=_path_asset_id("corrupt", path),
+                        source_path=str(path),
+                        kind=kind,
+                        status=AssetStatus.CORRUPT,
+                        error="ffprobe no pudo validar el medio",
                     )
                 )
                 continue
@@ -238,7 +319,7 @@ def ingest_assets(
             except OSError as exc:
                 report.assets.append(
                     IngestedAsset(
-                        asset_id=f"corrupt_{abs(hash(str(path))) % (10**10):010d}",
+                        asset_id=_path_asset_id("corrupt", path),
                         source_path=str(path),
                         kind=kind,
                         status=AssetStatus.CORRUPT,
@@ -280,6 +361,7 @@ def ingest_assets(
                     bytes=size,
                     transforms=_declared_transforms(kind),
                     segments=segments,
+                    media_info=media_info,
                 )
             )
     return report
