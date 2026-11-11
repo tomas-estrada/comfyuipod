@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import json
 import subprocess
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from comfy_studio.edl.ffmpeg_edl import execute_edl_ffmpeg
 from comfy_studio.media_bins import find_ffmpeg
+from comfy_studio.perception import keyframes
 from comfy_studio.perception.keyframes import probe_media_info
 from comfy_studio.projects import ProjectStore
-from comfy_studio.perception import keyframes
 
 FFMPEG = find_ffmpeg()
 pytestmark = pytest.mark.skipif(FFMPEG is None, reason="requiere ffmpeg")
@@ -55,7 +55,11 @@ def _make_video(path: Path, source: str = "testsrc") -> bytes:
             "-color_range",
             "pc" if source == "full-black" else "tv",
             "-bsf:v",
-            "h264_metadata=video_full_range_flag=1" if source == "full-black" else "h264_metadata=video_full_range_flag=0",
+            (
+                "h264_metadata=video_full_range_flag=1"
+                if source == "full-black"
+                else "h264_metadata=video_full_range_flag=0"
+            ),
             str(path),
         ],
         check=True,

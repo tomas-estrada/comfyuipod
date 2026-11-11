@@ -183,9 +183,10 @@ def execute_edl_ffmpeg(
         raise ValueError("fps debe estar entre 12 y 60.")
     if color_range not in {"limited", "full"}:
         raise ValueError("color_range debe ser 'limited' o 'full'.")
-    if not math.isfinite(float(picture_inset_percent)) or not 0 <= float(
-        picture_inset_percent
-    ) <= 25:
+    if (
+        not math.isfinite(float(picture_inset_percent))
+        or not 0 <= float(picture_inset_percent) <= 25
+    ):
         raise ValueError("picture_inset_percent debe estar entre 0 y 25.")
 
     ffmpeg_bin = find_ffmpeg()
@@ -201,6 +202,7 @@ def execute_edl_ffmpeg(
         inner_w, inner_h = target_w, target_h
     output_range = "tv" if color_range == "limited" else "pc"
     full_range_flag = "1" if color_range == "full" else "0"
+
     def _vf_chain(input_range: str | None) -> str:
         # ffprobe may not know the source range. Assume limited in that case,
         # matching the conventional interpretation of ordinary yuv420p video.
@@ -248,9 +250,7 @@ def execute_edl_ffmpeg(
                 resolved_sources[preferred_aid] = cached_source
             cut_aid, src_path = cached_source
             if src_path not in probed_sources:
-                probed_sources[src_path] = probe_media_info(
-                    src_path, timeout_s=ffprobe_timeout_s
-                )
+                probed_sources[src_path] = probe_media_info(src_path, timeout_s=ffprobe_timeout_s)
                 if not bool(probed_sources[src_path].get("probe_ok")):
                     raise RuntimeError(
                         f"El video fuente del corte #{idx + 1} no pudo verificarse con ffprobe."
