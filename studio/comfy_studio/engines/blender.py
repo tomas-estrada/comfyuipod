@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 
 from comfy_studio.blender import (
+    FAILURE_INVALID_OUTPUT,
     BlenderExportSpec,
     BlenderRenderSpec,
     classify_blender_failure,
@@ -218,7 +219,15 @@ class BlenderEngine(Engine):
         result = await run_blender_spec(
             blender_spec, log_dir=self._log_dir, blender_bin=self._blender_bin
         )
-        kind = classify_blender_failure(result.exit_code, result.log_tail)
+        if result.validation_error:
+            # el proceso acabó "bien" (exit 0) pero los artefactos no valen:
+            # rechazo tipado, nunca un ok con outputs podridos.
+            kind = FAILURE_INVALID_OUTPUT
+        else:
+            kind = classify_blender_failure(result.exit_code, result.log_tail)
+        stderr_tail = result.log_tail or None
+        if result.validation_error:
+            stderr_tail = f"[VALIDACION] {result.validation_error}\n{stderr_tail or ''}".rstrip()
         return EngineResult(
             ok=result.ok,
             engine=self.name,
@@ -227,9 +236,10 @@ class BlenderEngine(Engine):
                 "outputs": [str(p) for p in result.outputs],
                 "duration_s": round(result.duration_s, 3),
                 "failure_kind": kind,
+                "validation_error": result.validation_error,
             },
             exit_code=result.exit_code,
-            stderr_tail=result.log_tail or None,
+            stderr_tail=stderr_tail,
             simulated=result.stubbed,
         )
 

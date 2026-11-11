@@ -41,6 +41,11 @@ from comfy_studio.orchestration.executor import (
     record_shot_lineage,
     topological_shots,
 )
+from comfy_studio.orchestration.failures import (
+    MAX_TRANSIENT_RETRIES,
+    LayerFailureKind,
+    classify_runner_failure,
+)
 from comfy_studio.orchestration.graph import (
     END,
     ProductionGraph,
@@ -83,6 +88,7 @@ from comfy_studio.orchestration.template_selector import (
 
 __all__ = [
     "END",
+    "MAX_TRANSIENT_RETRIES",
     "REPLAN_ESCALATION",
     "Assembler",
     "ChainStep",
@@ -95,6 +101,7 @@ __all__ = [
     "EngineRunnerAdapter",
     "LLMPlannerAdapter",
     "Layer",
+    "LayerFailureKind",
     "LineageGraph",
     "LineageNode",
     "PlannerLLM",
@@ -124,6 +131,7 @@ __all__ = [
     "assemble_reel",
     "build_production_graph",
     "build_server_collaborators",
+    "classify_runner_failure",
     "evaluate_and_replan",
     "execute_next_shot",
     "invalidate_shot_lineage",

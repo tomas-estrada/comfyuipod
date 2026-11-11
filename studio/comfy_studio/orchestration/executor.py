@@ -18,9 +18,15 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Callable
+from pathlib import Path
 from threading import Event
 from typing import Any, Protocol
 
+from comfy_studio.orchestration.failures import (
+    MAX_TRANSIENT_RETRIES,
+    LayerFailureKind,
+    classify_runner_failure,
+)
 from comfy_studio.orchestration.lineage import LineageGraph
 from comfy_studio.orchestration.state import (
     ProductionState,
@@ -66,12 +72,23 @@ class EngineRunner(Protocol):
         Los adaptadores de motor actuales NO lo producen — mientras ningún
         runner lo reporte, el accounting de gasto se expone como desconocido.
         Ausente o no numérico se trata como 0; nunca rompe el run.
+
+        En un fallo (`'ok': False`) el resultado PUEDE declarar
+        `'failure_kind'` (`'transient'` | `'invalid_parameters'` |
+        `'permission_denied'` | `'engine'`): ver
+        `comfy_studio.orchestration.failures`. Sin declaración el executor
+        aplica el comportamiento legacy (escalera de replan, sin reintentos).
         """
         ...
 
 
 class StubEngineRunner:
-    """Runner determinista para CI/tests: 'ejecuta' escribiendo una ruta stub."""
+    """Runner determinista para CI/tests: 'ejecuta' escribiendo un artefacto stub.
+
+    Escribe bytes reales en la ruta que declara: el executor valida que todo
+    `output_path` reutilizado exista y tenga contenido, así que un stub que
+    declara una ruta sin fichero sería un artefacto fantasma en cada reinicio.
+    """
 
     def run_layer(
         self,
@@ -82,15 +99,36 @@ class StubEngineRunner:
         cancel_event: Event | None = None,
     ) -> dict[str, Any]:
         kind = job.get("kind", "gen")
+        output = Path("/tmp/stub") / f"{engine}_{kind}.out"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"stub artifact\n")
         return {
             "ok": True,
             "engine": engine,
-            "output_path": f"/tmp/stub/{engine}_{kind}.out",
+            "output_path": str(output),
         }
 
 
 class CyclicDependencyError(RuntimeError):
     """Los `depends_on` de los shots forman un ciclo (no ordenable)."""
+
+
+def _artifact_problem(path: str | None) -> str | None:
+    """Razón por la que un artefacto declarado NO es utilizable, o None si vale.
+
+    Un artefacto vale si existe, es un fichero regular y tiene bytes (>0).
+    """
+    if not path:
+        return None
+    p = Path(path)
+    try:
+        if not p.is_file():
+            return "missing"
+        if p.stat().st_size <= 0:
+            return "empty"
+    except OSError:
+        return "missing"
+    return None
 
 
 def topological_shots(state: ProductionState) -> list[Shot]:
@@ -328,8 +366,30 @@ def execute_next_shot(
             if cancel_event is not None and cancel_event.is_set():
                 return state
             if layer.output_path:
-                last_output = layer.output_path
-                continue
+                problem = _artifact_problem(layer.output_path)
+                if problem is None:
+                    last_output = layer.output_path
+                    continue
+                # Artefacto del checkpoint ya no está en disco (volumen efímero,
+                # limpieza, crash antes del flush): reusarlo ensamblaría una
+                # ruta colgante en el reel y en la galería. Se descarta el
+                # estado del intento y se re-ejecuta la capa con identidad de
+                # operación fresca (el idempotency_key incluye replan_attempts),
+                # SIN consumir escalón de replan: perder el fichero no es un
+                # fallo del plan.
+                state.record(
+                    "stale_artifact",
+                    shot=shot.id,
+                    layer=layer.kind,
+                    engine=layer.engine,
+                    path=layer.output_path,
+                    problem=problem,
+                )
+                layer.output_path = None
+                shot.output_path = None
+                invalidate_shot_lineage(state, shot)
+                shot.replan_attempts += 1
+                # fall through: la capa se re-ejecuta más abajo.
             key_material = (
                 f"{state.id}\0{shot.id}\0{layer_index}\0{shot.replan_attempts}"
             )
@@ -385,31 +445,94 @@ def execute_next_shot(
                 cost_cap = round(shot.cost_cap_usd - shot.cost_spent_usd, 6)
             else:
                 cost_cap = None
-            result = run.run_layer(
-                layer.engine,
-                job,
-                cost_cap=cost_cap,
-                cancel_event=cancel_event,
-            )
-            # el accounting es honesto: un run fallido también puede haber
-            # consumido gasto; se acumula si el runner lo reporta.
-            try:
-                spent = float(result["cost_usd"])
-            except (KeyError, TypeError, ValueError):
-                spent = None
-            if spent is not None and math.isfinite(spent) and spent >= 0:
-                shot.cost_spent_usd = round(shot.cost_spent_usd + spent, 6)
-                shot.spend_reported = True
-                state.record(
-                    "layer_spend",
-                    shot=shot.id,
-                    layer=layer.kind,
-                    engine=layer.engine,
-                    tier=str(shot.replan_tier) if shot.replan_tier else None,
-                    spent_usd=spent,
-                    cumulative_usd=shot.cost_spent_usd,
+            # Fallos TRANSIENT se reintentan in-place (misma identidad de op,
+            # la operación nunca completó) con presupuesto acotado; agotado,
+            # escala la escalera como cualquier otro fallo. INVALID_PARAMETERS
+            # no quema reintentos idénticos; PERMISSION_DENIED falla tipado sin
+            # tocar la escalera. Un resultado legacy (sin clase) se comporta
+            # exactamente como antes.
+            transient_retries = 0
+            while True:
+                # Recompute the allowance for every in-place retry. A runner
+                # can report spend on a transient failure; passing the original
+                # cap again would let the next attempt exceed the cumulative
+                # shot budget.
+                if shot.cost_cap_usd > 0:
+                    cost_cap = round(shot.cost_cap_usd - shot.cost_spent_usd, 6)
+                result = run.run_layer(
+                    layer.engine,
+                    job,
+                    cost_cap=cost_cap,
+                    cancel_event=cancel_event,
                 )
-            if not result.get("ok", False):
+                # el accounting es honesto: un run fallido también puede haber
+                # consumido gasto; se acumula si el runner lo reporta.
+                try:
+                    spent = float(result["cost_usd"])
+                except (KeyError, TypeError, ValueError):
+                    spent = None
+                if spent is not None and math.isfinite(spent) and spent >= 0:
+                    shot.cost_spent_usd = round(shot.cost_spent_usd + spent, 6)
+                    shot.spend_reported = True
+                    state.record(
+                        "layer_spend",
+                        shot=shot.id,
+                        layer=layer.kind,
+                        engine=layer.engine,
+                        tier=str(shot.replan_tier) if shot.replan_tier else None,
+                        spent_usd=spent,
+                        cumulative_usd=shot.cost_spent_usd,
+                    )
+                if result.get("ok", False):
+                    break
+                failure_kind = classify_runner_failure(result)
+                if failure_kind is LayerFailureKind.PERMISSION_DENIED:
+                    # Un permiso denegado no lo arregla ni un reintento ni un
+                    # replan (los escalones no cambian autorizaciones): fallo
+                    # terminal tipado, sin consumir la escalera.
+                    shot.error = (
+                        f"[permission_denied] "
+                        f"{str(result.get('error', 'permiso denegado sin detalle'))[:480]}"
+                    )
+                    shot.status = ShotStatus.FAILED
+                    invalidate_shot_lineage(state, shot)
+                    state.record(
+                        "permission_denied",
+                        shot=shot.id,
+                        layer=layer.kind,
+                        engine=layer.engine,
+                    )
+                    return state
+                if (
+                    failure_kind is LayerFailureKind.TRANSIENT
+                    and transient_retries < MAX_TRANSIENT_RETRIES
+                ):
+                    # P1: el gasto del intento fallido ya se acumuló; el
+                    # reintento solo procede si el cap RESTANTE lo permite.
+                    if shot.cost_cap_usd > 0 and shot.cost_spent_usd >= shot.cost_cap_usd:
+                        tier = shot.escalate_replan()
+                        invalidate_shot_lineage(state, shot)
+                        state.record(
+                            "budget_exhausted",
+                            shot=shot.id,
+                            layer=layer.kind,
+                            engine=layer.engine,
+                            tier=str(tier) if tier else None,
+                            cost_cap_usd=shot.cost_cap_usd,
+                            cost_spent_usd=shot.cost_spent_usd,
+                        )
+                        return state
+                    transient_retries += 1
+                    state.record(
+                        "layer_transient_retry",
+                        shot=shot.id,
+                        layer=layer.kind,
+                        engine=layer.engine,
+                        attempt=transient_retries,
+                        max_retries=MAX_TRANSIENT_RETRIES,
+                        failure_kind=str(failure_kind),
+                    )
+                    continue
                 shot.error = str(result.get("error", "fallo de capa sin detalle"))[:500]
                 # un fallo de ejecución escala el replan igual que un fallo de
                 # aceptación: local->plantilla->global->FAILED. Así un runner que
@@ -423,6 +546,7 @@ def execute_next_shot(
                     layer=layer.kind,
                     engine=layer.engine,
                     tier=str(tier) if tier else None,
+                    failure_kind=str(failure_kind),
                 )
                 return state
             layer.output_path = result.get("output_path")

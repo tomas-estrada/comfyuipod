@@ -45,9 +45,19 @@ _EXPORT_FORMATS = ("usd", "gltf", "fbx")
 _STUB_PNG = (
     b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 )
+_STUB_EXR = b"\x76\x2f\x31\x01" + b"\x00" * 32
 _STUB_GLB_HEADER = b"glTF\x02\x00\x00\x00\x14\x00\x00\x00" + b"\x00" * 12
 _STUB_USD = b'#usda 1.0\n( defaultPrim = "World" )\ndef Xform "World" {}\n'
 _STUB_FBX = b"; FBX stub (M3-D STUDIO_STUB_BLENDER)\n"
+
+# Magic bytes reales por extensión para validar artefactos producidos.
+_GLTF_MAGIC = b"glTF"
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_EXR_MAGIC = b"\x76\x2f\x31\x01"
+_FORMAT_MAGICS = {".png": _PNG_MAGIC, ".exr": _EXR_MAGIC, ".glb": _GLTF_MAGIC}
+
+#: clase de fallo cuando el run acaba "bien" pero los artefactos no valen.
+FAILURE_INVALID_OUTPUT = "blender_invalid_output"
 
 
 def find_blender_bin() -> str | None:
@@ -124,10 +134,51 @@ class BlenderResult:
     log_tail: str = ""
     duration_s: float = 0.0
     stubbed: bool = False
+    #: motivo de rechazo de artefactos (ausencia/vacíos/magic bytes), None si
+    #: todos los artefactos producidos valen. Un run puede acabar con
+    #: `exit_code == 0` y aun así NO ser ok: "acabó" no es "produjo artefacto".
+    validation_error: str | None = None
 
     @property
     def ok(self) -> bool:
-        return self.exit_code == 0
+        return self.exit_code == 0 and self.validation_error is None
+
+
+def validate_blender_outputs(
+    spec: BlenderRenderSpec | BlenderExportSpec, outputs: list[Path]
+) -> str | None:
+    """Valida los artefactos de un run. None = válidos; str = motivo de rechazo.
+
+    - vacío: un render/export que no escribió NADA no es un éxito (el modo
+      export ya lo protegía a nivel de script; esto lo cubre a nivel de run,
+      y aplica también al modo render, que no tenía ningún check).
+    - magic bytes: PNG/EXR/GLB con cabecera inválida se rechazan (un `.glb`
+      truncado o un PNG corrupto no deben registrarse como artefacto).
+    - export glTF reclamado: si se pidió `gltf` y no se produjo ningún `.glb`,
+      el paquete UE-ready está incompleto.
+    """
+    if not outputs:
+        if isinstance(spec, BlenderRenderSpec):
+            return (
+                "render sin artefactos: Blender terminó sin escribir frames "
+                f"en {spec.output_dir}"
+            )
+        return f"export sin artefactos: no se escribió ningún fichero en {spec.output_dir}"
+    if isinstance(spec, BlenderExportSpec) and "gltf" in spec.formats:
+        if not any(p.suffix.lower() == ".glb" for p in outputs):
+            return "export glTF reclamado pero no se produjo ningún .glb"
+    for p in outputs:
+        magic = _FORMAT_MAGICS.get(p.suffix.lower())
+        if magic is None:
+            continue
+        try:
+            with p.open("rb") as artifact:
+                head = artifact.read(len(magic))
+        except OSError as exc:
+            return f"artefacto ilegible {p.name}: {exc}"
+        if head != magic:
+            return f"magic bytes de {p.suffix} inválidos en {p.name}"
+    return None
 
 
 def classify_blender_failure(exit_code: int, log_tail: str) -> str:
@@ -268,10 +319,11 @@ def _stub_outputs_for(spec: BlenderRenderSpec | BlenderExportSpec) -> list[Path]
     if isinstance(spec, BlenderRenderSpec):
         count = spec.frames if spec.frames > 1 else 1
         ext = "exr" if spec.output_format == "exr" else "png"
+        blob = _STUB_EXR if spec.output_format == "exr" else _STUB_PNG
         for i in range(count):
             suffix = f"_{i + 1:04d}" if spec.frames > 1 else ""
             path = out_dir / f"render{suffix}.{ext}"
-            path.write_bytes(_STUB_PNG)
+            path.write_bytes(blob)
             created.append(path)
     else:
         stem = Path(spec.scene_path).stem
@@ -308,7 +360,12 @@ async def run_blender_spec(
 
     if is_stub_mode():
         outputs = _stub_outputs_for(spec)
+        # el stub también pasa por la validación: la garantía "run_blender_spec
+        # nunca devuelve ok con artefactos inválidos" cubre ambos caminos.
+        validation_error = validate_blender_outputs(spec, outputs)
         tail = "[STUB] STUDIO_STUB_BLENDER=1: ejecución simulada de Blender.\n"
+        if validation_error:
+            tail += f"[VALIDACION] {validation_error}\n"
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(tail)
         return BlenderResult(
@@ -317,6 +374,7 @@ async def run_blender_spec(
             log_tail=tail,
             duration_s=time.monotonic() - started,
             stubbed=True,
+            validation_error=validation_error,
         )
 
     binary = blender_bin or find_blender_bin()
@@ -382,18 +440,23 @@ async def run_blender_spec(
 
     exit_code = -1 if timed_out else (proc.returncode if proc.returncode is not None else -1)
     outputs = sorted(p for p in out_dir.iterdir() if p.is_file()) if out_dir.is_dir() else []
+    outputs = [
+        p
+        for p in outputs
+        if p.name not in ("blender_job.py", "blender.log", BLENDER_LOG_NAME)
+    ]
+    validation_error = validate_blender_outputs(spec, outputs)
     tail = redactor.redact(raw[-LOG_TAIL_BYTES:])
     if timed_out:
         tail = f"[TIMEOUT tras {spec.timeout_s:.0f}s]\n" + tail
+    if validation_error:
+        tail = f"[VALIDACION] {validation_error}\n" + tail
     return BlenderResult(
         exit_code=exit_code,
-        outputs=[
-            p
-            for p in outputs
-            if p.name not in ("blender_job.py", "blender.log", BLENDER_LOG_NAME)
-        ],
+        outputs=outputs,
         log_tail=tail,
         duration_s=time.monotonic() - started,
+        validation_error=validation_error,
     )
 
 
@@ -441,6 +504,7 @@ def write_unreal_manifest(manifest: dict[str, Any], dest: Path) -> Path:
 
 __all__ = [
     "BLENDER_LOG_NAME",
+    "FAILURE_INVALID_OUTPUT",
     "BlenderExportSpec",
     "BlenderRenderSpec",
     "BlenderResult",
@@ -451,5 +515,6 @@ __all__ = [
     "find_blender_bin",
     "is_stub_mode",
     "run_blender_spec",
+    "validate_blender_outputs",
     "write_unreal_manifest",
 ]
