@@ -756,6 +756,7 @@ class DomDocument {
 const document = new DomDocument();
 const elementSpecs = [
   ["div", "active-project-badge"],
+  ["span", "active-project-name"],
   ["h2", "active-project-title"],
   ["code", "active-project-id-code"],
   ["span", "active-project-summary"],
@@ -787,6 +788,9 @@ for (const [tag, id, extra] of elementSpecs) {
   if (extra) Object.assign(el, extra);
   document.body.appendChild(el);
 }
+document.getElementById("active-project-badge").appendChild(
+  document.getElementById("active-project-name")
+);
 
 const projectsById = {};
 for (const p of payload.projects) {
@@ -970,7 +974,7 @@ function getVisibleMessages() {
 function snapshotDom() {
   const listEl = document.getElementById("chat-messages-list");
   return {
-    activeBadgeText: document.getElementById("active-project-badge").textContent.trim(),
+    activeBadgeText: document.getElementById("active-project-name").textContent.trim(),
     activeProjectTitle: document.getElementById("active-project-title").textContent.trim(),
     activeProjectIdCode: document.getElementById("active-project-id-code").textContent.trim(),
     chatDomProjectIdAttr: listEl.getAttribute("data-chat-project-id"),
@@ -1481,7 +1485,7 @@ def test_panel_chat_after_deleting_only_project_recovers_and_never_posts_to_dele
     after_delete = result["afterDeleteSnap"]
     assert after_delete["chatDomProjectIdAttr"] is None
     assert after_delete["activeProjectIdCode"] == "Sin proyecto"
-    assert "Proyecto: Ninguno" in after_delete["activeBadgeText"]
+    assert after_delete["activeBadgeText"] == "Ninguno seleccionado"
     assert "eliminado" in after_delete["toastText"]
     assert "toast-success" in after_delete["toastClass"]
     assert all(
