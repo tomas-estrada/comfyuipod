@@ -97,6 +97,56 @@ def test_pending_lock_is_a_release_blocker_not_a_coherence_error() -> None:
     assert any("lock de código pendiente" in b for b in blockers)
 
 
+def test_a07_requires_immutable_revision_and_component_evidence() -> None:
+    mod = _load_module()
+    manifest = {
+        "engines": [
+            {
+                "id": "engine",
+                "disposition": "required",
+                "build_selected": True,
+                "terms_review": "reviewed",
+                "lock_required_before_build": True,
+                "code_revision": "v1.2.3",
+                "dependency_lock_hashes": {"requirements.txt": "not-a-hash"},
+                "redistribution_decision": None,
+                "notices_reviewed": False,
+                "implementation_status": "specified_not_implemented_here",
+            }
+        ]
+    }
+    problems, blockers = mod.validate(manifest, set())
+    assert problems == []
+    assert any("SHA inmutable de 40 hex" in blocker for blocker in blockers)
+    assert any("hashes SHA-256" in blocker for blocker in blockers)
+    assert any("decisión explícita de redistribución" in blocker for blocker in blockers)
+    assert any("revisión explícita de notices" in blocker for blocker in blockers)
+    assert any("entrypoint real" in blocker for blocker in blockers)
+
+
+def test_a07_accepts_only_complete_declared_component_pins() -> None:
+    mod = _load_module()
+    manifest = {
+        "engines": [
+            {
+                "id": "engine",
+                "disposition": "required",
+                "build_selected": True,
+                "terms_review": "reviewed",
+                "lock_required_before_build": True,
+                "code_revision": "a" * 40,
+                "dependency_lock_hashes": {"requirements.txt": "b" * 64},
+                "redistribution_decision": "allowed",
+                "notices_reviewed": True,
+                "implementation_status": "implemented",
+            }
+        ]
+    }
+    problems, blockers = mod.validate(manifest, set())
+    assert problems == []
+    assert blockers == []
+
+
 def test_duplicate_id_is_a_problem() -> None:
     mod = _load_module()
     manifest = {

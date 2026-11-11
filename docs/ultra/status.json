@@ -59,7 +59,7 @@
     "note": "Imagen candidata previa con digest real verificable."
   },
   "sub_items_pending": [
-    "fijar los 57 engine locks (code_revision por familia) en engines.json",
+    "completar la evidencia A07 para las 58 rutas build_selected de engines.json",
     "protocolo describe/execute/cancel/unload uniforme por engine",
     "enganchar av_recipes->seleccion en el planner/executor real",
     "LangGraph real ejecutando la ruta efectiva en la imagen",
