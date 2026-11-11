@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -88,23 +89,25 @@ def _first_y(path: Path) -> int:
         [
             FFMPEG,
             "-v",
-            "error",
+            "info",
             "-i",
             str(path),
             "-frames:v",
             "1",
+            "-vf",
+            "signalstats,metadata=print:file=-",
             "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "yuv420p",
-            "pipe:1",
+            "null",
+            "-",
         ],
         check=True,
         capture_output=True,
         timeout=120,
     )
-    assert proc.stdout
-    return proc.stdout[0]
+    output = proc.stdout + proc.stderr
+    match = re.search(rb"lavfi\.signalstats\.YMIN=(\d+(?:\.\d+)?)", output)
+    assert match, output.decode("utf-8", errors="replace")
+    return round(float(match.group(1)))
 
 
 def _rgb_at(path: Path, x: int, y: int) -> tuple[int, int, int]:
