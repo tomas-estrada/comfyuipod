@@ -256,6 +256,11 @@ def test_val_perc_002_clip_sqlite_vec_semantic_search_ranks_target_shot_top(
     idx_body = idx_resp.json()
     assert idx_body["shots_indexed"] >= 3
     assert (studio_data_dir / "index.db").is_file()
+    ingested = idx_body["ingestion"]
+    ingested_video = next(item for item in ingested["assets"] if item["asset_id"] == vid_id)
+    assert ingested_video["status"] == "pending_weights"
+    assert ingested_video["media_info"]["duration_sec"] > 0
+    assert ingested_video["media_validation"] == "verified"
 
     # 1. Consulta por escena verde ("plano con gorra verde")
     green_search = client.get(
@@ -267,6 +272,8 @@ def test_val_perc_002_clip_sqlite_vec_semantic_search_ranks_target_shot_top(
     assert len(green_shots) >= 3
     top_green = green_shots[0]
     assert abs(float(top_green["timestamp_sec"]) - 0.0) <= 0.6
+    assert top_green["source_asset_id"] == vid_id
+    assert float(top_green["timestamp_sec"]) >= 0.0
     assert "verde" in (top_green["metadata"].get("tags") or [])
 
     # 2. Consulta por escena roja ("fuego rojo intenso")
@@ -290,6 +297,66 @@ def test_val_perc_002_clip_sqlite_vec_semantic_search_ranks_target_shot_top(
     top_blue = blue_shots[0]
     assert abs(float(top_blue["timestamp_sec"]) - 4.0) <= 0.6
     assert "azul" in (top_blue["metadata"].get("tags") or [])
+
+
+def test_perception_ingest_rejects_nonempty_corrupt_media_without_aborting(
+    client: TestClient,
+) -> None:
+    project = client.post(
+        "/studio/api/projects",
+        json={"name": "Corrupt media isolation", "aspect_ratio": "16:9"},
+    ).json()
+    project_id = project["id"]
+    upload = client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("broken.mp4", b"not an MP4 container", "video/mp4")},
+        data={"category": "uploads"},
+    )
+    assert upload.status_code == 201, upload.text
+    asset_id = upload.json()["id"]
+
+    indexed = client.post(
+        f"/studio/api/projects/{project_id}/perception/index",
+        json={"asset_id": asset_id, "interval_sec": 1.0, "detect_faces": False},
+    )
+    assert indexed.status_code == 200, indexed.text
+    result = indexed.json()
+    assert result["status"] == "no_valid_media"
+    assert result["ingestion"]["counts"]["corrupt"] == 1
+    assert result["ingestion"]["assets"][0]["asset_id"] == asset_id
+    assert "source_path" not in result["ingestion"]["assets"][0]
+
+
+def test_perception_ingest_does_not_index_when_ffprobe_is_unavailable(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from comfy_studio import media_bins
+
+    project = client.post(
+        "/studio/api/projects",
+        json={"name": "Probe unavailable", "aspect_ratio": "16:9"},
+    ).json()
+    project_id = project["id"]
+    video_path = tmp_path / "valid.mp4"
+    _synthesize_scene_video_mp4(video_path)
+    upload = client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("valid.mp4", video_path.read_bytes(), "video/mp4")},
+        data={"category": "uploads"},
+    )
+    assert upload.status_code == 201, upload.text
+    monkeypatch.setattr(media_bins, "find_ffprobe", lambda: None)
+
+    result = client.post(
+        f"/studio/api/projects/{project_id}/perception/index",
+        json={"asset_id": upload.json()["id"], "interval_sec": 1.0, "detect_faces": False},
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "validation_unavailable"
+    assert result.json()["shots_indexed"] == 0
+    assert result.json()["ingestion"]["assets"][0]["media_validation"] == "unavailable"
 
 
 # ---------------------------------------------------------------------------
