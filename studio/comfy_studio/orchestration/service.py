@@ -56,6 +56,15 @@ class ProductionAlreadyTerminalError(RuntimeError):
 _TERMINAL_PHASES = frozenset({"done", "simulated", "failed", "cancelled", "halted"})
 
 
+def _terminal_reason(state: ProductionState) -> str | None:
+    """Última razón terminal tipada del log (p.ej. 'ambiguous_purpose'), o None."""
+    for entry in reversed(state.log):
+        if entry.get("kind") == "plan_rejected":
+            reason = str(entry.get("reason") or "")
+            return reason or None
+    return None
+
+
 def _gate_key(production_id: str) -> str:
     return f"__gate__{production_id}"
 
@@ -165,6 +174,17 @@ class ProductionService:
         state.metadata["execution_mode"] = "real" if self._fully_wired else "simulated"
         state.metadata["simulated"] = not self._fully_wired
         _plan(state, self.collaborators.planner)
+        if state.phase == "failed":
+            # P1: plan imposible (propósito ambiguo sin hipótesis que preservar)
+            # termina con razón tipada: no hay puerta ni aprobación que sufrir,
+            # y aprobarlo después falla por ProductionAlreadyTerminalError.
+            self.checkpointer.save(state)
+            return {
+                "production_id": state.id,
+                "phase": state.phase,
+                "terminal_reason": _terminal_reason(state),
+                "plan": state.to_dict(),
+            }
         if self.resource_vram_budget_mb is not None:
             binding = bind_recipes(
                 state,
@@ -719,6 +739,10 @@ class ProductionService:
         for s in shots:
             by_status[str(s.status)] = by_status.get(str(s.status), 0) + 1
         accepted = sum(1 for s in shots if s.status == ShotStatus.ACCEPTED)
+        # P1: solo hay gasto contable si algún runner lo REPORTÓ. Los
+        # adaptadores de motor actuales no producen `cost_usd`: exponer 0.0
+        # sería afirmar un gasto que no se midió -> None (desconocido).
+        spend_reported = any(s.spend_reported for s in shots)
         return {
             "production_id": state.id,
             "phase": state.phase,
@@ -727,6 +751,16 @@ class ProductionService:
             "shots_total": len(shots),
             "shots_accepted": accepted,
             "shots_by_status": by_status,
+            # gasto REPORTADO acumulado de ejecución sobre todos los shots (P1):
+            # sobrevive a los escalones de replan y a los reinicios del pod.
+            # Límite inferior si solo reportan algunos runners.
+            "cost_spent_usd": (
+                round(sum(s.cost_spent_usd for s in shots), 6)
+                if spend_reported
+                else None
+            ),
+            "spend_reported": spend_reported,
+            "terminal_reason": _terminal_reason(state),
             "storyboard_approved": state.storyboard_approved,
             "cancel_requested": bool(state.metadata.get("cancel_requested")),
             "final_output_path": state.final_output_path,

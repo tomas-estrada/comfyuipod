@@ -37,6 +37,8 @@ from comfy_studio.orchestration.executor import (
     EngineRunner,
     StubEngineRunner,
     execute_next_shot,
+    invalidate_shot_lineage,
+    record_shot_lineage,
     topological_shots,
 )
 from comfy_studio.orchestration.graph import (
@@ -45,8 +47,10 @@ from comfy_studio.orchestration.graph import (
     langgraph_available,
 )
 from comfy_studio.orchestration.health import orchestration_health_report
+from comfy_studio.orchestration.lineage import LineageGraph, LineageNode
 from comfy_studio.orchestration.planner import (
     PlannerLLM,
+    PlanTerminalReason,
     StubPlannerLLM,
     plan_production,
     replan_shot_focalized,
@@ -91,7 +95,10 @@ __all__ = [
     "EngineRunnerAdapter",
     "LLMPlannerAdapter",
     "Layer",
+    "LineageGraph",
+    "LineageNode",
     "PlannerLLM",
+    "PlanTerminalReason",
     "ProductionCheckpointer",
     "ProductionGraph",
     "ProductionAlreadyTerminalError",
@@ -119,10 +126,12 @@ __all__ = [
     "build_server_collaborators",
     "evaluate_and_replan",
     "execute_next_shot",
+    "invalidate_shot_lineage",
     "langgraph_available",
     "make_template_reselector",
     "orchestration_health_report",
     "plan_production",
+    "record_shot_lineage",
     "replan_shot_focalized",
     "topological_shots",
 ]

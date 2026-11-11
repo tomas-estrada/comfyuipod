@@ -24,6 +24,7 @@ from collections.abc import Callable
 from threading import Event
 from typing import Any, Protocol
 
+from comfy_studio.orchestration.executor import invalidate_shot_lineage
 from comfy_studio.orchestration.state import (
     ProductionState,
     ReplanTier,
@@ -192,6 +193,12 @@ def evaluate_and_replan(
             )
         else:  # LOCAL
             state.record("replan", shot=shot.id, tier=str(tier))
+        # P1 (W04): el shot entra en replan — invalidar su procedencia en el
+        # DAG de lineage DESPUÉS de la acción del escalón, para que las entradas
+        # del nodo reflejen ya la plantilla/descripción/capas nuevas y la
+        # invalidación selectiva (propio + descendientes) use fingerprints
+        # frescos. Se persiste en state.lineage con el checkpoint del paso.
+        invalidate_shot_lineage(state, shot)
         return state
 
     return state
