@@ -85,6 +85,17 @@ def test_project_raster_layers_persist_and_composite_real_pixels(
     prior_output = client.get(result_asset["preview_url"].replace("/file", "")).json()
     assert prior_output["metadata"]["stale"] is True
 
+    rerendered = client.post(f"{url}/composite")
+    assert rerendered.status_code == 201
+    changed_layers = edited.json()["layers"]
+    changed_layers[1]["region"] = "shadow-region"
+    replaced = client.put(url, json={"layers": changed_layers})
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["invalidated_layer_ids"] == ["overlay"]
+    previous_asset_url = rerendered.json()["asset"]["preview_url"].replace("/file", "")
+    previous_asset = client.get(previous_asset_url).json()
+    assert previous_asset["metadata"]["stale"] is True
+
 
 def test_raster_layers_reject_cycles_and_cross_project_assets(client: TestClient) -> None:
     first_id = client.post("/studio/api/projects", json={"name": "A"}).json()["id"]

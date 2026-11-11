@@ -38,6 +38,28 @@ class RasterLayerEditRequest(BaseModel):
     asset_id: str
 
 
+def _mark_previous_output_stale(
+    store: ProjectStore, project_id: str, invalidated: set[str]
+) -> None:
+    previous_output = store.get_meta(project_id, _OUTPUT_META_KEY)
+    if not isinstance(previous_output, dict) or not previous_output.get("asset_id"):
+        return
+    store.update_asset_metadata(
+        project_id,
+        str(previous_output["asset_id"]),
+        metadata={
+            "stale": True,
+            "stale_reason": "raster_layer_source_changed",
+            "invalidated_layer_ids": sorted(invalidated),
+        },
+    )
+    store.set_meta(
+        project_id,
+        _OUTPUT_META_KEY,
+        {**previous_output, "status": "stale"},
+    )
+
+
 def _store(request: Request) -> ProjectStore:
     return request.app.state.store
 
@@ -63,8 +85,30 @@ def register_routes(app: FastAPI) -> None:
                     raise RasterLayerError(
                         f"asset inexistente en este proyecto: {layer.asset_id}"
                     )
+            previous = store.get_meta(project_id, _META_KEY)
+            old_layers = parse_manifest(previous) if previous is not None else []
+            old_by_id = {layer.layer_id: layer for layer in old_layers}
+            new_by_id = {layer.layer_id: layer for layer in layers}
+            invalidated = {
+                layer_id
+                for layer_id in old_by_id.keys() | new_by_id.keys()
+                if old_by_id.get(layer_id) != new_by_id.get(layer_id)
+            }
+            if invalidated:
+                descendants = set(invalidated)
+                for changed_id in tuple(invalidated):
+                    if changed_id in old_by_id:
+                        descendants.update(affected_by(old_layers, changed_id))
+                    if changed_id in new_by_id:
+                        descendants.update(affected_by(layers, changed_id))
+                _mark_previous_output_stale(store, project_id, descendants)
+                invalidated = descendants
             store.set_meta(project_id, _META_KEY, manifest)
-            return {**manifest, "render_validation": "not_run"}
+            return {
+                **manifest,
+                "render_validation": "not_run",
+                "invalidated_layer_ids": sorted(invalidated),
+            }
         except RasterLayerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -104,22 +148,7 @@ def register_routes(app: FastAPI) -> None:
             ]
             manifest = canonical_manifest(edited)
             store.set_meta(project_id, _META_KEY, manifest)
-            previous_output = store.get_meta(project_id, _OUTPUT_META_KEY)
-            if isinstance(previous_output, dict) and previous_output.get("asset_id"):
-                store.update_asset_metadata(
-                    project_id,
-                    str(previous_output["asset_id"]),
-                    metadata={
-                        "stale": True,
-                        "stale_reason": "raster_layer_source_changed",
-                        "invalidated_layer_ids": sorted(affected),
-                    },
-                )
-                store.set_meta(
-                    project_id,
-                    _OUTPUT_META_KEY,
-                    {**previous_output, "status": "stale"},
-                )
+            _mark_previous_output_stale(store, project_id, affected)
             return {
                 **manifest,
                 "invalidated_layer_ids": sorted(affected),
