@@ -14,6 +14,7 @@ EXPECTED_ROUTES: list[str] = [
     "DELETE /studio/api/projects/{project_id}/identities/{identity_id}",
     "DELETE /studio/api/projects/{project_id}/media/{asset_id}",
     "DELETE /studio/api/projects/{project_id}/pins/{pin_id}",
+    "DELETE /studio/api/projects/{project_id}/sound/causes/{cause_id}",
     "DELETE,GET,PATCH,POST,PUT /studio/api/{unknown_path:path}",
     "GET /favicon.ico",
     "GET /health",
@@ -71,6 +72,7 @@ EXPECTED_ROUTES: list[str] = [
     "GET /studio/api/projects/{project_id}/pins/summary",
     "GET /studio/api/projects/{project_id}/transcriptions",
     "GET /studio/api/projects/{project_id}/transcriptions/{transcription_id}/subtitles",
+    "GET /studio/api/projects/{project_id}/sound/mix",
     "GET /studio/api/status",
     "GET /studio/api/templates",
     "GET /studio/api/templates/{template_id}",
@@ -127,6 +129,7 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/uploads",
     "POST /studio/api/templates/{template_id}/submit",
     "PUT /studio/api/projects/{project_id}",
+    "PUT /studio/api/projects/{project_id}/sound/mix",
 ]
 
 

@@ -84,3 +84,22 @@ def test_mix_serialization_groups_by_stem() -> None:
     d = _mix().to_dict()
     assert "foley" in d["stems"] and "ambience" in d["stems"]
     assert len(d["stems"]["foley"]) == 3
+    assert Mix.from_dict(d).to_dict() == d
+
+
+def test_mix_rejects_non_finite_timing_and_duplicate_event_ids() -> None:
+    from math import inf
+
+    invalid_time = Mix(fps=24, stems=[Stem(name="foley", events=[SoundEvent("x", inf)])])
+    with pytest.raises(AudioError, match="onset inválido"):
+        invalid_time.validate()
+
+    duplicate = Mix(
+        fps=24,
+        stems=[
+            Stem(name="foley", events=[SoundEvent("same", 0.0)]),
+            Stem(name="music", events=[SoundEvent("same", 0.5)]),
+        ],
+    )
+    with pytest.raises(AudioError, match="event_id duplicado"):
+        duplicate.validate()

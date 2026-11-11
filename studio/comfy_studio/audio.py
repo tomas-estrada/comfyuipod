@@ -22,6 +22,7 @@ de stems, que es lo que A20 pide a nivel de contrato.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,6 +40,16 @@ class SoundEvent:
     loudness_lufs: float = -23.0  # EBU R128 de referencia
     #: id de la causa (evento visual/contacto) que origina este sonido, o None.
     caused_by: str | None = None
+
+    def validate(self) -> None:
+        if not self.event_id.strip():
+            raise AudioError("event_id vacío")
+        if not math.isfinite(self.onset_s) or self.onset_s < 0:
+            raise AudioError(f"evento {self.event_id}: onset inválido")
+        if not math.isfinite(self.loudness_lufs):
+            raise AudioError(f"evento {self.event_id}: loudness no finito")
+        if self.caused_by is not None and not self.caused_by.strip():
+            raise AudioError(f"evento {self.event_id}: caused_by vacío")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +70,11 @@ class Stem:
     def onsets(self) -> list[float]:
         return sorted(e.onset_s for e in self.events)
 
+    def to_dict(self) -> list[dict[str, Any]]:
+        if not self.name.strip():
+            raise AudioError("stem con nombre vacío")
+        return [event.to_dict() for event in self.events]
+
 
 @dataclass(slots=True)
 class Mix:
@@ -66,16 +82,24 @@ class Mix:
 
     fps: int
     stems: list[Stem] = field(default_factory=list)
+    #: 0 significa duración todavía sin declarar (no impone límite superior).
     duration_s: float = 0.0
 
     def validate(self) -> None:
-        if self.fps <= 0:
+        if self.fps <= 0 or not math.isfinite(self.duration_s) or self.duration_s < 0:
             raise AudioError("fps del timebase debe ser > 0")
         names = [s.name for s in self.stems]
         if len(names) != len(set(names)):
             raise AudioError("stems con nombre duplicado (deben estar separados)")
+        event_ids: set[str] = set()
         for stem in self.stems:
+            if not stem.name.strip():
+                raise AudioError("stem con nombre vacío")
             for ev in stem.events:
+                ev.validate()
+                if ev.event_id in event_ids:
+                    raise AudioError(f"event_id duplicado: {ev.event_id}")
+                event_ids.add(ev.event_id)
                 if ev.onset_s < 0 or (self.duration_s and ev.onset_s > self.duration_s):
                     raise AudioError(
                         f"evento {ev.event_id} fuera del timebase [0,{self.duration_s}]"
@@ -89,13 +113,53 @@ class Mix:
         return int(round(onset_s * self.fps))
 
     def to_dict(self) -> dict[str, Any]:
+        self.validate()
         return {
+            "schema": "audio-mix/1",
             "fps": self.fps,
             "duration_s": self.duration_s,
-            "stems": {
-                s.name: [e.to_dict() for e in s.events] for s in self.stems
-            },
+            "stems": {s.name: [e.to_dict() for e in s.events] for s in self.stems},
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Mix:
+        if not isinstance(data, dict) or data.get("schema") not in (None, "audio-mix/1"):
+            raise AudioError("mix serializado inválido o schema desconocido")
+        stems_raw = data.get("stems", {})
+        if not isinstance(stems_raw, dict) or any(
+            not isinstance(events, list) for events in stems_raw.values()
+        ):
+            raise AudioError("stems serializados deben ser listas agrupadas por nombre")
+        try:
+            mix = cls(
+                fps=int(data["fps"]),
+                duration_s=float(data.get("duration_s", 0.0)),
+                stems=[
+                    Stem(
+                        name=str(name),
+                        events=[
+                            SoundEvent(
+                                event_id=str(event["event_id"]),
+                                onset_s=float(event["onset_s"]),
+                                loudness_lufs=float(event.get("loudness_lufs", -23.0)),
+                                caused_by=(
+                                    str(event["caused_by"])
+                                    if event.get("caused_by") is not None
+                                    else None
+                                ),
+                            )
+                            for event in events
+                        ],
+                    )
+                    for name, events in stems_raw.items()
+                ],
+            )
+            mix.validate()
+            return mix
+        except (KeyError, TypeError, ValueError) as exc:
+            if isinstance(exc, AudioError):
+                raise
+            raise AudioError(f"mix serializado inválido: {exc}") from exc
 
 
 def delete_cause(mix: Mix, cause_id: str) -> set[str]:
@@ -123,9 +187,7 @@ def assert_separate_stems(mix: Mix) -> None:
     único stem 'mixed' no acredita separación real.
     """
     if len(mix.stems) == 1 and mix.stems[0].name in ("mixed", "master"):
-        raise AudioError(
-            "un único stem mezclado no acredita separación de pistas (A20/W19)"
-        )
+        raise AudioError("un único stem mezclado no acredita separación de pistas (A20/W19)")
 
 
 __all__ = [

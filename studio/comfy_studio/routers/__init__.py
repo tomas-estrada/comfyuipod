@@ -8,6 +8,7 @@ from . import (
     ads,
     assets,
     atlas,
+    audio,
     brief,
     chat,
     cinematic,
@@ -36,6 +37,7 @@ _MODULES = (
     media_ops,
     brief,
     ads,
+    audio,
     review_pins,
     montage,
 )
