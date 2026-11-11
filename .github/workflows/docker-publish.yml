@@ -1561,11 +1561,29 @@ jobs:
           mock_hook_dir=""
 
       - name: Subir requirements.lock como artefacto de reproducibilidad (ALTA-05)
+        id: requirements_lock_upload
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: requirements-lock
           path: requirements.lock
           retention-days: 14
+
+      - name: Reintentar requirements.lock si falló el primer cierre
+        id: requirements_lock_retry
+        if: steps.requirements_lock_upload.outcome != 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: requirements-lock
+          path: requirements.lock
+          retention-days: 14
+          overwrite: true
+
+      - name: Exigir artefacto requirements.lock antes de promover
+        if: always() && steps.requirements_lock_upload.outcome != 'success' && steps.requirements_lock_retry.outcome != 'success'
+        run: |
+          echo "::error::No se pudo publicar requirements.lock después de dos acciones de upload-artifact; se cancela la promoción."
+          exit 1
 
       - name: Promover imagen verificada a latest / semver (ALTA-01)
         if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
