@@ -76,6 +76,9 @@ EXPECTED_ROUTES: list[str] = [
     "GET /studio/api/projects/{project_id}/transcriptions",
     "GET /studio/api/projects/{project_id}/transcriptions/{transcription_id}/subtitles",
     "GET /studio/api/projects/{project_id}/sound/mix",
+    "GET /studio/api/projects/{project_id}/voice",
+    "GET /studio/api/projects/{project_id}/voice/lexicons/{locale}",
+    "GET /studio/api/projects/{project_id}/voice/tracks/{speaker}",
     "GET /studio/api/status",
     "GET /studio/api/templates",
     "GET /studio/api/templates/{template_id}",
@@ -131,12 +134,15 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/spatial-memory/anchors/{anchor_id}/visits",
     "POST /studio/api/projects/{project_id}/templates/{template_id}/submit",
     "POST /studio/api/projects/{project_id}/transcribe",
+    "POST /studio/api/projects/{project_id}/voice/lexicons/{locale}/validate",
     "POST /studio/api/projects/{project_id}/uploads",
     "POST /studio/api/templates/{template_id}/submit",
     "PUT /studio/api/projects/{project_id}",
     "PUT /studio/api/projects/{project_id}/sound/mix",
     "PUT /studio/api/projects/{project_id}/spatial-memory/anchors/{anchor_id}",
     "PUT /studio/api/projects/{project_id}/aovs",
+    "PUT /studio/api/projects/{project_id}/voice/lexicons/{locale}",
+    "PUT /studio/api/projects/{project_id}/voice/tracks/{speaker}",
 ]
 
 

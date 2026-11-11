@@ -24,6 +24,7 @@ Verifica que el acento aprobado viene de datos, no de una suposición.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,10 +45,14 @@ class PronunciationLexicon:
 
     def add(self, text: str, phonetic: str) -> None:
         """Corrige/añade una entrada (el lexicon es corregible)."""
-        self.entries[text.lower()] = phonetic
+        key = text.strip().lower()
+        value = phonetic.strip()
+        if not key or not value:
+            raise VoiceError("entrada de lexicon requiere texto y fonética")
+        self.entries[key] = value
 
     def covers(self, text: str) -> bool:
-        return text.lower() in self.entries
+        return text.strip().lower() in self.entries
 
     def coverage(self, sample: list[str]) -> float:
         """Fracción de un dataset de muestra cubierta por el lexicon."""
@@ -55,6 +60,42 @@ class PronunciationLexicon:
             return 0.0
         hit = sum(1 for t in sample if self.covers(t))
         return hit / len(sample)
+
+    def validate(self) -> None:
+        if not self.locale.strip():
+            raise VoiceError("locale vacío")
+        if any(not text.strip() or not phonetic.strip() for text, phonetic in self.entries.items()):
+            raise VoiceError("entradas de lexicon requieren texto y fonética")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "locale": self.locale,
+            "entries": dict(self.entries),
+            "approved_variant": self.approved_variant,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PronunciationLexicon:
+        try:
+            if not isinstance(data, dict):
+                raise VoiceError("lexicon debe ser un objeto")
+            entries = data.get("entries", {})
+            if not isinstance(entries, dict):
+                raise VoiceError("entries del lexicon debe ser un objeto")
+            lexicon = cls(
+                locale=str(data["locale"]),
+                entries={
+                    str(text).strip().lower(): str(value).strip() for text, value in entries.items()
+                },
+                approved_variant=bool(data.get("approved_variant", False)),
+            )
+            lexicon.validate()
+            return lexicon
+        except (KeyError, TypeError, ValueError) as exc:
+            if isinstance(exc, VoiceError):
+                raise
+            raise VoiceError(f"lexicon serializado inválido: {exc}") from exc
 
 
 def assert_approved_variant(
@@ -91,6 +132,23 @@ class Utterance:
     def duration_s(self) -> float:
         return max(0.0, self.end_s - self.start_s)
 
+    def validate(self) -> None:
+        if not self.speaker.strip() or not self.text.strip():
+            raise VoiceError("utterance requiere speaker y texto")
+        if not math.isfinite(self.start_s) or not math.isfinite(self.end_s):
+            raise VoiceError("utterance contiene tiempos no finitos")
+        if self.start_s < 0 or self.end_s <= self.start_s:
+            raise VoiceError("utterance requiere 0 <= start_s < end_s")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "speaker": self.speaker,
+            "text": self.text,
+            "start_s": self.start_s,
+            "end_s": self.end_s,
+        }
+
 
 @dataclass(slots=True)
 class VoiceTrack:
@@ -100,8 +158,11 @@ class VoiceTrack:
     utterances: list[Utterance] = field(default_factory=list)
 
     def validate(self) -> None:
+        if not self.speaker.strip():
+            raise VoiceError("speaker vacío")
         last_end = -1.0
         for u in self.utterances:
+            u.validate()
             if u.speaker != self.speaker:
                 raise VoiceError(
                     f"utterance de {u.speaker} en pista de {self.speaker} (mezcla de hablantes)"
@@ -109,6 +170,34 @@ class VoiceTrack:
             if u.start_s < last_end:
                 raise VoiceError(f"{self.speaker}: turnos solapados en {u.start_s}")
             last_end = u.end_s
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {"speaker": self.speaker, "utterances": [u.to_dict() for u in self.utterances]}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> VoiceTrack:
+        try:
+            if not isinstance(data, dict):
+                raise VoiceError("voice track debe ser un objeto")
+            track = cls(
+                speaker=str(data["speaker"]),
+                utterances=[
+                    Utterance(
+                        speaker=str(item["speaker"]),
+                        text=str(item["text"]),
+                        start_s=float(item["start_s"]),
+                        end_s=float(item["end_s"]),
+                    )
+                    for item in data.get("utterances", [])
+                ],
+            )
+            track.validate()
+            return track
+        except (KeyError, TypeError, ValueError) as exc:
+            if isinstance(exc, VoiceError):
+                raise
+            raise VoiceError(f"voice track serializada inválida: {exc}") from exc
 
 
 def sync_report(utterance: Utterance, asr_text: str) -> dict[str, Any]:
