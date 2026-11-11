@@ -515,6 +515,12 @@ def localized_repair(
             ffmpeg_timeout_s=ffmpeg_timeout_s,
             ffprobe_timeout_s=ffprobe_timeout_s,
         )
+        if not provenance["provenance_ok"]:
+            raise LocalizedRepairError(
+                "La comparación RGB de muestra fuera del intervalo editado no pasó; "
+                "la salida no se registró en el proyecto. Esta comparación es un "
+                "indicador limitado y no una prueba de identidad de fotogramas."
+            )
 
         if out_file.stat().st_size > MAX_LOCALIZED_OUTPUT_BYTES:
             raise LocalizedRepairError("El MP4 reparado supera el limite de tamano.")
@@ -542,6 +548,8 @@ def localized_repair(
                 "frame_provenance_ok": provenance["provenance_ok"],
                 "frame_provenance_max_delta_rgb": provenance["max_delta_rgb"],
                 "frame_provenance_tolerance_rgb": provenance["tolerance_rgb"],
+                "frame_check_method": provenance["comparison"],
+                "frame_check_sample_count": provenance["sample_count"],
                 "byte_identity_claimed": False,
             },
         )

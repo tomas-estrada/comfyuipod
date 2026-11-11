@@ -4652,9 +4652,10 @@ def create_default_tool_belt() -> ToolBelt:
             description=(
                 "Repara localizadamente un intervalo temporal de un vídeo: sustituye "
                 "[edit_start_sec, edit_end_sec] por un segmento editado y reensambla "
-                "el clip, verificando con mediciones de fotogramas que los fotogramas "
-                "fuera del intervalo editado proceden del vídeo fuente (sin afirmar "
-                "identidad de bytes tras encode lossy). Registra el resultado."
+                "el clip. Solo registra el resultado si la comparación muestreada de "
+                "RGB medio fuera del intervalo no detecta diferencias grandes. Es un "
+                "indicador de regresión limitado, no una prueba de procedencia, "
+                "identidad de píxeles ni identidad de bytes tras el encode con pérdida."
             ),
             args_model=LocalizedRepairArgs,
             handler=_handle_localized_repair,
