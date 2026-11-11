@@ -185,6 +185,21 @@ def _open_rgba(
         raise RasterLayerError(f"{asset_id}: PNG ilegible") from exc
 
 
+def validate_asset_references(
+    store: ProjectStore, project_id: str, layers: list[RasterLayer]
+) -> None:
+    """Require every layer reference to resolve to a project-owned PNG asset."""
+    for layer in validate_layers(layers):
+        asset = store.get_asset(project_id, layer.asset_id)
+        path = store.get_asset_path(project_id, layer.asset_id)
+        if asset is None or path is None:
+            raise RasterLayerError(
+                f"asset inexistente en este proyecto: {layer.asset_id}"
+            )
+        if asset.get("kind") != "image" or path.suffix.lower() != ".png":
+            raise RasterLayerError(f"{layer.asset_id}: se requiere un PNG del proyecto")
+
+
 def composite_layers(
     store: ProjectStore, project_id: str, layers: list[RasterLayer]
 ) -> tuple[bytes, dict[str, Any]]:
@@ -270,5 +285,6 @@ __all__ = [
     "canonical_manifest",
     "composite_layers",
     "parse_manifest",
+    "validate_asset_references",
     "validate_layers",
 ]

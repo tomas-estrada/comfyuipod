@@ -16,6 +16,7 @@ from comfy_studio.raster_layers import (
     canonical_manifest,
     composite_layers,
     parse_manifest,
+    validate_asset_references,
 )
 
 _META_KEY = "ultra_raster_layer_set_v1"
@@ -79,12 +80,7 @@ def register_routes(app: FastAPI) -> None:
         layers = [RasterLayer(**item.model_dump()) for item in body.layers]
         try:
             manifest = canonical_manifest(layers)
-            for layer in parse_manifest(manifest):
-                asset = store.get_asset(project_id, layer.asset_id)
-                if asset is None:
-                    raise RasterLayerError(
-                        f"asset inexistente en este proyecto: {layer.asset_id}"
-                    )
+            validate_asset_references(store, project_id, layers)
             previous = store.get_meta(project_id, _META_KEY)
             old_layers = parse_manifest(previous) if previous is not None else []
             old_by_id = {layer.layer_id: layer for layer in old_layers}
@@ -136,9 +132,13 @@ def register_routes(app: FastAPI) -> None:
         _require_project(store, project_id)
         try:
             layers = parse_manifest(store.get_meta(project_id, _META_KEY))
-            asset = store.get_asset(project_id, body.asset_id)
-            if asset is None or asset.get("kind") != "image":
-                raise RasterLayerError("el nuevo origen debe ser una imagen del proyecto")
+            existing_layer = next(
+                (item for item in layers if item.layer_id == layer_id), None
+            )
+            if existing_layer is None:
+                raise RasterLayerError(f"capa inexistente: {layer_id}")
+            replacement = replace(existing_layer, asset_id=body.asset_id)
+            validate_asset_references(store, project_id, [replacement])
             affected = affected_by(layers, layer_id)
             edited = [
                 replace(layer, asset_id=body.asset_id)
