@@ -55,6 +55,17 @@ inspect current repository code, state applicability limits, and validate the
 change with CPU fixtures before making hardware claims. See
 [`docs/research/README.md`](docs/research/README.md).
 
+OpenCode sessions use automatic compaction with a 20% model-specific context
+reserve and retain 12,000 recent tokens (`opencode.json`). Important state must
+be written to repository files before compaction because summaries are lossy.
+The local Ollama model `qwen3.5:2b-opencode64k` is the preferred summary model
+when installed (`scripts/setup-opencode-local-compaction`); OpenCode falls back
+to the active session model if it cannot resolve it. When paid Go
+usage hits its five-hour limit, select the pinned `free-builder` agent or run
+`scripts/opencode-free-builder "<task>"`; it uses `opencode-go/beam-free` and
+must not retry a limited paid model. If the free model is also unavailable,
+report that without cycling through paid models.
+
 > **Diagramas: renderizar antes de commitear.** Un `.puml` cuya sintaxis es
 > valida puede renderizar vacio o con el texto solapado, y nadie lo nota hasta
 > que una persona lo abre. Regla obligatoria en
