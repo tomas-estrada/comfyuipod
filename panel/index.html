@@ -47,31 +47,37 @@
     <div class="studio-layout">
         <aside class="studio-sidebar" aria-label="Navegación del estudio">
             <nav class="studio-nav">
-                <span class="nav-group-label">Espacio de trabajo</span>
-                <button type="button" id="nav-projects" class="nav-tab active" data-view="projects" aria-current="page">
-                    <span class="nav-icon" aria-hidden="true">⌂</span><span>Proyectos y medios</span>
-                </button>
+                <div class="nav-section" role="group" aria-labelledby="nav-group-workspace">
+                    <span id="nav-group-workspace" class="nav-group-label">Espacio de trabajo</span>
+                    <button type="button" id="nav-projects" class="nav-tab active" data-view="projects" aria-current="page">
+                        <span class="nav-icon" aria-hidden="true">⌂</span><span>Proyectos y medios</span>
+                    </button>
+                </div>
 
-                <span class="nav-group-label">Crear</span>
-                <button type="button" id="nav-chat" class="nav-tab" data-view="chat">
-                    <span class="nav-icon" aria-hidden="true">✦</span><span>Agente creativo</span>
-                </button>
-                <button type="button" id="nav-cinematic" class="nav-tab" data-view="cinematic">
-                    <span class="nav-icon" aria-hidden="true">◉</span><span>Estudio cinemático</span>
-                </button>
+                <div class="nav-section" role="group" aria-labelledby="nav-group-create">
+                    <span id="nav-group-create" class="nav-group-label">Crear</span>
+                    <button type="button" id="nav-chat" class="nav-tab" data-view="chat">
+                        <span class="nav-icon" aria-hidden="true">✦</span><span>Agente creativo</span>
+                    </button>
+                    <button type="button" id="nav-cinematic" class="nav-tab" data-view="cinematic">
+                        <span class="nav-icon" aria-hidden="true">◉</span><span>Estudio cinemático</span>
+                    </button>
+                </div>
 
-                <span class="nav-group-label">Revisar y entregar</span>
-                <button type="button" id="nav-edl" class="nav-tab" data-view="edl">
-                    <span class="nav-icon" aria-hidden="true">▤</span><span>Timeline de edición</span>
-                </button>
-                <button type="button" id="nav-jobs" class="nav-tab" data-view="jobs">
-                    <span class="nav-icon" aria-hidden="true">◷</span><span>Jobs y renders</span>
-                </button>
-                <button type="button" id="nav-gallery" class="nav-tab" data-view="gallery">
-                    <span class="nav-icon" aria-hidden="true">▣</span><span>Entregables</span>
-                </button>
+                <div class="nav-section" role="group" aria-labelledby="nav-group-delivery">
+                    <span id="nav-group-delivery" class="nav-group-label">Revisar y entregar</span>
+                    <button type="button" id="nav-edl" class="nav-tab" data-view="edl">
+                        <span class="nav-icon" aria-hidden="true">▤</span><span>Timeline de edición</span>
+                    </button>
+                    <button type="button" id="nav-jobs" class="nav-tab" data-view="jobs">
+                        <span class="nav-icon" aria-hidden="true">◷</span><span>Jobs y renders</span>
+                    </button>
+                    <button type="button" id="nav-gallery" class="nav-tab" data-view="gallery">
+                        <span class="nav-icon" aria-hidden="true">▣</span><span>Entregables</span>
+                    </button>
+                </div>
 
-                <details class="nav-more">
+                <details class="nav-more" aria-label="Más herramientas">
                     <summary><span class="nav-icon" aria-hidden="true">•••</span><span>Más herramientas</span></summary>
                     <button type="button" id="nav-ads" class="nav-tab" data-view="ads">Estudio de anuncios</button>
                     <button type="button" id="nav-atlas" class="nav-tab" data-view="atlas">Atlas Aburrá</button>

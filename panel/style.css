@@ -288,6 +288,12 @@ code {
     gap: 0.2rem;
 }
 
+.nav-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
 .nav-group-label {
     margin: 1rem 0 0.35rem;
     padding: 0 0.65rem;
@@ -482,6 +488,11 @@ code {
         gap: 0.3rem;
         overflow-x: auto;
         scrollbar-width: thin;
+    }
+
+    .nav-section {
+        flex-direction: row;
+        flex: 0 0 auto;
     }
 
     .nav-group-label {

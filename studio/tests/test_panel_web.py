@@ -137,6 +137,32 @@ def test_panel_static_files_served_at_studio_root(client: TestClient) -> None:
     assert resp_fav.status_code == 204
 
 
+def test_panel_navigation_groups_are_named_and_disclosure_tracks_active_view() -> None:
+    """Los grupos tienen nombre accesible y las vistas de herramientas abren su disclosure."""
+    html = (PANEL_DIR / "index.html").read_text(encoding="utf-8")
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+    for group_id in ("nav-group-workspace", "nav-group-create", "nav-group-delivery"):
+        assert f'role="group" aria-labelledby="{group_id}"' in html
+        assert f'id="{group_id}" class="nav-group-label"' in html
+    assert '<details class="nav-more" aria-label="Más herramientas">' in html
+    assert 'activeNav.closest("details.nav-more")' in app_js
+    assert "navDisclosure.open = true" in app_js
+
+
+def test_system_summary_updates_after_secondary_health_changes() -> None:
+    """Descargas con error y SSE desconectado se reflejan en el resumen del sistema."""
+    app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
+    download_start = app_js.index("async function refreshDownloadProgress()")
+    download_end = app_js.index("/* --- PROJECTS & ASSETS --- */", download_start)
+    assert "finally" in app_js[download_start:download_end]
+    assert "health-download-badge" in app_js
+    assert 'sseBadge.classList.contains("status-warn")' in app_js
+    sse_start = app_js.index("function connectProgressSse()")
+    sse_end = app_js.index("/* --- ATLAS GEORREFERENCIADO", sse_start)
+    sse_body = app_js[sse_start:sse_end]
+    assert sse_body.count("updateSystemHealthSummary()") >= 4
+
+
 def test_panel_respects_edge_basic_auth(
     anon_client: TestClient,
     client: TestClient,
