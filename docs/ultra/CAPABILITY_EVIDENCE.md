@@ -31,7 +31,7 @@ This records the highest evidence level actually demonstrated for each capabilit
 | C21 | Reiluminación temporal | L0 | W16 acceptance is not complete. |
 | C22 | Restilizar una actuación | L0 | W16 acceptance is not complete. |
 | C23 | Generación audiovisual multirreferencia | L1 partial | W08 recipe/catalog code and CPU contracts exist; the capability’s multireference output acceptance is not demonstrated. |
-| C24 | Reparación localizada | L0 | W15/W20 acceptance is not complete. |
+| C24 | Reparación localizada | L1 partial | The CPU-only `localized_repair` tool replaces a video interval with a duration-matched clip, keeps source audio, validates the output with ffprobe and samples frame RGB means outside the edit interval. This is a lossy encode and the sampled mean-color check is a limited regression signal, not causal repair, pixel/byte identity, neural inpainting, or completion of W15/W20 acceptance. |
 | C25 | Diseño de sonido por escena | L0 | W18 acceptance is not complete. |
 | C26 | Música original dirigida | L0 | W19 acceptance is not complete. |
 | C27 | Voz y pronunciación en español | L1 partial | Merged PR #246 adds deterministic CPU tests for acoustic-window analysis and word-span construction. W19's real Spanish voice/pronunciation checks and model-quality acceptance remain unproven. |

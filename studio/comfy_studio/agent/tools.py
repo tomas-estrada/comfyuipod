@@ -735,6 +735,47 @@ class AssembleLongVideoArgs(BaseModel):
     )
 
 
+class LocalizedRepairArgs(BaseModel):
+    """Argumentos para la herramienta `localized_repair`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_asset_id: str = Field(
+        ...,
+        description="ID del asset de vídeo fuente cuyo intervalo se repara.",
+    )
+    replacement_asset_id: str | None = Field(
+        default=None,
+        description=(
+            "ID del asset de vídeo que sustituye el intervalo editado "
+            "(misma duración aproximada)."
+        ),
+    )
+    edit_start_sec: float = Field(
+        ...,
+        ge=0.0,
+        description="Inicio del intervalo a reemplazar en el vídeo fuente (segundos).",
+    )
+    edit_end_sec: float = Field(
+        ...,
+        gt=0.0,
+        description="Fin del intervalo a reemplazar en el vídeo fuente (segundos).",
+    )
+    output_filename: str | None = Field(
+        default=None,
+        description="Nombre del MP4 de salida (opcional).",
+    )
+    frame_tolerance: float = Field(
+        default=8.0,
+        ge=0.0,
+        le=255.0,
+        description=(
+            "Tolerancia RGB (0..255) para verificar procedencia de fotogramas "
+            "fuera del intervalo editado tras el encode lossy."
+        ),
+    )
+
+
 class UpscaleAssetArgs(BaseModel):
     """Argumentos para la herramienta `upscale_asset`."""
 
@@ -2235,6 +2276,32 @@ async def _handle_assemble_long_video(
             raise ToolExecutionError(str(exc)) from exc
 
     return await run_in_threadpool(_do_assemble)
+
+
+async def _handle_localized_repair(
+    args: LocalizedRepairArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..edl.localized_repair import LocalizedRepairError, localized_repair
+
+    def _do_repair() -> dict[str, Any]:
+        try:
+            return localized_repair(
+                context.store,
+                context.project_id,
+                source_asset_id=args.source_asset_id,
+                replacement_asset_id=args.replacement_asset_id,
+                edit_start_sec=args.edit_start_sec,
+                edit_end_sec=args.edit_end_sec,
+                output_filename=args.output_filename,
+                frame_tolerance=args.frame_tolerance,
+                ffmpeg_timeout_s=context.config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=context.config.studio_ffprobe_timeout_s,
+            )
+        except LocalizedRepairError as exc:
+            raise ToolExecutionError(str(exc)) from exc
+
+    return await run_in_threadpool(_do_repair)
 
 
 async def _handle_ab_compare_models(
@@ -4481,6 +4548,21 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=AssembleLongVideoArgs,
             handler=_handle_assemble_long_video,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="localized_repair",
+            description=(
+                "Repara localizadamente un intervalo temporal de un vídeo: sustituye "
+                "[edit_start_sec, edit_end_sec] por un segmento editado y reensambla "
+                "el clip, verificando con mediciones de fotogramas que los fotogramas "
+                "fuera del intervalo editado proceden del vídeo fuente (sin afirmar "
+                "identidad de bytes tras encode lossy). Registra el resultado."
+            ),
+            args_model=LocalizedRepairArgs,
+            handler=_handle_localized_repair,
+            parallel_safe=False,
         )
     )
     belt.register(
