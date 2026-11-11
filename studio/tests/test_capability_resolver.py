@@ -2353,15 +2353,22 @@ def test_an_unremovable_partial_still_yields_a_report_entry(
         sha256=hashlib.sha256(b"pesos").hexdigest(),
     )
 
+    open_handles: list[object] = []
+
     def _download_then_lock(argv, *, timeout, should_cancel):
         token = Path(argv[argv.index("--local-dir") + 1])
         target = token / argv[3]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"parcial")
-        target.with_name(target.name + ".incomplete").write_bytes(b"parcial")
+        incomplete = target.with_name(target.name + ".incomplete")
+        incomplete.write_bytes(b"parcial")
         # D1: el stageado vive en el subárbol de la adquisición, así que es ese
-        # directorio el que hay que dejar sin escritura.
-        token.chmod(0o500)  # ni el parcial ni su `.incomplete` se pueden borrar
+        # directorio el que hay que dejar sin escritura. En Windows `chmod` no
+        # impide borrar: se mantiene abierto el fichero (sin FILE_SHARE_DELETE).
+        if os.name == "nt":
+            open_handles.extend([open(target, "rb"), open(incomplete, "rb")])
+        else:
+            token.chmod(0o500)  # ni el parcial ni su `.incomplete` se pueden borrar
         return asset_acquire.CANCELLED_RETURNCODE
 
     monkeypatch.setattr(asset_acquire, "_run_hf_download", _download_then_lock)
@@ -2374,8 +2381,11 @@ def test_an_unremovable_partial_still_yields_a_report_entry(
             should_cancel=lambda: False,
         )
     finally:
-        for token in stage.glob("job-*"):
-            token.chmod(0o700)
+        for handle in open_handles:
+            handle.close()
+        if os.name != "nt":
+            for token in stage.glob("job-*"):
+                token.chmod(0o700)
 
     entry = report.entries[0]
     assert entry.status == "cancelled", "hay informe, no una excepción"

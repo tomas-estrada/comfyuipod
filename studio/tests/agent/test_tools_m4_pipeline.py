@@ -30,6 +30,10 @@ def pipeline_tool_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> To
     monkeypatch.setenv("STUDIO_STUB_VOICE_CLONE", "1")
     monkeypatch.setenv("STUDIO_STUB_AUDIO", "1")
     monkeypatch.setenv("STUDIO_STUB_LLM", "1")
+    # Aísla el índice vectorial: sin esto el store abre el `index.db` compartido
+    # del `STUDIO_DATA_DIR` por defecto, que puede venir de otra versión con
+    # otras dimensiones (y el test fallaba por el entorno, no por su lógica).
+    monkeypatch.setenv("STUDIO_DATA_DIR", str(tmp_path / "studio_data"))
     cfg = StudioConfig.from_env()
     assert cfg.studio_stub_llm is True
     store = ProjectStore(studio_data_dir=tmp_path / "studio_data")

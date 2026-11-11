@@ -213,3 +213,33 @@ def test_cache_key_y_tags_sin_gpu(tmp_path: Path) -> None:
     assert "rojo" in classify_rgb_semantic_tags(200.0, 30.0, 30.0)
     assert "azul" in classify_rgb_semantic_tags(30.0, 30.0, 200.0)
     assert "verde" in classify_rgb_semantic_tags(30.0, 200.0, 30.0)
+
+
+def test_un_indice_con_dims_antiguas_falla_con_motivo_accionable(tmp_path: Path) -> None:
+    """Un `index.db` heredado (float[64]) no revienta en el primer insert.
+
+    La meta puede decir 512 mientras la tabla `vec_*` sigue en 64 (se reescribió
+    la meta sin reconstruir el índice). Antes el error salía al insertar, como
+    `Dimension mismatch ... Expected 64 ... received 512`, sin decir qué hacer.
+    Ahora el store lo detecta al abrir y nombra la acción (reindexar).
+    """
+    import sqlite3
+
+    db = tmp_path / "index.db"
+    conn = sqlite3.connect(db)
+    conn.enable_load_extension(True)
+    load_sqlite_vec().load(conn)
+    conn.enable_load_extension(False)
+    conn.execute(
+        "CREATE VIRTUAL TABLE vec_face_identities USING vec0(embedding float[64])"
+    )
+    conn.execute("CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute("INSERT INTO schema_meta VALUES ('face_dim', '512')")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(PerceptionUnavailableError) as excinfo:
+        PerceptionVectorStore(tmp_path)
+
+    message = str(excinfo.value)
+    assert "float[64]" in message and "reindex" in message, message
