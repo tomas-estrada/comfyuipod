@@ -42,6 +42,19 @@
 ## Validation Commands
 Always run these before submitting changes:
 
+## Research-Grounded Builder Work
+Before proposing an approach for agent execution, MCP/tool security, 3D/Blender,
+multimodal validation, or context management, query the local research corpus:
+
+```
+python scripts/research_rag.py "<implementation question>"
+```
+
+Treat retrieved results as leads, not proof. Check the linked primary work,
+inspect current repository code, state applicability limits, and validate the
+change with CPU fixtures before making hardware claims. See
+[`docs/research/README.md`](docs/research/README.md).
+
 > **Diagramas: renderizar antes de commitear.** Un `.puml` cuya sintaxis es
 > valida puede renderizar vacio o con el texto solapado, y nadie lo nota hasta
 > que una persona lo abre. Regla obligatoria en

@@ -78,7 +78,9 @@ def test_executor_checkpoints_each_layer_and_reuses_idempotency_key(tmp_path):
             if engine == "engine-b" and self.fail_once:
                 self.fail_once = False
                 raise RuntimeError("simulated process interruption")
-            return {"ok": True, "output_path": f"/tmp/{engine}.out"}
+            out = tmp_path / f"{engine}.out"
+            out.write_bytes(b"artifact\n")
+            return {"ok": True, "output_path": str(out)}
 
     runner = Runner()
     with pytest.raises(RuntimeError, match="interruption"):
@@ -87,7 +89,7 @@ def test_executor_checkpoints_each_layer_and_reuses_idempotency_key(tmp_path):
     interrupted = checkpointer.load(state.id)
     assert interrupted is not None
     assert interrupted.all_shots()[0].status == ShotStatus.RUNNING
-    assert interrupted.all_shots()[0].layers[0].output_path == "/tmp/engine-a.out"
+    assert interrupted.all_shots()[0].layers[0].output_path == str(tmp_path / "engine-a.out")
     resumed = execute_next_shot(interrupted, runner, checkpoint=checkpointer.save)
 
     assert resumed.all_shots()[0].status == ShotStatus.EVALUATING
