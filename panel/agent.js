@@ -783,6 +783,7 @@
 
         $("#agent-refresh-projects").addEventListener("click", () => loadProjects());
         $("#agent-refresh-productions").addEventListener("click", () => loadProductions());
+        $("#agent-refresh-health").addEventListener("click", loadSystemStatus);
         $("#agent-clear-activity").addEventListener("click", () => { $("#agent-activity-feed").textContent = ""; });
 
         const composer = $("#agent-composer-form");
