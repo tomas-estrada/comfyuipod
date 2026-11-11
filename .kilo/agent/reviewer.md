@@ -1,3 +1,12 @@
+---
+permission:
+  task:
+    implementer: allow
+    reviewer: allow
+    scrutiny-auditor: allow
+    "*": deny
+---
+
 # Reviewer Agent
 
 ## Responsibilities

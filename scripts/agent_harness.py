@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import time
 import uuid
@@ -94,16 +95,51 @@ def main() -> int:
     record["checkpoints"].append({"at": now(), "stage": "process_started"})
     save()
     started = time.monotonic()
+    process: subprocess.Popen[bytes] | None = None
+
+    def stop_process_tree() -> None:
+        if process is None or process.poll() is not None:
+            return
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                return
+        else:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if os.name == "posix":
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
+            process.wait()
+
     try:
-        completed = subprocess.run(command, check=False, timeout=args.max_wall_seconds)
-        record["status"] = "completed" if completed.returncode == 0 else "failed"
-        record["exit_code"] = completed.returncode
+        process = subprocess.Popen(
+            command,
+            start_new_session=(os.name == "posix"),
+        )
+        try:
+            exit_code = process.wait(timeout=args.max_wall_seconds)
+        except subprocess.TimeoutExpired:
+            stop_process_tree()
+            record["status"] = "wall_budget_exhausted"
+            record["exit_code"] = 124
+        else:
+            record["status"] = "completed" if exit_code == 0 else "failed"
+            record["exit_code"] = exit_code
     except subprocess.TimeoutExpired:
         record["status"] = "wall_budget_exhausted"
-        record["exit_code"] = None
+        record["exit_code"] = 124
     except KeyboardInterrupt:
+        stop_process_tree()
         record["status"] = "interrupted"
-        record["exit_code"] = None
+        record["exit_code"] = 130
     finally:
         record["finished_at"] = now()
         record["wall_seconds"] = round(time.monotonic() - started, 3)
@@ -113,11 +149,7 @@ def main() -> int:
         f"Agent run {run_id}: {record['status']} ({record.get('exit_code')}); "
         f"evidence: {record_path}"
     )
-    if record.get("exit_code") is not None:
-        return int(record["exit_code"])
-    if record["status"] == "wall_budget_exhausted":
-        return 124
-    return 130 if record["status"] == "interrupted" else 1
+    return int(record.get("exit_code", 1))
 
 
 if __name__ == "__main__":
