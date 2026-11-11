@@ -560,8 +560,10 @@ def register_routes(app: FastAPI) -> None:
         """Descarga un proyecto editable con fuentes incluidas desde un EDL guardado."""
         from comfy_studio.delivery_4k import (
             ASPECT_4K,
+            AudioStem,
             Clip,
             TimelineSpec,
+            Title,
             write_editable_package_archive,
         )
         from comfy_studio.perception.keyframes import probe_media_info
@@ -591,10 +593,10 @@ def register_routes(app: FastAPI) -> None:
             asset_id = str(cut.get("asset_id") or edl.get("source_asset_id") or "").strip()
             asset = active_store.get_asset(project_id, asset_id) if asset_id else None
             source = active_store.get_asset_path(project_id, asset_id) if asset else None
-            if asset is None or source is None:
+            if asset is None or source is None or asset.get("kind") != "video":
                 raise HTTPException(
                     status_code=400,
-                    detail=f"No se puede resolver el medio fuente del corte {index}",
+                    detail=f"El corte {index} requiere un vídeo fuente del proyecto",
                 )
             if asset_id not in dimensions:
                 info = probe_media_info(
@@ -630,11 +632,65 @@ def register_routes(app: FastAPI) -> None:
                 )
             )
 
+        titles = [
+            Title(
+                title_id=f"title-{index:03d}",
+                text=str(item.get("text") or ""),
+                start_s=float(item.get("start_s", -1)),
+                end_s=float(item.get("end_s", 0)),
+                kind="title",
+                position=str(item.get("position") or "bottom"),
+            )
+            for index, item in enumerate(edl.get("titles", []), start=1)
+        ]
+        captions = [
+            Title(
+                title_id=f"caption-{index:03d}",
+                text=str(item.get("text") or ""),
+                start_s=float(item.get("start_s", -1)),
+                end_s=float(item.get("end_s", 0)),
+                kind="caption",
+                position=str(item.get("position") or "bottom"),
+            )
+            for index, item in enumerate(edl.get("captions", []), start=1)
+        ]
+
+        audio_stems: list[AudioStem] = []
+        audio_id = str(edl.get("audio_asset_id") or "").strip()
+        if audio_id:
+            audio_asset = active_store.get_asset(project_id, audio_id)
+            audio_source = active_store.get_asset_path(project_id, audio_id)
+            if audio_asset is None or audio_asset.get("kind") != "audio" or audio_source is None:
+                raise HTTPException(
+                    status_code=400, detail="La pista de audio EDL no está disponible"
+                )
+            audio_info = probe_media_info(
+                audio_source,
+                timeout_s=request.app.state.config.studio_ffprobe_timeout_s,
+            )
+            if not audio_info.get("probe_ok") or not audio_info.get("has_audio"):
+                raise HTTPException(status_code=400, detail="No se pudo verificar el audio fuente")
+            audio_meta = audio_asset.get("metadata") or {}
+            audio_stems.append(
+                AudioStem(
+                    stem_id="edl-audio",
+                    source_path=str(audio_source),
+                    role="mix",
+                    license=str(audio_meta.get("license") or "unknown"),
+                    channels=max(1, min(8, int(audio_info.get("audio_channels") or 2))),
+                )
+            )
+
+        transitions = [str(cut.get("transition_in") or "cut") for cut in cuts]
+
         timeline = TimelineSpec(
             name=str(edl.get("title") or f"EDL v{version}"),
             aspect=aspect,
             fps=24,
             clips=clips,
+            titles=titles + captions,
+            transitions=transitions,
+            audio_stems=audio_stems,
         )
         fd, archive_name = tempfile.mkstemp(prefix="comfyuipod-editable-", suffix=".zip")
         os.close(fd)
