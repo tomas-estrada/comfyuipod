@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .harness import AgentHarnessError, AgentRunRecord, AgentRunSpec, AgentRunStore
 from .llm import (
     LLMProviderError,
     LLMResponse,
@@ -26,6 +27,10 @@ from .tools import (
 
 __all__ = [
     "AgentTurnResult",
+    "AgentHarnessError",
+    "AgentRunRecord",
+    "AgentRunSpec",
+    "AgentRunStore",
     "EnqueueRenderArgs",
     "LLMProviderError",
     "LLMResponse",

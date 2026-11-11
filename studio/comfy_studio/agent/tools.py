@@ -114,6 +114,9 @@ class ToolContext:
     # `Any` para no importar `loop.py` (ciclo: loop importa este módulo).
     # `loop.py` lo inyecta; sin él (MCP, tests directos sin turno) no hay tope.
     call_budget: Any | None = None
+    # Optional run-level allowlist. ToolBelt enforces this on dispatch, not only
+    # in the model-visible tool schema.
+    allowed_tools: frozenset[str] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -4189,8 +4192,28 @@ class ToolBelt:
         """Devuelve las especificaciones registradas (nombre + descripción) por orden de alta."""
         return list(self._tools.values())
 
-    def to_openai_tools(self) -> list[dict[str, Any]]:
-        return [spec.to_openai_schema() for spec in self._tools.values()]
+    def restricted_to(self, allowed_tools: set[str] | frozenset[str] | tuple[str, ...]) -> ToolBelt:
+        allowed = set(allowed_tools)
+        missing = allowed - self._tools.keys()
+        if missing:
+            raise ToolExecutionError(
+                f"El contrato del agente menciona herramientas no registradas: {sorted(missing)}"
+            )
+        belt = ToolBelt()
+        for name, spec in self._tools.items():
+            if name in allowed:
+                belt.register(spec)
+        return belt
+
+    def to_openai_tools(
+        self, allowed_tools: set[str] | frozenset[str] | tuple[str, ...] | None = None
+    ) -> list[dict[str, Any]]:
+        allowed = set(allowed_tools) if allowed_tools is not None else None
+        return [
+            spec.to_openai_schema()
+            for name, spec in self._tools.items()
+            if allowed is None or name in allowed
+        ]
 
     async def execute(
         self,
@@ -4201,6 +4224,8 @@ class ToolBelt:
         spec = self._tools.get(name)
         if spec is None:
             raise ToolExecutionError(f"Herramienta no registrada: {name!r}")
+        if context.allowed_tools is not None and name not in context.allowed_tools:
+            raise ToolExecutionError(f"Herramienta no permitida por el harness: {name!r}")
 
         if isinstance(raw_arguments, str):
             try:

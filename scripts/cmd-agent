@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if (($# == 0)); then
+  echo "Usage: scripts/cmd-agent <task prompt>" >&2
+  exit 2
+fi
+
+task="$*"
+model="${CMD_AGENT_MODEL:-stealth/glyph-cluster:free}"
+exec python3 "$(dirname "$0")/agent_harness.py" \
+  --runtime-id command-code \
+  --model-id "$model" \
+  --role builder \
+  --tools "read,search,edit,write,shell" \
+  --task "$task" \
+  -- cmd --model "$model" '{prompt}'

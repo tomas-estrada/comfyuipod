@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -14,6 +16,7 @@ from ..comfyui_client import ComfyUIClient
 from ..config import RedactingLogFilter, SecretRedactor, StudioConfig
 from ..progress import ProgressBroker
 from ..projects import ProjectStore
+from .harness import AgentHarnessError, AgentRunRecord, AgentRunSpec, AgentRunStore
 from .llm import (
     OpenAICompatibleLLMClient,
     build_vision_content_part,
@@ -51,7 +54,14 @@ def _serialize_tool_result_for_context(result: dict[str, Any]) -> str:
 # M1.4: `max_iterations` y el agotamiento del presupuesto de llamadas LLM son
 # condiciones DISTINTAS con remedios distintos (subir iteraciones vs subir el
 # presupuesto de llamadas), así que no deben compartir telemetría.
-StopReason = Literal["completed", "max_iterations", "call_budget_exhausted"]
+StopReason = Literal[
+    "completed",
+    "max_iterations",
+    "call_budget_exhausted",
+    "cancelled",
+    "wall_budget_exhausted",
+    "failed",
+]
 
 
 class CallBudget:
@@ -189,6 +199,7 @@ class AgentTurnResult:
     tool_results: list[dict[str, Any]] = field(default_factory=list)
     provider: str = "primary"
     model: str = ""
+    run_id: str = ""
     events: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -201,6 +212,7 @@ class AgentTurnResult:
             "tool_results": self.tool_results,
             "provider": self.provider,
             "model": self.model,
+            "run_id": self.run_id,
         }
 
 
@@ -224,6 +236,8 @@ class StudioAgent:
         max_llm_calls_per_turn: int = DEFAULT_MAX_LLM_CALLS_PER_TURN,
         budget: CallBudget | None = None,
         agent_role: str | None = None,
+        run_contract: AgentRunSpec | None = None,
+        cancel_requested: Any | None = None,
     ) -> None:
         self._config = config
         self._store = store
@@ -244,6 +258,8 @@ class StudioAgent:
         # M2 (`M3-IDEA-037`): identifica al sub-agente que ejecuta cada herramienta, para
         # que el panel muestre quién hizo qué en un turno delegado.
         self._agent_role = agent_role
+        self._run_contract = run_contract
+        self._cancel_requested = cancel_requested
 
         if not any(isinstance(f, RedactingLogFilter) for f in logger.filters):
             logger.addFilter(RedactingLogFilter(self._redactor))
@@ -260,7 +276,12 @@ class StudioAgent:
     def max_iterations(self) -> int:
         return self._max_iterations
 
-    def _build_system_message(self, project: dict[str, Any]) -> dict[str, Any]:
+    def _build_system_message(
+        self,
+        project: dict[str, Any],
+        *,
+        tool_belt: ToolBelt | None = None,
+    ) -> dict[str, Any]:
         pid = project["id"]
         assets = self._store.list_assets(pid)
         asset_summaries = [
@@ -297,7 +318,8 @@ class StudioAgent:
                 )
 
         tools_catalog = "\n".join(
-            f"- `{spec.name}`: {spec.description}" for spec in self._tool_belt.list_specs()
+            f"- `{spec.name}`: {spec.description}"
+            for spec in (tool_belt or self._tool_belt).list_specs()
         )
         base_prompt = self._system_prompt_override or SYSTEM_PROMPT_ES
         context_block = (
@@ -450,8 +472,53 @@ class StudioAgent:
             else self._max_iterations
         )
 
-        budget = self._shared_budget or CallBudget(self._max_llm_calls_per_turn)
+        requested_calls = (
+            min(self._max_llm_calls_per_turn, self._run_contract.max_llm_calls)
+            if self._run_contract is not None
+            else self._max_llm_calls_per_turn
+        )
+        budget = self._shared_budget or CallBudget(requested_calls)
+        budget_start = budget.used
+        run_spec = self._run_contract or AgentRunSpec.create(
+            task=user_text,
+            runtime_id="comfy_studio.agent",
+            model_id=self._config.studio_llm_model,
+            allowed_tools=self._tool_belt.list_names(),
+            max_iterations=effective_max,
+            max_llm_calls=budget.max_calls,
+            role=self._agent_role or "primary",
+        )
+        effective_max = min(effective_max, run_spec.max_iterations)
+        active_belt = self._tool_belt.restricted_to(set(run_spec.allowed_tools))
+        run_store = AgentRunStore(self._store, project["id"])
+        run_record = AgentRunRecord(run_spec)
+        run_record.checkpoint(
+            "started",
+            {
+                "project_id": project["id"],
+                "context_message_limit": run_spec.max_context_messages,
+                "context_char_limit": run_spec.max_context_chars,
+            },
+        )
+        run_store.save(run_record)
+        run_started = time.monotonic()
+
+        async def emit(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return await self._emit(event_type, {"run_id": run_spec.run_id, **payload})
+
         await self._maybe_summarize_history(project["id"], budget)
+        summary = self._store.get_meta(project["id"], "chat_summary")
+        if isinstance(summary, dict) and str(summary.get("text") or "").strip():
+            run_record.checkpoint(
+                "context_compaction",
+                {
+                    "summary_sha256": hashlib.sha256(
+                        str(summary["text"]).encode("utf-8")
+                    ).hexdigest(),
+                    "summary_upto": str(summary.get("upto") or ""),
+                },
+            )
+            run_store.save(run_record)
 
         # Construimos historial previo + mensaje actual (con keyframes en base64 si aplica)
         history_messages = self._load_history_messages(project["id"])
@@ -463,10 +530,11 @@ class StudioAgent:
         )
 
         messages: list[dict[str, Any]] = [
-            self._build_system_message(project),
+            self._build_system_message(project, tool_belt=active_belt),
             *history_messages,
             {"role": "user", "content": user_content},
         ]
+        messages = run_spec.bound_messages(messages)
         validate_no_auth_urls_in_messages(messages)
 
         # Persistimos el mensaje del usuario en la memoria SQLite del proyecto (redactado)
@@ -482,7 +550,7 @@ class StudioAgent:
                 tool_calls=self._redactor.redact_value(attachments_meta),
             )
 
-        openai_tools = self._tool_belt.to_openai_tools()
+        openai_tools = active_belt.to_openai_tools()
 
         async def _delegate_runner(
             *,
@@ -490,9 +558,22 @@ class StudioAgent:
             task: str,
             max_iterations: int = SUB_AGENT_MAX_ITERATIONS,
         ) -> dict[str, Any]:
-            sub_belt = create_restricted_belt(self._tool_belt, role)
+            sub_belt = create_restricted_belt(active_belt, role)
             if not sub_belt.list_names():
                 raise ValueError(f"El rol {role!r} no tiene herramientas disponibles.")
+            child_spec = run_spec.child(
+                task=task,
+                role=role,
+                allowed_tools=sub_belt.list_names(),
+                max_iterations=min(int(max_iterations), SUB_AGENT_MAX_ITERATIONS),
+                remaining_llm_calls=budget.max_calls - budget.used,
+                model_id=self._config.studio_llm_model,
+            )
+            run_record.checkpoint(
+                "child_started",
+                {"child_run_id": child_spec.run_id, "role": role},
+            )
+            run_store.save(run_record)
             sub_agent = StudioAgent(
                 config=self._config,
                 store=self._store,
@@ -507,12 +588,24 @@ class StudioAgent:
                 allow_delegation=False,
                 budget=budget,
                 agent_role=role,
+                run_contract=child_spec,
+                cancel_requested=self._cancel_requested,
             )
             sub_result = await sub_agent.run_turn(
                 project_id=project["id"],
                 user_message=task,
             )
+            run_record.checkpoint(
+                "child_completed",
+                {
+                    "child_run_id": sub_result.run_id,
+                    "role": role,
+                    "stop_reason": sub_result.stop_reason,
+                },
+            )
+            run_store.save(run_record)
             return {
+                "run_id": sub_result.run_id,
                 "reply": sub_result.reply,
                 "iterations": sub_result.iterations,
                 "stop_reason": sub_result.stop_reason,
@@ -532,6 +625,8 @@ class StudioAgent:
             config=self._config,
             delegate_runner=_delegate_runner if self._allow_delegation else None,
             call_budget=budget,
+            allowed_tools=frozenset(run_spec.allowed_tools),
+            cancel_requested=self._cancel_requested,
         )
 
         all_tool_calls: list[dict[str, Any]] = []
@@ -543,6 +638,23 @@ class StudioAgent:
         iterations_run = 0
 
         for iteration in range(1, effective_max + 1):
+            if self._cancel_requested is not None and self._cancel_requested():
+                stop_reason = "cancelled"
+                final_reply = final_reply or "Ejecución cancelada en un límite seguro del agente."
+                break
+            if time.monotonic() - run_started >= run_spec.max_wall_seconds:
+                stop_reason = "wall_budget_exhausted"
+                final_reply = final_reply or "Se agotó el presupuesto de tiempo del agente."
+                break
+            try:
+                messages = run_spec.bound_messages(messages)
+            except AgentHarnessError:
+                stop_reason = "failed"
+                final_reply = (
+                    "El contexto excedió el presupuesto de este run; "
+                    "no se enviaron más datos."
+                )
+                break
             if not budget.consume():
                 stop_reason = "call_budget_exhausted"
                 if not final_reply:
@@ -552,6 +664,13 @@ class StudioAgent:
                     )
                 break
             iterations_run = iteration
+            run_record.iterations_used = iteration
+            run_record.llm_calls_used = budget.used - budget_start
+            run_record.checkpoint(
+                "llm_call_started",
+                {"iteration": iteration, "llm_calls_used": run_record.llm_calls_used},
+            )
+            run_store.save(run_record)
             token_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
 
             async def _on_token(
@@ -563,11 +682,13 @@ class StudioAgent:
 
             async def _drive_stream(
                 _q: asyncio.Queue[tuple[str, str] | None] = token_queue,
+                _messages: list[dict[str, Any]] = messages,
+                _tools: list[dict[str, Any]] = openai_tools,
             ):
                 try:
                     return await self._llm_client.stream_complete(
-                        messages=messages,
-                        tools=openai_tools,
+                        messages=_messages,
+                        tools=_tools,
                         on_token=_on_token,
                     )
                 finally:
@@ -580,7 +701,7 @@ class StudioAgent:
                     if item is None:
                         break
                     piece, piece_model = item
-                    ev = await self._emit(
+                    ev = await emit(
                         "token",
                         {
                             "project_id": project["id"],
@@ -638,7 +759,7 @@ class StudioAgent:
                         "iteration": iteration,
                     }
                 )
-                call_ev = await self._emit(
+                call_ev = await emit(
                     "tool_call",
                     {
                         "project_id": project["id"],
@@ -659,7 +780,11 @@ class StudioAgent:
             async def _execute_one(tc: Any) -> tuple[str, dict[str, Any], bool]:
                 is_error = False
                 try:
-                    raw_res = await self._tool_belt.execute(
+                    if self._cancel_requested is not None and self._cancel_requested():
+                        raise ToolExecutionError(
+                            "El run fue cancelado antes de ejecutar la herramienta"
+                        )
+                    raw_res = await active_belt.execute(
                         tc.name,
                         tc.arguments,
                         tool_ctx,
@@ -685,7 +810,7 @@ class StudioAgent:
             parallel_calls = []
             sequential_calls = []
             for tc in llm_resp.tool_calls:
-                spec = self._tool_belt.get(tc.name)
+                spec = active_belt.get(tc.name)
                 if spec is not None and spec.parallel_safe:
                     parallel_calls.append(tc)
                 else:
@@ -713,7 +838,14 @@ class StudioAgent:
                     "iteration": iteration,
                 }
                 all_tool_results.append(tr_record)
-                res_ev = await self._emit(
+                run_record.record_tool(tc.name, ok=not is_error, iteration=iteration)
+                run_record.llm_calls_used = budget.used - budget_start
+                run_record.checkpoint(
+                    "tool_result",
+                    {"name": tc.name, "is_error": is_error, "iteration": iteration},
+                )
+                run_store.save(run_record)
+                res_ev = await emit(
                     "tool_result",
                     {
                         "project_id": project["id"],
@@ -761,7 +893,31 @@ class StudioAgent:
                 tool_calls=[],
             )
 
-        done_ev = await self._emit(
+        status_by_stop_reason: dict[StopReason, str] = {
+            "completed": "completed",
+            "max_iterations": "max_iterations",
+            "call_budget_exhausted": "budget_exhausted",
+            "cancelled": "cancelled",
+            "wall_budget_exhausted": "wall_budget_exhausted",
+            "failed": "failed",
+        }
+        run_record.finish(
+            status_by_stop_reason[stop_reason],  # type: ignore[arg-type]
+            completion_evidence={
+                "reply_sha256": hashlib.sha256(final_reply.encode("utf-8")).hexdigest(),
+                "tool_count": len(all_tool_calls),
+                "successful_tool_count": sum(not item["is_error"] for item in all_tool_results),
+                "stop_reason": stop_reason,
+            },
+            provider=last_provider,
+            resolved_model_id=last_model,
+            iterations_used=iterations_run,
+            llm_calls_used=budget.used - budget_start,
+            error_code=(stop_reason if stop_reason in {"failed", "cancelled"} else None),
+        )
+        run_store.save(run_record)
+
+        done_ev = await emit(
             "done",
             {
                 "project_id": project["id"],
@@ -772,6 +928,7 @@ class StudioAgent:
                 "tool_results": all_tool_results,
                 "provider": last_provider,
                 "model": last_model,
+                "run_id": run_spec.run_id,
             },
         )
         yield done_ev
@@ -806,5 +963,6 @@ class StudioAgent:
             tool_results=list(done_ev.get("tool_results") or []),
             provider=str(done_ev.get("provider") or "primary"),
             model=str(done_ev.get("model") or self._config.studio_llm_model),
+            run_id=str(done_ev.get("run_id") or ""),
             events=events,
         )
