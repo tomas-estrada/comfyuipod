@@ -125,6 +125,17 @@ class Shot:
     replan_tier: ReplanTier | None = None
     replan_attempts: int = 0
     cost_cap_usd: float = 0.0
+    #: gasto REPORTADO acumulado del shot en USD a lo largo de TODOS sus intentos
+    #: (inicial + escalones de replan local→plantilla→global). Nunca se
+    #: reinicia en `escalate_replan`: el gasto ya consumido es pasado y el
+    #: siguiente intento solo dispone del cap restante (P1). NO es el gasto
+    #: real salvo que el runner lo reporte: los adaptadores de motor actuales
+    #: no producen `cost_usd` (ver `spend_reported`).
+    cost_spent_usd: float = 0.0
+    #: True si algún runner reportó `cost_usd` en algún intento de este shot.
+    #: False => `cost_spent_usd` es un límite inferior vacío (0.0), no una
+    #: medición: la superficie de estado lo expone como gasto desconocido (P1).
+    spend_reported: bool = False
     output_path: str | None = None
     error: str | None = None
 
@@ -137,6 +148,7 @@ class Shot:
         # A new replan attempt has a different stable layer operation ID. Do
         # not carry artifacts from the previous attempt into its checkpoint or
         # let the resumable executor mistake them for completed new work.
+        # (El gasto acumulado NO se toca: sobrevive al escalón — P1.)
         for layer in self.layers:
             layer.output_path = None
         self.output_path = None
@@ -248,6 +260,8 @@ class ProductionState:
                             ),
                             "replan_attempts": sh.replan_attempts,
                             "cost_cap_usd": sh.cost_cap_usd,
+                            "cost_spent_usd": sh.cost_spent_usd,
+                            "spend_reported": sh.spend_reported,
                             "output_path": sh.output_path,
                             "error": sh.error,
                             "layers": [
@@ -307,6 +321,8 @@ class ProductionState:
                     ),
                     replan_attempts=int(sh_d.get("replan_attempts", 0)),
                     cost_cap_usd=float(sh_d.get("cost_cap_usd", 0.0)),
+                    cost_spent_usd=float(sh_d.get("cost_spent_usd", 0.0)),
+                    spend_reported=bool(sh_d.get("spend_reported", False)),
                     output_path=sh_d.get("output_path"),
                     error=sh_d.get("error"),
                 )

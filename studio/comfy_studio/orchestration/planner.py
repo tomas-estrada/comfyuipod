@@ -19,6 +19,7 @@ El plan reparte el cost cap total entre los shots y fija un `acceptance` por sho
 from __future__ import annotations
 
 import os
+from enum import StrEnum
 from typing import Any, Protocol
 
 from comfy_studio.orchestration.state import (
@@ -36,6 +37,20 @@ DEFAULT_SEMANTIC_MIN = float(os.environ.get("STUDIO_ORCH_SEMANTIC_MIN", "0.6"))
 
 #: duración objetivo de un shot (dentro del rango 3–7 s del plan maestro).
 DEFAULT_SHOT_SECONDS = 5.0
+
+
+class PlanTerminalReason(StrEnum):
+    """Razón terminal tipada del nodo plan (legible por máquina, P1).
+
+    Misma doctrina que `EngineReason`: la limitación es legible por máquina y
+    el mensaje sigue siendo humano en el log (`detail`). Un plan que no se puede
+    producir termina con una razón tipada, no con un `done` ficticio ni con un
+    `max_steps` inespecífico.
+    """
+
+    #: el propósito del brief no se pudo determinar y no hay hipótesis que
+    #: preservar (idea vacía/blanca): no hay nada que planificar.
+    AMBIGUOUS_PURPOSE = "ambiguous_purpose"
 
 
 class PlannerLLM(Protocol):
@@ -100,6 +115,38 @@ class StubPlannerLLM:
         return {"sequences": [{"title": "secuencia principal", "shots": shots}]}
 
 
+def _sequences_from_raw(
+    raw: dict[str, Any],
+    idea: str,
+    *,
+    vbench_min: float,
+    semantic_min: float,
+) -> list[Sequence]:
+    """Construye la jerarquía tipada desde el dict de un planner."""
+    sequences: list[Sequence] = []
+    for seq_d in raw.get("sequences", []):
+        seq = Sequence(title=str(seq_d.get("title", "secuencia")))
+        for sh_d in seq_d.get("shots", []):
+            shot = Shot(
+                description=str(sh_d.get("description", idea))[:200],
+                duration_s=float(sh_d.get("duration_s", DEFAULT_SHOT_SECONDS)),
+                acceptance={"vbench_min": vbench_min, "semantic_min": semantic_min},
+                depends_on=list(sh_d.get("depends_on", [])),
+            )
+            shot.layers = [
+                Layer(
+                    kind=str(ly.get("kind", "gen")),
+                    engine=str(ly.get("engine", "comfyui")),
+                    template_id=ly.get("template_id"),
+                    params=dict(ly.get("params", {})),
+                )
+                for ly in sh_d.get("layers", [])
+            ]
+            seq.shots.append(shot)
+        sequences.append(seq)
+    return sequences
+
+
 def plan_production(
     state: ProductionState,
     llm: PlannerLLM | None = None,
@@ -158,27 +205,38 @@ def plan_production(
     raw = planner.plan(state.idea, context=context)
 
     # construir la jerarquía tipada desde el dict del planner.
-    sequences: list[Sequence] = []
-    for seq_d in raw.get("sequences", []):
-        seq = Sequence(title=str(seq_d.get("title", "secuencia")))
-        for sh_d in seq_d.get("shots", []):
-            shot = Shot(
-                description=str(sh_d.get("description", state.idea))[:200],
-                duration_s=float(sh_d.get("duration_s", DEFAULT_SHOT_SECONDS)),
-                acceptance={"vbench_min": vbench_min, "semantic_min": semantic_min},
-                depends_on=list(sh_d.get("depends_on", [])),
+    sequences = _sequences_from_raw(
+        raw, state.idea, vbench_min=vbench_min, semantic_min=semantic_min
+    )
+
+    if not any(seq.shots for seq in sequences):
+        # P1: el planner no determinó qué producir (propósito ambiguo). La
+        # hipótesis NO se descarta en silencio: si hay una (idea no vacía) se
+        # preserva con el plan conservador COMPLETO y determinista (estructura
+        # apertura/medio/cierre sobre la idea textual, sin inventar detalles);
+        # si no hay hipótesis que preservar, termina con razón tipada en vez de
+        # girar hasta un `max_steps` inespecífico.
+        if not state.idea.strip():
+            state.record(
+                "plan_rejected",
+                reason=str(PlanTerminalReason.AMBIGUOUS_PURPOSE),
+                hypothesis=state.idea,
+                detail=(
+                    "el planner no devolvió shots y no hay hipótesis que preservar"
+                ),
             )
-            shot.layers = [
-                Layer(
-                    kind=str(ly.get("kind", "gen")),
-                    engine=str(ly.get("engine", "comfyui")),
-                    template_id=ly.get("template_id"),
-                    params=dict(ly.get("params", {})),
-                )
-                for ly in sh_d.get("layers", [])
-            ]
-            seq.shots.append(shot)
-        sequences.append(seq)
+            state.phase = "failed"
+            return state
+        fallback = StubPlannerLLM().plan(state.idea, context=context)
+        sequences = _sequences_from_raw(
+            fallback, state.idea, vbench_min=vbench_min, semantic_min=semantic_min
+        )
+        state.record(
+            "plan_conservative_fallback",
+            reason=str(PlanTerminalReason.AMBIGUOUS_PURPOSE),
+            hypothesis=state.idea,
+            planner=type(planner).__name__,
+        )
 
     state.sequences = sequences
 
