@@ -272,6 +272,9 @@ def test_edl_build_renders_each_aspect_variant(
             f"/studio/api/projects/{project_id}/edl/build",
             json={
                 "aspect_ratios": ["16:9", "9:16"],
+                "fps": 12,
+                "color_range": "full",
+                "picture_inset_percent": 2.0,
                 "source_asset_id": asset["id"],
                 "cuts": [{"in_sec": 0.0, "out_sec": 1.5, "reason": "test"}],
             },
@@ -292,6 +295,9 @@ def test_edl_build_renders_each_aspect_variant(
     for variant in body["variants"]:
         assert variant["verification"]["probe_ok"] is True
         assert variant["verification"]["verified"] is True
+        assert variant["verification"]["probed_fps"] == pytest.approx(12.0, abs=0.5)
+        assert variant["verification"]["probed_color_range"] == "pc"
+        assert variant["verification"]["picture_inset_percent"] == 2.0
         assert variant["output_asset"]["id"]
     # Un evento `edl` con status=built por variante ⇒ un `edl_rendered` por webhook.
     built = [d for t, d in captured if t == "edl" and d.get("status") == "built"]

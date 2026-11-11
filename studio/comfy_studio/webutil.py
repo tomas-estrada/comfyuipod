@@ -268,8 +268,10 @@ class EdlBuildRequest(BaseModel):
         ),
     )
     source_asset_id: str | None = None
-    cuts: list[EdlCutItem] | None = Field(default=None, max_length=200)  # M3-SCR-005
     fps: int = Field(default=24, ge=12, le=60)
+    color_range: Literal["limited", "full"] = "limited"
+    picture_inset_percent: float = Field(default=0.0, ge=0.0, le=25.0)
+    cuts: list[EdlCutItem] | None = Field(default=None, max_length=200)  # M3-SCR-005
 
     @field_validator("aspect_ratios")
     @classmethod

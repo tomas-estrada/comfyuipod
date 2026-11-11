@@ -93,6 +93,8 @@ def probe_media_info(
             "has_video": True,
             "has_audio": False,
             "probe_ok": False,
+            "fps": 0.0,
+            "color_range": None,
         }
 
     cmd = [
@@ -100,7 +102,7 @@ def probe_media_info(
         "-v",
         "error",
         "-show_entries",
-        "format=duration:stream=codec_type,codec_name,width,height,duration",
+        "format=duration:stream=codec_type,codec_name,width,height,duration,r_frame_rate,avg_frame_rate,color_range",
         "-of",
         "json",
         str(file_path),
@@ -123,6 +125,8 @@ def probe_media_info(
                 "codec_name": "h264",
                 "audio_codec_name": None,
                 "probe_ok": False,
+                "fps": 0.0,
+                "color_range": None,
             }
         data = json.loads(proc.stdout)
     except Exception:
@@ -135,6 +139,8 @@ def probe_media_info(
             "codec_name": "h264",
             "audio_codec_name": None,
             "probe_ok": False,
+            "fps": 0.0,
+            "color_range": None,
         }
 
     streams = data.get("streams") or []
@@ -153,6 +159,9 @@ def probe_media_info(
     codec_name = "h264"
     audio_codec_name: str | None = None
     audio_channels = 0
+    r_frame_rate: str | None = None
+    avg_frame_rate: str | None = None
+    color_range: str | None = None
     for st in streams:
         ctype = st.get("codec_type")
         if ctype == "video":
@@ -163,6 +172,12 @@ def probe_media_info(
                 width = int(st["width"])
             if st.get("height"):
                 height = int(st["height"])
+            if st.get("r_frame_rate"):
+                r_frame_rate = str(st["r_frame_rate"])
+            if st.get("avg_frame_rate"):
+                avg_frame_rate = str(st["avg_frame_rate"])
+            if st.get("color_range"):
+                color_range = str(st["color_range"])
             if duration <= 0.0 and st.get("duration") is not None:
                 try:
                     duration = max(duration, float(st["duration"]))
@@ -182,6 +197,19 @@ def probe_media_info(
                 except (TypeError, ValueError):
                     pass
 
+    def _fps_from_rate(rate: str | None) -> float:
+        if not rate or "/" not in rate:
+            return 0.0
+        try:
+            numerator, denominator = rate.split("/", 1)
+            denominator_value = float(denominator)
+            if denominator_value == 0:
+                return 0.0
+            return round(float(numerator) / denominator_value, 6)
+        except (TypeError, ValueError):
+            return 0.0
+
+    fps_value = _fps_from_rate(avg_frame_rate) or _fps_from_rate(r_frame_rate)
     return {
         "duration_sec": round(max(0.0, duration), 3),
         "width": width,
@@ -192,6 +220,8 @@ def probe_media_info(
         "audio_codec_name": audio_codec_name,
         "audio_channels": audio_channels,
         "probe_ok": True,
+        "fps": fps_value,
+        "color_range": color_range,
     }
 
 

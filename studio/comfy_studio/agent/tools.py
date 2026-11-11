@@ -573,6 +573,16 @@ class BuildEdlArgs(BaseModel):
             "Vacío ⇒ una sola variante (`aspect_ratio` o la del EDL)."
         ),
     )
+    fps: int = Field(default=24, ge=12, le=60, description="Fotogramas por segundo de salida.")
+    color_range: Literal["limited", "full"] = Field(
+        default="limited", description="Rango de color de salida realmente convertido."
+    )
+    picture_inset_percent: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=25.0,
+        description="Porcentaje para reducir la imagen completa y centrarla con margen negro.",
+    )
 
 
 class ListTemplatesArgs(BaseModel):
@@ -2030,6 +2040,9 @@ async def _handle_build_edl(
                 aspect_ratio=aspect,
                 resolution=args.resolution,
                 source_asset_id=args.source_asset_id,
+                fps=args.fps,
+                color_range=args.color_range,
+                picture_inset_percent=args.picture_inset_percent,
                 ffmpeg_timeout_s=context.config.studio_ffmpeg_timeout_s,
                 ffprobe_timeout_s=context.config.studio_ffprobe_timeout_s,
             )
