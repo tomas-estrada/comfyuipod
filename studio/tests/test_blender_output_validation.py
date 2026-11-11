@@ -33,6 +33,13 @@ from comfy_studio.engines import EngineRunSpec
 from comfy_studio.engines.blender import BlenderEngine
 
 
+@pytest.fixture(autouse=True)
+def _disable_blender_stub_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The image CI job enables this globally for its smoke environment. These
+    # subprocess fixtures must opt into the fake Blender binary explicitly.
+    monkeypatch.delenv("STUDIO_STUB_BLENDER", raising=False)
+
+
 def _fake_blender(tmp_path: Path, body: str) -> str:
     """Crea un binario `blender` falso (bash) que corre su `body` y sale 0."""
     bin_dir = tmp_path / "fakebin"
