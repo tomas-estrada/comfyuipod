@@ -90,3 +90,11 @@ def test_aovset_serialization_splits_valid_unknown() -> None:
     d = s.to_dict()
     assert d["valid"] == ["albedo"]
     assert d["unknown"] == ["depth"]
+    assert AOVSet.from_dict(d).to_dict() == d
+
+
+def test_invalid_aov_serialization_is_rejected() -> None:
+    with pytest.raises(RelightError, match="schema desconocido"):
+        AOVSet.from_dict({"schema": "aov-set/2", "aovs": {}})
+    with pytest.raises(RelightError, match="validez de AOV inválida"):
+        AOVSet().add("depth", "stale")  # type: ignore[arg-type]
