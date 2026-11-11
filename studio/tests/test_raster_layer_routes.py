@@ -71,6 +71,20 @@ def test_project_raster_layers_persist_and_composite_real_pixels(
     assert rendered.json()["evidence"]["renderer"] == "pillow-alpha-composite-cpu"
     assert rendered.json()["evidence"]["matting"] == "not_run"
 
+    replacement = client.post(
+        f"/studio/api/projects/{project_id}/uploads",
+        files={"file": ("replacement.png", _png([(80, 40, 20, 255)] * 2), "image/png")},
+    )
+    assert replacement.status_code == 201
+    edited = client.patch(
+        f"{url}/base", json={"asset_id": replacement.json()["id"]}
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["invalidated_layer_ids"] == ["base", "overlay"]
+    assert edited.json()["recomposition"] == "required_not_run"
+    prior_output = client.get(result_asset["preview_url"].replace("/file", "")).json()
+    assert prior_output["metadata"]["stale"] is True
+
 
 def test_raster_layers_reject_cycles_and_cross_project_assets(client: TestClient) -> None:
     first_id = client.post("/studio/api/projects", json={"name": "A"}).json()["id"]

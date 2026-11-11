@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -11,12 +12,14 @@ from comfy_studio.projects import MediaValidationError, ProjectStore
 from comfy_studio.raster_layers import (
     RasterLayer,
     RasterLayerError,
+    affected_by,
     canonical_manifest,
     composite_layers,
     parse_manifest,
 )
 
 _META_KEY = "ultra_raster_layer_set_v1"
+_OUTPUT_META_KEY = "ultra_raster_layer_output_v1"
 
 
 class RasterLayerRequest(BaseModel):
@@ -29,6 +32,10 @@ class RasterLayerRequest(BaseModel):
 
 class RasterLayerSetRequest(BaseModel):
     layers: list[RasterLayerRequest]
+
+
+class RasterLayerEditRequest(BaseModel):
+    asset_id: str
 
 
 def _store(request: Request) -> ProjectStore:
@@ -74,6 +81,53 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {**manifest, "render_validation": "not_run"}
 
+    @app.patch("/studio/api/projects/{project_id}/raster-layers/{layer_id}")
+    async def edit_raster_layer(
+        project_id: str,
+        layer_id: str,
+        body: RasterLayerEditRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        try:
+            layers = parse_manifest(store.get_meta(project_id, _META_KEY))
+            asset = store.get_asset(project_id, body.asset_id)
+            if asset is None or asset.get("kind") != "image":
+                raise RasterLayerError("el nuevo origen debe ser una imagen del proyecto")
+            affected = affected_by(layers, layer_id)
+            edited = [
+                replace(layer, asset_id=body.asset_id)
+                if layer.layer_id == layer_id
+                else layer
+                for layer in layers
+            ]
+            manifest = canonical_manifest(edited)
+            store.set_meta(project_id, _META_KEY, manifest)
+            previous_output = store.get_meta(project_id, _OUTPUT_META_KEY)
+            if isinstance(previous_output, dict) and previous_output.get("asset_id"):
+                store.update_asset_metadata(
+                    project_id,
+                    str(previous_output["asset_id"]),
+                    metadata={
+                        "stale": True,
+                        "stale_reason": "raster_layer_source_changed",
+                        "invalidated_layer_ids": sorted(affected),
+                    },
+                )
+                store.set_meta(
+                    project_id,
+                    _OUTPUT_META_KEY,
+                    {**previous_output, "status": "stale"},
+                )
+            return {
+                **manifest,
+                "invalidated_layer_ids": sorted(affected),
+                "recomposition": "required_not_run",
+            }
+        except RasterLayerError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.post("/studio/api/projects/{project_id}/raster-layers/composite", status_code=201)
     async def composite_raster_layers(
         project_id: str, request: Request
@@ -96,6 +150,15 @@ def register_routes(app: FastAPI) -> None:
                     "source_layers": [layer.to_dict() for layer in layers],
                     "pixel_render": "cpu_png",
                     "matting": "not_run",
+                },
+            )
+            store.set_meta(
+                project_id,
+                _OUTPUT_META_KEY,
+                {
+                    "asset_id": asset["id"],
+                    "sha256": evidence["sha256"],
+                    "status": "current",
                 },
             )
             return {

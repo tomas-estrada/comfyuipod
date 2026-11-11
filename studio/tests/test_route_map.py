@@ -94,6 +94,7 @@ EXPECTED_ROUTES: list[str] = [
     "PATCH /studio/api/projects/{project_id}/brief",
     "PATCH /studio/api/projects/{project_id}/identities/{identity_id}",
     "PATCH /studio/api/projects/{project_id}/pins/{pin_id}",
+    "PATCH /studio/api/projects/{project_id}/raster-layers/{layer_id}",
     "POST /studio/api/jobs",
     "POST /studio/api/jobs/{job_id}/progress",
     "POST /studio/api/mcp",

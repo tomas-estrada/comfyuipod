@@ -137,6 +137,23 @@ def validate_layers(layers: list[RasterLayer]) -> list[RasterLayer]:
     return sorted(layers, key=lambda layer: layer.order)
 
 
+def affected_by(layers: list[RasterLayer], changed_id: str) -> set[str]:
+    """Return the changed layer and its transitive causal descendants."""
+    ordered = validate_layers(layers)
+    if changed_id not in {layer.layer_id for layer in ordered}:
+        raise RasterLayerError(f"capa inexistente: {changed_id}")
+    affected = {changed_id}
+    while True:
+        descendants = {
+            layer.layer_id
+            for layer in ordered
+            if layer.caused_by in affected and layer.layer_id not in affected
+        }
+        if not descendants:
+            return affected
+        affected.update(descendants)
+
+
 def _open_rgba(
     store: ProjectStore,
     project_id: str,
@@ -249,6 +266,7 @@ def parse_manifest(raw: Any) -> list[RasterLayer]:
 __all__ = [
     "RasterLayer",
     "RasterLayerError",
+    "affected_by",
     "canonical_manifest",
     "composite_layers",
     "parse_manifest",
