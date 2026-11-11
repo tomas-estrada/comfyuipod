@@ -53,15 +53,14 @@ jobs:
         # Un .puml que "parsea" pero nadie ha visto es inutil: la sintaxis puede
         # ser valida y el render salir vacio (paso con Graphviz ausente) o con el
         # texto solapado. Este paso renderiza de verdad y exige que la salida
-        # tenga tamano real, asi que un diagrama ilegible rompe la CI.
+        # tenga tamano real, asi que un diagrama ilegible rompe la CI. Smetana
+        # viene integrado en PlantUML y evita instalar Graphviz desde APT.
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends graphviz >/dev/null
           curl -fsSL --retry 3 -o /tmp/plantuml.jar \
             "https://github.com/plantuml/plantuml/releases/download/v1.2024.7/plantuml-1.2024.7.jar"
           out="$(mktemp -d)"
-          java -DGRAPHVIZ_DOT="$(command -v dot)" -jar /tmp/plantuml.jar \
+          java -jar /tmp/plantuml.jar -Playout=smetana \
             -tsvg -charset UTF-8 -o "$out" \
             docs/architecture/01-components.puml docs/architecture/02-states.puml
           for f in "$out"/*.svg; do
