@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPO_ROOT / "upgrades-ultra-version" / "engines.json"
 DEFAULT_CAPS = REPO_ROOT / "upgrades-ultra-version" / "capabilities.json"
+COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 
 ALLOWED_DISPOSITIONS = {
     "required",
@@ -108,11 +110,30 @@ def validate(
         if selected and not (eng.get("terms_review") or "").strip():
             problems.append(f"{eid}: build_selected sin terms_review (licencia sin revisar)")
 
-        # 4. lock_required pero sin code_revision = RELEASE BLOCKER (no error):
-        # fijar el lock es el trabajo de W07 antes del build; declarado, visible.
-        if eng.get("lock_required_before_build") and selected:
-            if not (eng.get("code_revision") or ""):
+        # 4. A07 readiness evidence. These are release blockers, not manifest
+        # incoherences: unknown evidence must stay visible without inventing it.
+        if selected:
+            revision = str(eng.get("code_revision") or "")
+            if eng.get("lock_required_before_build") and not revision:
                 blockers.append(f"{eid}: lock de código pendiente de fijar antes del build")
+            elif not COMMIT_SHA_RE.fullmatch(revision):
+                blockers.append(f"{eid}: A07 requiere code_revision como SHA inmutable de 40 hex")
+
+            hashes = eng.get("dependency_lock_hashes")
+            if not isinstance(hashes, dict) or not hashes or any(
+                not re.fullmatch(r"[0-9a-f]{64}", str(value), re.IGNORECASE)
+                for value in hashes.values()
+            ):
+                blockers.append(f"{eid}: A07 requiere hashes SHA-256 de dependency locks")
+
+            if eng.get("redistribution_decision") not in {"allowed", "conditional", "blocked"}:
+                blockers.append(f"{eid}: A07 requiere decisión explícita de redistribución")
+            if eng.get("notices_reviewed") is not True:
+                blockers.append(f"{eid}: A07 requiere revisión explícita de notices")
+            if eng.get("implementation_status") != "implemented":
+                blockers.append(
+                    f"{eid}: adapter/entrypoint real aún no está declarado implementado"
+                )
 
         # 5. excluded / reference_only no se hornean.
         if dispo in {"excluded", "reference_only"} and selected:
@@ -145,6 +166,10 @@ def build_report(
         "dispositions": dispo_counts,
         "problems": problems,
         "release_blockers": blockers,
+        "a07_evidence_scope": (
+            "Manifest declarations only; image inventory, offline boot and runtime "
+            "probes require separate CI evidence."
+        ),
         "coherent": not problems,
         "release_ready": not problems and not blockers,
     }
@@ -183,7 +208,8 @@ def main(argv: list[str] | None = None) -> int:
             if len(blockers) > 5:
                 print(f"  ... y {len(blockers) - 5} más")
 
-    # --check falla SOLO por incoherencias reales, no por locks pendientes.
+    # --check falla SOLO por incoherencias reales; missing A07 evidence remains
+    # a visible release blocker until the evidence is supplied and verified.
     if args.check and problems:
         return 1
     return 0

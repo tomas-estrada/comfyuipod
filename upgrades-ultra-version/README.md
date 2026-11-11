@@ -36,6 +36,14 @@ Usar el texto de [GOAL.md](GOAL.md). Tiene aproximadamente 1.200 caracteres. [MI
 
 La misión contiene 34 objetivos funcionales, 14 programas y 30 opciones adicionales. No son 64 motores distintos obligatorios. engines.json incluye además plataformas/servicios propios y alternativas; sus números no se convierten en downloads al boot.
 
+Para que una ruta marcada `build_selected` cuente como preparada para A07,
+`scripts/check_engines_manifest.py` reporta como bloqueos los SHA de código
+inmutables, hashes SHA-256 de locks, decisión explícita de redistribución,
+revisión de notices y estado de implementación del adapter. Ese informe evalúa
+declaraciones del manifiesto; inventario de la imagen, boot offline y probes de
+runtime requieren evidencia separada de CI. Un manifiesto coherente no implica
+que el release esté listo.
+
 ## Reglas de lectura y ejecución
 
 - GOAL/MISSION y anexos actuales prevalecen sobre premisas antiguas del marco histórico.

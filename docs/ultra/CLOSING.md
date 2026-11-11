@@ -77,8 +77,9 @@ no se ejecutó generación neuronal en GPU.
 - **W23** Investigador autónomo y aprendizaje selectivo (C33, C34).
 
 ### Sub-items de los paquetes integrados
-- Fijar `code_revision`/lock por familia en `engines.json` (57 release-blockers
-  declarados por `scripts/check_engines_manifest.py`).
+- Completar la evidencia A07 de las 58 rutas `build_selected` en `engines.json`;
+  el verificador ahora enumera faltantes de pin, locks, redistribución, notices
+  e implementación. Verificar de nuevo el conteo al cerrar cada familia.
 - Protocolo uniforme `describe`/`execute`/`cancel`/`unload` sobre `Engine` base.
 - LangGraph real ejecutando la ruta efectiva en la imagen (hoy con fallback).
 - Provider profiles LLM/VLM intercambiables con contract server (A06).
