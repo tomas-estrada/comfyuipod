@@ -153,12 +153,11 @@ def test_editable_package_download_uses_project_owned_edl_source(
     monkeypatch.setattr(
         keyframes,
         "probe_media_info",
-        lambda *_args, **_kwargs: {
-            "probe_ok": True,
-            "width": 640,
-            "height": 360,
-            "has_video": True,
-        },
+        lambda path, **_kwargs: (
+            {"probe_ok": True, "has_video": False, "has_audio": True, "audio_channels": 1}
+            if str(path).endswith(".wav")
+            else {"probe_ok": True, "width": 640, "height": 360, "has_video": True}
+        ),
     )
     project_id = client.post("/studio/api/projects", json={"name": "Editable"}).json()["id"]
     uploaded = client.post(
@@ -167,12 +166,33 @@ def test_editable_package_download_uses_project_owned_edl_source(
     )
     assert uploaded.status_code == 201, uploaded.text
     asset_id = uploaded.json()["id"]
+    audio = client.post(
+        f"/studio/api/projects/{project_id}/assets",
+        files={"file": ("music.wav", b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wav")},
+    )
+    assert audio.status_code == 201, audio.text
     edl = client.post(
         f"/studio/api/projects/{project_id}/edl",
         json={
             "title": "Prueba editable",
             "source_asset_id": asset_id,
-            "cuts": [{"asset_id": asset_id, "in_sec": 1.0, "out_sec": 3.0}],
+            "audio_asset_id": audio.json()["id"],
+            "cuts": [{
+                "asset_id": asset_id,
+                "in_sec": 1.0,
+                "out_sec": 3.0,
+                "transition_in": "crossfade",
+                "transition_duration_s": 0.4,
+            }],
+            "titles": [
+                {
+                    "text": "Título editable",
+                    "start_s": 0.0,
+                    "end_s": 1.0,
+                    "position": "top",
+                }
+            ],
+            "captions": [{"text": "Subtítulo editable", "start_s": 1.0, "end_s": 2.0}],
         },
     )
     assert edl.status_code == 201, edl.text
@@ -187,7 +207,12 @@ def test_editable_package_download_uses_project_owned_edl_source(
     assert project["name"] == "Prueba editable"
     assert project["clips"][0]["in_s"] == 1.0
     assert project["clips"][0]["source_path"].startswith("assets/")
-    assert manifest["sources"][0]["kind"] == "clip"
+    assert project["transitions"] == ["crossfade"]
+    assert [title["kind"] for title in project["titles"]] == ["title", "caption"]
+    assert project["titles"][0]["position"] == "top"
+    assert project["audio_stems"][0]["source_path"].startswith("assets/")
+    assert manifest["captions"] is True
+    assert {source["kind"] for source in manifest["sources"]} == {"clip", "audio"}
 
 
 @pytest.mark.skipif(

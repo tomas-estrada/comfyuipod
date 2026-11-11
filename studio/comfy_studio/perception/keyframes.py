@@ -152,6 +152,7 @@ def probe_media_info(
     has_audio = False
     codec_name = "h264"
     audio_codec_name: str | None = None
+    audio_channels = 0
     for st in streams:
         ctype = st.get("codec_type")
         if ctype == "video":
@@ -169,6 +170,10 @@ def probe_media_info(
                     pass
         elif ctype == "audio":
             has_audio = True
+            try:
+                audio_channels = max(audio_channels, int(st.get("channels") or 0))
+            except (TypeError, ValueError):
+                pass
             if st.get("codec_name"):
                 audio_codec_name = str(st["codec_name"])
             if duration <= 0.0 and st.get("duration") is not None:
@@ -185,6 +190,7 @@ def probe_media_info(
         "has_audio": has_audio,
         "codec_name": codec_name,
         "audio_codec_name": audio_codec_name,
+        "audio_channels": audio_channels,
         "probe_ok": True,
     }
 

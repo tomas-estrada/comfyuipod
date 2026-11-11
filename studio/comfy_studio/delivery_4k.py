@@ -81,6 +81,8 @@ class Title:
     text: str
     start_s: float
     end_s: float
+    kind: str = "title"
+    position: str = "bottom"
 
 
 @dataclass(slots=True)
@@ -154,16 +156,20 @@ class TimelineSpec:
             raise DeliveryError("title_id duplicado")
         if any(
             not t.title_id
+            or not t.text.strip()
+            or len(t.text) > 1000
             or not all(math.isfinite(v) for v in (t.start_s, t.end_s))
             or t.start_s < 0
             or t.end_s <= t.start_s
+            or t.kind not in {"title", "caption"}
+            or t.position not in {"top", "center", "bottom"}
             for t in self.titles
         ):
             raise DeliveryError("rango de título inválido")
-        if any(
-            not isinstance(transition, str) or not transition
-            for transition in self.transitions
-        ):
+        if self.transitions and len(self.transitions) != len(self.clips):
+            raise DeliveryError("debe haber una transición por cada corte")
+        if any(transition not in {"cut", "crossfade", "fade", "slide"}
+               for transition in self.transitions):
             raise DeliveryError("transición inválida")
         for stem in self.audio_stems:
             if not stem.stem_id or not stem.source_path:
@@ -188,7 +194,14 @@ class TimelineSpec:
                 for c in self.clips
             ],
             "titles": [
-                {"title_id": t.title_id, "text": t.text, "start_s": t.start_s, "end_s": t.end_s}
+                {
+                    "title_id": t.title_id,
+                    "text": t.text,
+                    "start_s": t.start_s,
+                    "end_s": t.end_s,
+                    "kind": t.kind,
+                    "position": t.position,
+                }
                 for t in self.titles
             ],
             "transitions": list(self.transitions),
@@ -429,7 +442,9 @@ class DeliveryManifest:
         }
 
 
-def build_delivery_manifest(spec: TimelineSpec, *, captions: bool = True) -> DeliveryManifest:
+def build_delivery_manifest(
+    spec: TimelineSpec, *, captions: bool | None = None
+) -> DeliveryManifest:
     """Construye el manifest de entrega 4K con créditos de todas las fuentes."""
     spec.validate()
     w, h = target_dimensions(spec.aspect)
@@ -452,7 +467,8 @@ def build_delivery_manifest(spec: TimelineSpec, *, captions: bool = True) -> Del
         fps=spec.fps,
         duration_s=spec.total_duration_s(),
         credits=credits,
-        captions=captions,
+        captions=(any(title.kind == "caption" for title in spec.titles)
+                  if captions is None else captions),
         color_space=spec.color_space,
         color_range=spec.color_range,
         audio_stems=[
