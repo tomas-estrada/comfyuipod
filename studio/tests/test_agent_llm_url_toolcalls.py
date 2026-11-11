@@ -436,8 +436,46 @@ async def test_complete_fails_closed_on_malformed_json_body(studio_data_dir: Pat
         )
 
     client = _client(studio_data_dir, handler)
-    with pytest.raises(LLMProviderError):
+    with pytest.raises(LLMProviderError) as error:
         await client.complete([{"role": "user", "content": "hola"}])
+    assert error.value.kind == "invalid_json"
+    assert error.value.retryable is False
+    assert calls == [_PRIMARY_ENDPOINT, _FALLBACK_ENDPOINT]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("status", "body", "expected_kind"),
+    [
+        (401, {"error": {"message": "invalid api key"}}, "authentication"),
+        (
+            400,
+            {"error": {"code": "context_length_exceeded", "message": "prompt too long"}},
+            "context_limit",
+        ),
+        (413, {"error": {"message": "request entity too large"}}, "context_limit"),
+        (429, {"error": {"message": "rate limit exceeded"}}, "rate_limit"),
+    ],
+)
+async def test_provider_failures_are_typed_and_fallback_attempt_is_bounded(
+    studio_data_dir: Path,
+    status: int,
+    body: dict[str, Any],
+    expected_kind: str,
+) -> None:
+    calls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(status, json=body, request=request)
+
+    client = _client(studio_data_dir, handler)
+    with pytest.raises(LLMProviderError) as error:
+        await client.complete([{"role": "user", "content": "brief"}])
+
+    assert error.value.kind == expected_kind
+    assert error.value.status_code == status
+    assert error.value.retryable is False
     assert calls == [_PRIMARY_ENDPOINT, _FALLBACK_ENDPOINT]
 
 

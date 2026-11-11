@@ -133,7 +133,7 @@ async def test_plan_tools_answer(
 async def test_fallback_on_500_4xx_and_timeout(
     studio_data_dir: Path,
 ) -> None:
-    """Cuando el primario DashScope falla (500, 429 o timeout), entra el fallback con su key."""
+    """401, 429, 500 y timeout del primario entran al fallback con su propia key."""
     primary_key = "YOUR_STUDIO_PRIMARY_KEY_1111"
     fallback_key = "YOUR_STUDIO_FALLBACK_KEY_2222"
     cfg = StudioConfig(
@@ -147,7 +147,7 @@ async def test_fallback_on_500_4xx_and_timeout(
         studio_stub_llm=False,
     )
 
-    for failure_mode in ("500", "429", "timeout"):
+    for failure_mode in ("401", "429", "500", "timeout"):
         called_urls: list[tuple[str, str, str]] = []
 
         async def handler(
@@ -162,7 +162,7 @@ async def test_fallback_on_500_4xx_and_timeout(
                 assert auth == f"Bearer {primary_key}"
                 if _mode == "timeout":
                     raise httpx.ReadTimeout("Primary DashScope timed out", request=request)
-                status = 500 if _mode == "500" else 429
+                status = {"401": 401, "429": 429, "500": 500}[_mode]
                 return httpx.Response(
                     status_code=status,
                     json={"error": {"message": f"Simulated primary failure {status}"}},

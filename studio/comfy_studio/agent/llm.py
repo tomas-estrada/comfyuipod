@@ -26,7 +26,59 @@ _STD_B64_TOKEN = re.compile(r"[A-Za-z0-9+/]*={0,2}")
 
 
 class LLMProviderError(RuntimeError):
-    """Error al invocar el proveedor LLM primario y su fallback secundario."""
+    """Error LLM normalizado, sin secretos ni cuerpos remotos sin filtrar."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = "provider_error",
+        retryable: bool = False,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.retryable = retryable
+        self.status_code = status_code
+
+
+def _classify_provider_failure(status_code: int, body: str) -> tuple[str, bool]:
+    """Classify a provider failure to keep retry/fallback decisions bounded."""
+    normalized = body.casefold()
+    if any(
+        marker in normalized
+        for marker in (
+            "context_length_exceeded",
+            "maximum context length",
+            "max context length",
+            "prompt is too long",
+            "too many tokens",
+            "input token limit",
+        )
+    ) or status_code == 413:
+        return "context_limit", False
+    if status_code in (401, 403):
+        return "authentication", False
+    if status_code == 429:
+        return "rate_limit", True
+    if status_code in (408, 425) or status_code >= 500:
+        return "transient_http", True
+    return "http_error", False
+
+
+def _response_json(response: httpx.Response, *, endpoint: str) -> dict[str, Any]:
+    """Decode one provider JSON object or return a safe, typed protocol error."""
+    try:
+        value = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        raise LLMProviderError(
+            f"Respuesta JSON inválida desde {endpoint}.", kind="invalid_json"
+        ) from None
+    if not isinstance(value, dict):
+        raise LLMProviderError(
+            f"Respuesta JSON con forma inválida desde {endpoint}.", kind="invalid_json"
+        )
+    return value
 
 
 @dataclass(slots=True)
@@ -365,7 +417,19 @@ class OpenAICompatibleLLMClient:
                 f"como el fallback secundario ({fallback_exc})."
             )
             logger.error("%s", msg)
-            raise LLMProviderError(msg) from None
+            raise LLMProviderError(
+                msg,
+                kind=(
+                    fallback_exc.kind
+                    if isinstance(fallback_exc, LLMProviderError)
+                    else "provider_error"
+                ),
+                status_code=(
+                    fallback_exc.status_code
+                    if isinstance(fallback_exc, LLMProviderError)
+                    else None
+                ),
+            ) from None
 
     def _complete_with_stub(
         self,
@@ -571,12 +635,17 @@ class OpenAICompatibleLLMClient:
                 ) from None
 
         if response.status_code >= 400:
-            body_preview = self._redactor.redact(response.text[:400])
+            body_text = response.text
+            kind, retryable = _classify_provider_failure(response.status_code, body_text)
+            body_preview = self._redactor.redact(body_text[:400])
             raise LLMProviderError(
-                f"HTTP {response.status_code} desde {endpoint}: {body_preview}"
+                f"HTTP {response.status_code} desde {endpoint}: {body_preview}",
+                kind=kind,
+                retryable=retryable,
+                status_code=response.status_code,
             )
 
-        data = response.json()
+        data = _response_json(response, endpoint=endpoint)
         choices = data.get("choices") or []
         first_choice = choices[0] if choices else {}
         message = first_choice.get("message") or {}
@@ -637,9 +706,15 @@ class OpenAICompatibleLLMClient:
                     if response.status_code >= 400:
                         raw_err = await response.aread()
                         err_text = raw_err.decode("utf-8", errors="replace")
+                        kind, retryable = _classify_provider_failure(
+                            response.status_code, err_text
+                        )
                         body_preview = self._redactor.redact(err_text[:400])
                         raise LLMProviderError(
-                            f"HTTP {response.status_code} desde {endpoint}: {body_preview}"
+                            f"HTTP {response.status_code} desde {endpoint}: {body_preview}",
+                            kind=kind,
+                            retryable=retryable,
+                            status_code=response.status_code,
                         )
 
                     content_type = (response.headers.get("content-type") or "").lower()
@@ -748,7 +823,17 @@ class OpenAICompatibleLLMClient:
 
                     # Fallback compatible para respuestas JSON no-SSE a una petición stream=True
                     raw_body = await response.aread()
-                    data = json.loads(raw_body.decode("utf-8"))
+                    try:
+                        data = json.loads(raw_body.decode("utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        raise LLMProviderError(
+                            f"Respuesta JSON inválida desde {endpoint}.", kind="invalid_json"
+                        ) from None
+                    if not isinstance(data, dict):
+                        raise LLMProviderError(
+                            f"Respuesta JSON con forma inválida desde {endpoint}.",
+                            kind="invalid_json",
+                        )
             except httpx.HTTPError as exc:
                 safe_err = self._redactor.redact(str(exc))
                 raise LLMProviderError(
@@ -900,7 +985,19 @@ class OpenAICompatibleLLMClient:
                 f"como el fallback secundario ({fallback_exc})."
             )
             logger.error("%s", msg)
-            raise LLMProviderError(msg) from None
+            raise LLMProviderError(
+                msg,
+                kind=(
+                    fallback_exc.kind
+                    if isinstance(fallback_exc, LLMProviderError)
+                    else "provider_error"
+                ),
+                status_code=(
+                    fallback_exc.status_code
+                    if isinstance(fallback_exc, LLMProviderError)
+                    else None
+                ),
+            ) from None
 
     async def _iter_text_chunks(self, text: str) -> AsyncIterator[str]:
         words = text.split(" ")
