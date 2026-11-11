@@ -118,6 +118,44 @@ def test_localized_repair_store_flow(tmp_path, store):
     assert store.get_asset_path(pid, out_asset["id"]) is not None
 
 
+def test_localized_repair_does_not_register_failed_frame_check(tmp_path, store, monkeypatch):
+    from importlib import import_module
+
+    repair_module = import_module("comfy_studio.edl.localized_repair")
+
+    pid = store.list_projects()[0]["id"]
+    src = tmp_path / "src.mp4"
+    repl = tmp_path / "repl.mp4"
+    _make_video(src, 8.0, "green")
+    _make_video(repl, 1.0, "yellow")
+    sid = _upload(store, pid, src)
+    rid = _upload(store, pid, repl)
+    initial_output_count = len(store.list_assets(pid, category="outputs"))
+    monkeypatch.setattr(
+        repair_module,
+        "verify_source_frame_provenance",
+        lambda *args, **kwargs: {
+            "provenance_ok": False,
+            "sample_count": 1,
+            "max_delta_rgb": 100.0,
+            "tolerance_rgb": 8.0,
+            "comparison": "frame_rgb_mean_tolerance",
+        },
+    )
+
+    with pytest.raises(LocalizedRepairError, match="no se registró"):
+        localized_repair(
+            store,
+            pid,
+            source_asset_id=sid,
+            replacement_asset_id=rid,
+            edit_start_sec=2.0,
+            edit_end_sec=3.0,
+        )
+
+    assert len(store.list_assets(pid, category="outputs")) == initial_output_count
+
+
 def test_verify_fails_if_outside_changed(tmp_path):
     src = tmp_path / "src.mp4"
     other = tmp_path / "other.mp4"
@@ -157,7 +195,7 @@ def test_localized_repair_tool_registered():
     belt = create_default_tool_belt()
     spec = belt.get("localized_repair")
     assert spec is not None
-    assert "fotogramas" in (spec.description or "").lower()
+    assert "comparación muestreada" in (spec.description or "").lower()
     assert "identidad de bytes" in (spec.description or "").lower()
 
 
