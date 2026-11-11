@@ -55,6 +55,17 @@ inspect current repository code, state applicability limits, and validate the
 change with CPU fixtures before making hardware claims. See
 [`docs/research/README.md`](docs/research/README.md).
 
+## Agent Harness Requirement
+
+Every agent that works in this repository must run through its runtime harness
+and leave a durable `.agent-runs/` record. OpenCode and Kilo load their project
+hooks automatically; Studio uses its built-in harness. Command Code does not
+auto-load the project mod, so launch its agents only through
+`scripts/cmd-agent <task>`, which supplies the mod and bounded child profile.
+Do not disable these hooks or launch an unregistered child profile. A new
+runtime is unsupported until it has a dispatch hook or tested repository
+adapter enforcing `docs/agent-harness-contract.md`.
+
 OpenCode sessions use automatic compaction with a 20% model-specific context
 reserve and retain 12,000 recent tokens (`opencode.json`). Important state must
 be written to repository files before compaction because summaries are lossy.

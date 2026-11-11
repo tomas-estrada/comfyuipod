@@ -7,11 +7,25 @@ if (($# == 0)); then
 fi
 
 task="$*"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+cd "$repo_root"
 model="${CMD_AGENT_MODEL:-stealth/glyph-cluster:free}"
-exec python3 "$(dirname "$0")/agent_harness.py" \
+max_turns="${CMD_AGENT_MAX_TURNS:-12}"
+max_llm_calls="${CMD_AGENT_MAX_LLM_CALLS:-24}"
+max_tool_calls="${CMD_AGENT_MAX_TOOL_CALLS:-48}"
+max_wall_seconds="${CMD_AGENT_MAX_WALL_SECONDS:-1800}"
+export COMFYUIPOD_AGENT_MAX_TURNS="$max_turns"
+export COMFYUIPOD_AGENT_MAX_LLM_CALLS="$max_llm_calls"
+export COMFYUIPOD_AGENT_MAX_TOOL_CALLS="$max_tool_calls"
+export COMFYUIPOD_AGENT_MAX_WALL_SECONDS="$max_wall_seconds"
+exec python3 "$script_dir/agent_harness.py" \
   --runtime-id command-code \
   --model-id "$model" \
   --role builder \
-  --tools "read,search,edit,write,shell" \
+  --tools "read_file,read_directory,glob,grep,write_file,edit_file,shell_command,agent,agent_output" \
+  --max-iterations "$max_turns" \
+  --max-llm-calls "$max_llm_calls" \
+  --max-wall-seconds "$max_wall_seconds" \
   --task "$task" \
-  -- cmd --model "$model" '{prompt}'
+  -- cmd --trust --model "$model" --max-turns "$max_turns" --mod "$repo_root/.commandcode/mods/agent-harness.ts" -p '{prompt}'

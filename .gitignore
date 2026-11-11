@@ -16,6 +16,9 @@ __pycache__/
 .kilo/*
 !.kilo/agent/
 !.kilo/skills/
+!.kilo/plugin/
+!.kilo/plugin/**
+!.kilo/opencode.jsonc
 docs/auditorias/LONG_RUN_AUDIT_TRACKER.md
 docs/auditorias/AUDITORIA_AGENTE_V[1-9][0-9]*.md
 comfyctl/target/
