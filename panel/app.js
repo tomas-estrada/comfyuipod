@@ -147,6 +147,9 @@
             if (isMatch) btn.setAttribute("aria-current", "page");
             else btn.removeAttribute("aria-current");
         });
+        const activeNav = document.querySelector(`.nav-tab[data-view="${target}"]`);
+        const navDisclosure = activeNav && activeNav.closest("details.nav-more");
+        if (navDisclosure) navDisclosure.open = true;
 
         document.querySelectorAll(".studio-view[data-view-panel]").forEach((sec) => {
             const isMatch = sec.getAttribute("data-view-panel") === target;
@@ -544,7 +547,11 @@
             .map((id) => document.getElementById(id))
             .filter(Boolean);
         const hasError = critical.some((badge) => badge.classList.contains("status-err"));
+        const downloadBadge = document.getElementById("health-download-badge");
+        const sseBadge = document.getElementById("sse-status-badge");
         const hasWarning = critical.some((badge) => badge.classList.contains("status-warn")) ||
+            Boolean(downloadBadge && downloadBadge.classList.contains("status-err")) ||
+            Boolean(sseBadge && (sseBadge.classList.contains("status-warn") || sseBadge.classList.contains("status-err"))) ||
             Boolean(engineBadge && engineBadge.textContent.includes("no disponible"));
         const waiting = critical.some((badge) => badge.classList.contains("status-neutral"));
         summary.textContent = hasError
@@ -640,6 +647,8 @@
         } catch (_err) {
             badge.textContent = "Descargas: sin conexión";
             badge.className = "status-pill status-err";
+        } finally {
+            updateSystemHealthSummary();
         }
     }
 
@@ -3107,6 +3116,7 @@
                     badge.textContent = "SSE: Conectado";
                     badge.className = "status-pill status-ok";
                 }
+                updateSystemHealthSummary();
             };
 
             es.addEventListener("heartbeat", function (evt) {
@@ -3114,6 +3124,7 @@
                     badge.textContent = "SSE: Activo";
                     badge.className = "status-pill status-ok";
                 }
+                updateSystemHealthSummary();
                 if (banner) {
                     try {
                         const data = JSON.parse(evt.data);
@@ -3175,11 +3186,14 @@
                     badge.textContent = "SSE: Espera / Reintento";
                     badge.className = "status-pill status-warn";
                 }
+                updateSystemHealthSummary();
             };
         } catch (_err) {
             if (badge) {
                 badge.textContent = "SSE: No disponible";
+                badge.className = "status-pill status-warn";
             }
+            updateSystemHealthSummary();
         }
     }
 
