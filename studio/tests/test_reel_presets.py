@@ -53,3 +53,28 @@ def test_unknown_preset_fails_closed() -> None:
             duration_s=1.0,
             clip_count=1,
         )
+
+
+@pytest.mark.parametrize(
+    ("preset_id", "expected_dimensions", "safe_area"),
+    [
+        ("delivery-landscape-4k-v1", (3840, 2160), 5.0),
+        ("delivery-vertical-4k-v1", (2160, 3840), 10.0),
+    ],
+)
+def test_delivery_4k_presets_resolve_exact_format_and_safe_area(
+    preset_id: str, expected_dimensions: tuple[int, int], safe_area: float
+) -> None:
+    preset, width, height, fps = resolve_reel_preset(
+        preset_id,
+        width=None,
+        height=None,
+        fps=None,
+        duration_s=12.0,
+        clip_count=3,
+    )
+    assert (width, height) == expected_dimensions
+    assert fps == 24
+    assert preset.safe_area_percent == safe_area
+    assert preset.concurrency == 1
+    assert preset.max_pixels_per_frame >= width * height

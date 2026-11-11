@@ -34,6 +34,10 @@ export const reelSchema = z.object({
   width: z.number().default(1080),
   height: z.number().default(1920),
   audio: z.string().nullable().default(null),
+  audioTracks: z.array(z.object({ src: z.string(), gainDb: z.number().min(-60).max(12) })).default([]),
+  safeAreaPercent: z.number().min(0).max(24).default(8),
+  colorSpace: z.literal("bt709").default("bt709"),
+  colorRange: z.enum(["limited", "full"]).default("limited"),
   clips: z.array(clipSchema).default([]),
   titles: z.array(overlaySchema).default([]),
   captions: z.array(overlaySchema).default([]),
@@ -46,6 +50,10 @@ export const defaultReelProps: ReelProps = {
   width: 1080,
   height: 1920,
   audio: null,
+  audioTracks: [],
+  safeAreaPercent: 8,
+  colorSpace: "bt709",
+  colorRange: "limited",
   clips: [],
   titles: [],
   captions: [],
@@ -99,7 +107,7 @@ const Clip: React.FC<{
   );
 };
 
-export const Reel: React.FC<ReelProps> = ({ audio, clips, titles, captions }) => {
+export const Reel: React.FC<ReelProps> = ({ audio, audioTracks, safeAreaPercent, clips, titles, captions }) => {
   const { fps, width } = useVideoConfig();
   let cursor = 0;
   let previousDurationFrames = 0;
@@ -136,6 +144,7 @@ export const Reel: React.FC<ReelProps> = ({ audio, clips, titles, captions }) =>
           kind="title"
           fps={fps}
           width={width}
+          safeAreaPercent={safeAreaPercent}
         />
       ))}
       {captions.map((overlay, i) => (
@@ -145,9 +154,17 @@ export const Reel: React.FC<ReelProps> = ({ audio, clips, titles, captions }) =>
           kind="caption"
           fps={fps}
           width={width}
+          safeAreaPercent={safeAreaPercent}
         />
       ))}
       {audio ? <Audio src={staticFile(audio)} /> : null}
+      {audioTracks.map((track, index) => (
+        <Audio
+          key={`audio-${index}`}
+          src={staticFile(track.src)}
+          volume={Math.pow(10, track.gainDb / 20)}
+        />
+      ))}
     </AbsoluteFill>
   );
 };
@@ -155,8 +172,8 @@ export const Reel: React.FC<ReelProps> = ({ audio, clips, titles, captions }) =>
 type Overlay = ReelProps["titles"][number];
 
 const TextOverlay: React.FC<
-  Overlay & { kind: "title" | "caption"; fps: number; width: number }
-> = ({ text, startInSeconds, endInSeconds, position, kind, fps, width }) => {
+  Overlay & { kind: "title" | "caption"; fps: number; width: number; safeAreaPercent: number }
+> = ({ text, startInSeconds, endInSeconds, position, kind, fps, width, safeAreaPercent }) => {
   const from = Math.round(startInSeconds * fps);
   const duration = Math.max(1, Math.round((endInSeconds - startInSeconds) * fps));
   const justifyContent =
@@ -167,7 +184,7 @@ const TextOverlay: React.FC<
         style={{
           alignItems: "center",
           justifyContent,
-          padding: "8% 6%",
+          padding: `${safeAreaPercent}% 6%`,
           boxSizing: "border-box",
           pointerEvents: "none",
         }}

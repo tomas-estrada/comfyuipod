@@ -102,7 +102,7 @@ def probe_media_info(
         "-v",
         "error",
         "-show_entries",
-        "format=duration:stream=codec_type,codec_name,width,height,duration,r_frame_rate,avg_frame_rate,color_range",
+        "format=duration:stream=codec_type,codec_name,width,height,duration,r_frame_rate,avg_frame_rate,color_range,color_space,color_transfer,color_primaries",
         "-of",
         "json",
         str(file_path),
@@ -162,6 +162,9 @@ def probe_media_info(
     r_frame_rate: str | None = None
     avg_frame_rate: str | None = None
     color_range: str | None = None
+    color_space: str | None = None
+    color_transfer: str | None = None
+    color_primaries: str | None = None
     for st in streams:
         ctype = st.get("codec_type")
         if ctype == "video":
@@ -187,6 +190,9 @@ def probe_media_info(
                     "jpeg": "pc",
                     "full": "pc",
                 }.get(str(st["color_range"]).strip().lower())
+            color_space = str(st.get("color_space") or color_space or "") or None
+            color_transfer = str(st.get("color_transfer") or color_transfer or "") or None
+            color_primaries = str(st.get("color_primaries") or color_primaries or "") or None
             if duration <= 0.0 and st.get("duration") is not None:
                 try:
                     duration = max(duration, float(st["duration"]))
@@ -231,6 +237,9 @@ def probe_media_info(
         "probe_ok": True,
         "fps": fps_value,
         "color_range": color_range,
+        "color_space": color_space,
+        "color_transfer": color_transfer,
+        "color_primaries": color_primaries,
     }
 
 

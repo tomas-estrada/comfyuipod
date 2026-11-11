@@ -195,11 +195,15 @@ def register_routes(app: FastAPI) -> None:
                 status_code=422,
                 detail="El título o caption no puede superar la duración final del EDL",
             )
-        if body.audio_asset_id:
-            audio = active_store.get_asset(project_id, body.audio_asset_id)
-            if audio is None or audio.get("kind") != "audio":
+        audio_asset_ids = list(dict.fromkeys(
+            [*(body.audio_asset_ids or []), *([body.audio_asset_id] if body.audio_asset_id else [])]
+        ))
+        for audio_id in audio_asset_ids:
+            audio = active_store.get_asset(project_id, audio_id)
+            audio_path = active_store.get_asset_path(project_id, audio_id)
+            if audio is None or audio.get("kind") != "audio" or audio_path is None:
                 raise HTTPException(
-                    status_code=400, detail="La pista de audio EDL no está disponible"
+                    status_code=400, detail=f"La pista de audio EDL {audio_id!r} no está disponible"
                 )
         edl_doc: dict[str, Any] = {
             "schema": "comfy_studio.edl.v1",
@@ -211,6 +215,10 @@ def register_routes(app: FastAPI) -> None:
             "titles": [item.model_dump() for item in body.titles],
             "captions": [item.model_dump() for item in body.captions],
             "audio_asset_id": body.audio_asset_id,
+            "audio_asset_ids": audio_asset_ids,
+            "fps": body.fps,
+            "color_space": body.color_space,
+            "color_range": body.color_range,
             "notes": body.notes,
         }
         saved = active_store.save_edl_version(project_id, edl=edl_doc)
@@ -433,12 +441,14 @@ def register_routes(app: FastAPI) -> None:
             )
             total_s += clip.duration_s - overlap
             previous_duration = clip.duration_s
+        target_color_space = body.color_space or str(edl.get("color_space") or "bt709")
+        target_color_range = body.color_range or str(edl.get("color_range") or "limited")
         try:
             preset, width, height, fps = resolve_reel_preset(
                 body.preset_id,
                 width=body.width,
                 height=body.height,
-                fps=body.fps,
+                fps=body.fps or int(edl.get("fps") or 24),
                 duration_s=total_s,
                 clip_count=len(clips),
             )
@@ -451,14 +461,32 @@ def register_routes(app: FastAPI) -> None:
                 status_code=422, detail="Un título o caption supera la duración final"
             )
 
-        audio_id = str(edl.get("audio_asset_id") or "").strip() or None
-        audio_path = store.get_asset_path(project_id, audio_id) if audio_id else None
-        if audio_id:
+        audio_ids = list(dict.fromkeys(
+            [
+                str(value).strip()
+                for value in edl.get("audio_asset_ids", [])
+                if str(value).strip()
+            ]
+            + ([str(edl.get("audio_asset_id") or "").strip()]
+               if str(edl.get("audio_asset_id") or "").strip() else [])
+        ))
+        audio_paths: list[Path] = []
+        audio_gains_db: list[float] = []
+        for audio_id in audio_ids:
+            audio_path = store.get_asset_path(project_id, audio_id)
             audio_asset = store.get_asset(project_id, audio_id)
             if audio_asset is None or audio_asset.get("kind") != "audio" or audio_path is None:
                 raise HTTPException(
-                    status_code=400, detail="La pista de audio EDL no está disponible"
+                    status_code=400, detail=f"La pista de audio EDL {audio_id!r} no está disponible"
                 )
+            audio_paths.append(audio_path)
+            try:
+                gain_db = float((audio_asset.get("metadata") or {}).get("gain_db", 0.0))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="Ganancia de audio inválida") from exc
+            if not -60 <= gain_db <= 12:
+                raise HTTPException(status_code=400, detail="Ganancia de audio fuera de rango")
+            audio_gains_db.append(gain_db)
 
         with tempfile.TemporaryDirectory(prefix="studio-edl-remotion-") as output_dir:
             output_path = Path(output_dir) / "edl-reel.mp4"
@@ -477,7 +505,11 @@ def register_routes(app: FastAPI) -> None:
                 "width": width,
                 "height": height,
                 "fps": fps,
-                "audio_path": str(audio_path) if audio_path else None,
+                "audio_paths": [str(path) for path in audio_paths],
+                "audio_gains_db": audio_gains_db,
+                "safe_area_percent": preset.safe_area_percent,
+                "color_space": target_color_space,
+                "color_range": target_color_range,
                 "titles": [
                     {
                         "text": item.text,
@@ -515,10 +547,29 @@ def register_routes(app: FastAPI) -> None:
                 or not output_info.get("has_video")
                 or int(output_info.get("width") or 0) != width
                 or int(output_info.get("height") or 0) != height
+                or abs(float(output_info.get("fps") or 0.0) - fps) > 0.01
+                or output_info.get("color_range")
+                != ("pc" if target_color_range == "full" else "tv")
+                or output_info.get("color_space") != target_color_space
+                or output_info.get("color_transfer") != target_color_space
+                or output_info.get("color_primaries") != target_color_space
+                or (audio_ids and not output_info.get("has_audio"))
                 or abs(float(output_info.get("duration_sec") or 0) - total_s) > (1 / fps + 0.05)
             ):
                 raise HTTPException(
                     status_code=503, detail="La salida Remotion no verificó dimensiones/duración"
+                )
+            audio_loudness = result.payload.get("audio_loudness_lufs")
+            true_peak = result.payload.get("true_peak_dbfs")
+            if audio_ids and (
+                audio_loudness is None
+                or true_peak is None
+                or abs(float(audio_loudness) + 16.0) > 1.0
+                or float(true_peak) > -0.5
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail="El máster no verificó loudness objetivo (-16 LUFS / pico ≤ -1 dBFS)",
                 )
             if rendered.stat().st_size > config.max_upload_bytes:
                 raise HTTPException(status_code=413, detail="El reel renderizado supera el límite")
@@ -535,10 +586,16 @@ def register_routes(app: FastAPI) -> None:
                         "edl_version": version,
                         "preset_id": preset.preset_id,
                         "source_asset_ids": source_ids,
-                        "audio_asset_id": audio_id,
+                        "audio_asset_id": audio_ids[0] if audio_ids else None,
+                        "audio_asset_ids": audio_ids,
                         "width": width,
                         "height": height,
                         "fps": fps,
+                        "color_space": target_color_space,
+                        "color_range": target_color_range,
+                        "safe_area_percent": preset.safe_area_percent,
+                        "audio_loudness_lufs": audio_loudness,
+                        "true_peak_dbfs": true_peak,
                         "duration_s": round(total_s, 3),
                     },
                 )
@@ -549,6 +606,17 @@ def register_routes(app: FastAPI) -> None:
             "project_id": project_id,
             "edl_version": version,
             "engine": "remotion",
+            "audio_asset_ids": audio_ids,
+            "delivery_policy": {
+                "width": width,
+                "height": height,
+                "fps": fps,
+                "color_space": target_color_space,
+                "color_range": target_color_range,
+                "safe_area_percent": preset.safe_area_percent,
+                "audio_loudness_lufs": audio_loudness,
+                "true_peak_dbfs": true_peak,
+            },
             "simulated": False,
             "output_asset": output_asset,
         }
@@ -558,12 +626,14 @@ def register_routes(app: FastAPI) -> None:
         project_id: str,
         version: int,
         request: Request,
+        body: EdlProgrammedRenderRequest | None = None,
     ) -> FileResponse:
-        """Descarga un proyecto editable con fuentes incluidas desde un EDL guardado."""
+        """Renderiza un máster 4K real y lo incluye con las fuentes en el proyecto editable."""
         from comfy_studio.delivery_4k import (
             ASPECT_4K,
             AudioStem,
             Clip,
+            DeliveryError,
             TimelineSpec,
             Title,
             write_editable_package_archive,
@@ -658,13 +728,21 @@ def register_routes(app: FastAPI) -> None:
         ]
 
         audio_stems: list[AudioStem] = []
-        audio_id = str(edl.get("audio_asset_id") or "").strip()
-        if audio_id:
+        audio_ids = list(dict.fromkeys(
+            [
+                str(value).strip()
+                for value in edl.get("audio_asset_ids", [])
+                if str(value).strip()
+            ]
+            + ([str(edl.get("audio_asset_id") or "").strip()]
+               if str(edl.get("audio_asset_id") or "").strip() else [])
+        ))
+        for index, audio_id in enumerate(audio_ids, start=1):
             audio_asset = active_store.get_asset(project_id, audio_id)
             audio_source = active_store.get_asset_path(project_id, audio_id)
             if audio_asset is None or audio_asset.get("kind") != "audio" or audio_source is None:
                 raise HTTPException(
-                    status_code=400, detail="La pista de audio EDL no está disponible"
+                    status_code=400, detail=f"La pista de audio EDL {audio_id!r} no está disponible"
                 )
             audio_info = probe_media_info(
                 audio_source,
@@ -673,30 +751,101 @@ def register_routes(app: FastAPI) -> None:
             if not audio_info.get("probe_ok") or not audio_info.get("has_audio"):
                 raise HTTPException(status_code=400, detail="No se pudo verificar el audio fuente")
             audio_meta = audio_asset.get("metadata") or {}
+            try:
+                gain_db = float(audio_meta.get("gain_db") or 0.0)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="Ganancia de audio inválida") from exc
+            if not -60 <= gain_db <= 12:
+                raise HTTPException(status_code=400, detail="Ganancia de audio fuera de rango")
             audio_stems.append(
                 AudioStem(
-                    stem_id="edl-audio",
+                    stem_id=f"edl-audio-{index:02d}",
                     source_path=str(audio_source),
-                    role="mix",
+                    role=str(audio_meta.get("role") or ("mix" if index == 1 else "stem")),
                     license=str(audio_meta.get("license") or "unknown"),
+                    gain_db=gain_db,
                     channels=max(1, min(8, int(audio_info.get("audio_channels") or 2))),
                 )
             )
 
         transitions = [str(cut.get("transition_in") or "cut") for cut in cuts]
 
+        fps = int(edl.get("fps") or 24)
+        color_space = str(edl.get("color_space") or "bt709")
+        color_range = str(edl.get("color_range") or "limited")
+        safe_area_percent = 10.0 if aspect == "9:16" else 5.0
         timeline = TimelineSpec(
             name=str(edl.get("title") or f"EDL v{version}"),
             aspect=aspect,
-            fps=24,
+            fps=fps,
             clips=clips,
             titles=titles + captions,
             transitions=transitions,
             audio_stems=audio_stems,
+            color_space=color_space,
+            color_range=color_range,
+            safe_area_percent=safe_area_percent,
         )
+        preset_id = {
+            "16:9": "delivery-landscape-4k-v1",
+            "9:16": "delivery-vertical-4k-v1",
+            "1:1": "delivery-square-4k-v1",
+        }[aspect]
+        render_request = body or EdlProgrammedRenderRequest(preset_id=preset_id)
+        if (
+            render_request.preset_id != preset_id
+            or render_request.width is not None
+            or render_request.height is not None
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=f"El paquete editable requiere el preset 4K {preset_id}",
+            )
+        try:
+            rendered_result = await render_programmed_edl_version(
+                project_id, version, render_request, request
+            )
+        except HTTPException:
+            raise
+        master_asset = rendered_result["output_asset"]
+        delivery_policy = rendered_result["delivery_policy"]
+        timeline.fps = int(delivery_policy["fps"])
+        timeline.color_space = str(delivery_policy["color_space"])
+        timeline.color_range = str(delivery_policy["color_range"])
+        timeline.safe_area_percent = float(delivery_policy["safe_area_percent"])
+        timeline.audio_loudness_lufs = delivery_policy["audio_loudness_lufs"]
+        timeline.true_peak_dbfs = delivery_policy["true_peak_dbfs"]
+        master_path = active_store.get_asset_path(project_id, str(master_asset["id"]))
+        if master_path is None:
+            raise HTTPException(status_code=503, detail="El máster renderizado no está disponible")
         fd, archive_name = tempfile.mkstemp(prefix="comfyuipod-editable-", suffix=".zip")
         os.close(fd)
-        archive = await run_in_threadpool(write_editable_package_archive, timeline, archive_name)
+        try:
+            archive = await run_in_threadpool(
+                write_editable_package_archive,
+                timeline,
+                archive_name,
+                additional_artifacts=[
+                    {
+                        "source_path": str(master_path),
+                        "filename": f"master-{master_asset['id']}.mp4",
+                        "kind": "master",
+                        "media_type": "video/mp4",
+                        "metadata": {
+                            "asset_id": master_asset["id"],
+                            "engine": rendered_result["engine"],
+                            "edl_version": version,
+                            **delivery_policy,
+                        },
+                    }
+                ],
+            )
+        except (DeliveryError, OSError) as exc:
+            Path(archive_name).unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=422,
+                detail=f"No se pudo crear el paquete editable: {exc}",
+            ) from exc
         return FileResponse(
             archive,
             media_type="application/zip",
