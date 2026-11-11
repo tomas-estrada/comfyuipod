@@ -20,6 +20,7 @@ from . import (
     productions,
     projects,
     relight,
+    raster_layers,
     review_pins,
     spatial_memory,
     templates,
@@ -45,6 +46,7 @@ _MODULES = (
     spatial_memory,
     montage,
     relight,
+    raster_layers,
     voice,
 )
 

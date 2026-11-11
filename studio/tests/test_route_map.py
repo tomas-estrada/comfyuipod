@@ -73,6 +73,7 @@ EXPECTED_ROUTES: list[str] = [
     "GET /studio/api/projects/{project_id}/pins/summary",
     "GET /studio/api/projects/{project_id}/spatial-memory",
     "GET /studio/api/projects/{project_id}/spatial-memory/anchors/{anchor_id}/round-trip",
+    "GET /studio/api/projects/{project_id}/raster-layers",
     "GET /studio/api/projects/{project_id}/transcriptions",
     "GET /studio/api/projects/{project_id}/transcriptions/{transcription_id}/subtitles",
     "GET /studio/api/projects/{project_id}/sound/mix",
@@ -121,6 +122,7 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/edl/{version}/render",
     "POST /studio/api/projects/{project_id}/edl/{version}/programmed-render",
     "POST /studio/api/projects/{project_id}/reels/render",
+    "POST /studio/api/projects/{project_id}/raster-layers/composite",
     "POST /studio/api/projects/{project_id}/faces/index",
     "POST /studio/api/projects/{project_id}/identities",
     "POST /studio/api/projects/{project_id}/keyframes/extract",
@@ -141,6 +143,7 @@ EXPECTED_ROUTES: list[str] = [
     "PUT /studio/api/projects/{project_id}/sound/mix",
     "PUT /studio/api/projects/{project_id}/spatial-memory/anchors/{anchor_id}",
     "PUT /studio/api/projects/{project_id}/aovs",
+    "PUT /studio/api/projects/{project_id}/raster-layers",
     "PUT /studio/api/projects/{project_id}/voice/lexicons/{locale}",
     "PUT /studio/api/projects/{project_id}/voice/tracks/{speaker}",
 ]
