@@ -168,6 +168,45 @@ def test_editable_package_copies_and_reopens_source_media(tmp_path) -> None:
     reopened = load_editable_package(package)
     assert reopened.titles[0].text == "ATARDECER"
     assert all((package / clip.source_path).is_file() for clip in reopened.clips)
+
+
+def test_editable_package_copies_and_verifies_rendered_master(tmp_path) -> None:
+    spec = _spec()
+    sources = []
+    for name in ("clip-a.mp4", "clip-b.mp4", "foley.wav", "music.wav"):
+        source = tmp_path / name
+        source.write_bytes(name.encode())
+        sources.append(source)
+    for clip, source in zip(spec.clips, sources[:2], strict=True):
+        clip.source_path = str(source)
+    for stem, source in zip(spec.audio_stems, sources[2:], strict=True):
+        stem.source_path = str(source)
+    master = tmp_path / "master.mp4"
+    master.write_bytes(b"verified-master")
+
+    package = write_editable_package(
+        spec,
+        tmp_path / "with-master",
+        additional_artifacts=[
+            {
+                "source_path": str(master),
+                "filename": "approved-master.mp4",
+                "kind": "master",
+                "media_type": "video/mp4",
+                "metadata": {"width": 3840, "height": 2160, "fps": 24},
+            }
+        ],
+    )
+    reopened = load_editable_package(package)
+    assert reopened.fps == 24
+    manifest = __import__("json").loads((package / "delivery-manifest.json").read_text())
+    record = manifest["delivery_artifacts"][0]
+    assert record["path"] == "masters/approved-master.mp4"
+    assert record["metadata"]["width"] == 3840
+    assert (package / record["path"]).read_bytes() == b"verified-master"
+    (package / record["path"]).write_bytes(b"changed")
+    with pytest.raises(DeliveryError, match="hash de artefacto"):
+        load_editable_package(package)
     assert all((package / stem.source_path).is_file() for stem in reopened.audio_stems)
     assert (package / "delivery-manifest.json").is_file()
     assert (package / reopened.clips[0].source_path).read_bytes() == b"clip-a.mp4"

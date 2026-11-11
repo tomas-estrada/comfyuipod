@@ -111,8 +111,8 @@ class TimelineSpec:
     color_space: str = "bt709"
     color_range: str = "limited"
     safe_area_percent: float = 5.0
-    audio_loudness_lufs: float = -16.0
-    true_peak_dbfs: float = -1.0
+    audio_loudness_lufs: float | None = -16.0
+    true_peak_dbfs: float | None = -1.0
 
     SCHEMA_VERSION = 1
 
@@ -134,9 +134,14 @@ class TimelineSpec:
             raise DeliveryError(f"color_range no soportado: {self.color_range}")
         if not math.isfinite(self.safe_area_percent) or not 0 <= self.safe_area_percent < 50:
             raise DeliveryError("safe_area_percent debe estar entre 0 y 50")
-        if not math.isfinite(self.audio_loudness_lufs) or not -70 <= self.audio_loudness_lufs <= 0:
+        if self.audio_loudness_lufs is not None and (
+            not math.isfinite(self.audio_loudness_lufs)
+            or not -70 <= self.audio_loudness_lufs <= 0
+        ):
             raise DeliveryError("audio_loudness_lufs debe estar entre -70 y 0")
-        if not math.isfinite(self.true_peak_dbfs) or not -20 <= self.true_peak_dbfs <= 0:
+        if self.true_peak_dbfs is not None and (
+            not math.isfinite(self.true_peak_dbfs) or not -20 <= self.true_peak_dbfs <= 0
+        ):
             raise DeliveryError("true_peak_dbfs debe estar entre -20 y 0")
         ids = [c.clip_id for c in self.clips]
         if len(ids) != len(set(ids)):
@@ -174,7 +179,11 @@ class TimelineSpec:
         for stem in self.audio_stems:
             if not stem.stem_id or not stem.source_path:
                 raise DeliveryError("cada audio stem requiere id y source_path")
-            if not math.isfinite(stem.gain_db) or not 1 <= stem.channels <= 8:
+            if (
+                not math.isfinite(stem.gain_db)
+                or not -60 <= stem.gain_db <= 12
+                or not 1 <= stem.channels <= 8
+            ):
                 raise DeliveryError("ganancia o número de canales de audio inválido")
 
     def to_dict(self) -> dict[str, Any]:
@@ -241,8 +250,16 @@ class TimelineSpec:
                 color_space=delivery.get("color_space", "bt709"),
                 color_range=delivery.get("color_range", "limited"),
                 safe_area_percent=float(delivery.get("safe_area_percent", 5.0)),
-                audio_loudness_lufs=float(delivery.get("audio_loudness_lufs", -16.0)),
-                true_peak_dbfs=float(delivery.get("true_peak_dbfs", -1.0)),
+                audio_loudness_lufs=(
+                    float(delivery["audio_loudness_lufs"])
+                    if delivery.get("audio_loudness_lufs") is not None
+                    else None
+                ),
+                true_peak_dbfs=(
+                    float(delivery["true_peak_dbfs"])
+                    if delivery.get("true_peak_dbfs") is not None
+                    else None
+                ),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise DeliveryError(f"proyecto editable inválido: {exc}") from exc
@@ -260,7 +277,12 @@ class TimelineSpec:
         return cls.from_dict(data)
 
 
-def write_editable_package(spec: TimelineSpec, destination: str | Path) -> Path:
+def write_editable_package(
+    spec: TimelineSpec,
+    destination: str | Path,
+    *,
+    additional_artifacts: list[dict[str, Any]] | None = None,
+) -> Path:
     """Empaqueta proyecto, medios fuente y manifiesto en un directorio portable.
 
     No sobrescribe destinos existentes. Cada archivo copiado se verifica por
@@ -312,6 +334,29 @@ def write_editable_package(spec: TimelineSpec, destination: str | Path) -> Path:
         manifest["schema"] = "comfyuipod.delivery-manifest"
         manifest["schema_version"] = 1
         manifest["sources"] = source_records
+        artifact_records: list[dict[str, Any]] = []
+        for artifact in additional_artifacts or []:
+            source = Path(str(artifact.get("source_path") or "")).expanduser().resolve()
+            if not source.is_file():
+                raise DeliveryError(f"artefacto de entrega inexistente o no es archivo: {source}")
+            filename = Path(str(artifact.get("filename") or source.name)).name
+            if not filename:
+                raise DeliveryError("nombre de artefacto de entrega vacío")
+            relative = f"masters/{filename}"
+            out = stage / relative
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, out)
+            digest = _sha256_file(out)
+            if digest != _sha256_file(source):
+                raise DeliveryError(f"falló la verificación SHA-256 del artefacto {source}")
+            artifact_records.append({
+                "path": relative,
+                "sha256": digest,
+                "kind": str(artifact.get("kind") or "master"),
+                "media_type": str(artifact.get("media_type") or "application/octet-stream"),
+                "metadata": dict(artifact.get("metadata") or {}),
+            })
+        manifest["delivery_artifacts"] = artifact_records
         (stage / "delivery-manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -356,15 +401,38 @@ def load_editable_package(directory: str | Path) -> TimelineSpec:
         actual = _sha256_file(asset)
         if actual != record.get("sha256"):
             raise DeliveryError(f"hash de medio no coincide: {relative}")
+    artifacts = manifest.get("delivery_artifacts", [])
+    if not isinstance(artifacts, list):
+        raise DeliveryError("inventario de artefactos de entrega inválido")
+    for record in artifacts:
+        relative = Path(str(record.get("path", "")))
+        artifact = (root / relative).resolve()
+        if (
+            relative.is_absolute()
+            or not artifact.is_relative_to(root)
+            or not artifact.is_file()
+        ):
+            raise DeliveryError(f"ruta de artefacto insegura o inexistente: {relative}")
+        if _sha256_file(artifact) != record.get("sha256"):
+            raise DeliveryError(f"hash de artefacto no coincide: {relative}")
     return spec
 
 
-def write_editable_package_archive(spec: TimelineSpec, archive_path: str | Path) -> Path:
+def write_editable_package_archive(
+    spec: TimelineSpec,
+    archive_path: str | Path,
+    *,
+    additional_artifacts: list[dict[str, Any]] | None = None,
+) -> Path:
     """Escribe un ZIP portable con el proyecto, sus fuentes y el manifiesto."""
     archive = Path(archive_path).expanduser().resolve()
     archive.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="editable-delivery-") as workdir:
-        package = write_editable_package(spec, Path(workdir) / "package")
+        package = write_editable_package(
+            spec,
+            Path(workdir) / "package",
+            additional_artifacts=additional_artifacts,
+        )
         with ZipFile(archive, "w", compression=ZIP_STORED) as bundle:
             for path in sorted(package.rglob("*")):
                 if path.is_file():
@@ -419,8 +487,8 @@ class DeliveryManifest:
     color_range: str = "limited"
     audio_stems: list[dict[str, Any]] = field(default_factory=list)
     safe_area_percent: float = 5.0
-    audio_loudness_lufs: float = -16.0
-    true_peak_dbfs: float = -1.0
+    audio_loudness_lufs: float | None = -16.0
+    true_peak_dbfs: float | None = -1.0
 
     def to_dict(self) -> dict[str, Any]:
         return {

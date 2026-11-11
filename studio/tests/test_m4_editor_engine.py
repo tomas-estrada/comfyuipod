@@ -83,6 +83,52 @@ def test_remotion_props_shape() -> None:
     assert props["clips"][0]["transitionIn"] == "crossfade"
 
 
+def test_remotion_props_preserve_audio_tracks_and_delivery_policy() -> None:
+    from comfy_studio.engines.editor import Clip, EditorEngine, TimelineSpec
+
+    timeline = TimelineSpec(
+        clips=[Clip(path=Path("scene.mp4"), duration_s=2.0)],
+        output_path=Path("master.mp4"),
+        width=2160,
+        height=3840,
+        fps=24,
+        audio_paths=[Path("music.wav"), Path("foley.wav")],
+        audio_gains_db=[-3.0, -9.0],
+        safe_area_percent=10.0,
+        color_space="bt709",
+        color_range="full",
+    )
+    timeline.validate()
+    props = EditorEngine._remotion_props(timeline)
+    assert props["audioTracks"] == [
+        {"src": "music.wav", "gainDb": -3.0},
+        {"src": "foley.wav", "gainDb": -9.0},
+    ]
+    assert props["safeAreaPercent"] == 10.0
+    assert props["colorSpace"] == "bt709" and props["colorRange"] == "full"
+
+
+def test_remotion_timeline_rejects_unpaired_or_unsafe_audio_gains() -> None:
+    from comfy_studio.engines.editor import Clip, TimelineSpec
+
+    timeline = TimelineSpec(
+        clips=[Clip(path=Path("scene.mp4"), duration_s=2.0)],
+        output_path=Path("master.mp4"),
+        audio_paths=[Path("music.wav")],
+        audio_gains_db=[20.0],
+    )
+    with pytest.raises(ValueError, match="ganancia de audio fuera de rango"):
+        timeline.validate()
+
+
+def test_loudnorm_metrics_parser_reads_ffmpeg_measurement_json() -> None:
+    from comfy_studio.engines.editor import _extract_loudnorm_metrics
+
+    stderr = 'noise before {"input_i":"-21.75","output_i":"-16.05","output_tp":"-1.25"} trailing'
+    assert _extract_loudnorm_metrics(stderr) == pytest.approx((-16.05, -1.25))
+    assert _extract_loudnorm_metrics("no measurements") is None
+
+
 def test_empty_timeline_rejected(tmp_path: Path) -> None:
     eng = EditorEngine()
     job = {"clips": [], "output_path": str(tmp_path / "x.mp4")}

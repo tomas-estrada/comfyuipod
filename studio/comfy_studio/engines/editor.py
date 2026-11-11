@@ -50,6 +50,22 @@ _REMOTION_COMPOSITION = "Reel"  # id de composición en el proyecto
 _REMOTION_DEFAULT_TIMEOUT_S = 1800.0
 
 
+def _extract_loudnorm_metrics(output: str) -> tuple[float, float] | None:
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(output):
+        if char != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(output[index:])
+            integrated = float(payload["output_i"])
+            true_peak = float(payload["output_tp"])
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(integrated) and math.isfinite(true_peak):
+            return integrated, true_peak
+    return None
+
+
 @dataclass(slots=True)
 class Clip:
     """Un clip de entrada en la línea de tiempo."""
@@ -108,6 +124,13 @@ class TimelineSpec:
     height: int = 1920  # vertical 9:16 por defecto (reel)
     fps: int = 30
     audio_path: Path | None = None
+    audio_paths: list[Path] = field(default_factory=list)
+    audio_gains_db: list[float] = field(default_factory=list)
+    safe_area_percent: float = 8.0
+    color_space: str = "bt709"
+    color_range: str = "limited"
+    audio_loudness_lufs: float = -16.0
+    true_peak_dbfs: float = -1.0
     timeout_s: float = 1800.0
     titles: list[TextOverlay] = field(default_factory=list)
     captions: list[TextOverlay] = field(default_factory=list)
@@ -119,6 +142,18 @@ class TimelineSpec:
             raise ValueError("demasiados clips (máx 512)")
         if self.fps < 1 or self.fps > 120:
             raise ValueError("fps fuera de rango (1..120)")
+        if not math.isfinite(self.safe_area_percent) or not 0 <= self.safe_area_percent < 25:
+            raise ValueError("safe_area_percent debe estar entre 0 y 25")
+        if self.color_space != "bt709" or self.color_range not in {"limited", "full"}:
+            raise ValueError("el renderer Remotion admite solo BT.709 y rango limited/full")
+        if self.audio_gains_db and len(self.audio_gains_db) != len(self.audio_paths):
+            raise ValueError("cada pista de audio debe tener una ganancia")
+        if any(not math.isfinite(gain) or not -60 <= gain <= 12 for gain in self.audio_gains_db):
+            raise ValueError("ganancia de audio fuera de rango (-60..12 dB)")
+        if not math.isfinite(self.audio_loudness_lufs) or not -70 <= self.audio_loudness_lufs <= 0:
+            raise ValueError("audio_loudness_lufs debe estar entre -70 y 0")
+        if not math.isfinite(self.true_peak_dbfs) or not -20 <= self.true_peak_dbfs <= 0:
+            raise ValueError("true_peak_dbfs debe estar entre -20 y 0")
         for dim in (self.width, self.height):
             if dim < 16 or dim > 8192:
                 raise ValueError("width/height fuera de rango (16..8192)")
@@ -152,6 +187,8 @@ class EditorResult:
     duration_s: float = 0.0
     stubbed: bool = False
     outputs: list[Path] = field(default_factory=list)
+    audio_loudness_lufs: float | None = None
+    true_peak_dbfs: float | None = None
 
     @property
     def ok(self) -> bool:
@@ -240,6 +277,8 @@ class EditorEngine(Engine):
                 "duration_s": round(res.duration_s, 3),
                 "clips": len(timeline.clips),
                 "total_timeline_s": timeline.total_duration_s(),
+                "audio_loudness_lufs": res.audio_loudness_lufs,
+                "true_peak_dbfs": res.true_peak_dbfs,
             },
             exit_code=res.exit_code,
             stderr_tail=res.log_tail or None,
@@ -268,6 +307,13 @@ class EditorEngine(Engine):
             height=int(job.get("height", 1920)),
             fps=int(job.get("fps", 30)),
             audio_path=Path(job["audio_path"]) if job.get("audio_path") else None,
+            audio_paths=[Path(path) for path in job.get("audio_paths", [])],
+            audio_gains_db=[float(value) for value in job.get("audio_gains_db", [])],
+            safe_area_percent=float(job.get("safe_area_percent", 8.0)),
+            color_space=str(job.get("color_space", "bt709")),
+            color_range=str(job.get("color_range", "limited")),
+            audio_loudness_lufs=float(job.get("audio_loudness_lufs", -16.0)),
+            true_peak_dbfs=float(job.get("true_peak_dbfs", -1.0)),
             titles=[TextOverlay(**o) for o in job.get("titles", [])],
             captions=[TextOverlay(**o) for o in job.get("captions", [])],
         )
@@ -458,18 +504,135 @@ class EditorEngine(Engine):
                 log_tail=tail or "remotion render falló sin salida",
                 duration_s=time.monotonic() - start,
             )
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            return EditorResult(
+                exit_code=1,
+                output=None,
+                log_tail="ffmpeg es requerido para fijar el rango y etiquetado BT.709",
+                duration_s=time.monotonic() - start,
+            )
+        tagged = out.with_name(f".{out.stem}.color-policy{out.suffix}")
+        output_range = "pc" if timeline.color_range == "full" else "tv"
+        range_filter = f"scale=in_range=tv:out_range={output_range}"
+        try:
+            color_result = run_cancellable(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-v",
+                    "info",
+                    "-i",
+                    str(out),
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "0:a?",
+                    "-vf",
+                    range_filter,
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "18",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-x264-params",
+                    "colorprim=bt709:transfer=bt709:colormatrix=bt709",
+                    "-color_primaries",
+                    "bt709",
+                    "-color_trc",
+                    "bt709",
+                    "-colorspace",
+                    "bt709",
+                    "-color_range",
+                    output_range,
+                    "-af",
+                    (
+                        f"loudnorm=I={timeline.audio_loudness_lufs}:"
+                        f"TP={timeline.true_peak_dbfs}:LRA=11:print_format=json"
+                    ),
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-movflags",
+                    "+faststart",
+                    str(tagged),
+                ],
+                cancel_event=spec.cancel_event,
+                cwd=project,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=max(1.0, timeout - (time.monotonic() - start)),
+            )
+        except (ProcessCancelled, subprocess.TimeoutExpired):
+            tagged.unlink(missing_ok=True)
+            return EditorResult(
+                exit_code=130 if spec.cancel_event and spec.cancel_event.is_set() else 124,
+                output=None,
+                log_tail="aplicación de política de color cancelada o vencida",
+                duration_s=time.monotonic() - start,
+            )
+        if color_result.returncode != 0 or not tagged.is_file():
+            tagged.unlink(missing_ok=True)
+            return EditorResult(
+                exit_code=color_result.returncode or 1,
+                output=None,
+                log_tail=redactor.redact(
+                    (color_result.stderr or color_result.stdout or "")[-4096:]
+                ) or "falló la aplicación de política de color",
+                duration_s=time.monotonic() - start,
+            )
+        audio_loudness = None
+        true_peak = None
+        if timeline.audio_path is not None or timeline.audio_paths:
+            metrics = _extract_loudnorm_metrics(color_result.stderr or "")
+            if metrics is None:
+                tagged.unlink(missing_ok=True)
+                return EditorResult(
+                    exit_code=1,
+                    output=None,
+                    log_tail=redactor.redact(
+                        "FFmpeg no informó mediciones de loudness para las pistas de audio: "
+                        + (color_result.stderr or color_result.stdout or "")[-2048:]
+                    ),
+                    duration_s=time.monotonic() - start,
+                )
+            audio_loudness, true_peak = metrics
+            if (
+                abs(audio_loudness - timeline.audio_loudness_lufs) > 1.0
+                or true_peak > timeline.true_peak_dbfs + 0.5
+            ):
+                tagged.unlink(missing_ok=True)
+                return EditorResult(
+                    exit_code=1,
+                    output=None,
+                    log_tail=(
+                        "el audio normalizado quedó fuera de la política: "
+                        f"{audio_loudness:.2f} LUFS / {true_peak:.2f} dBFS"
+                    ),
+                    duration_s=time.monotonic() - start,
+                )
+        tagged.replace(out)
         return EditorResult(
             exit_code=0,
             output=out,
             log_tail=tail,
             duration_s=time.monotonic() - start,
             outputs=[out],
+            audio_loudness_lufs=audio_loudness,
+            true_peak_dbfs=true_peak,
         )
 
     @staticmethod
     def _stage_remotion_assets(timeline: TimelineSpec, public_dir: Path) -> dict[Path, str]:
         """Copia medios verificados al public-dir que Remotion sirve al navegador."""
         paths = [clip.path for clip in timeline.clips]
+        paths.extend(timeline.audio_paths)
         if timeline.audio_path is not None:
             paths.append(timeline.audio_path)
         staged: dict[Path, str] = {}
@@ -494,6 +657,18 @@ class EditorEngine(Engine):
             "width": timeline.width,
             "height": timeline.height,
             "audio": resolve(timeline.audio_path) if timeline.audio_path else None,
+            "audioTracks": [
+                {
+                    "src": resolve(path),
+                    "gainDb": timeline.audio_gains_db[index]
+                    if timeline.audio_gains_db
+                    else 0.0,
+                }
+                for index, path in enumerate(timeline.audio_paths)
+            ],
+            "safeAreaPercent": timeline.safe_area_percent,
+            "colorSpace": timeline.color_space,
+            "colorRange": timeline.color_range,
             "clips": [
                 {
                     "src": resolve(c.path),

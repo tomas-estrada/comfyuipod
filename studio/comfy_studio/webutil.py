@@ -230,6 +230,10 @@ class EdlCreateRequest(BaseModel):
     titles: list[EdlOverlayRequest] = Field(default_factory=list, max_length=50)
     captions: list[EdlOverlayRequest] = Field(default_factory=list, max_length=50)
     audio_asset_id: str | None = Field(default=None, max_length=64)
+    audio_asset_ids: list[str] = Field(default_factory=list, max_length=8)
+    fps: int = Field(default=24, ge=12, le=60)
+    color_space: Literal["bt709"] = "bt709"
+    color_range: Literal["limited", "full"] = "limited"
     notes: str = Field(default="", max_length=2000)
 
 
@@ -331,6 +335,8 @@ class EdlProgrammedRenderRequest(BaseModel):
     width: int | None = Field(default=None, ge=16, le=3840)
     height: int | None = Field(default=None, ge=16, le=3840)
     fps: int | None = Field(default=None, ge=1, le=60)
+    color_space: Literal["bt709"] | None = None
+    color_range: Literal["limited", "full"] | None = None
 
 
 class BriefUnderstandRequest(BaseModel):

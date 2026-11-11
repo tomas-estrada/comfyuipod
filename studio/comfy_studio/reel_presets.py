@@ -19,6 +19,8 @@ class ReelPreset:
     max_clips: int
     concurrency: int
     offthread_cache_bytes: int
+    safe_area_percent: float = 8.0
+    max_pixels_per_frame: int = 4_147_200
 
     def public_dict(self) -> dict[str, int | float | str]:
         return asdict(self)
@@ -36,6 +38,18 @@ _PRESETS = {
     ),
     "custom-preview-v1": ReelPreset(
         "custom-preview-v1", 1080, 1920, 30, 30.0, 30, 1, 134_217_728
+    ),
+    "delivery-landscape-4k-v1": ReelPreset(
+        "delivery-landscape-4k-v1", 3840, 2160, 24, 60.0, 50, 1, 134_217_728,
+        safe_area_percent=5.0, max_pixels_per_frame=8_294_400,
+    ),
+    "delivery-vertical-4k-v1": ReelPreset(
+        "delivery-vertical-4k-v1", 2160, 3840, 24, 60.0, 50, 1, 134_217_728,
+        safe_area_percent=10.0, max_pixels_per_frame=8_294_400,
+    ),
+    "delivery-square-4k-v1": ReelPreset(
+        "delivery-square-4k-v1", 2160, 2160, 24, 60.0, 50, 1, 134_217_728,
+        safe_area_percent=5.0, max_pixels_per_frame=8_294_400,
     ),
 }
 
@@ -60,12 +74,17 @@ def resolve_reel_preset(
     resolved_width = width if width is not None else preset.width
     resolved_height = height if height is not None else preset.height
     resolved_fps = fps if fps is not None else preset.fps
-    if resolved_width * resolved_height > 4_147_200:
-        raise ValueError("el preset limita la salida a 4.147.200 píxeles por frame")
+    if resolved_width * resolved_height > preset.max_pixels_per_frame:
+        raise ValueError(
+            f"el preset limita la salida a {preset.max_pixels_per_frame:,} píxeles por frame"
+        )
     target_ratio = {
         "social-vertical-v1": 9 / 16,
         "social-landscape-v1": 16 / 9,
         "square-preview-v1": 1.0,
+        "delivery-landscape-4k-v1": 16 / 9,
+        "delivery-vertical-4k-v1": 9 / 16,
+        "delivery-square-4k-v1": 1.0,
     }.get(preset_id)
     if target_ratio is not None and abs(resolved_width / resolved_height - target_ratio) > 0.02:
         raise ValueError(f"la relación de aspecto no corresponde al preset {preset_id}")

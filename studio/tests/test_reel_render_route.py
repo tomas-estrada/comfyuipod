@@ -164,6 +164,11 @@ def test_programmed_render_consumes_persisted_edl_time_ranges_and_overlays(
             "duration_sec": 2.0 if "studio-edl-remotion" in str(_path) else 4.0,
             "width": 320,
             "height": 240,
+            "fps": 15.0,
+            "color_range": "tv",
+            "color_space": "bt709",
+            "color_transfer": "bt709",
+            "color_primaries": "bt709",
         }
 
     def fake_render(_engine: EditorEngine, spec: EngineRunSpec) -> EngineResult:
