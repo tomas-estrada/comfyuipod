@@ -1,6 +1,6 @@
 # ComfyUIPod — ComfyUI + Comfy Studio para Vast.ai (RTX PRO 6000 Blackwell, 96 GB)
 
-ComfyUI y Comfy Studio para un pod Linux de un solo usuario, con Vast.ai como ruta de despliegue documentada. El perfil de hardware predeterminado es una **NVIDIA RTX PRO 6000 Blackwell (96 GB de VRAM)** con **128 GB de RAM de host**; también existe la variante de 256 GB y se conserva un perfil heredado de GPU de consumo (~32 GB). El perfil es el objetivo, no prueba de que todos los workflows o modelos estén validados en GPU. La interfaz web funciona desde Windows, macOS o Linux; el helper Bash es opcional y funciona en macOS/Linux o WSL2.
+ComfyUI y Comfy Studio para un pod Linux de un solo usuario, con Vast.ai como ruta de despliegue documentada. El perfil de hardware predeterminado es una **NVIDIA RTX PRO 6000 Blackwell (96 GB de VRAM)** con preferencia de oferta de **128 GB de RAM de host**; la variante de 256 GB es otra preferencia de búsqueda y se conserva un perfil heredado de GPU de consumo (~32 GB). En el pod, Studio detecta el límite efectivo de RAM (incluido cgroup) y dimensiona el presupuesto con esa cifra real: una oferta de 200 GB se presupuesta como 200 GB menos la reserva operativa, no como 128 o 256 GB. El perfil no prueba que todos los workflows o modelos estén validados en GPU. La interfaz web funciona desde Windows, macOS o Linux; el helper Bash es opcional y funciona en macOS/Linux o WSL2.
 
 > Empieza por el [índice de documentación](docs/README.md) y la [guía para contribuir](CONTRIBUTING.md). La [política de recursos](docs/POLITICA_ARQUITECTURA_RECURSOS.md) y `studio/comfy_studio/hardware_profile.py` definen el hardware y el espacio actuales; la [guía de despliegue](docs/GUIA_PASO_A_PRODUCCION.md) explica cómo ponerlo en marcha.
 
@@ -10,7 +10,7 @@ ComfyUI y Comfy Studio para un pod Linux de un solo usuario, con Vast.ai como ru
 
 ## 1. Características Principales
 
-1. **Objetivo actual: RTX PRO 6000 Blackwell (96 GB de VRAM), 128/256 GB de RAM de host**; el perfil de consumo de ~32 GB se conserva por compatibilidad, no como base de la arquitectura.
+1. **Objetivo actual: RTX PRO 6000 Blackwell (96 GB de VRAM)**; 128/256 GB son preferencias de búsqueda de RAM, mientras el presupuesto del runtime usa el límite medido del pod. El perfil de consumo de ~32 GB se conserva por compatibilidad, no como base de la arquitectura.
    - Basada en `nvidia/cuda:12.8.0-runtime-ubuntu24.04` con la terna **PyTorch `2.9.1+cu128`** fijada y **`onnxruntime-gpu`** + **`opencv-python-headless`** protegidos mediante [`config/constraints.txt`](config/constraints.txt) y [`config/nodes.lock`](config/nodes.lock), más registro de librerías CUDA/cuDNN en `ldconfig`.
    - Conserva `build-essential` (`gcc`/`g++`) y `python3-dev` en la imagen para que `torch.compile` (Triton) y los custom nodes con extensiones C/C++ instalados desde ComfyUI-Manager funcionen en tiempo de ejecución.
 2. **Separación segura `/opt/ComfyUI` (código) y `/workspace/comfyui-data` (datos)**:
@@ -23,7 +23,7 @@ ComfyUI y Comfy Studio para un pod Linux de un solo usuario, con Vast.ai como ru
       - **`/status` y `/status/api`**: Panel de estado en vivo y API JSON servidos por **`comfyctl`** (binario nativo en Rust en `127.0.0.1:18189`) con métricas de GPU/VRAM, RAM/Swap, disco, estado del arranque y de las adquisiciones de modelos (bootstrap y tareas), motor de triaje automático (17 patrones con causa y remediación) y visor de logs por pestañas.
       - **`/report.md`**: Informe Markdown autocontenido (hasta 400 KB, con secretos redactados automáticamente por `comfyctl`) diseñado para copiar y pegar directamente al agente IA para depuración sin acceso SSH.
 4. **Supervisor en Rust (`comfyctl supervise`) y modo de arranque estricto (`STRICT_START=1`)**:
-   - `comfyctl` valida el host antes de adquirir modelos e iniciar ComfyUI. Los mínimos genéricos de runtime (driver ≥ 570, VRAM ≥ 20 GB, RAM ≥ 16 GB) son distintos del perfil predeterminado del helper (96 GB de VRAM / 128 GB de RAM de host). S5 lee el gate de disco de `storage-requirement.json`, generado en la imagen (hoy 11 GB con bootstrap vacío); el volumen total por perfil se calcula aparte con `scripts/storage_requirement.py`. Studio añade el diagnóstico del perfil Blackwell. Ante un `FATAL` estricto, Nginx y el diagnóstico siguen disponibles durante `STRICT_FATAL_GRACE` (600 s); después el proceso sale con código 20.
+   - `comfyctl` valida el host antes de adquirir modelos e iniciar ComfyUI. Los mínimos genéricos de runtime (driver ≥ 570, VRAM ≥ 20 GB, RAM ≥ 16 GB) son distintos de las preferencias de oferta del helper (96 GB VRAM y un piso de 128 GB RAM por defecto). Studio mide y usa el límite efectivo de RAM del pod. S5 lee el gate de disco de `storage-requirement.json`, generado en la imagen (hoy 11 GB con bootstrap vacío); el volumen total por perfil se calcula aparte con `scripts/storage_requirement.py`. Studio añade el diagnóstico del perfil Blackwell. Ante un `FATAL` estricto, Nginx y el diagnóstico siguen disponibles durante `STRICT_FATAL_GRACE` (600 s); después el proceso sale con código 20.
    - Supervisa `main.py`, escribe atómicamente `/run/comfyui-supervisor.json`, clasifica salidas (`137` OOM, `134`/`139` crash nativo CUDA/C++, `1` excepción Python, `143` SIGTERM), resetea el contador tras `COMFY_HEALTHY_UPTIME` (`600s`) y propaga `SIGTERM` limpiamente a sus subprocesos.
 5. **ComfyUI-Manager preinstalado y desbloqueado**:
    - Instalado desde `Comfy-Org/ComfyUI-Manager` con `security_level = weak` (seguro porque ComfyUI escucha solo en `127.0.0.1`) para instalar cualquier custom node o modelo faltante con **un clic** desde la UI.
@@ -265,7 +265,7 @@ La guía está dividida en dos partes: **A. Primera vez** (configuración que se
    | GPU | Una RTX PRO 6000 Blackwell de 96 GB para el perfil predeterminado; 1 GPU | El helper deriva los filtros del perfil de hardware configurado |
    | **CUDA** (`cuda_vers`) | **≥ 12.8** | Versión máxima de CUDA soportada por el host (campo documentado de la API); con menos, `torch` cu128 no inicializa la GPU |
    | **GPU RAM** | ≥ 96 GB para el perfil Blackwell predeterminado | El helper valida la VRAM anunciada contra el perfil; no infiere la capacidad solo por el nombre de la oferta |
-   | **CPU RAM** | ≥ 128 GB por defecto; 256 GB si seleccionas esa variante | La RAM de host y la VRAM son presupuestos separados; una no sustituye a la otra |
+   | **CPU RAM** | Piso de 128 GB por defecto; `STUDIO_MIN_RAM_GB` permite cambiarlo | 128/256 GB son preferencias para ordenar ofertas; el límite medido del pod determina el presupuesto efectivo. RAM y VRAM son presupuestos separados |
    | **Disk Space** | Mínimo derivado por perfil: 231 GB para Studio base; vuelve a calcularlo para opt-ins y añade el espacio de outputs. | `comfy rent studio` lo calcula; consulta `scripts/storage_requirement.py` antes de alquilar |
    | **Internet Download** (`inet_down`) | ≥ 5000 Mbps (5 Gbps), como exige el helper `comfy rent studio` | El tiempo depende de los activos que solicites, el tamaño y el rendimiento real del host; no todo el catálogo se descarga al iniciar |
    | **Reliability** | ≥ 0.98, *verified* | Menos cortes a mitad de sesión |
@@ -273,7 +273,7 @@ La guía está dividida en dos partes: **A. Primera vez** (configuración que se
    > Los puertos van **proxy-mapeados** por Vast.ai (no se requieren *direct ports*): Vast asigna un puerto del host y lo redirige al 8188 del contenedor. Es lo que hace `comfy rent` con `--args` (runtype args, que respeta el ENTRYPOINT de la imagen).
 
 2. **Lee la tarjeta de la oferta antes de pulsar Rent**, no solo el $/h:
-   - **RAM del host**: respeta la RAM de host del perfil seleccionado: Studio requiere 128 GB por defecto (o 256 GB en esa variante). En perfiles menores, el uso real depende de la receta; no asumas que 32 GB bastan para cargas grandes.
+   - **RAM del host**: verifica la RAM declarada en la oferta. La preferencia de 256 GB admite una oferta intermedia (por ejemplo, 200 GB) si cumple el piso de `STUDIO_MIN_RAM_GB`; al iniciar, Studio usa el límite medido del cgroup menos la reserva operativa. En perfiles menores, el uso real depende de la receta.
    - **$/GB/mes de almacenamiento** y **$/TB de tráfico**: si una tarea descarga muchos modelos, el tráfico puede costar más que la primera hora de GPU; el arranque por defecto no descarga el catálogo.
    - **On-demand** para sesiones de trabajo; *interruptible* es más barato pero otro usuario puede quitarte la máquina.
 3. Pulsa **Rent** (o ejecuta `comfy rent studio` para el perfil de referencia) solo después de revisar la oferta completa. El helper muestra el precio vigente antes de confirmar; no uses cifras históricas como presupuesto actual.
@@ -370,7 +370,7 @@ La imagen es agnóstica de proveedor: sirve igual en un **RunPod GPU Pod** persi
 
 ### 4. Perfil GPU y rendimiento
 
-El perfil de referencia es RTX PRO 6000 Blackwell de 96 GB de VRAM (94 GB utilizables tras la reserva operativa) con 128 GB de RAM host. Esa capacidad no demuestra que todos los grafos, resoluciones y modelos estén validados. La campaña W26 contiene una ejecución SDXL acotada; consulta [sus resultados y límites](docs/ultra/W26_GPU_RESULTS.md) y usa recetas medidas por combinación de modelo, configuración y hardware.
+El perfil de referencia es RTX PRO 6000 Blackwell de 96 GB de VRAM (94 GB utilizables tras la reserva operativa). La preferencia de 128 GB de RAM host no limita al runtime: el presupuesto se basa en la RAM detectada (por ejemplo, 200 GB menos la reserva operativa). Esa capacidad no demuestra que todos los grafos, resoluciones y modelos estén validados. La campaña W26 contiene una ejecución SDXL acotada; consulta [sus resultados y límites](docs/ultra/W26_GPU_RESULTS.md) y usa recetas medidas por combinación de modelo, configuración y hardware.
 
 ### 5. Modelos de detección de InsightFace (`buffalo_l`, `inswapper_128.onnx`)
 - **Solución aplicada**: La ejecución explícita de `scripts/download-models.sh --phase1` descarga y descomprime `buffalo_l.zip` en `/workspace/comfyui-data/models/insightface/models/buffalo_l/` y crea el enlace en `/root/.insightface/models/buffalo_l`, junto con `inswapper_128.onnx`, `codeformer-v0.1.0.pth`, `GFPGANv1.4.pth`, `detection_Resnet50_Final.pth` y `parsing_parsenet.pth`.

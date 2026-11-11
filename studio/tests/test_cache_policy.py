@@ -1232,8 +1232,8 @@ def test_w02_unmeasurable_hardware_is_unknown_not_emulated(monkeypatch) -> None:
     assert eff.effective.vram_gb == 96  # nominal, pero verified=False lo delata
 
 
-def test_w02_detected_larger_than_requested_keeps_requested(monkeypatch) -> None:
-    """Si el hardware tiene MÁS que lo pedido, se respeta lo pedido."""
+def test_w02_detected_larger_ram_expands_effective_budget(monkeypatch) -> None:
+    """La RAM efectiva aprovecha la capacidad medida por encima de la preferencia."""
     from comfy_studio import hardware_detect
     from comfy_studio.hardware_detect import DetectedHardware, effective_profile
 
@@ -1247,3 +1247,6 @@ def test_w02_detected_larger_than_requested_keeps_requested(monkeypatch) -> None
     eff = effective_profile({"STUDIO_HARDWARE_PROFILE": "consumer-gpu-32"}, detected=detected)
     assert eff.effective.vram_gb == 32  # pedido < detectado => se respeta pedido
     assert eff.vram_capped is False
+    assert eff.effective.ram_gb == 256
+    assert eff.effective.ram_usable_gb == 250  # reserva de 6 GB del perfil legacy
+    assert eff.ram_capped is False

@@ -843,10 +843,12 @@ filter_offers_json() {
     local min_vram_gb="$3"
     local min_disk_gb="$4"
     local min_inet_down="$5"
-    # F21: por defecto el perfil vigente (RTX PRO 6000 Blackwell 96 GB / 128 GB RAM).
+    # La RAM preferida ordena ofertas; el piso de admisión se configura aparte
+    # para que, por ejemplo, una oferta de 200 GB pueda sustituir al objetivo 256.
     local min_cpu_ram_gb="${6:-128}"
+    local preferred_cpu_ram_gb="${7:-${min_cpu_ram_gb}}"
 
-    OFFERS_JSON="${raw_offers}" "${PYTHON_BIN}" - "${target_gpu}" "${min_vram_gb}" "${min_disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}" << 'PYEOF'
+    OFFERS_JSON="${raw_offers}" "${PYTHON_BIN}" - "${target_gpu}" "${min_vram_gb}" "${min_disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}" "${preferred_cpu_ram_gb}" << 'PYEOF'
 import json, os, sys
 
 target_gpu = sys.argv[1].strip().replace(" ", "_").upper()
@@ -854,6 +856,7 @@ min_vram_gb = float(sys.argv[2])
 min_disk_gb = float(sys.argv[3])
 min_inet_down = float(sys.argv[4])
 min_cpu_ram_gb = float(sys.argv[5]) if len(sys.argv) > 5 else 128.0
+preferred_cpu_ram_gb = float(sys.argv[6]) if len(sys.argv) > 6 else min_cpu_ram_gb
 
 data = json.loads(os.environ.get("OFFERS_JSON", "[]"))
 rows = data.get("offers", data) if isinstance(data, dict) else data
@@ -904,17 +907,28 @@ for r in rows:
         continue
     filtered.append(r)
 
-filtered.sort(key=lambda item: float(item.get("dph_total") or item.get("dph_base") or 999999.0))
+def offer_ram_gb(item):
+    raw = float(item.get("cpu_ram") or 0)
+    return raw / 1024.0 if raw > 512 else raw
+
+# Prefer the closest actual offer to the requested RAM, then the lower price.
+# This keeps a 200 GB offer usable for a 256 GB preference without pretending it
+# has 256 GB; Studio will detect and budget the exact cgroup limit at runtime.
+filtered.sort(key=lambda item: (
+    abs(offer_ram_gb(item) - preferred_cpu_ram_gb),
+    float(item.get("dph_total") or item.get("dph_base") or 999999.0),
+))
 print(json.dumps(filtered))
 PYEOF
 }
 
-# F21: el perfil de hardware es la fuente de verdad de la admisión de hardware.
+# El perfil de hardware es la preferencia para buscar una oferta; la RAM detectada
+# dentro del pod (cgroup) será la capacidad efectiva usada para presupuestar.
 # Se resuelve igual que dentro del contenedor (`studio/comfy_studio/hardware_profile.py`):
-# perfil por defecto RTX PRO 6000 Blackwell de 96 GB con 128 GB de RAM de host, y
-# variante de 256 GB seleccionable por nombre/alias o por `STUDIO_TARGET_RAM_GB`.
-# De ahí salen el VRAM y la RAM mínimos que se le piden a la oferta, para que lo
-# que se alquila sea la máquina contra la que se juzgan las recetas.
+# perfil por defecto RTX PRO 6000 Blackwell de 96 GB con preferencia de 128 GB,
+# y variante de 256 GB seleccionable por nombre/alias o `STUDIO_TARGET_RAM_GB`.
+# VRAM sigue siendo requisito. La RAM preferida puede diferir del tamaño real de
+# la oferta, dentro del piso `STUDIO_MIN_RAM_GB`.
 # Expone HW_PROFILE_NAME, HW_VRAM_GB y HW_RAM_GB.
 resolve_hardware_profile() {
     local self_dir studio_dir="" candidate resolved=""
@@ -1043,7 +1057,16 @@ cmd_rent() {
     # VRAM, 128/256 GB de RAM). El mínimo ya no es un GPU de consumo de 32 GB.
     resolve_hardware_profile
     local min_vram_gb="${HW_VRAM_GB}"
-    local min_cpu_ram_gb="${HW_RAM_GB}"
+    local preferred_cpu_ram_gb="${HW_RAM_GB}"
+    local default_min_ram_gb="128"
+    [ "${preferred_cpu_ram_gb}" -lt 128 ] && default_min_ram_gb="${preferred_cpu_ram_gb}"
+    local min_cpu_ram_gb="${STUDIO_MIN_RAM_GB:-${default_min_ram_gb}}"
+    if ! [[ "${min_cpu_ram_gb}" =~ ^[0-9]+$ ]] || [ "${min_cpu_ram_gb}" -le 0 ]; then
+        die "STUDIO_MIN_RAM_GB='${min_cpu_ram_gb}' debe ser un entero positivo."
+    fi
+    if [ "${preferred_cpu_ram_gb}" -lt "${min_cpu_ram_gb}" ]; then
+        preferred_cpu_ram_gb="${min_cpu_ram_gb}"
+    fi
     if [ "${profile}" = "studio" ]; then
         min_inet_down="5000"
         # El mínimo de disco se DERIVA de scripts/storage_requirement.py (política de
@@ -1129,7 +1152,7 @@ cmd_rent() {
     for gpu_name in ${gpu_candidates[@]+"${gpu_candidates[@]}"}; do
         query="gpu_name=${gpu_name} ${base_filters}"
         raw_offers="$(search_offers "${query}")"
-        offers_json="$(filter_offers_json "${raw_offers}" "${gpu_name}" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}")"
+        offers_json="$(filter_offers_json "${raw_offers}" "${gpu_name}" "${min_vram_gb}" "${disk_gb}" "${min_inet_down}" "${min_cpu_ram_gb}" "${preferred_cpu_ram_gb}")"
         offer_id="$(OFFERS_JSON="${offers_json}" "${PYTHON_BIN}" -c '
 import json, os
 rows = json.loads(os.environ.get("OFFERS_JSON", "[]"))
@@ -1153,7 +1176,7 @@ rows = data.get("offers", data) if isinstance(data, dict) else data
 disk_gb = float(os.environ.get("DISK_GB", "120"))
 top5 = rows[:5]
 
-print(f"\nTop 5 ofertas más económicas encontradas (disco solicitado: {disk_gb:.0f} GB):")
+print(f"\nTop 5 ofertas más cercanas a la RAM preferida (desempate por coste; disco solicitado: {disk_gb:.0f} GB):")
 hdr = f"{'#':<3} {'OFFER_ID':<10} {'GPU':<12} {'VRAM':<7} {'HOST_RAM':<9} {'CUDA':<6} {'DISK_GB':<8} {'DOWN_Mbps':<10} {'$/GB·mes':<9} {'GPU_$/h':<8} {'TOTAL_EST_$/h'}"
 print(hdr)
 print("-" * len(hdr))

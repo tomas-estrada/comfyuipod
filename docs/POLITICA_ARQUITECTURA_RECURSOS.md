@@ -482,17 +482,21 @@ importa es que la decisión sea ahora versionada y verificada.
 
 El perfil principal es **una NVIDIA RTX PRO 6000 Blackwell con 96 GB de VRAM**
 (`rtx-pro-6000-blackwell-96-128`), con la RAM de host en perfiles separados de
-**128 y 256 GB**. `studio/comfy_studio/hardware_profile.py` es la fuente única:
+**preferencias de oferta de 128 y 256 GB**, no tamaños válidos únicos. `studio/comfy_studio/hardware_profile.py` define las preferencias de búsqueda; el límite efectivo en ejecución es el menor de RAM física y cgroup detectado dentro del pod:
 
-- `BLACKWELL_96_128` (96 GB VRAM / 128 GB RAM) es el perfil por defecto;
-  `BLACKWELL_96_256` es la variante de 256 GB.
+- `BLACKWELL_96_128` y `BLACKWELL_96_256` conservan preferencias históricas
+  para buscar ofertas; un valor intermedio declarado por Vast.ai también es
+  válido y se ordena por cercanía a la preferencia.
 - `CONSUMER_32` (32 GB / 64 GB) se conserva por compatibilidad: **no limita el
   perfil principal**.
 - `TARGET_VRAM_GB`, `target_vram_gb` y `STUDIO_TARGET_VRAM_GB` dejaron de estar
-  clavados en 32: se derivan del perfil (96), y `STUDIO_TARGET_VRAM_GB` /
-  `STUDIO_TARGET_RAM_GB` siguen siendo override manual para un operario.
+  clavados en 32: se derivan del perfil (96). `STUDIO_TARGET_RAM_GB` expresa
+  preferencia de oferta; `STUDIO_MIN_RAM_GB` configura el piso de búsqueda.
+  En ejecución, `effective_profile` sustituye la preferencia por la RAM medida
+  (límite físico/cgroup), menor que nunca el hardware detectado.
 - Reserva operativa explícita: **2 GB de VRAM** y **8 GB de RAM**, así que el
-  perfil de 96 publica **94 GB utilizables** y el de 128 publica **120 GB**.
+  perfil de 96 publica **94 GB utilizables** y una oferta detectada de 200 GB
+  publica **192 GB utilizables**.
 - El perfil se transmite a la API (`/studio/api/status`), al resolvedor de
   capacidades, a las recetas y al ayudante de macOS.
 
@@ -596,7 +600,7 @@ Las rutas y contratos están implementados y cubiertos por pruebas; la validaci�
 
 | Criterio | Estado | Evidencia |
 |---|---|---|
-| A. Perfil 96 efectivo, RAM 128/256, admisión con límites y reserva | **Hecho** | `hardware_profile.py`: default 96 GB / 128 GB, 94 GB y 120 GB utilizables; `RAM_OPTIONS_GB=(128,256)`; 4 pruebas de control de exclusión GPU (pico 1, liberación tras fallo y tras cancelación) |
+| A. Perfil 96 efectivo, RAM efectiva detectada, admisión con límites y reserva | **Hecho** | `hardware_profile.py` conserva 128/256 GB como preferencias de búsqueda; `hardware_detect.py` usa el límite físico/cgroup real, aplica reserva operativa y tiene pruebas para una oferta intermedia de 200 GB; 4 pruebas de control de exclusión GPU (pico 1, liberación tras fallo y tras cancelación) |
 | B. Arranque con pesos vacíos, sin descarga task/optional | **Hecho** | `--bootstrap` con el manifiesto real: 0 archivos, 0 descargas; con una entrada bootstrap: 1 descarga y promoción atómica |
 | C. Capacidad elegida: dependencias, reutilización, corrupción, cancelación, disco lleno | **Hecho** | Descarga real de un activo público de 32 B (`ByteDance/LatentSync-1.6 config.json`, pin sha1) → `downloaded`; segundo intento `skipped` con 0 descargas; destino corrupto → se re-descarga y restaura; volumen de 40 MB con margen de 10 GiB → `failed` con «espacio insuficiente» y ningún parcial promocionado |
 | D. Grafo final con procesamiento real en CPU | **Hecho** | `image.generate` resuelve a motor `comfyui` + plantilla `sdxl_image` con el perfil de 96 GB propagado, y declara un activo `task` de 7.1 GB con su destino resuelto. El grafo final (7 nodos) lo consume en `CheckpointLoaderSimple.ckpt_name`, que es exactamente el fichero que declara la capacidad: no hay activo en el grafo que la capacidad no haya declarado ni activo declarado que el grafo no use. El procesamiento real en CPU lo demuestra `test_composicion_asset_alfa_sobre_fondo_real`, que compone un asset con alfa sobre un fondo real del bundle con Pillow y verifica con sha256 que los píxeles fuera del asset quedan idénticos |

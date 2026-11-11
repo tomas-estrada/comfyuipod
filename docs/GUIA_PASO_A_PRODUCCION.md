@@ -7,7 +7,7 @@
 
 ## A. Qué tienes ahora
 
-Tienes una imagen Docker Linux para un pod de un solo usuario. El perfil de hardware predeterminado es RTX PRO 6000 Blackwell (96 GB de VRAM) con 128 GB de RAM de host; hay una variante de RAM de 256 GB y un perfil heredado de GPU de consumo. El hardware objetivo no implica que todas las plantillas estén medidas. La imagen incluye ComfyUI, Studio, portal, diagnóstico y supervisor. El helper Bash es opcional (macOS/Linux o WSL2); la interfaz funciona en un navegador de Windows, macOS o Linux.
+Tienes una imagen Docker Linux para un pod de un solo usuario. El perfil de hardware predeterminado busca RTX PRO 6000 Blackwell (96 GB de VRAM); 128 y 256 GB son preferencias de búsqueda de RAM, no perfiles de capacidad rígidos. Studio mide el límite real del pod mediante cgroup al iniciar. El hardware objetivo no implica que todas las plantillas estén medidas. La imagen incluye ComfyUI, Studio, portal, diagnóstico y supervisor. El helper Bash es opcional (macOS/Linux o WSL2); la interfaz funciona en un navegador de Windows, macOS o Linux.
 
 > **Qué es real y qué es simulado en Comfy Studio.** La extracción de keyframes, `sqlite-vec`, el almacenamiento de identidades, el EDL y el render final son componentes reales. El backend ML arranca en `auto`: usa modelos reales si el probe de capacidades tiene éxito; de lo contrario usa simulación determinista, declarada por `simulated: true` y `simulation_notice`. `STUDIO_PERCEPTION_BACKEND=real` exige modelos reales y falla de forma explícita cuando no están disponibles; `sim` fuerza el camino simulado. Algunas funciones del índice visual CLIP permanecen deterministas incluso con backend real. Comprueba siempre el campo de respuesta antes de evaluar calidad. Si falta `sqlite-vec`, las funciones dependientes se degradan y reportan el motivo sin tumbar todo Studio.
 
@@ -110,7 +110,7 @@ comfy open           # espera al arranque y abre el portal /home
 comfy report         # descarga /report.md y lo copia al portapapeles
 ```
 
-El helper busca ofertas que cumplan el perfil de hardware configurado (por defecto RTX PRO 6000 Blackwell, 96 GB VRAM y 128 GB de RAM host) y muestra el precio vigente antes de confirmar. El dry-run muestra además la imagen y el resumen de variables de entorno definidas (enmascaradas).
+El helper busca ofertas con el GPU solicitado y un piso de RAM configurable con `STUDIO_MIN_RAM_GB` (128 GB por defecto); la preferencia `STUDIO_TARGET_RAM_GB` o el perfil de 256 GB ordena por cercanía y puede elegir ofertas intermedias. Studio usa luego el límite real de RAM/cgroup menos la reserva al dimensionar el presupuesto. El helper muestra el precio vigente antes de confirmar; el dry-run muestra además la imagen y el resumen de variables definidas (enmascaradas).
 
 **Cómo sé que va bien:** el portal `/home` y `/status` quedan disponibles durante el arranque y ComfyUI abre cuando terminan las comprobaciones. El bootstrap actual no descarga modelos por defecto. Si una tarea necesita pesos ausentes, solicítalos explícitamente y sigue ese progreso; los tiempos dependen de tamaño, red y oferta.
 
@@ -173,7 +173,7 @@ comfy destroy <id>
 
 | Concepto | Coste aproximado | Notas |
 |---|---|---|
-| GPU objetivo | RTX PRO 6000 Blackwell (96 GB VRAM), 128 GB RAM host por defecto; la oferta real determina el precio | El helper filtra el perfil seleccionado y muestra el costo antes de crear la instancia |
+| GPU objetivo | RTX PRO 6000 Blackwell (96 GB VRAM); RAM de oferta con piso configurable y capacidad real medida en pod | El helper muestra el costo antes de crear la instancia; runtime se dimensiona con cgroup |
 | Disco | Derivado por perfil; 231 GB para `studio` base en la revisión actual | Comprueba `scripts/storage_requirement.py`; el helper calcula el volumen y los opt-ins lo elevan |
 | Perfiles alternativos | GPU heredada de ~32 GB, no el objetivo principal | La compatibilidad del ejecutor no equivale a aceptación de todas las recetas |
 | Sesión de prueba de 1 h | Céntimos a ~$0.95 | Según la oferta elegida |

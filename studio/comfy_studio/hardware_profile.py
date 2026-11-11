@@ -1,7 +1,8 @@
 """Perfil de hardware de ejecución (arquitectura vigente).
 
-Perfil principal: **una RTX PRO 6000 Blackwell con 96 GB de VRAM**, con RAM de
-host en perfiles separados de **128 y 256 GB**.
+Perfil principal: **una RTX PRO 6000 Blackwell con 96 GB de VRAM**. Los valores
+de RAM 128 y 256 GB son preferencias para buscar ofertas, no clases únicas de
+pod ni techos de capacidad.
 
 Reglas que este módulo hace explícitas:
 
@@ -105,7 +106,8 @@ CONSUMER_32 = HardwareProfile(
 #: Perfil por defecto de la arquitectura vigente.
 DEFAULT_PROFILE = BLACKWELL_96_128
 
-#: Perfiles de RAM reconocidos para el GPU principal (objetivo, punto 3).
+#: Preferencias históricas de RAM para búsqueda/interfaz; la RAM efectiva viene
+#: del límite físico/cgroup que se mide en el pod.
 RAM_OPTIONS_GB: tuple[int, ...] = (128, 256)
 
 _PROFILES: dict[str, HardwareProfile] = {

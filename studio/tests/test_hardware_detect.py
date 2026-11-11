@@ -60,3 +60,22 @@ def test_effective_profile_unknown_source_not_capped_and_unverified() -> None:
     assert result.vram_capped is False
     assert result.ram_capped is False
     assert result.verified is False
+
+
+def test_effective_profile_uses_detected_ram_above_preference() -> None:
+    """A 200 GB pod uses measured capacity even with a 128 GB preference."""
+    detected = DetectedHardware(
+        gpu_available=True,
+        gpu_name="NVIDIA Test GPU",
+        vram_total_mb=96 * 1024,
+        ram_limit_bytes=200 * GiB,
+        source="nvidia-smi+cgroup",
+    )
+
+    result = effective_profile({"STUDIO_TARGET_RAM_GB": "128"}, detected=detected)
+
+    assert result.requested.ram_gb == 128
+    assert result.effective.ram_gb == 200
+    assert result.effective.ram_usable_gb == 192
+    assert result.ram_capped is False
+    assert result.detected.ram_limit_bytes == 200 * GiB

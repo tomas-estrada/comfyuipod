@@ -795,7 +795,7 @@ def test_rent_studio_hardware_profile_ram_variants_are_forwarded(tmp_path: Path)
         f"stderr={by_profile.stderr}\nstdout={by_profile.stdout}"
     )
     queries = _search_queries(state_dir)
-    assert queries and all("cpu_ram>=256" in q for q in queries)
+    assert queries and all("cpu_ram>=128" in q for q in queries)
     assert queries and all("gpu_ram>=96" in q for q in queries)
     assert "hardware=rtx-pro-6000-blackwell-96-256" in by_profile.stdout
     c_args = _created_args(state_dir)
@@ -817,10 +817,36 @@ def test_rent_studio_hardware_profile_ram_variants_are_forwarded(tmp_path: Path)
         f"stderr={by_override.stderr}\nstdout={by_override.stdout}"
     )
     queries_override = _search_queries(state_dir)
-    assert queries_override[-1].count("cpu_ram>=256") == 1
+    assert queries_override[-1].count("cpu_ram>=128") == 1
     c_args_override = _created_args(state_dir)
     assert c_args_override[:3] == ["create", "instance", "502"]
     assert '-e STUDIO_TARGET_RAM_GB="256"' in _env_flags(c_args_override)
+
+
+def test_rent_ram_preference_accepts_closest_measured_offer(tmp_path: Path) -> None:
+    """A 200 GB offer is selectable for a 256 GB preference with a 128 GB floor."""
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    fixture = [
+        _blackwell_offer(511, cpu_ram_mb=131072, inet_down=9000, dph_total=0.75),
+        _blackwell_offer(512, cpu_ram_mb=204800, inet_down=9000, dph_total=1.20),
+    ]
+    (state_dir / "offers_fixture.json").write_text(json.dumps(fixture), encoding="utf-8")
+
+    result = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "STUDIO_HARDWARE_PROFILE": "rtx-pro-6000-blackwell-96-256",
+        },
+        stdin_text="sk-dynamic-ram-test-secret-12345678\n",
+    )
+
+    assert result.returncode == 0, f"stderr={result.stderr}\nstdout={result.stdout}"
+    queries = _search_queries(state_dir)
+    assert queries and all("cpu_ram>=128" in query for query in queries)
+    assert _created_args(state_dir)[:3] == ["create", "instance", "512"]
 
 
 class _MockPodServer:
