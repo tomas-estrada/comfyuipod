@@ -189,7 +189,12 @@ def _probe_media(path: Path, *, timeout_s: float) -> dict[str, Any] | None:
                 "-v",
                 "error",
                 "-show_entries",
-                "format=duration:stream=codec_type,codec_name,width,height,avg_frame_rate",
+                (
+                    "format=start_time,duration:"
+                    "stream=codec_type,codec_name,width,height,start_time,duration,"
+                    "time_base,r_frame_rate,avg_frame_rate:"
+                    "stream_tags=rotate:stream_side_data=rotation"
+                ),
                 "-of",
                 "json",
                 str(path),
@@ -210,15 +215,31 @@ def _probe_media(path: Path, *, timeout_s: float) -> dict[str, Any] | None:
         ):
             return {}
         info: dict[str, Any] = {"streams": streams}
-        duration = (payload.get("format") or {}).get("duration")
+        format_info = payload.get("format")
+        if isinstance(format_info, dict):
+            for key in ("start_time", "duration"):
+                value = format_info.get(key)
+                if value is not None:
+                    try:
+                        info[f"format_{key}_sec"] = float(value)
+                    except (TypeError, ValueError):
+                        pass
+        duration = info.get("format_duration_sec")
         if duration is not None:
-            info["duration_sec"] = float(duration)
+            info["duration_sec"] = duration
         return info
     except (OSError, subprocess.SubprocessError, ValueError, TypeError):
         return {}
 
 
-def _plan_segments(kind: MediaKind, weights_available: bool) -> list[dict[str, Any]]:
+def _plan_segments(
+    kind: MediaKind,
+    weights_available: bool,
+    *,
+    source_path: Path,
+    source_asset_id: str,
+    media_info: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
     """Plan de segmentos con evidencia por tiempo (pendiente de pesos si faltan).
 
     La extracción real (CLIP/ASR/OCR) la ejecutan los backends de percepción/ASR
@@ -231,10 +252,92 @@ def _plan_segments(kind: MediaKind, weights_available: bool) -> list[dict[str, A
         kinds = ["clip", "ocr"]
     else:
         kinds = []
+    if not kinds:
+        return []
+
+    source_range = _source_time_range(kind, media_info)
     return [
-        {"evidence": k, "status": "ready" if weights_available else "pending_weights"}
-        for k in kinds
+        {
+            "evidence": evidence,
+            "status": "ready" if weights_available else "pending_weights",
+            "source_asset_id": source_asset_id,
+            "source_path": str(source_path),
+            **({"source_interval_sec": source_range} if source_range else {}),
+        }
+        for evidence in kinds
     ]
+
+
+def _source_time_range(
+    kind: MediaKind, media_info: dict[str, Any] | None
+) -> dict[str, float] | None:
+    """Return measured source timestamps; never replace a missing offset with zero."""
+    if kind not in (MediaKind.VIDEO, MediaKind.AUDIO) or not media_info:
+        return None
+    streams = media_info.get("streams", [])
+    matching = next(
+        (
+            stream
+            for stream in streams
+            if isinstance(stream, dict)
+            and stream.get("codec_type") == str(kind)
+        ),
+        None,
+    )
+    if matching is None:
+        return None
+    try:
+        start = float(matching.get("start_time", media_info.get("format_start_time_sec")))
+        duration = float(matching.get("duration", media_info.get("duration_sec")))
+    except (TypeError, ValueError):
+        return None
+    if not (start == start and duration == duration and duration >= 0):
+        return None
+    return {"start_sec": start, "end_sec": start + duration}
+
+
+def _observed_video_transforms(media_info: dict[str, Any] | None) -> dict[str, Any]:
+    """Preserve measured frame-rate and display-rotation metadata for downstream renders."""
+    if not media_info:
+        return {}
+    stream = next(
+        (
+            item
+            for item in media_info.get("streams", [])
+            if isinstance(item, dict) and item.get("codec_type") == "video"
+        ),
+        None,
+    )
+    if stream is None:
+        return {}
+
+    rotation = None
+    for side_data in stream.get("side_data_list", []):
+        if isinstance(side_data, dict) and side_data.get("rotation") is not None:
+            try:
+                rotation = int(round(float(side_data["rotation"]))) % 360
+            except (TypeError, ValueError):
+                rotation = None
+            break
+    if rotation is None:
+        try:
+            rotation = int(round(float(stream.get("tags", {}).get("rotate", 0)))) % 360
+        except (TypeError, ValueError, AttributeError):
+            rotation = 0
+
+    avg_rate = stream.get("avg_frame_rate")
+    nominal_rate = stream.get("r_frame_rate")
+    observed: dict[str, Any] = {
+        "observed_rotation_degrees": rotation,
+        "source_time_base": stream.get("time_base"),
+        "source_avg_frame_rate": avg_rate,
+        "source_nominal_frame_rate": nominal_rate,
+    }
+    if avg_rate and nominal_rate:
+        observed["frame_rate_relation"] = (
+            "different_rates_possible_vfr" if avg_rate != nominal_rate else "rates_match"
+        )
+    return observed
 
 
 def _batched(items: list[Path], size: int) -> Iterator[list[Path]]:
@@ -345,7 +448,13 @@ def ingest_assets(
 
             asset_id = _asset_id(kind, sha)
             seen_hashes[sha] = asset_id
-            segments = _plan_segments(kind, weights_available)
+            segments = _plan_segments(
+                kind,
+                weights_available,
+                source_path=path,
+                source_asset_id=asset_id,
+                media_info=media_info,
+            )
             status = (
                 AssetStatus.INDEXED
                 if weights_available or not segments
@@ -359,7 +468,7 @@ def ingest_assets(
                     status=status,
                     content_sha256=sha,
                     bytes=size,
-                    transforms=_declared_transforms(kind),
+                    transforms=_declared_transforms(kind, media_info),
                     segments=segments,
                     media_info=media_info,
                 )
@@ -367,7 +476,9 @@ def ingest_assets(
     return report
 
 
-def _declared_transforms(kind: MediaKind) -> dict[str, Any]:
+def _declared_transforms(
+    kind: MediaKind, media_info: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Transformaciones que la ingesta DECLARA (no aplica) para trazabilidad.
 
     La rotación y el paso VFR→CFR se resuelven en el motor de media (FFmpeg) a
@@ -375,7 +486,12 @@ def _declared_transforms(kind: MediaKind) -> dict[str, Any]:
     explícito.
     """
     if kind is MediaKind.VIDEO:
-        return {"normalize_timebase": "project_cfr", "apply_rotation_metadata": True}
+        return {
+            "normalize_timebase": "project_cfr",
+            "preserve_source_timestamps": True,
+            "apply_rotation_metadata": True,
+            **_observed_video_transforms(media_info),
+        }
     return {}
 
 

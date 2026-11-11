@@ -15,9 +15,58 @@ from comfy_studio.media_bins import find_ffmpeg, find_ffprobe
 from comfy_studio.perception.keyframes import _make_solid_png
 
 
-def _make_video(path: Path, color: str) -> Path:
+def _make_video(path: Path, color: str, *, mobile_vfr: bool = False) -> Path:
     ffmpeg = find_ffmpeg()
     assert ffmpeg
+    if mobile_vfr:
+        source = path.with_name(f"{path.stem}.source.mp4")
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c={color}:s=48x32:r=30:d=1",
+                "-vf",
+                "select='not(eq(mod(n,3),1))'",
+                "-fps_mode",
+                "vfr",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-output_ts_offset",
+                "0.5",
+                str(source),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-v",
+                "error",
+                "-display_rotation:v:0",
+                "90",
+                "-i",
+                str(source),
+                "-c",
+                "copy",
+                "-output_ts_offset",
+                "0.5",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=15,
+        )
+        return path
     subprocess.run(
         [
             ffmpeg,
@@ -58,8 +107,10 @@ def mixed_real_media_corpus(tmp_path: Path) -> list[Path]:
         pytest.skip("FFmpeg y ffprobe son necesarios para validar medios reales")
 
     paths: list[Path] = []
-    for index, color in enumerate(("red", "blue")):
-        paths.append(_make_video(tmp_path / f"clip_{index}.mp4", color))
+    paths.append(
+        _make_video(tmp_path / "mobile_vfr_rotated.mp4", "red", mobile_vfr=True)
+    )
+    paths.append(_make_video(tmp_path / "clip_1.mp4", "blue"))
     for index, frequency in enumerate((440, 880)):
         paths.append(_make_wav(tmp_path / f"voice_{index}.wav", frequency))
     for index in range(94):
@@ -97,6 +148,20 @@ def test_hundred_real_mixed_files_probe_dedup_and_isolate_corruption(
         asset.media_info and asset.media_info.get("streams")
         for asset in report.by_status(AssetStatus.PENDING_WEIGHTS)
     )
+    mobile = next(
+        asset for asset in report.by_status(AssetStatus.PENDING_WEIGHTS)
+        if asset.source_path.endswith("mobile_vfr_rotated.mp4")
+    )
+    stream = next(item for item in mobile.media_info["streams"] if item["codec_type"] == "video")
+    assert stream["avg_frame_rate"] != stream["r_frame_rate"]
+    assert stream["start_time"] == "0.500000"
+    assert stream["side_data_list"][0]["rotation"] == 90
+    assert mobile.transforms["observed_rotation_degrees"] == 90
+    assert mobile.transforms["frame_rate_relation"] == "different_rates_possible_vfr"
+    for segment in mobile.segments:
+        assert segment["source_asset_id"] == mobile.asset_id
+        assert segment["source_path"] == mobile.source_path
+        assert segment["source_interval_sec"] == {"start_sec": 0.5, "end_sec": 1.5}
     assert all(
         segment["status"] == "pending_weights"
         for asset in report.by_status(AssetStatus.PENDING_WEIGHTS)
