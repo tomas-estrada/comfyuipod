@@ -19,6 +19,7 @@ from . import (
     perception,
     productions,
     projects,
+    relight,
     review_pins,
     spatial_memory,
     templates,
@@ -42,6 +43,7 @@ _MODULES = (
     review_pins,
     spatial_memory,
     montage,
+    relight,
 )
 
 

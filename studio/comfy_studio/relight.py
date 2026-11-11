@@ -28,12 +28,12 @@ from typing import Any
 
 class AOVValidity(StrEnum):
     VALID = "valid"
-    UNKNOWN = "unknown"   # no se pudo derivar; NO se presenta como válido
+    UNKNOWN = "unknown"  # no se pudo derivar; NO se presenta como válido
 
 
 class TaskKind(StrEnum):
-    RELIGHT = "relight"    # cambia iluminación, conserva materiales/geometría
-    RESTYLE = "restyle"    # cambia estilo/apariencia; tarea DISTINTA a relight
+    RELIGHT = "relight"  # cambia iluminación, conserva materiales/geometría
+    RESTYLE = "restyle"  # cambia estilo/apariencia; tarea DISTINTA a relight
 
 
 class RelightError(ValueError):
@@ -66,7 +66,18 @@ class AOVSet:
     aovs: dict[str, AOV] = field(default_factory=dict)
 
     def add(self, name: str, validity: AOVValidity = AOVValidity.VALID) -> None:
+        if not name.strip():
+            raise RelightError("nombre de AOV vacío")
+        if not isinstance(validity, AOVValidity):
+            raise RelightError(f"validez de AOV inválida: {validity!r}")
         self.aovs[name] = AOV(name=name, validity=validity)
+
+    def validate(self) -> None:
+        for name, aov in self.aovs.items():
+            if not name.strip() or aov.name != name:
+                raise RelightError("nombre de AOV inconsistente")
+            if not isinstance(aov.validity, AOVValidity):
+                raise RelightError(f"AOV {name}: validez desconocida")
 
     def valid_names(self) -> set[str]:
         return {n for n, a in self.aovs.items() if a.is_valid()}
@@ -83,10 +94,52 @@ class AOVSet:
             raise RelightError(f"AOV {name} es 'unknown': no se usa como válido")
 
     def to_dict(self) -> dict[str, Any]:
+        self.validate()
         return {
+            "schema": "aov-set/1",
+            "aovs": {
+                name: {"validity": str(aov.validity), "content_hash": aov.content_hash}
+                for name, aov in self.aovs.items()
+            },
             "valid": sorted(self.valid_names()),
             "unknown": sorted(self.unknown_names()),
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AOVSet:
+        if not isinstance(data, dict) or data.get("schema") not in (None, "aov-set/1"):
+            raise RelightError("AOVSet serializado inválido o schema desconocido")
+        try:
+            result = cls()
+            if "aovs" in data:
+                entries = data["aovs"]
+                if not isinstance(entries, dict):
+                    raise RelightError("aovs debe ser un objeto")
+                for name, item in entries.items():
+                    if not isinstance(item, dict):
+                        raise RelightError(f"AOV {name}: entrada debe ser un objeto")
+                    result.aovs[str(name)] = AOV(
+                        name=str(name),
+                        validity=AOVValidity(item["validity"]),
+                        content_hash=item.get("content_hash"),
+                    )
+            else:
+                valid = data.get("valid", [])
+                unknown = data.get("unknown", [])
+                if not isinstance(valid, list) or not isinstance(unknown, list):
+                    raise RelightError("valid y unknown deben ser listas")
+                if set(valid) & set(unknown):
+                    raise RelightError("un AOV no puede ser valid y unknown a la vez")
+                for name in valid:
+                    result.add(str(name), AOVValidity.VALID)
+                for name in unknown:
+                    result.add(str(name), AOVValidity.UNKNOWN)
+            result.validate()
+            return result
+        except (KeyError, TypeError, ValueError) as exc:
+            if isinstance(exc, RelightError):
+                raise
+            raise RelightError(f"AOVSet serializado inválido: {exc}") from exc
 
 
 def invalidate_for_task(aovset: AOVSet, task: TaskKind) -> set[str]:
