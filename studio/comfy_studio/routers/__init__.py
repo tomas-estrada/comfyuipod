@@ -23,6 +23,7 @@ from . import (
     review_pins,
     spatial_memory,
     templates,
+    voice,
 )
 
 _MODULES = (
@@ -44,6 +45,7 @@ _MODULES = (
     spatial_memory,
     montage,
     relight,
+    voice,
 )
 
 

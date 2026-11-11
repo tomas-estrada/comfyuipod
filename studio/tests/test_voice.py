@@ -54,6 +54,29 @@ def test_lexicon_is_correctable() -> None:
     assert lex.entries["envigado"] == "/en.bi.ˈɣa.ðo/"
 
 
+def test_voice_assets_round_trip_and_reject_invalid_times() -> None:
+    lexicon = _paisa_lexicon()
+    assert PronunciationLexicon.from_dict(lexicon.to_dict()).to_dict() == lexicon.to_dict()
+
+    track = VoiceTrack(
+        speaker="ana",
+        utterances=[Utterance(speaker="ana", text="hola", start_s=0.0, end_s=0.5)],
+    )
+    assert VoiceTrack.from_dict(track.to_dict()).to_dict() == track.to_dict()
+    with pytest.raises(VoiceError, match="0 <= start_s"):
+        VoiceTrack(
+            speaker="ana",
+            utterances=[Utterance(speaker="ana", text="hola", start_s=-1.0, end_s=0.5)],
+        ).validate()
+
+
+def test_lexicon_reload_rejects_malformed_entries_shape() -> None:
+    with pytest.raises(VoiceError, match="entries del lexicon debe ser un objeto"):
+        PronunciationLexicon.from_dict(
+            {"locale": "es-CO-paisa", "entries": ["invalid"], "approved_variant": True}
+        )
+
+
 def test_voice_track_rejects_mixed_speakers() -> None:
     """Pistas separadas por hablante (W19: no generación conjunta)."""
     track = VoiceTrack(
