@@ -15,6 +15,7 @@ from comfy_studio.assets3d import (
     Material,
     Part,
     Provenance,
+    assert_camera_not_presented_as_observed,
     assert_not_presented_as_observed,
 )
 
@@ -56,6 +57,32 @@ def test_part_referencing_missing_material_rejected() -> None:
     a = _asset(parts=[bad])
     with pytest.raises(Asset3DError, match="material inexistente"):
         a.validate()
+
+
+def test_invalid_pbr_values_and_bbox_are_rejected() -> None:
+    bad_material = Material(name="bad", base_color_rgba=(0.8, 0.8, 0.8, 2.0))
+    with pytest.raises(Asset3DError, match="base_color_rgba"):
+        _asset(
+            materials=[bad_material],
+            parts=[
+                Part(
+                    part_id="p1",
+                    name="cuerpo",
+                    material="bad",
+                    provenance=Provenance.OBSERVED,
+                )
+            ],
+        ).validate()
+
+    bad_part = Part(
+        part_id="bad",
+        name="bad bbox",
+        material="pbr_base",
+        provenance=Provenance.OBSERVED,
+        bbox=(2.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+    )
+    with pytest.raises(Asset3DError, match="bbox invertido"):
+        _asset(parts=[bad_part]).validate()
 
 
 def test_inferred_part_is_not_presentable_as_observed() -> None:
@@ -111,9 +138,59 @@ def test_material_carries_explicit_alpha() -> None:
 
 
 def test_roundtrip_serialization() -> None:
-    a = _asset(source_engine="partcrafter")
+    a = _asset(
+        source_engine="partcrafter",
+        cameras=[
+            CameraPose(
+                name="vista",
+                position=(1.0, 2.0, 3.0),
+                target=(0.0, 0.0, 0.0),
+                provenance=Provenance.INFERRED,
+            )
+        ],
+    )
     d = a.to_dict()
     assert d["units"] == "meters"
     assert d["transform"][0] == [1.0, 0.0, 0.0, 0.0]
     assert d["coverage"]["fully_observed"] is True
     assert d["source_engine"] == "partcrafter"
+    reopened = Asset3D.from_dict(d)
+    assert reopened.to_dict() == d
+    assert reopened.has_inferred_geometry()
+
+
+def test_reopen_rejects_invalid_part_material_reference() -> None:
+    data = _asset().to_dict()
+    data["parts"][0]["material"] = "missing"
+    with pytest.raises(Asset3DError, match="material inexistente"):
+        Asset3D.from_dict(data)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("forward_axis", [0.0, 0.0, -2.0], "unitario"),
+        ("forward_axis", [0.0, 1.0, 0.0], "paralelo"),
+        ("transform", [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 1, 0, 1]], "homogénea"),
+    ],
+)
+def test_reopen_rejects_invalid_axes_and_transform(field, value, message) -> None:
+    data = _asset().to_dict()
+    data[field] = value
+    with pytest.raises(Asset3DError, match=message):
+        Asset3D.from_dict(data)
+
+
+def test_inferred_camera_is_not_presentable_as_observed() -> None:
+    asset = _asset(
+        cameras=[
+            CameraPose(
+                name="vista_sintetica",
+                position=(0.0, 1.0, 5.0),
+                target=(0.0, 0.0, 0.0),
+                provenance=Provenance.INFERRED,
+            )
+        ]
+    )
+    with pytest.raises(Asset3DError, match="INFERIDA"):
+        assert_camera_not_presented_as_observed(asset, "vista_sintetica")

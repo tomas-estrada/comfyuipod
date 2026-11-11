@@ -38,10 +38,12 @@ def test_fov_from_focal() -> None:
 
 
 def test_validate_rejects_out_of_order_keyframes() -> None:
-    p = _plan(keyframes=[
-        CameraKeyframe(t=1.0, position=(0, 0, 5), target=(0, 0, 0)),
-        CameraKeyframe(t=0.0, position=(0, 0, 5), target=(0, 0, 0)),
-    ])
+    p = _plan(
+        keyframes=[
+            CameraKeyframe(t=1.0, position=(0, 0, 5), target=(0, 0, 0)),
+            CameraKeyframe(t=0.0, position=(0, 0, 5), target=(0, 0, 0)),
+        ]
+    )
     with pytest.raises(CameraError, match="fuera de orden"):
         p.validate()
 
@@ -81,6 +83,30 @@ def test_composition_detects_obstacle_collision() -> None:
     )
     assert rep.ok is False
     assert any("obstáculo" in c for c in rep.collisions)
+
+
+def test_composition_detects_obstacle_occluding_subject() -> None:
+    p = _plan(keyframes=[CameraKeyframe(t=0.0, position=(0.0, 1.0, 5.0), target=(0.0, 1.0, 0.0))])
+    rep = check_composition(
+        p,
+        subject_position=(0.0, 1.0, 0.0),
+        subject_radius=0.5,
+        obstacles=[((0.0, 1.0, 2.5), 0.4)],
+    )
+    assert rep.ok is False
+    assert any("sujeto ocluido" in item for item in rep.occlusions)
+
+
+def test_obstacle_behind_subject_does_not_occlude_subject() -> None:
+    p = _plan(keyframes=[CameraKeyframe(t=0.0, position=(0.0, 1.0, 5.0), target=(0.0, 1.0, 0.0))])
+    rep = check_composition(
+        p,
+        subject_position=(0.0, 1.0, 0.0),
+        subject_radius=0.5,
+        obstacles=[((0.0, 1.0, -2.0), 0.4)],
+    )
+    assert rep.ok is True
+    assert not rep.occlusions
 
 
 def _asset_with(front_prov: Provenance, back_prov: Provenance) -> Asset3D:

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,7 +35,7 @@ class Joint:
     """Un joint articulado con sus límites y unidades explícitas."""
 
     name: str
-    axis: str              # "x" | "y" | "z"
+    axis: str  # "x" | "y" | "z"
     min_deg: float
     max_deg: float
 
@@ -57,6 +58,35 @@ class SimSpec:
     #: altura inicial (m) para una caída; o amplitud de una articulación.
     initial_height_m: float = 10.0
     joints: list[Joint] = field(default_factory=list)
+
+    def validate(self) -> None:
+        if self.maneuver not in {
+            "free_fall",
+            "caida_libre",
+            "joint_sweep",
+            "joint_cycle",
+        }:
+            raise PhysicsError(f"maniobra no soportada: {self.maneuver!r}")
+        if (
+            self.fps <= 0
+            or not math.isfinite(self.duration_s)
+            or self.duration_s <= 0
+            or not math.isfinite(self.initial_height_m)
+        ):
+            raise PhysicsError("fps y duration_s deben ser > 0")
+        if not self.joints and self.maneuver not in {"free_fall", "caida_libre"}:
+            raise PhysicsError(f"{self.maneuver} requiere al menos un joint")
+        if self.initial_height_m < 0:
+            raise PhysicsError("initial_height_m debe ser >= 0")
+        names: set[str] = set()
+        for joint in self.joints:
+            if not joint.name or joint.axis not in {"x", "y", "z"}:
+                raise PhysicsError(f"joint inválido: {joint.name!r}/{joint.axis!r}")
+            if joint.name in names:
+                raise PhysicsError(f"joint duplicado: {joint.name!r}")
+            names.add(joint.name)
+            if joint.min_deg > joint.max_deg:
+                raise PhysicsError(f"joint {joint.name}: min_deg > max_deg")
 
     def frame_count(self) -> int:
         return max(1, int(round(self.fps * self.duration_s)))
@@ -88,6 +118,7 @@ class FrameState:
     velocity_mps: float
     in_contact: bool
     joint_angles_deg: dict[str, float] = field(default_factory=dict)
+    joint_velocity_deg_s: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -111,8 +142,7 @@ class SimResult:
             "frame_count": len(self.frames),
             "is_proxy": self.is_proxy,
             "proxy_note": (
-                "proxy cinemático CPU; la fidelidad tras render neural "
-                "NO se deduce de esto (A14)"
+                "proxy cinemático CPU; la fidelidad tras render neural NO se deduce de esto (A14)"
             ),
             "contact_frame": self.contact_frame(),
             "frames": [
@@ -123,6 +153,9 @@ class SimResult:
                     "velocity_mps": round(f.velocity_mps, 4),
                     "in_contact": f.in_contact,
                     "joint_angles_deg": {k: round(v, 3) for k, v in f.joint_angles_deg.items()},
+                    "joint_velocity_deg_s": {
+                        k: round(v, 3) for k, v in f.joint_velocity_deg_s.items()
+                    },
                 }
                 for f in self.frames
             ],
@@ -137,11 +170,9 @@ def simulate(spec: SimSpec) -> SimResult:
     - los joints se mueven dentro de sus límites a lo largo de la duración;
     - timebase explícito (fps); mismo seed/params → mismo resultado.
     """
-    if spec.fps <= 0 or spec.duration_s <= 0:
-        raise PhysicsError("fps y duration_s deben ser > 0")
-    for j in spec.joints:
-        if j.min_deg > j.max_deg:
-            raise PhysicsError(f"joint {j.name}: min_deg > max_deg")
+    spec.validate()
+    if spec.maneuver == "joint_cycle" and spec.frame_count() < 2:
+        raise PhysicsError("joint_cycle requiere al menos dos frames")
 
     result = SimResult(spec_hash=spec.state_hash())
     dt = 1.0 / spec.fps
@@ -150,18 +181,28 @@ def simulate(spec: SimSpec) -> SimResult:
     n = spec.frame_count()
     for i in range(n):
         t = i * dt
-        if height > 0.0:
+        if spec.maneuver in {"free_fall", "caida_libre"} and height > 0.0:
             velocity += GRAVITY * dt
             height -= velocity * dt
-        contact = height <= 0.0
+        contact = spec.maneuver in {"free_fall", "caida_libre"} and height <= 0.0
         if contact:
             height = 0.0
             velocity = 0.0
         # joints: interpolación lineal determinista dentro de límites.
         angles: dict[str, float] = {}
+        angular_velocity: dict[str, float] = {}
         frac = i / max(1, n - 1)
         for j in spec.joints:
-            raw = j.min_deg + frac * (j.max_deg - j.min_deg)
+            span = j.max_deg - j.min_deg
+            if spec.maneuver == "joint_cycle":
+                phase = math.tau * frac
+                raw = (j.min_deg + j.max_deg) / 2 - span / 2 * math.cos(phase)
+                angular_velocity[j.name] = span * math.pi / spec.duration_s * math.sin(phase)
+            else:
+                raw = j.min_deg + frac * span
+                angular_velocity[j.name] = (
+                    span / spec.duration_s if spec.maneuver == "joint_sweep" else 0.0
+                )
             angles[j.name] = j.clamp(raw)
         result.frames.append(
             FrameState(
@@ -171,24 +212,38 @@ def simulate(spec: SimSpec) -> SimResult:
                 velocity_mps=velocity,
                 in_contact=contact,
                 joint_angles_deg=angles,
+                joint_velocity_deg_s=angular_velocity,
             )
         )
     return result
 
 
-def assert_returns_to_initial(result_a: SimResult, result_b: SimResult) -> None:
-    """Un producto articulado debe poder volver a su estado inicial (A14).
-
-    Dos simulaciones con la misma spec producen el mismo hash y el mismo primer
-    frame: el ciclo articulado es reproducible (vuelta al estado inicial).
-    """
-    if result_a.spec_hash != result_b.spec_hash:
-        raise PhysicsError("simulaciones de specs distintas: no comparables")
-    if not result_a.frames or not result_b.frames:
-        raise PhysicsError("simulación vacía")
-    fa, fb = result_a.frames[0], result_b.frames[0]
-    if abs(fa.height_m - fb.height_m) > 1e-9 or fa.joint_angles_deg != fb.joint_angles_deg:
-        raise PhysicsError("estado inicial no reproducible entre corridas")
+def assert_returns_to_initial(result_a: SimResult, result_b: SimResult | None = None) -> None:
+    """Compara corridas o prueba un ciclo real entre primer y último frame (A14)."""
+    if result_b is not None:
+        if result_a.spec_hash != result_b.spec_hash:
+            raise PhysicsError("simulaciones de specs distintas: no comparables")
+        if not result_a.frames or not result_b.frames:
+            raise PhysicsError("simulación vacía")
+        if result_a.to_dict() != result_b.to_dict():
+            raise PhysicsError("corridas no deterministas")
+        return
+    if len(result_a.frames) < 2:
+        raise PhysicsError("un ciclo requiere al menos dos frames")
+    first, last = result_a.frames[0], result_a.frames[-1]
+    if (
+        abs(first.height_m - last.height_m) > 1e-6
+        or abs(first.velocity_mps - last.velocity_mps) > 1e-6
+        or first.in_contact != last.in_contact
+        or first.joint_angles_deg.keys() != last.joint_angles_deg.keys()
+        or any(
+            abs(first.joint_angles_deg[name] - last.joint_angles_deg[name]) > 1e-6
+            for name in first.joint_angles_deg
+        )
+        or any(abs(value) > 1e-6 for value in last.joint_velocity_deg_s.values())
+        or any(abs(value) > 1e-6 for value in first.joint_velocity_deg_s.values())
+    ):
+        raise PhysicsError("estado final no vuelve al estado inicial")
 
 
 __all__ = [

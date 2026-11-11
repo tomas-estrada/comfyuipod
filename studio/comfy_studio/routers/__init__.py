@@ -20,6 +20,7 @@ from . import (
     productions,
     projects,
     review_pins,
+    spatial_memory,
     templates,
 )
 
@@ -39,6 +40,7 @@ _MODULES = (
     ads,
     audio,
     review_pins,
+    spatial_memory,
     montage,
 )
 

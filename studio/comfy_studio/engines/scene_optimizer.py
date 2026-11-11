@@ -52,7 +52,7 @@ class SceneOptimizerEngine(Engine):
                 "checks": [
                     "colisión con sujeto",
                     "colisión con obstáculos",
-                    "visibilidad (FOV)",
+                    "visibilidad (FOV y oclusión por obstáculos)",
                 ],
                 "stub": self.is_stub(),
             },
@@ -115,9 +115,7 @@ class SceneOptimizerEngine(Engine):
             )
         # parsear sujeto
         try:
-            subject_pos = self._parse_vec3(
-                job.get("subject_position", (0.0, 0.0, 0.0))
-            )
+            subject_pos = self._parse_vec3(job.get("subject_position", (0.0, 0.0, 0.0)))
             subject_radius = float(job.get("subject_radius", 0.5))
         except (TypeError, ValueError) as exc:
             return EngineResult(
@@ -130,9 +128,7 @@ class SceneOptimizerEngine(Engine):
         obstacles: list[tuple[Vec3, float]] = []
         for obs in obstacles_raw:
             try:
-                obstacles.append(
-                    (self._parse_vec3(obs["position"]), float(obs["radius"]))
-                )
+                obstacles.append((self._parse_vec3(obs["position"]), float(obs["radius"])))
             except (KeyError, TypeError, ValueError) as exc:
                 return EngineResult(
                     ok=False,
@@ -142,7 +138,10 @@ class SceneOptimizerEngine(Engine):
                 )
         if self.is_stub():
             return self._stub_run(
-                plan, subject_pos, subject_radius, obstacles,
+                plan,
+                subject_pos,
+                subject_radius,
+                obstacles,
                 float(job.get("min_distance", 0.5)),
             )
 

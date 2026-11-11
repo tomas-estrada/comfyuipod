@@ -70,6 +70,8 @@ EXPECTED_ROUTES: list[str] = [
     "GET /studio/api/projects/{project_id}/perception/search",
     "GET /studio/api/projects/{project_id}/pins",
     "GET /studio/api/projects/{project_id}/pins/summary",
+    "GET /studio/api/projects/{project_id}/spatial-memory",
+    "GET /studio/api/projects/{project_id}/spatial-memory/anchors/{anchor_id}/round-trip",
     "GET /studio/api/projects/{project_id}/transcriptions",
     "GET /studio/api/projects/{project_id}/transcriptions/{transcription_id}/subtitles",
     "GET /studio/api/projects/{project_id}/sound/mix",
@@ -124,12 +126,14 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/pins",
     "POST /studio/api/projects/{project_id}/search/combined",
     "POST /studio/api/projects/{project_id}/search/faces",
+    "POST /studio/api/projects/{project_id}/spatial-memory/anchors/{anchor_id}/visits",
     "POST /studio/api/projects/{project_id}/templates/{template_id}/submit",
     "POST /studio/api/projects/{project_id}/transcribe",
     "POST /studio/api/projects/{project_id}/uploads",
     "POST /studio/api/templates/{template_id}/submit",
     "PUT /studio/api/projects/{project_id}",
     "PUT /studio/api/projects/{project_id}/sound/mix",
+    "PUT /studio/api/projects/{project_id}/spatial-memory/anchors/{anchor_id}",
 ]
 
 

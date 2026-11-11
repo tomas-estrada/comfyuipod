@@ -53,7 +53,7 @@ class CameraError(ValueError):
 class CameraKeyframe:
     """Un keyframe de la trayectoria de cámara."""
 
-    t: float              # tiempo normalizado 0..1
+    t: float  # tiempo normalizado 0..1
     position: Vec3
     target: Vec3
 
@@ -138,9 +138,7 @@ def check_composition(
     for kf in plan.keyframes:
         # colisión con el sujeto.
         if _dist(kf.position, subject_position) < (subject_radius + min_distance):
-            report.collisions.append(
-                f"t={kf.t}: cámara dentro de la zona del sujeto"
-            )
+            report.collisions.append(f"t={kf.t}: cámara dentro de la zona del sujeto")
         # colisión con obstáculos.
         for i, (obs_pos, obs_r) in enumerate(obstacles):
             if _dist(kf.position, obs_pos) < (obs_r + min_distance):
@@ -159,6 +157,20 @@ def check_composition(
         cos_ang = max(-1.0, min(1.0, cos_ang))
         if math.acos(cos_ang) > half_fov:
             report.occlusions.append(f"t={kf.t}: sujeto fuera del encuadre (FOV)")
+
+        # An obstacle sphere between the camera and the subject blocks the
+        # sightline even when the camera itself does not collide with it.
+        segment_sq = sum(value * value for value in to_subj)
+        for i, (obs_pos, obs_r) in enumerate(obstacles):
+            if obs_r <= 0:
+                continue
+            to_obstacle = _sub(obs_pos, kf.position)
+            fraction = sum(to_obstacle[axis] * to_subj[axis] for axis in range(3)) / segment_sq
+            if not 0.0 < fraction < 1.0:
+                continue
+            closest = tuple(kf.position[axis] + fraction * to_subj[axis] for axis in range(3))
+            if _dist(obs_pos, closest) < obs_r:
+                report.occlusions.append(f"t={kf.t}: sujeto ocluido por obstáculo {i}")
 
     report.ok = not report.collisions and not report.occlusions
     return report
@@ -200,6 +212,7 @@ __all__ = [
 
 
 # --- Animatic (C05/C08/A13): delegación lazy para evitar import circular ----
+
 
 def interpolate_camera(*args, **kwargs):
     from .animatic import interpolate_camera as _fn
