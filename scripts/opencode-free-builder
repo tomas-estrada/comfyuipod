@@ -6,4 +6,11 @@ if (($# == 0)); then
   exit 2
 fi
 
-exec opencode run --agent free-builder "$@"
+task="$*"
+exec python3 "$(dirname "$0")/agent_harness.py" \
+  --runtime-id opencode \
+  --model-id opencode-go/beam-free \
+  --role builder \
+  --tools "read,search,edit,write,shell" \
+  --task "$task" \
+  -- opencode run --agent free-builder '{prompt}'

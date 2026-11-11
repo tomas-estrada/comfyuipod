@@ -20,6 +20,7 @@ docs/auditorias/LONG_RUN_AUDIT_TRACKER.md
 docs/auditorias/AUDITORIA_AGENTE_V[1-9][0-9]*.md
 comfyctl/target/
 studio/remotion/node_modules/
+.agent-runs/
 
 # estado mutable del atlas (selecciones por proyecto): no va al repo/imagen
 atlas/selection*.json
