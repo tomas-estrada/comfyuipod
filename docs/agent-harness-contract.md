@@ -41,17 +41,19 @@ evidence must be checkpointed outside model context.
 | Studio | Tool allowlist checked in dispatch | LLM calls, iterations, wall/cancel checks at loop boundaries | Bounds messages before model calls | Project-scoped run store |
 | Codex CLI/Desktop | `.codex/hooks.json` creates primary/child records, injects contracts, and denies unlisted local tools at `PreToolUse`; child tools intersect the parent's allowlist | Shared local tool and wall budgets enforced at dispatch; model-request limits are advisory because Codex model hooks cannot block | Codex owns automatic model-aware compaction; pre/post hooks persist checkpoint guidance | `.agent-runs/<run-id>/run.json` and `checkpoint.md` |
 | OpenCode | Plugin filters request tools and rejects unlisted tool dispatch; only `harnessed-builder` can be spawned | Shared LLM/tool budgets; 12-step agent cap; wall time checked at tool/model boundaries | Native automatic compaction uses the selected model's context window and 20% reserve; compaction keeps checkpoint guidance | `.agent-runs/<run-id>/run.json` and `checkpoint.md` |
-| Command Code | Mod filters primary tools; native child profile limits the child tool set and four turns | Primary LLM/tool budgets and wall time enforced at loop boundaries; child turns are capped by the runtime profile, while child tool calls/tokens are observed after dispatch and cannot be interrupted by the parent mod | Primary mod compacts at 75% of its measured model window; native children use the host's configured compaction policy, but their context window is not exposed to the parent mod | Parent and each child have separate durable run records; child tool-call/token evidence is collected from native subagent lifecycle events |
+| Command Code | Mod filters primary tools; agent delegation is blocked because the current native child API does not expose enforceable per-call/shared-budget hooks | Primary LLM/tool budgets and wall time enforced at loop boundaries; no child agents may launch through this adapter until the runtime exposes dispatch-time enforcement | Primary mod compacts at 75% of its measured model window | Primary run has durable evidence; child evidence is not claimed because child dispatch is blocked |
 | Kilo | Plugin rejects unlisted tools at dispatch; if task delegation is exposed, it targets registered project profiles and child tool sets intersect the parent's | Shared LLM/tool call and wall-time budgets enforced at model/tool boundaries; child depth is capped at three | Native auto-compaction is configured at 75% of the selected model's available context window; the plugin preserves checkpoint guidance | `.agent-runs/<run-id>/run.json` and `checkpoint.md` for each session |
 | Future runtimes | Must add a runtime-specific dispatch hook before project agents may be launched | Enforce each exposed limit; record unsupported controls as limitations | Use runtime/model metadata and native compaction hooks | Same `comfyuipod.agent-run` record |
 
-The OpenCode plugin instruments primary and child sessions. Command Code's
-native children are recorded by the parent's subagent lifecycle observer and
-bounded by the child's runtime profile; the parent mod cannot interrupt their
-tool calls mid-run. Command Code does not auto-load a project mod, so its
-sessions must start through `scripts/cmd-agent`; direct CLI sessions are not
-covered. A runtime that bypasses its repository plugin/mod/adapter is an
-untracked run and does not satisfy this repository's harness requirement.
+The OpenCode plugin instruments primary and child sessions. Command Code does
+not currently expose enough dispatch-time control over native children to
+enforce shared tool budgets. Its adapter therefore blocks the agent tool;
+child delegation can be enabled only after a runtime integration can create
+the child contract and enforce its limits before the child starts. Command
+Code does not auto-load a project mod, so its primary sessions must start
+through scripts/cmd-agent; direct CLI sessions are not covered. A runtime
+that bypasses its repository plugin/mod/adapter is an untracked run and does
+not satisfy this repository's harness requirement.
 Runtime hooks cannot interrupt a provider request already in flight; those
 time limits are enforced at the next safe boundary.
 
