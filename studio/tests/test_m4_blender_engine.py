@@ -75,6 +75,28 @@ def test_bad_mode_rejected(tmp_path: Path) -> None:
     assert "mode" in (res.error or "")
 
 
+def test_camera_view_job_builds_eevee_cpu_spec(tmp_path: Path) -> None:
+    job = _render_job(tmp_path)
+    job.update(
+        {
+            "engine": "eevee",
+            "device": "cpu",
+            "camera_views": [
+                {"name": "front", "position": [0, -4, 0], "target": [0, 0, 0]},
+            ],
+            "asset_transform": [
+                [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]
+            ],
+            "up_axis": "z_up",
+        }
+    )
+    spec = BlenderEngine._build_spec(job)
+    assert spec.engine == "eevee"
+    assert spec.device == "cpu"
+    assert spec.camera_views[0].name == "front"
+    assert spec.up_axis == "z_up"
+
+
 def test_install_blocked_when_dynamic_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -25,6 +25,7 @@ from pathlib import Path
 
 from comfy_studio.blender import (
     FAILURE_INVALID_OUTPUT,
+    BlenderCameraView,
     BlenderExportSpec,
     BlenderRenderSpec,
     classify_blender_failure,
@@ -389,4 +390,26 @@ class BlenderEngine(Engine):
             height=int(job.get("height", 720)),
             frames=int(job.get("frames", 1)),
             device=str(job.get("device", "gpu")).lower(),
+            camera_views=tuple(
+                BlenderCameraView(
+                    name=str(view["name"]),
+                    position=tuple(float(value) for value in view["position"]),
+                    target=tuple(float(value) for value in view["target"]),
+                    fov_deg=float(view.get("fov_deg", 50.0)),
+                )
+                for view in job.get("camera_views", [])
+            ),
+            asset_transform=tuple(
+                tuple(float(value) for value in row)
+                for row in job.get(
+                    "asset_transform",
+                    (
+                        (1.0, 0.0, 0.0, 0.0),
+                        (0.0, 1.0, 0.0, 0.0),
+                        (0.0, 0.0, 1.0, 0.0),
+                        (0.0, 0.0, 0.0, 1.0),
+                    ),
+                )
+            ),
+            up_axis=str(job.get("up_axis", "y_up")),
         )
