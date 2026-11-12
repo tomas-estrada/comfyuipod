@@ -296,7 +296,10 @@ def classify_blender_failure(exit_code: int, log_tail: str) -> str:
 
 def _camera_view_render_script(spec: BlenderRenderSpec) -> str:
     """Generate a real CPU scene render for each persisted asset camera pose."""
-    views = json.dumps([asdict(view) for view in spec.camera_views], ensure_ascii=True)
+    # Blender executes this payload as Python source, so JSON's `null`/`true`/
+    # `false` tokens are invalid here. Dataclass values are validated above and
+    # repr emits safe Python literals for None, booleans, strings, and numbers.
+    views = repr([asdict(view) for view in spec.camera_views])
     transform = json.dumps([list(row) for row in spec.asset_transform])
     up_axis = json.dumps(spec.up_axis)
     transparent_background = "True" if spec.transparent_background else "False"
