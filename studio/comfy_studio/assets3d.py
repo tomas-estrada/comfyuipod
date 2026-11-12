@@ -64,6 +64,7 @@ class Material:
     metallic: float = 0.0
     provenance: Provenance = Provenance.OBSERVED
     texture_license: str | None = None
+    material_index: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +74,7 @@ class Material:
             "metallic": self.metallic,
             "provenance": str(self.provenance),
             "texture_license": self.texture_license,
+            "material_index": self.material_index,
         }
 
 
@@ -86,6 +88,10 @@ class Part:
     provenance: Provenance
     #: bbox local [minx,miny,minz, maxx,maxy,maxz] para trazabilidad.
     bbox: tuple[float, float, float, float, float, float] | None = None
+    mesh_index: int | None = None
+    node_index: int | None = None
+    parent_part_id: str | None = None
+    transform: tuple[tuple[float, ...], ...] = IDENTITY_4X4
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -94,6 +100,10 @@ class Part:
             "material": self.material,
             "provenance": str(self.provenance),
             "bbox": list(self.bbox) if self.bbox else None,
+            "mesh_index": self.mesh_index,
+            "node_index": self.node_index,
+            "parent_part_id": self.parent_part_id,
+            "transform": [list(row) for row in self.transform],
         }
 
 
@@ -184,16 +194,47 @@ class Asset3D:
                 )
             if not isinstance(part.provenance, Provenance):
                 raise Asset3DError(f"parte {part.part_id} sin procedencia explícita")
+            if part.mesh_index is not None and part.mesh_index < 0:
+                raise Asset3DError(f"parte {part.part_id} tiene mesh_index negativo")
+            if part.node_index is not None and part.node_index < 0:
+                raise Asset3DError(f"parte {part.part_id} tiene node_index negativo")
+            if part.parent_part_id == part.part_id:
+                raise Asset3DError(f"parte {part.part_id} no puede ser su propio padre")
+            if len(part.transform) != 4 or any(len(row) != 4 for row in part.transform):
+                raise Asset3DError(f"parte {part.part_id} tiene transform que no es 4x4")
+            if any(not math.isfinite(value) for row in part.transform for value in row):
+                raise Asset3DError(f"parte {part.part_id} tiene transform no finito")
+            if any(
+                abs(actual - expected) > 1e-9
+                for actual, expected in zip(part.transform[3], (0, 0, 0, 1), strict=True)
+            ):
+                raise Asset3DError(f"parte {part.part_id} tiene transform no afín")
             if part.bbox is not None:
                 if len(part.bbox) != 6 or any(not math.isfinite(value) for value in part.bbox):
                     raise Asset3DError(f"parte {part.part_id} tiene bbox inválido")
                 if any(part.bbox[i] > part.bbox[i + 3] for i in range(3)):
                     raise Asset3DError(f"parte {part.part_id} tiene bbox invertido")
+        part_ids_set = set(part_ids)
+        for part in self.parts:
+            if part.parent_part_id and part.parent_part_id not in part_ids_set:
+                raise Asset3DError(
+                    f"parte {part.part_id} referencia padre inexistente {part.parent_part_id!r}"
+                )
+        for part in self.parts:
+            seen: set[str] = set()
+            current = part
+            while current.parent_part_id:
+                if current.part_id in seen:
+                    raise Asset3DError("jerarquía de partes contiene un ciclo")
+                seen.add(current.part_id)
+                current = next(p for p in self.parts if p.part_id == current.parent_part_id)
         # Cada material inferido debe decir que lo es (no colar un alpha/color
         # sintetizado como observado).
         for mat in self.materials:
             if not isinstance(mat.provenance, Provenance):
                 raise Asset3DError(f"material {mat.name} sin procedencia explícita")
+            if mat.material_index is not None and mat.material_index < 0:
+                raise Asset3DError(f"material {mat.name} tiene material_index negativo")
             if len(mat.base_color_rgba) != 4 or any(
                 not math.isfinite(value) or not 0 <= value <= 1 for value in mat.base_color_rgba
             ):
@@ -281,6 +322,11 @@ class Asset3D:
                         metallic=item["metallic"],
                         provenance=Provenance(item["provenance"]),
                         texture_license=item.get("texture_license"),
+                        material_index=(
+                            int(item["material_index"])
+                            if item.get("material_index") is not None
+                            else None
+                        ),
                     )
                     for item in data.get("materials", [])
                 ],
@@ -291,6 +337,17 @@ class Asset3D:
                         material=item["material"],
                         provenance=Provenance(item["provenance"]),
                         bbox=tuple(item["bbox"]) if item.get("bbox") is not None else None,
+                        mesh_index=(
+                            int(item["mesh_index"]) if item.get("mesh_index") is not None else None
+                        ),
+                        node_index=(
+                            int(item["node_index"]) if item.get("node_index") is not None else None
+                        ),
+                        parent_part_id=item.get("parent_part_id"),
+                        transform=tuple(
+                            tuple(float(value) for value in row)
+                            for row in item.get("transform", IDENTITY_4X4)
+                        ),
                     )
                     for item in data.get("parts", [])
                 ],

@@ -367,6 +367,14 @@ class BriefFeedbackRequest(BaseModel):
     applies_to: str | None = Field(default=None, max_length=200)
 
 
+class Asset3DManifestRequest(BaseModel):
+    """Manifest reabrible de cámaras, materiales y partes de un GLB del proyecto."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    manifest: dict[str, Any] = Field(...)
+
+
 class BriefReviewRequest(BaseModel):
     """Revisión del render real de un asset contra el brief activo."""
 

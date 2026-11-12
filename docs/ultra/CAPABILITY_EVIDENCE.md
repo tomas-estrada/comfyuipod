@@ -16,8 +16,8 @@ This records the highest evidence level actually demonstrated for each capabilit
 | C06 | Mundos con memoria espacial | L0 | W17 acceptance is not complete. |
 | C07 | Lugares reales del Aburrá | L1 partial | W09 offline atlas data and CPU tests exist; merged PR #134 adds a regression that checks camera constraints against the explicitly requested view. Full stratified atlas acceptance remains unproven. |
 | C08 | Animatic y ensayo virtual | L1 partial | The registered agent tool creates and ffprobe verifies a synthetic top-down camera path preview with CPU fixtures. It does not render a 3D scene or establish visual quality; W11/W22 acceptance remains incomplete. |
-| C09 | Producto 3D reutilizable | L0 | W10 acceptance is not complete. |
-| C10 | Despiece y ensamblaje | L0 | W10/W12 acceptance is not complete. |
+| C09 | Producto 3D reutilizable | L1 partial | This candidate adds an agent/API entrypoint that binds a project-owned GLB to a persistent `Asset3D` manifest by SHA-256. CPU acceptance reopens one GLB under three named camera poses while preserving the same asset ID, units, materials, part IDs and observed/inferred provenance; stub headers without verified mesh POSITION data are rejected. It does not validate 3D reconstruction quality, three rendered views, or target-GPU execution. |
+| C10 | Despiece y ensamblaje | L1 partial | This candidate persists part-to-mesh/node indices, parent hierarchy, per-part transforms, materials and provenance; rehydration preserves IDs/transforms, and missing mesh/node references and hierarchy cycles fail closed. An inferred detail remains labeled inferred. The code defines reusable structure but does not yet generate or replay an assembly animation, validate CAD, or complete W12 physics acceptance. |
 | C11 | Rigging y deformación | L0 | W13 acceptance is not complete. |
 | C12 | Movimiento recuperado | L0 | W13 acceptance is not complete. |
 | C13 | Coreografía generada | L0 | W13 acceptance is not complete. |

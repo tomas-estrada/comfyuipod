@@ -1200,6 +1200,21 @@ class RegisterIdentityArgs(BaseModel):
     )
 
 
+class Register3DManifestArgs(BaseModel):
+    """Argumentos para guardar cámaras y partes reabribles de un GLB."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(..., min_length=1, max_length=64)
+    manifest: dict[str, Any] = Field(
+        ...,
+        description=(
+            "Asset3D manifest: IDs de partes, mesh_index, pivotes/transforms, materiales, "
+            "cámaras y provenance observed/inferred. asset_id debe ser el GLB del proyecto."
+        ),
+    )
+
+
 class ListIdentitiesArgs(BaseModel):
     """Argumentos para la herramienta `list_identities`."""
 
@@ -1530,6 +1545,7 @@ ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
         "list_templates",
         "search_assets",
         "tag_asset",
+        "register_3d_manifest",
         "job_status",
         "index_media",
         "find_shots_text",
@@ -3098,6 +3114,34 @@ async def _handle_register_identity(
     return await run_in_threadpool(_do_register)
 
 
+async def _handle_register_3d_manifest(
+    args: Register3DManifestArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    from ..asset3d_manifest import save_asset3d_manifest
+
+    try:
+        record = await run_in_threadpool(
+            save_asset3d_manifest,
+            context.store,
+            context.project_id,
+            args.asset_id,
+            args.manifest,
+        )
+    except (LookupError, ValueError) as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    return {
+        "status": "registered",
+        "project_id": context.project_id,
+        "asset_id": args.asset_id,
+        "manifest": record,
+        "next_step": (
+            "Reutiliza este asset_id para todas las cámaras; las partes inferidas siguen "
+            "marcadas inferred y no son observaciones ni CAD verificado."
+        ),
+    }
+
+
 async def _handle_list_identities(
     _args: ListIdentitiesArgs,
     context: ToolContext,
@@ -4565,6 +4609,18 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=RegisterIdentityArgs,
             handler=_handle_register_identity,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="register_3d_manifest",
+            description=(
+                "Guarda un manifiesto reabrible de cámaras, materiales, jerarquía y partes "
+                "para un GLB del proyecto. Comprueba el GLB y enlaza el manifiesto a su hash; "
+                "las zonas inferidas nunca se elevan a CAD observado."
+            ),
+            args_model=Register3DManifestArgs,
+            handler=_handle_register_3d_manifest,
         )
     )
     belt.register(
