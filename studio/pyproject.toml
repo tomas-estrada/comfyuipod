@@ -28,6 +28,9 @@ asr = [
     "whisperx==3.8.6",
     "funasr==1.4.16",
 ]
+inverse-rendering = [
+    "mitsuba==3.9.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
