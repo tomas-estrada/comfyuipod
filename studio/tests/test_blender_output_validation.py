@@ -14,6 +14,7 @@ igual que `test_m5_capture3d.py` usa `ns-*` falsos.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import os
 import stat
@@ -137,7 +138,16 @@ def test_camera_view_render_spec_is_bounded_and_generates_python(tmp_path: Path)
     spec.validate()
     script = build_render_script(spec)
     compile(script, "generated_blender_camera_preview.py", "exec")
-    assert '"name": "front"' in script
+    camera_views_assignment = next(
+        node
+        for node in ast.parse(script).body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "camera_views"
+            for target in node.targets
+        )
+    )
+    assert ast.literal_eval(camera_views_assignment.value)[0]["name"] == "front"
     assert "bpy.ops.render.render(write_still=True)" in script
     assert "camera views rendered" in script
     assert 'asset_up_axis = "y_up"' in script
