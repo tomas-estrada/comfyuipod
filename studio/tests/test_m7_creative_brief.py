@@ -628,6 +628,52 @@ def test_feedback_is_learned_and_carried_into_next_brief(client: TestClient) -> 
     assert row["brief"]["learned_preferences"], "el nuevo brief hereda las preferencias"
 
 
+def test_project_preferences_can_be_corrected_and_deleted_without_cross_project_leak(
+    client: TestClient,
+) -> None:
+    project_a = _make_project(client, "Memoria privada A")
+    project_b = _make_project(client, "Memoria privada B")
+    feedback_a = client.post(
+        f"/studio/api/projects/{project_a}/brief/feedback",
+        json={"text": "Público universitario", "applies_to": "audience"},
+    )
+    feedback_b = client.post(
+        f"/studio/api/projects/{project_b}/brief/feedback",
+        json={"text": "Público familiar", "applies_to": "audience"},
+    )
+    preference_a = feedback_a.json()["entry"]["id"]
+    preference_b = feedback_b.json()["entry"]["id"]
+
+    listed_a = client.get(f"/studio/api/projects/{project_a}/brief/preferences")
+    listed_b = client.get(f"/studio/api/projects/{project_b}/brief/preferences")
+    assert [p["id"] for p in listed_a.json()["preferences"]] == [preference_a]
+    assert [p["id"] for p in listed_b.json()["preferences"]] == [preference_b]
+    assert "familiar" in listed_b.json()["preferences"][0]["text"]
+
+    corrected = client.patch(
+        f"/studio/api/projects/{project_a}/brief/preferences/{preference_a}",
+        json={"text": "Público profesional", "applies_to": "audience"},
+    )
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["preference"]["revision"] == 2
+    assert "profesional" in corrected.json()["preference"]["text"]
+    assert client.patch(
+        f"/studio/api/projects/{project_b}/brief/preferences/{preference_a}",
+        json={"text": "No mover entre proyectos", "applies_to": "audience"},
+    ).status_code == 404
+
+    deleted = client.delete(
+        f"/studio/api/projects/{project_a}/brief/preferences/{preference_a}"
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert client.get(f"/studio/api/projects/{project_a}/brief/preferences").json()[
+        "preferences"
+    ] == []
+    assert [p["id"] for p in client.get(
+        f"/studio/api/projects/{project_b}/brief/preferences"
+    ).json()["preferences"]] == [preference_b]
+
+
 # ---------------------------------------------------------------------------
 # 11. Integración con el tool-belt del agente (modo agente)
 # ---------------------------------------------------------------------------
