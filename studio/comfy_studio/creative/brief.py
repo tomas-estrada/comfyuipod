@@ -74,6 +74,77 @@ _DURATION_PATTERNS = (
     (re.compile(r"un\s*minuto\b|1\s*minuto\b", re.I), 60.0),
 )
 
+# Commercial claims are carried into the brief only with transcript evidence.
+# The patterns are intentionally conservative: they identify common literal
+# dates and prices, not general-purpose fact extraction.
+_CLAIM_PATTERNS = {
+    "date": re.compile(
+        r"\b(?:hoy|mañana|pasado mañana|"
+        r"\d{1,2}\s+de\s+[a-záéíóúñ]+\s+de\s+\d{4}|"
+        r"\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b",
+        re.I,
+    ),
+    "price": re.compile(
+        r"(?:\b(?:COP|USD|EUR|MXN|ARS)\s*\$?\s*\d[\d.,]*"
+        r"|[$€£]\s*\d[\d.,]*"
+        r"|\b\d[\d.,]*\s*(?:COP|USD|EUR|MXN|ARS|pesos?|dólares?|euros?)\b)",
+        re.I,
+    ),
+}
+
+
+def _commercial_claims(text: str) -> list[tuple[str, str]]:
+    claims = [
+        (kind, match.group(0).strip())
+        for kind, pattern in _CLAIM_PATTERNS.items()
+        for match in pattern.finditer(text or "")
+    ]
+    # Preserve source order and avoid duplicate captures from overlapping forms.
+    return list(dict.fromkeys(claims))
+
+
+def _without_commercial_claims(text: str) -> str:
+    for pattern in _CLAIM_PATTERNS.values():
+        text = pattern.sub(" ", text or "")
+    return text
+
+
+def _assess_commercial_claims(
+    prompt: str,
+    facts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Mark literal user date/price claims as supported, conflicting, or open."""
+    transcript_facts = [
+        f for f in facts
+        if f.get("kind") == "transcript_segment" and not f.get("simulated")
+    ]
+    transcript_text = " ".join(str(f.get("claim") or "") for f in transcript_facts)
+    transcript_claims = _commercial_claims(transcript_text)
+    assessments: list[dict[str, Any]] = []
+    for kind, claim in _commercial_claims(prompt):
+        if claim.casefold() in transcript_text.casefold():
+            status = "supported"
+            refs = [
+                f.get("id") for f in transcript_facts
+                if claim.casefold() in str(f.get("claim") or "").casefold()
+            ]
+        else:
+            same_kind = [item for item_kind, item in transcript_claims if item_kind == kind]
+            status = "conflicting" if same_kind else "unverified"
+            refs = [
+                f.get("id") for f in transcript_facts
+                if _commercial_claims(str(f.get("claim") or ""))
+            ]
+        assessment = {
+            "kind": kind,
+            "claim": claim,
+            "source": "user_prompt",
+            "status": status,
+            "evidence_refs": refs,
+        }
+        assessments.append(assessment)
+    return assessments
+
 _PLATFORM_MAP = {
     "instagram": "instagram",
     "tiktok": "tiktok",
@@ -312,7 +383,7 @@ def parse_prompt(prompt: str) -> dict[str, Any]:
         "piece_type": piece_type,
         "constraints": constraints,
         "tone": tone,
-        "keywords": _keywords(text),
+        "keywords": _keywords(_without_commercial_claims(text)),
         "platform": platform,
         "aspect_ratio": aspect_ratio,
         "language": language,
@@ -408,6 +479,11 @@ def new_brief(
         subtitles = bool(_constraint_value(intent, "subtitles"))
 
     facts = evidence.get("facts", [])
+    claim_assessments = _assess_commercial_claims(prompt, facts)
+    unsupported_claims = [
+        claim for claim in claim_assessments if claim["status"] != "supported"
+    ]
+    safe_keywords = _keywords(_without_commercial_claims(prompt))
     asset_facts = [
         {
             "id": f.get("id"),
@@ -513,7 +589,11 @@ def new_brief(
         "prompt": prompt,
         "status": status if status in BRIEF_STATUSES else "draft",
         "purpose": editorial.get("promise", ""),
-        "main_message": " ".join(keywords[:6]) if keywords else (prompt or "")[:120],
+        "main_message": (
+            " ".join(safe_keywords[:6])
+            if safe_keywords
+            else "Plan editorial pendiente de confirmar hechos comerciales."
+        ),
         "piece_type": piece_type,
         "audience": audience,
         "duration": {
@@ -530,7 +610,20 @@ def new_brief(
         "user_constraints": constraints,
         "asset_facts": asset_facts,
         "assumptions": assumptions,
-        "pending": [],
+        "pending": [
+            {
+                "question": (
+                    f"Confirmar la afirmación de {claim['kind']}: {claim['claim']} "
+                    "(no usar como hecho en títulos, voz ni captions hasta verificar)."
+                ),
+                "kind": claim["kind"],
+                "claim": claim["claim"],
+                "status": claim["status"],
+                "evidence_refs": claim["evidence_refs"],
+            }
+            for claim in unsupported_claims
+        ],
+        "claim_assessments": claim_assessments,
         "budget": budget,
         "acceptance_criteria": acceptance,
         "editorial": editorial,
