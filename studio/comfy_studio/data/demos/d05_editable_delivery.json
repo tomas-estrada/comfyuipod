@@ -1,8 +1,13 @@
 {
-  "schema": "comfy_studio.demo_fixture.d05.v1",
-  "fixture_kind": "synthetic editable delivery metadata; render is a color-card toolchain probe",
+  "schema": "comfy_studio.demo_fixture.d05.v2",
+  "fixture_kind": "synthetic transcript and heterogeneous media; CPU pipeline fixture, no quality claim",
   "project_name": "D05_CPU_fixture_only",
   "titles": [{"id": "title_01", "text": "Fixture de validación"}],
   "credits": [{"source": "generated://synthetic-color-card", "license": "CC0-1.0"}],
-  "render": {"width": 3840, "height": 2160, "fps": 1, "duration_s": 1}
+  "render": {
+    "horizontal": [3840, 2160],
+    "vertical": [2160, 3840],
+    "fps": 12,
+    "duration_s": 1
+  }
 }

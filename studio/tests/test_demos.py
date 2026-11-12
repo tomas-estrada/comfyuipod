@@ -111,17 +111,62 @@ def test_pending_gpu_stage_requires_explanation() -> None:
         stage.validate()
 
 
-@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
-                    reason="real FFmpeg/ffprobe binaries required")
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="real FFmpeg/ffprobe binaries required",
+)
 def test_d05_runner_encodes_and_probes_exact_4k_fixture(tmp_path: Path) -> None:
     result = run_demo("D05", tmp_path)
-    artifact = result["artifacts"][0]
-    assert artifact["bytes"] > 0
-    assert artifact["sha256"]
-    assert result["checks"]["ffmpeg_encode"]["dimensions_verified"] is True
-    assert Path(result["manifest"]).parent.joinpath("editable_project.json").is_file()
+    artifacts = {artifact["path"]: artifact for artifact in result["artifacts"]}
+    assert "D05_delivery_package.zip" in artifacts
+    assert "D05_asset_inventory.json" in artifacts
+    assert artifacts["D05_delivery_package.zip"]["bytes"] > 0
+    assert artifacts["D05_delivery_package.zip"]["sha256"]
+    assert result["checks"]["asset_inventory"]["input_count"] == 100
+    assert result["checks"]["asset_inventory"]["corrupt"] == 5
+    assert result["checks"]["asset_inventory"]["unsupported"] == 5
+    assert result["checks"]["asset_inventory"]["pending_weights"] == 90
+    assert result["checks"]["asset_inventory"]["duplicate"] == 0
+    assert result["checks"]["budget"]["within_budget"] is True
+    assert result["checks"]["brief_to_edl"]["cuts"] >= 1
+    assert result["checks"]["editable_roundtrip"]["title_edit_preserved_clips"] is True
+    assert result["checks"]["editable_roundtrip"]["credits_verified"] is True
+    assert result["checks"]["ffmpeg_encode"]["dimensions_verified"] == {
+        "16:9": True,
+        "9:16": True,
+    }
+    assert result["checks"]["ffmpeg_encode"]["fps_verified"] == {
+        "16:9": True,
+        "9:16": True,
+    }
+    assert result["checks"]["ffmpeg_encode"]["color_range_verified"] == {
+        "16:9": True,
+        "9:16": True,
+    }
     manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
     assert manifest["checks"]["ffmpeg_encode"]["quality_claim"] is False
+    assert manifest["checkpoints"][-1]["status"] == "done"
+    inventory = json.loads(
+        Path(result["manifest"]).parent.joinpath("D05_asset_inventory.json").read_text()
+    )
+    assert len(inventory["inputs"]) == 100
+    assert all(row["sha256"] for row in inventory["inputs"] if row["status"] in {
+        "pending_weights", "duplicate"
+    })
+    measured_audio_durations = {
+        row["duration_sec"]
+        for row in inventory["inputs"]
+        if row["kind"] == "audio" and row["duration_sec"] is not None
+    }
+    assert len(measured_audio_durations) >= 10
+    measured_video_durations = {
+        row["duration_sec"]
+        for row in inventory["inputs"]
+        if row["kind"] == "video" and row["duration_sec"] is not None
+    }
+    assert len(measured_video_durations) >= 10
+    resumed = run_demo("D05", tmp_path, resume=True)
+    assert resumed["resumed"] is True
 
 
 def test_runner_rejects_unknown_demo(tmp_path: Path) -> None:
