@@ -248,6 +248,10 @@ def test_d05_runner_encodes_and_probes_exact_4k_fixture(tmp_path: Path) -> None:
         "9:16": True,
     }
     manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    fingerprint = manifest["execution_fingerprint"]
+    assert len(fingerprint["runner_sha256"]) == 64
+    assert fingerprint["python_version"]
+    assert set(fingerprint["tool_versions"]) == {"ffmpeg", "ffprobe"}
     assert manifest["checks"]["ffmpeg_encode"]["quality_claim"] is False
     assert manifest["checkpoints"][-1]["status"] == "done"
     inventory = json.loads(
@@ -331,4 +335,78 @@ def test_runner_refuses_symlinked_manifest_and_d05_artifacts(
     with pytest.raises(DemoError, match="output symlink"):
         run_demo("D05", output_root)
     assert outside.read_text(encoding="utf-8") == "protected"
+
+
+@pytest.mark.parametrize(
+    ("demo_id", "artifact_name"),
+    [("D01", "run_manifest.json"), ("D05", "D05_master_16x9.mp4")],
+)
+def test_runner_refuses_hardlinked_output_files(
+    tmp_path: Path, demo_id: str, artifact_name: str
+) -> None:
+    outside = tmp_path / "protected.json"
+    outside.write_text("protected", encoding="utf-8")
+    output_root = tmp_path / "runs"
+    demo_dir = output_root / demo_id
+    demo_dir.mkdir(parents=True)
+    try:
+        (demo_dir / artifact_name).hardlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"hardlinks unavailable: {exc}")
+
+    with pytest.raises(DemoError, match="hard-linked output"):
+        demos_module._prepare_demo_output(demo_id, output_root)
+    assert outside.read_text(encoding="utf-8") == "protected"
+
+
+def test_d05_resume_rejects_empty_artifact_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def fake_render(data: dict[str, object], out_dir: Path) -> tuple[Path, dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        names = (
+            "D05_delivery_package.zip",
+            "D05_master_16x9.mp4",
+            "D05_master_9x16.mp4",
+            "D05_asset_inventory.json",
+            "editable_project.json",
+        )
+        for name in names:
+            (out_dir / name).write_bytes(name.encode("utf-8"))
+        return out_dir / names[0], {}
+
+    monkeypatch.setattr(demos_module, "_render_d05", fake_render)
+    first = run_demo("D05", tmp_path)
+    manifest_path = Path(first["manifest"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"] = []
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    resumed = run_demo("D05", tmp_path, resume=True)
+
+    assert calls == 2
+    assert resumed["resumed"] is False
+    assert len(resumed["artifacts"]) == 5
+
+
+def test_resume_rejects_changed_execution_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_fingerprint = {"runner_sha256": "a" * 64, "tools": {}}
+    current_fingerprint = {"runner_sha256": "b" * 64, "tools": {}}
+    fingerprints = [first_fingerprint, current_fingerprint]
+
+    def fingerprint(demo_id: str) -> dict[str, object]:
+        return fingerprints.pop(0)
+
+    monkeypatch.setattr(demos_module, "_execution_fingerprint", fingerprint)
+    first = run_demo("D02", tmp_path)
+    resumed = run_demo("D02", tmp_path, resume=True)
+
+    assert resumed["resumed"] is False
+    manifest = json.loads(Path(first["manifest"]).read_text(encoding="utf-8"))
+    assert manifest["execution_fingerprint"] == current_fingerprint
 
