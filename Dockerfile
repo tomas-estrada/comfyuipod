@@ -501,6 +501,7 @@ COPY config/models-studio.json /etc/comfyui/models-studio.json
 COPY config/models-core.json /etc/comfyui/models-core.json
 COPY upgrades-ultra-version/engines.json /etc/comfyui/engines.json
 COPY docs/licenses/blender.md /usr/share/doc/blender/
+COPY docs/licenses/mitsuba.md /usr/share/doc/mitsuba/copyright
 COPY scripts/storage_requirement.py /usr/local/bin/storage_requirement.py
 COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
@@ -561,7 +562,9 @@ RUN find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json"
         /etc/comfyui/panel/app.js && \
     python3 -m venv /opt/venvs/studio && \
     /opt/venvs/studio/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    /opt/venvs/studio/bin/pip install --no-cache-dir '/opt/studio[inverse-rendering]' && \
+    /opt/venvs/studio/bin/pip install --no-cache-dir /opt/studio && \
+    /opt/venvs/studio/bin/pip install --no-cache-dir --require-hashes \
+        -r /opt/studio/locks/mitsuba-cp312-linux-amd64.lock && \
     /opt/venvs/studio/bin/python -m compileall -q /opt/venvs/studio/lib && \
     /opt/venvs/studio/bin/python -m comfy_studio.templates && \
     /opt/venvs/studio/bin/python /tmp/smoke_blender_cpu.py && \

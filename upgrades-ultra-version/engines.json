@@ -1663,17 +1663,25 @@
         "N17"
       ],
       "scope": "Optimización diferenciable de cámara/material/luz con verdad sintética.",
-      "terms_review": "Licencias propias de renderer/deps y mapping explícito OpenPBR; ajustar parámetros observables, no todos a la vez.",
+      "terms_review": "Mitsuba 3 y Dr.Jit BSD-3-Clause revisados; sus avisos se incluyen en la imagen. No se incluyen pesos. El fixture ajusta solo el albedo sintético observado; no afirma una conversión OpenPBR general.",
       "hardware_notes": "Ruta CPU de fixture y CUDA/OptiX Blackwell de campaña posterior.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C20"
       ],
-      "code_revision": null,
+      "code_revision": "478e193a183c21723f4a8251afc3ad29a8da4c5e",
+      "dependency_lock_hashes": {
+        "studio/locks/mitsuba-cp312-linux-amd64.lock": "185ee9278baae31fb19994d890cf475254bde4122b618e117c0aa373a88e328e"
+      },
+      "redistribution_decision": "allowed",
+      "notices_reviewed": true,
+      "upstream_url": "https://github.com/mitsuba-renderer/mitsuba3",
+      "dependency_packages": ["mitsuba==3.9.1", "drjit==1.5.0", "typing_extensions==4.15.0"],
+      "evidence_entrypoint": "scripts/smoke_mitsuba_cpu_fit.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
