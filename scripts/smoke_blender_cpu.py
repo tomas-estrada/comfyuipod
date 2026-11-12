@@ -10,9 +10,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageStat
-
 from comfy_studio.blender import BlenderRenderSpec, run_blender_spec
+from PIL import Image, ImageStat
 
 
 def _make_scene(blender: str, scene_path: Path, work: Path) -> None:
