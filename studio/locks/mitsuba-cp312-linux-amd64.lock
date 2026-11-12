@@ -4,5 +4,5 @@ drjit==1.5.0 \
     --hash=sha256:4e09b4ca25917a05a59c6e857d2a1cb93ff523afa40556eef2cbabd4f40d05c5
 mitsuba==3.9.1 \
     --hash=sha256:67d9cea9e0ee75295ad3692ef12360e285e679be01e8ff1997ef4c38925f5a13
-typing_extensions==4.15.0 \
-    --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
+typing_extensions==4.16.0 \
+    --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8

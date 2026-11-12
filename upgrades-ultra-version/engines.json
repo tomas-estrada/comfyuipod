@@ -1675,7 +1675,7 @@
       ],
       "code_revision": "478e193a183c21723f4a8251afc3ad29a8da4c5e",
       "dependency_lock_hashes": {
-        "studio/locks/mitsuba-cp312-linux-amd64.lock": "185ee9278baae31fb19994d890cf475254bde4122b618e117c0aa373a88e328e"
+        "studio/locks/mitsuba-cp312-linux-amd64.lock": "1ef47e5e4d6ea31473f44b0b1208770031c7ea59133f3017338bdb31ee4222ca"
       },
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
