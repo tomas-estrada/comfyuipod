@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validador del manifiesto de engines (plan Ultra, W07 / acceptance A07).
 
-`upgrades-ultra-version/engines.json` declara 88 engines con su disposición
+`upgrades-ultra-version/engines.json` declara 89 engines con su disposición
 (required/alternative/conditional/excluded/reference_only), revisión de código,
 lock exigido antes de build, revisión de licencia (`terms_review`) y gate de
 release. Este script es un **release gate de coherencia**: no construye nada ni
@@ -28,8 +28,10 @@ incumplimiento, para CI. `--json` emite el informe estructurado.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -50,7 +52,16 @@ ALLOWED_DISPOSITIONS = {
 
 def load_json(path: Path) -> Any:
     with open(path, encoding="utf-8-sig") as handle:
-        return json.load(handle)
+        return json.load(handle, object_pairs_hook=_unique_object_pairs)
+
+
+def _unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
 
 
 def _capability_ids(caps_path: Path) -> set[str]:
@@ -67,8 +78,38 @@ def _capability_ids(caps_path: Path) -> set[str]:
     return out
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _git_tracked_paths(repo_root: Path) -> set[str] | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "-z"],
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return {
+        raw_path.decode("utf-8", errors="surrogateescape")
+        for raw_path in result.stdout.split(b"\0")
+        if raw_path
+    }
+
+
 def validate(
-    manifest: dict[str, Any], cap_ids: set[str]
+    manifest: dict[str, Any],
+    cap_ids: set[str],
+    *,
+    repo_root: Path | None = None,
+    require_git_tracked: bool | None = None,
 ) -> tuple[list[str], list[str]]:
     """Devuelve (incumplimientos, release_blockers).
 
@@ -83,6 +124,10 @@ def validate(
     """
     problems: list[str] = []
     blockers: list[str] = []
+    evidence_root = (repo_root or REPO_ROOT).resolve()
+    if require_git_tracked is None:
+        require_git_tracked = True
+    tracked_paths = _git_tracked_paths(evidence_root) if require_git_tracked else None
     engines = manifest.get("engines", [])
 
     # 1. Contadores.
@@ -125,6 +170,59 @@ def validate(
                 for value in hashes.values()
             ):
                 blockers.append(f"{eid}: A07 requiere hashes SHA-256 de dependency locks")
+            else:
+                for lock_name, expected_hash in hashes.items():
+                    if not isinstance(lock_name, str) or not lock_name.strip():
+                        blockers.append(f"{eid}: nombre de dependency lock inválido")
+                        continue
+                    lock_path = Path(lock_name)
+                    if lock_path.is_absolute():
+                        blockers.append(
+                            f"{eid}: dependency lock {lock_name} fuera de la raíz del repositorio"
+                        )
+                        continue
+                    try:
+                        resolved_lock = (evidence_root / lock_path).resolve(strict=True)
+                    except (OSError, RuntimeError, ValueError):
+                        blockers.append(
+                            f"{eid}: lock file {lock_name} no existe, no es accesible "
+                            "o tiene una ruta inválida"
+                        )
+                        continue
+                    if not resolved_lock.is_relative_to(evidence_root):
+                        blockers.append(
+                            f"{eid}: dependency lock {lock_name} fuera de la raíz del repositorio"
+                        )
+                        continue
+                    if not resolved_lock.is_file():
+                        blockers.append(f"{eid}: lock file {lock_name} no es un archivo")
+                        continue
+                    if require_git_tracked:
+                        if tracked_paths is None:
+                            blockers.append(
+                                f"{eid}: no se pudo comprobar el versionado Git de {lock_name}"
+                            )
+                            continue
+                        if lock_name not in tracked_paths:
+                            blockers.append(
+                                f"{eid}: lock file {lock_name} no está versionado"
+                            )
+                            continue
+                        resolved_name = resolved_lock.relative_to(evidence_root).as_posix()
+                        if resolved_name not in tracked_paths:
+                            blockers.append(
+                                f"{eid}: target de lock {resolved_name} no está versionado"
+                            )
+                            continue
+                    try:
+                        actual_hash = _sha256_file(resolved_lock)
+                    except OSError:
+                        blockers.append(f"{eid}: lock file {lock_name} no es legible")
+                        continue
+                    if actual_hash.casefold() != str(expected_hash).casefold():
+                        blockers.append(
+                            f"{eid}: SHA-256 no coincide para dependency lock {lock_name}"
+                        )
 
             if eng.get("redistribution_decision") not in {"allowed", "conditional", "blocked"}:
                 blockers.append(f"{eid}: A07 requiere decisión explícita de redistribución")
