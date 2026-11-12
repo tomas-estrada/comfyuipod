@@ -492,6 +492,7 @@ def test_brief_top_level_shape_is_stable() -> None:
         "assumptions",
         "audience",
         "budget",
+        "claim_assessments",
         "concept",
         "created_at",
         "duration",

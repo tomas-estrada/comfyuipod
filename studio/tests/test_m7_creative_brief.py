@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 from comfy_studio.agent.tools import ToolContext, create_default_tool_belt
 from comfy_studio.comfyui_client import ComfyUIClient
 from comfy_studio.config import StudioConfig
+from comfy_studio.creative.brief import _assess_commercial_claims
 from comfy_studio.perception.store import PerceptionVectorStore
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
@@ -186,6 +187,69 @@ def test_event_facts_preserved_verbatim_with_evidence_and_simulated_flag(
 
     dates = re.findall(r"\d{1,2} de [a-z]+ de \d{4}", str(brief["asset_facts"]))
     assert dates == ["12 de octubre de 2026"]
+
+
+def test_false_commercial_claims_remain_unverified_and_out_of_plan(
+    client: TestClient,
+) -> None:
+    pid = _make_project(client, "Evento con datos por verificar")
+    asset = _upload(client, pid, "evento.mp4", FAKE_MP4, "video/mp4")
+    transcript = "El evento será el 12 de octubre de 2026 y la entrada cuesta $25.000 COP"
+    tr_resp = client.post(
+        f"/studio/api/projects/{pid}/transcribe",
+        json={
+            "asset_id": asset["id"],
+            "language": "es",
+            "script_segments": [
+                {"start": 0.0, "end": 3.0, "text": transcript, "speaker": "S1"}
+            ],
+        },
+    )
+    assert tr_resp.status_code == 200, tr_resp.text
+
+    row = _create_brief(
+        client,
+        pid,
+        "Anuncia el evento el 10 de octubre de 2025 con entrada a $20.000 COP",
+    )
+    brief = row["brief"]
+    claims = {claim["kind"]: claim for claim in brief["claim_assessments"]}
+    assert claims["date"]["claim"] == "10 de octubre de 2025"
+    assert claims["price"]["claim"] == "$20.000"
+    # La transcripción de fixture está marcada como simulada y no puede
+    # confirmar ni refutar una fecha o un precio como hechos.
+    assert {claim["status"] for claim in claims.values()} == {"unverified"}
+    assert all(not claim["evidence_refs"] for claim in claims.values())
+    assert len(brief["pending"]) == 2
+    assert all("no usar como hecho" in item["question"] for item in brief["pending"])
+    assert "2025" not in brief["main_message"]
+    assert "20.000" not in brief["main_message"]
+    assert "2025" not in " ".join(brief["keywords"])
+    assert "20.000" not in " ".join(brief["keywords"])
+    assert "2025" not in str(brief["editorial"])
+    assert "20.000" not in str(brief["editorial"])
+
+
+def test_real_transcript_claims_are_referenced_or_marked_conflicting() -> None:
+    facts = [
+        {
+            "id": "fact-0007",
+            "kind": "transcript_segment",
+            "simulated": False,
+            "claim": "Dice: «El evento será el 12 de octubre de 2026; entrada $25.000 COP»",
+        }
+    ]
+    supported = _assess_commercial_claims(
+        "El evento será el 12 de octubre de 2026 y cuesta $25.000 COP", facts
+    )
+    assert [item["status"] for item in supported] == ["supported", "supported"]
+    assert all(item["evidence_refs"] == ["fact-0007"] for item in supported)
+
+    conflicting = _assess_commercial_claims(
+        "El evento será el 10 de octubre de 2025 y cuesta $20.000 COP", facts
+    )
+    assert [item["status"] for item in conflicting] == ["conflicting", "conflicting"]
+    assert all(item["evidence_refs"] == ["fact-0007"] for item in conflicting)
 
 
 # ---------------------------------------------------------------------------
