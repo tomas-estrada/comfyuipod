@@ -15,6 +15,7 @@ import math
 import os
 import shutil
 import sqlite3
+import stat
 import struct
 import subprocess
 import sys
@@ -410,7 +411,7 @@ def clean_demo_output(demo_id: str, output_root: Path) -> bool:
 
 
 def _prepare_demo_output(demo_id: str, output_root: Path) -> tuple[Path, Path]:
-    """Create a contained output directory and reject symlinked run files."""
+    """Create a contained output directory and reject aliased run files."""
     root = output_root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     out_dir = root / demo_id
@@ -426,9 +427,58 @@ def _prepare_demo_output(demo_id: str, output_root: Path) -> tuple[Path, Path]:
         generated.extend(out_dir / name for name in (
             "D05_delivery_package.zip", "D05_master_16x9.mp4", "D05_master_9x16.mp4"))
         generated.append(out_dir / "D05_asset_inventory.json")
-    if any(path.is_symlink() for path in generated):
-        raise DemoError("refusing to overwrite a demo output symlink")
+    for path in generated:
+        if path.is_symlink():
+            raise DemoError("refusing to overwrite a demo output symlink")
+        try:
+            file_stat = path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise DemoError("refusing to overwrite a non-file demo output path")
+        if file_stat.st_nlink > 1:
+            raise DemoError("refusing to overwrite a hard-linked output file")
     return out_dir, manifest
+
+
+def _execution_fingerprint(demo_id: str) -> dict[str, Any]:
+    """Identify the runner and external tools used to produce resumable evidence."""
+    fingerprint: dict[str, Any] = {
+        "runner_sha256": _sha256(Path(__file__)),
+        "python_version": sys.version.split()[0],
+        "tool_versions": {},
+    }
+    if demo_id != "D05":
+        return fingerprint
+
+    for name, executable in (("ffmpeg", find_ffmpeg()), ("ffprobe", find_ffprobe())):
+        try:
+            result = subprocess.run(
+                [executable, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise DemoError(f"unable to identify {name} version: {exc}") from exc
+        first_line = result.stdout.splitlines()[0] if result.stdout.splitlines() else ""
+        if result.returncode or not first_line:
+            raise DemoError(f"unable to identify {name} version")
+        fingerprint["tool_versions"][name] = first_line
+    return fingerprint
+
+
+def _expected_artifact_names(demo_id: str) -> set[str]:
+    if demo_id == "D05":
+        return {
+            "D05_delivery_package.zip",
+            "D05_master_16x9.mp4",
+            "D05_master_9x16.mp4",
+            "D05_asset_inventory.json",
+            "editable_project.json",
+        }
+    return set()
 
 
 def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -921,6 +971,7 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
         atlas_evidence, atlas_inputs = _check_d01_atlas_references(fixture_data)
         checks["atlas_reference_evidence"] = atlas_evidence
         inputs.extend(atlas_inputs)
+    execution_fingerprint = _execution_fingerprint(demo_id)
     if resume and manifest_path.is_file():
         def artifact_is_valid(item: dict[str, Any]) -> bool:
             name = item.get("path")
@@ -932,16 +983,27 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
                 and candidate.is_file()
                 and candidate.resolve().parent == out_dir
                 and _sha256(candidate) == item.get("sha256")
+                and candidate.stat().st_size == item.get("bytes")
             )
 
         try:
             prior = json.loads(manifest_path.read_text(encoding="utf-8"))
             valid = (
-                prior.get("schema") == "comfy_studio.demo_run.v2"
+                prior.get("schema") == "comfy_studio.demo_run.v3"
                 and prior.get("result") == "cpu_fixture_checks_passed"
                 and prior.get("inputs") == inputs
-                and isinstance(prior.get("artifacts", []), list)
-                and all(artifact_is_valid(item) for item in prior.get("artifacts", []))
+                and prior.get("execution_fingerprint") == execution_fingerprint
+                and isinstance(prior.get("artifacts"), list)
+                and {
+                    item.get("path")
+                    for item in prior["artifacts"]
+                    if isinstance(item, dict)
+                } == _expected_artifact_names(demo_id)
+                and len(prior["artifacts"]) == len(_expected_artifact_names(demo_id))
+                and all(
+                    isinstance(item, dict) and artifact_is_valid(item)
+                    for item in prior["artifacts"]
+                )
             )
         except (OSError, json.JSONDecodeError, IndexError, KeyError, TypeError):
             valid = False
@@ -960,7 +1022,7 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
     if failed:
         raise DemoError(f"{demo_id} failed fixture checks: {', '.join(failed)}")
     manifest: dict[str, Any] = {
-        "schema": "comfy_studio.demo_run.v2",
+        "schema": "comfy_studio.demo_run.v3",
         "demo": demo.to_dict(),
         "result": "cpu_fixture_checks_passed",
         "claim_scope": (
@@ -970,6 +1032,7 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
             else "fixture consistency/toolchain only; no model quality or capability proof"
         ),
         "inputs": inputs,
+        "execution_fingerprint": execution_fingerprint,
         "checks": checks,
         "checkpoints": checks.get("checkpoints", []),
         "stages": [
