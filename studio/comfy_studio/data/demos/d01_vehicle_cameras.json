@@ -2,6 +2,15 @@
   "schema": "comfy_studio.demo_fixture.d01.v1",
   "fixture_kind": "synthetic calibrated landmarks and protected-logo mask",
   "max_reprojection_rmse_px": 0.01,
+  "atlas_site": {
+    "place_id": "plc_medellin_avenida_el_poblado",
+    "view_ids": [
+      "view_ref_file_colombia_medellin_el_poblado_panoramio_jpg",
+      "view_ref_file_colombia_medellin_el_poblado_panora_989e1fdd",
+      "view_ref_file_colombia_latin_top_jobs_medellin_at_23a8c1e2"
+    ],
+    "max_gps_span_m": 100
+  },
   "cameras": [
     {"id": "cam_front", "intrinsics": [800, 800, 640, 360], "points": [
       {"xyz": [0.0, 0.0, 4.0], "uv": [640, 360]},
