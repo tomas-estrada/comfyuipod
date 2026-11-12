@@ -65,6 +65,7 @@ def test_install_siempre_rechazado_tipado(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("STUDIO_DYNAMIC", "1")
     res = LlmServerEngine().install("llama-cpp")
     assert res.ok is False and res.verb == "install"
+    assert "no está incluido" in (res.error or "")
 
 
 def test_run_rechaza_spec_invalido() -> None:

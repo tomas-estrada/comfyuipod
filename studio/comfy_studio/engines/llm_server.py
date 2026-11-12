@@ -165,8 +165,8 @@ class LlmServerEngine:
             engine=self.name,
             verb="install",
             error=(
-                "llama-server se hornea pinned en la imagen y el modelo .gguf "
-                f"llega en runtime; nada que instalar para {submotor!r}"
+                "el binario llama-server aún no está incluido ni supervisado en la imagen; "
+                f"la preparación para {submotor!r} sigue pendiente"
             ),
         )
 

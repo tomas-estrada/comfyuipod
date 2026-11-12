@@ -1979,8 +1979,8 @@
       "source_ids": [
         "LOCAL-LLM-01"
       ],
-      "scope": "llama-server (llama.cpp) en 127.0.0.1: chat completions OpenAI-compatibles para el agente sin APIs facturadas; binario horneado pinned, modelo .gguf como dependencia de tarea en runtime.",
-      "terms_review": "Codigo MIT verificado via API (ggml-org/llama.cpp, MIT License). Release v0.9.0 (2026-11-04, https://github.com/ggml-org/llama.cpp/releases/tag/v0.9.0). Sin redistribucion de pesos en la imagen; loopback-only.",
+      "scope": "Preparación planificada de llama-server (llama.cpp) en 127.0.0.1 para chat completions OpenAI-compatibles sin APIs facturadas. El adaptador existe, pero el binario aún no está incluido ni supervisado; el modelo .gguf sería una dependencia de tarea en runtime.",
+      "terms_review": "Revisión preliminar: MIT del código principal verificado para ggml-org/llama.cpp v0.9.0 (2026-11-04), commit cd959bae99ff4bed22bef2604f45241c09bbb8c8. Los avisos de dependencias vendorizadas/configuración de build siguen pendientes; no redistribuir un binario hasta completar esa revisión. Sin pesos en la imagen; loopback-only.",
       "hardware_notes": "CPU u offload GPU segun modelo; binario de decenas de MB; WARM sin residencia VRAM por defecto.",
       "build_selected": true,
       "runtime_installs_allowed": false,
@@ -1991,7 +1991,7 @@
         "C03",
         "C08"
       ],
-      "code_revision": "v0.9.0",
+      "code_revision": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     }

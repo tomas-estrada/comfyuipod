@@ -208,6 +208,11 @@ def test_blender_declares_that_no_binary_is_baked() -> None:
     assert prep.state == "not_installed"
 
 
+def test_llm_server_prep_does_not_claim_binary_is_baked() -> None:
+    spec = build_default_prep_specs()["llm_server"]
+    assert "no está incluido" in spec.note
+
+
 def test_health_report_exposes_both_views() -> None:
     reg = build_default_registry()
     rep = health_report(reg)
