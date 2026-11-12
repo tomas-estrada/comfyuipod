@@ -43,10 +43,9 @@ def test_dockerfile_installs_isolated_studio_venv_and_templates() -> None:
     assert "COPY studio/ /opt/studio/" in text
     assert "COPY panel/ /etc/comfyui/panel/" in text
     assert "python3 -m venv /opt/venvs/studio" in text
-    assert (
-        "/opt/venvs/studio/bin/pip install --no-cache-dir '/opt/studio[inverse-rendering]'"
-        in text
-    )
+    assert "/opt/venvs/studio/bin/pip install --no-cache-dir /opt/studio" in text
+    assert "/opt/venvs/studio/bin/pip install --no-cache-dir --require-hashes" in text
+    assert "-r /opt/studio/locks/mitsuba-cp312-linux-amd64.lock" in text
     assert "/opt/venvs/studio/bin/python -m comfy_studio.templates" in text
 
     # requirements.lock de ComfyUI se genera antes de crear /opt/venvs/studio (cero deriva)

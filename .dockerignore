@@ -30,9 +30,10 @@ atlas/selection*.json
 atlas/catalog.db-wal
 atlas/catalog.db-shm
 
-# Blender's runtime archive has a required license notice copied into the image.
+# Blender and Mitsuba runtime components have required license notices copied into the image.
 !docs/
 docs/*
 !docs/licenses/
 docs/licenses/*
 !docs/licenses/blender.md
+!docs/licenses/mitsuba.md

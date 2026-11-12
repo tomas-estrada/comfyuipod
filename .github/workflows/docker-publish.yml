@@ -866,6 +866,7 @@ jobs:
             -e SKIP_MODEL_DOWNLOAD=1 \
             -e STRICT_MIN_RAM_MB=4096 \
             -e STRICT_MIN_DISK_GB=1 \
+            -e COMFY_VOLUME_WAIT_TRIES=0 \
             -e COMFYUI_EXTRA_ARGS="--cpu" \
             -e COMFY_USER=admin \
             -e COMFY_PASS=${smoke_comfy_pass} \
@@ -1283,7 +1284,7 @@ jobs:
             if [ "$SECONDS" -ge "$studio_deadline" ]; then
               timeout 30 docker logs "$studio_cid" || true
               echo "=== Recent redacted Studio server log ==="
-              timeout 15 docker exec "$studio_cid" /opt/venvs/studio/bin/python -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8188/logs/studio?n=200", timeout=8).read().decode("utf-8", "replace"))' || true
+              timeout 15 curl -fsS -u "admin:${smoke_comfy_pass}" "http://127.0.0.1:18188/logs/studio?n=200" || true
               echo "::error::smoke-studio no alcanzó /healthz == 200 en <=300s"
               exit 1
             fi
@@ -1482,6 +1483,7 @@ jobs:
             -e SKIP_MODEL_DOWNLOAD=1 \
             -e STRICT_MIN_RAM_MB=4096 \
             -e STRICT_MIN_DISK_GB=1 \
+            -e COMFY_VOLUME_WAIT_TRIES=0 \
             -e COMFYUI_EXTRA_ARGS="--cpu" \
             -e COMFY_USER=admin \
             -e COMFY_PASS=${smoke_comfy_pass} \
