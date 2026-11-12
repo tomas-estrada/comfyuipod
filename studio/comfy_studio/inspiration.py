@@ -1,29 +1,24 @@
-"""Inspiración activa: referencia → receta editable (plan Ultra, W06 / A09).
+"""Analyze authorized local references and derive provenance-aware recipes.
 
-W06 pide convertir una referencia autorizada (cortes/beat/cámara/texto/sonido) en
-una **receta editable** adaptada a los assets propios, con conectores gratuitos
-opcionales y una política de selección por relevancia. El invariante (A09): no
-depender de reverse cloud, compras, descargas no autorizadas ni cuentas nuevas;
-el modo sin red funciona sobre la biblioteca propia; un conector sin credenciales
-queda `blocked`, no inventa datos; y el análisis distingue **observado /
-inferido / adaptado** sin prometer viralidad.
-
-Este módulo implementa el análisis LOCAL sobre una referencia ya disponible en la
-biblioteca propia (metadatos de cortes, beats, títulos OCR y movimiento que la
-ingesta/perception ya extrajeron): produce un `ReferenceAnalysis` y lo transforma
-en una `EditableRecipe`. No llama a ninguna red; los conectores externos se
-declaran como capacidades opcionales con su estado real.
-
-Puro CPU y determinista: no ejecuta modelos ni descarga. La extracción fina real
-(OCR/flow) la hacen los backends con pesos; aquí se consume lo ya extraído y se
-razona la receta.
+The analyzer probes local video, detects FFmpeg scene changes, extracts
+keyframes, optionally OCRs them, and infers audio onsets. It keeps camera
+movement unknown without supporting evidence, never calls external services,
+and reports observed/inferred/adapted provenance instead of predicting outcomes.
 """
 
 from __future__ import annotations
 
+import hashlib
+import math
+import re
+import shutil
+import struct
+import subprocess
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+
+from .media_bins import find_ffmpeg
 
 
 class Origin(StrEnum):
@@ -66,10 +61,14 @@ class ReferenceAnalysis:
     beats: list[float] = field(default_factory=list)
     #: títulos/textos detectados por OCR, con su origen.
     titles: list[dict[str, Any]] = field(default_factory=list)
-    #: movimiento de cámara aproximado por corte (pan/tilt/zoom/static).
+    #: movimiento de cámara aproximado por corte, or ``unknown`` without evidence.
     camera_moves: list[str] = field(default_factory=list)
     #: de dónde salió la referencia (biblioteca propia / conector permitido).
     source: str = "own_library"
+    limitations: list[str] = field(default_factory=list)
+    #: hash y duración del medio que sustenta el análisis, cuando se conoce.
+    media_sha256: str | None = None
+    media_duration_s: float | None = None
 
     def beat_interval_s(self) -> float | None:
         """Intervalo medio entre beats (tempo), o None si <2 beats."""
@@ -90,6 +89,9 @@ class ReferenceAnalysis:
             "beat_interval_s": self.beat_interval_s(),
             "titles": list(self.titles),
             "camera_moves": list(self.camera_moves),
+            "media_sha256": self.media_sha256,
+            "media_duration_s": self.media_duration_s,
+            "limitations": list(self.limitations),
         }
 
 
@@ -138,7 +140,7 @@ def derive_recipe(
 ) -> EditableRecipe:
     """Convierte el análisis en una receta editable adaptada al brief.
 
-    - cada corte observado → un paso `shot` (observado);
+    - cada corte conserva su origen observado o inferido;
     - el tempo (beat interval) → un paso `beat_sync` (inferido del ritmo);
     - cada título OCR → un paso `title` (observado, con el texto real);
     - si el brief pide un número de shots distinto, se ADAPTA (origen adapted),
@@ -154,10 +156,10 @@ def derive_recipe(
                     "index": i,
                     "duration_s": round(cut.duration_s, 3),
                     "camera_move": (
-                        analysis.camera_moves[i] if i < len(analysis.camera_moves) else "static"
+                        analysis.camera_moves[i] if i < len(analysis.camera_moves) else "unknown"
                     ),
                 },
-                origin=Origin.OBSERVED,
+                origin=cut.origin,
             )
         )
 
@@ -191,6 +193,252 @@ def derive_recipe(
         )
 
     return recipe
+
+
+def _beat_candidates_from_pcm(pcm_s16le: bytes, sample_rate: int) -> list[float]:
+    """Find conservative onset candidates from locally decoded mono PCM."""
+    if sample_rate <= 0 or len(pcm_s16le) < 2:
+        return []
+    complete_samples = pcm_s16le[: len(pcm_s16le) // 2 * 2]
+    samples = [sample[0] for sample in struct.iter_unpack("<h", complete_samples)]
+    window = max(1, round(sample_rate * 0.02))
+    rms: list[float] = []
+    for start in range(0, len(samples), window):
+        chunk = samples[start : start + window]
+        if not chunk:
+            continue
+        rms.append(math.sqrt(sum(value * value for value in chunk) / len(chunk)))
+    if len(rms) < 3:
+        return []
+    onsets = [max(0.0, current - previous) for previous, current in zip(rms, rms[1:], strict=False)]
+    ordered = sorted(onsets)
+    median = ordered[len(ordered) // 2]
+    deviations = sorted(abs(value - median) for value in onsets)
+    mad = deviations[len(deviations) // 2]
+    threshold = max(median + 3.0 * mad, max(onsets, default=0.0) * 0.20)
+    candidates = [
+        i + 1
+        for i in range(1, len(onsets) - 1)
+        if onsets[i] >= threshold and onsets[i] >= onsets[i - 1] and onsets[i] > onsets[i + 1]
+    ]
+    min_gap = max(1, round(0.18 / 0.02))
+    selected: list[int] = []
+    for frame in candidates:
+        if not selected or frame - selected[-1] >= min_gap:
+            selected.append(frame)
+        elif onsets[frame] > onsets[selected[-1]]:
+            selected[-1] = frame
+    return [round(frame * 0.02, 3) for frame in selected[:256]]
+
+
+def _scene_cut_times(
+    path: Any,
+    *,
+    threshold: float,
+    duration_s: float,
+) -> list[float]:
+    """Detect FFmpeg scene changes locally; return no claims on tool failure."""
+    from .media_bins import find_ffmpeg
+
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg or not math.isfinite(duration_s) or duration_s <= 0:
+        return []
+    select_threshold = max(0.05, min(0.95, float(threshold)))
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg,
+                "-v",
+                "info",
+                "-i",
+                str(path),
+                "-vf",
+                f"select='gt(scene\\,{select_threshold:.3f})',showinfo",
+                "-an",
+                "-f",
+                "null",
+                "-",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    return sorted(
+        {
+            float(match.group(1))
+            for line in result.stderr.splitlines()
+            if "Parsed_showinfo" in line
+            for match in [re.search(r"pts_time:([0-9]+(?:\.[0-9]+)?)", line)]
+            if match is not None
+            and 0.05 < float(match.group(1)) < duration_s - 0.05
+        }
+    )
+
+
+def analyze_reference_asset(
+    store: Any,
+    project_id: str,
+    asset_id: str,
+    *,
+    scene_threshold: float = 0.25,
+    interval_sec: float = 2.0,
+) -> ReferenceAnalysis:
+    """Analyze a project-owned video offline and preserve observed/inferred limits.
+
+    Keyframe timestamps and OCR text come from local media extraction. The
+    interval from each keyframe to the next is only an inferred shot window, not
+    an exact cut boundary. Beat candidates are inferred from the decoded audio
+    envelope. Missing OCR or motion tooling is reported in ``limitations``.
+    """
+    # Import lazily: perception.__init__ loads several index backends and may
+    # itself be imported by engine registration during application startup.
+    from .perception.keyframes import extract_video_keyframes, probe_media_info
+
+    asset = store.get_asset(project_id, asset_id)
+    path = store.get_asset_path(project_id, asset_id)
+    if asset is None or path is None:
+        raise LookupError(f"Referencia {asset_id!r} no disponible en el proyecto.")
+    if asset.get("kind") != "video":
+        raise ValueError("El análisis local de referencia requiere un video.")
+    probe = probe_media_info(path)
+    if not probe.get("probe_ok") or not probe.get("has_video"):
+        raise ValueError("ffprobe no pudo validar una pista de video real para la referencia.")
+    media_hash = hashlib.sha256()
+    with path.open("rb") as media_file:
+        for chunk in iter(lambda: media_file.read(1024 * 1024), b""):
+            media_hash.update(chunk)
+
+    keyframes = extract_video_keyframes(
+        store,
+        project_id,
+        asset_id,
+        scene_threshold=scene_threshold,
+        interval_sec=max(
+            interval_sec,
+            float(probe.get("duration_sec") or 0.0) / 29.0,
+        ),
+    )
+    observed_frames = [frame for frame in keyframes if not frame.get("synthetic")]
+    if not observed_frames:
+        raise ValueError("No se pudieron extraer fotogramas reales de la referencia.")
+    ordered_frames = sorted(observed_frames, key=lambda frame: float(frame["timestamp_sec"]))
+    duration_s = float(probe.get("duration_sec") or 0.0)
+    cut_times = _scene_cut_times(path, threshold=scene_threshold, duration_s=duration_s)
+    cuts: list[Cut] = []
+    if cut_times:
+        boundaries = [0.0, *cut_times, duration_s]
+        cuts = [
+            Cut(start_s=start_s, end_s=end_s, origin=Origin.OBSERVED)
+            for start_s, end_s in zip(boundaries, boundaries[1:], strict=False)
+            if math.isfinite(start_s) and math.isfinite(end_s) and end_s > start_s
+        ]
+    if not cuts:
+        for frame in ordered_frames:
+            start_s = float(frame["shot_start_sec"])
+            end_s = float(frame["shot_end_sec"])
+            if not (math.isfinite(start_s) and math.isfinite(end_s) and end_s > start_s):
+                continue
+            cuts.append(Cut(start_s=start_s, end_s=end_s, origin=Origin.INFERRED))
+    if not cuts:
+        raise ValueError("Los fotogramas reales no contienen intervalos de plano válidos.")
+    limitations: list[str] = []
+    if not cut_times:
+        limitations.append("detección de escenas falló; se usan ventanas inferidas de keyframes")
+    if duration_s > 600:
+        limitations.append("beats analizados solo en los primeros 600 segundos de audio")
+    camera_moves = ["unknown"] * len(cuts)
+    limitations.append("movimiento de cámara no estimado: falta un estimador local de flujo")
+
+    titles: list[dict[str, Any]] = []
+    tesseract = shutil.which("tesseract")
+    if tesseract:
+        for frame in ordered_frames:
+            frame_path = store.get_asset_path(project_id, str(frame["keyframe_asset_id"]))
+            if frame_path is None:
+                continue
+            try:
+                result = subprocess.run(
+                    [tesseract, str(frame_path), "stdout", "--psm", "6"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                limitations.append("OCR local falló en al menos un fotograma")
+                break
+            text = " ".join((result.stdout or "").split())
+            if result.returncode == 0 and text:
+                titles.append(
+                    {
+                        "text": text,
+                        "start_s": float(frame["shot_start_sec"]),
+                        "end_s": float(frame["shot_end_sec"]),
+                        "origin": str(Origin.OBSERVED),
+                        "method": "tesseract-local",
+                    }
+                )
+    else:
+        limitations.append("OCR no disponible: tesseract no está instalado")
+
+    beats: list[float] = []
+    if probe.get("has_audio"):
+        ffmpeg = find_ffmpeg()
+        if not ffmpeg:
+            limitations.append("beat map no disponible: ffmpeg no está instalado")
+        else:
+            try:
+                result = subprocess.run(
+                    [
+                        ffmpeg,
+                        "-v",
+                        "error",
+                        "-i",
+                        str(path),
+                        "-t",
+                        "600",
+                        "-vn",
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "8000",
+                        "-f",
+                        "s16le",
+                        "pipe:1",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    timeout=120,
+                )
+                if result.returncode == 0:
+                    beats = _beat_candidates_from_pcm(result.stdout, 8000)
+                    if not beats:
+                        limitations.append(
+                            "no se detectaron acentos de audio por encima del umbral"
+                        )
+                else:
+                    limitations.append("decodificación local de audio falló; beat map vacío")
+            except (OSError, subprocess.TimeoutExpired):
+                limitations.append("decodificación local de audio falló; beat map vacío")
+    else:
+        limitations.append("la referencia no contiene audio; beat map no disponible")
+
+    return ReferenceAnalysis(
+        reference_id=asset_id,
+        cuts=cuts,
+        beats=beats,
+        titles=titles,
+        camera_moves=camera_moves,
+        source="own_library",
+        media_sha256=media_hash.hexdigest(),
+        media_duration_s=duration_s or None,
+        limitations=limitations,
+    )
 
 
 @dataclass(slots=True)
@@ -255,6 +503,7 @@ __all__ = [
     "RecipeStep",
     "ReferenceAnalysis",
     "assert_no_paid_connector",
+    "analyze_reference_asset",
     "connector_catalog",
     "derive_recipe",
 ]

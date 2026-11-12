@@ -62,6 +62,10 @@ and leave a durable `.agent-runs/` record. OpenCode and Kilo load their project
 hooks automatically; Studio uses its built-in harness. Command Code does not
 auto-load the project mod, so launch its agents only through
 `scripts/cmd-agent <task>`, which supplies the mod and bounded child profile.
+Codex CLI/Desktop uses `.codex/hooks.json`; review and trust that hook set in
+Codex before launching repository agents. If its project hooks are untrusted or
+disabled, Codex is unsupported for repository work. Hosted Codex tools that
+bypass local hooks cannot be counted as harness-enforced.
 Do not disable these hooks or launch an unregistered child profile. A new
 runtime is unsupported until it has a dispatch hook or tested repository
 adapter enforcing `docs/agent-harness-contract.md`.

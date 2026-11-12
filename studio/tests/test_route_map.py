@@ -109,6 +109,7 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/ads/{ad_id}/variants",
     "POST /studio/api/projects/{project_id}/aovs/invalidate",
     "POST /studio/api/projects/{project_id}/assets",
+    "POST /studio/api/projects/{project_id}/assets/{asset_id}/inspiration/analyze",
     "POST /studio/api/projects/{project_id}/brief",
     "POST /studio/api/projects/{project_id}/brief/feedback",
     "POST /studio/api/projects/{project_id}/brief/review",
