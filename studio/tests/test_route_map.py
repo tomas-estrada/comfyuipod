@@ -10,6 +10,7 @@ from fastapi import FastAPI
 EXPECTED_ROUTES: list[str] = [
     "DELETE /studio/api/projects/{project_id}",
     "DELETE /studio/api/projects/{project_id}/assets/{asset_id}",
+    "DELETE /studio/api/projects/{project_id}/brief/preferences/{preference_id}",
     "DELETE /studio/api/projects/{project_id}/chat",
     "DELETE /studio/api/projects/{project_id}/identities/{identity_id}",
     "DELETE /studio/api/projects/{project_id}/media/{asset_id}",
@@ -57,6 +58,7 @@ EXPECTED_ROUTES: list[str] = [
     "GET /studio/api/projects/{project_id}/assets/{asset_id}/3d-manifest",
     "GET /studio/api/projects/{project_id}/brief",
     "GET /studio/api/projects/{project_id}/brief/delivery",
+    "GET /studio/api/projects/{project_id}/brief/preferences",
     "GET /studio/api/projects/{project_id}/brief/{version}",
     "GET /studio/api/projects/{project_id}/briefs",
     "GET /studio/api/projects/{project_id}/assets/{asset_id}",
@@ -93,6 +95,7 @@ EXPECTED_ROUTES: list[str] = [
     "PATCH /studio/api/productions/{production_id}/plan",
     "PATCH /studio/api/projects/{project_id}",
     "PATCH /studio/api/projects/{project_id}/brief",
+    "PATCH /studio/api/projects/{project_id}/brief/preferences/{preference_id}",
     "PATCH /studio/api/projects/{project_id}/identities/{identity_id}",
     "PATCH /studio/api/projects/{project_id}/pins/{pin_id}",
     "PATCH /studio/api/projects/{project_id}/raster-layers/{layer_id}",
