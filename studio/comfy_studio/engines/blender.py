@@ -122,9 +122,7 @@ class BlenderEngine(Engine):
             "for m in addon_utils.modules())\n"
             "print('ADDON_ENABLED' if ok else 'ADDON_ENABLE_FAILED')\n"
         )
-        with tempfile.NamedTemporaryFile(
-            "w", suffix=".py", delete=False, encoding="utf-8"
-        ) as fh:
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as fh:
             fh.write(script)
             script_path = fh.name
         try:
@@ -234,10 +232,15 @@ class BlenderEngine(Engine):
                 "stub": False,
                 "weights": "not_required",
             },
-            error=error or (None if ready else (
-                "binario de Blender ausente o no encontrado "
-                "(STUDIO_BLENDER_BIN, PATH o /opt/blender)"
-            )),
+            error=error
+            or (
+                None
+                if ready
+                else (
+                    "binario de Blender ausente o no encontrado "
+                    "(STUDIO_BLENDER_BIN, PATH o /opt/blender)"
+                )
+            ),
             reason=reason or (None if ready else "not_installed"),
         )
 
@@ -396,6 +399,7 @@ class BlenderEngine(Engine):
                     position=tuple(float(value) for value in view["position"]),
                     target=tuple(float(value) for value in view["target"]),
                     fov_deg=float(view.get("fov_deg", 50.0)),
+                    light_rig=view.get("light_rig"),
                 )
                 for view in job.get("camera_views", [])
             ),
@@ -412,4 +416,5 @@ class BlenderEngine(Engine):
                 )
             ),
             up_axis=str(job.get("up_axis", "y_up")),
+            transparent_background=bool(job.get("transparent_background", False)),
         )

@@ -161,9 +161,7 @@ class RenderTemplateParams(BaseModel):
         default=None,
         ge=256,
         le=2048,
-        description=(
-            "Alto en píxeles (480 por defecto para VACE/Wan en 480p; 1024 para SDXL)."
-        ),
+        description=("Alto en píxeles (480 por defecto para VACE/Wan en 480p; 1024 para SDXL)."),
     )
     frames: int | None = Field(
         default=None,
@@ -205,8 +203,7 @@ class RenderTemplateParams(BaseModel):
     image_asset_id: str | None = Field(
         default=None,
         description=(
-            "ID del asset de imagen inicial o referencia "
-            "(para wan_i2v / vace_restyle / hunyuan3d)."
+            "ID del asset de imagen inicial o referencia (para wan_i2v / vace_restyle / hunyuan3d)."
         ),
     )
     first_frame_asset_id: str | None = Field(
@@ -413,8 +410,7 @@ class ExtractKeyframesArgs(BaseModel):
     asset_id: str | None = Field(
         default=None,
         description=(
-            "ID opcional del asset de vídeo en el proyecto "
-            "(usa el primero disponible si se omite)."
+            "ID opcional del asset de vídeo en el proyecto (usa el primero disponible si se omite)."
         ),
     )
     interval_sec: float = Field(
@@ -520,8 +516,7 @@ class TranscribeArgs(BaseModel):
     asset_id: str | None = Field(
         default=None,
         description=(
-            "ID del asset de audio o vídeo a transcribir "
-            "(usa el primero del proyecto si se omite)."
+            "ID del asset de audio o vídeo a transcribir (usa el primero del proyecto si se omite)."
         ),
     )
     language: str = Field(
@@ -632,8 +627,7 @@ class ListReviewPinsArgs(BaseModel):
         default=None,
         ge=1,
         description=(
-            "Versión del EDL a revisar; si se omite, se listan los pins de todas "
-            "las versiones."
+            "Versión del EDL a revisar; si se omite, se listan los pins de todas las versiones."
         ),
     )
     status: Literal["open", "resolved", "discarded"] = Field(
@@ -730,9 +724,7 @@ class ExportEdlArgs(BaseModel):
     version: int | None = Field(
         default=None,
         ge=1,
-        description=(
-            "Número de versión del EDL a exportar (usa la última versión si se omite)."
-        ),
+        description=("Número de versión del EDL a exportar (usa la última versión si se omite)."),
     )
 
 
@@ -805,8 +797,7 @@ class LocalizedRepairArgs(BaseModel):
     replacement_asset_id: str | None = Field(
         default=None,
         description=(
-            "ID del asset de vídeo que sustituye el intervalo editado "
-            "(misma duración aproximada)."
+            "ID del asset de vídeo que sustituye el intervalo editado (misma duración aproximada)."
         ),
     )
     edit_start_sec: float = Field(
@@ -1097,9 +1088,7 @@ class LipsyncVideoArgs(BaseModel):
     audio_asset_id: str = Field(
         ...,
         min_length=1,
-        description=(
-            "ID del asset de audio con el habla (p. ej. salida de generate_speech)."
-        ),
+        description=("ID del asset de audio con el habla (p. ej. salida de generate_speech)."),
     )
 
 
@@ -1111,9 +1100,7 @@ class AdScriptArgs(BaseModel):
     product_name: str = Field(min_length=1, max_length=120)
     key_message: str = Field(min_length=1, max_length=500)
     audience: str = Field(min_length=1, max_length=200)
-    tone: Literal["profesional", "energico", "cercano", "inspirador", "humoristico"] = (
-        "profesional"
-    )
+    tone: Literal["profesional", "energico", "cercano", "inspirador", "humoristico"] = "profesional"
     target_duration_s: float = Field(default=15.0, ge=5.0, le=60.0)
     cta: str = Field(min_length=1, max_length=120)
     language: str = Field(default="es", pattern=r"^[a-z]{2}(-[A-Za-z]{2})?$")
@@ -1241,6 +1228,15 @@ class RenderAsset3DViewsArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     asset_id: str = Field(..., min_length=1, max_length=64)
+
+
+class OptimizeAsset3DStagingArgs(BaseModel):
+    """Bounded whole-asset camera/light search using real Blender CPU renders."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(..., min_length=1, max_length=64)
+    max_candidates: int = Field(default=8, ge=1, le=8)
 
 
 class ListIdentitiesArgs(BaseModel):
@@ -1455,9 +1451,7 @@ class ExportSubtitlesArgs(BaseModel):
     transcription_id: str | None = Field(
         default=None,
         max_length=64,
-        description=(
-            "ID de la transcripción a exportar (usa la última del proyecto si se omite)."
-        ),
+        description=("ID de la transcripción a exportar (usa la última del proyecto si se omite)."),
     )
     format: Literal["srt", "vtt"] = Field(
         default="srt",
@@ -1577,8 +1571,7 @@ class ReviewOutputArgs(BaseModel):
         min_length=1,
         max_length=64,
         description=(
-            "Asset renderizado a revisar contra el brief activo "
-            "(mediciones ffprobe reales)."
+            "Asset renderizado a revisar contra el brief activo (mediciones ffprobe reales)."
         ),
     )
 
@@ -1617,6 +1610,7 @@ ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
         "tag_asset",
         "register_3d_manifest",
         "render_asset3d_views",
+        "optimize_asset3d_staging",
         "job_status",
         "index_media",
         "find_shots_text",
@@ -1733,7 +1727,8 @@ def _record_template_use(template_id: str, context: ToolContext) -> None:
         return
 
 
-async def _handle_enqueue_render(    args: EnqueueRenderArgs,
+async def _handle_enqueue_render(
+    args: EnqueueRenderArgs,
     context: ToolContext,
 ) -> dict[str, Any]:
     if args.template_id != "hunyuan3d_image_to_3d" and not (
@@ -2206,9 +2201,7 @@ async def _handle_job_status(
     if args.job_id:
         job = context.store.get_job(args.job_id)
         if job is None or job.get("project_id") != context.project_id:
-            raise ToolExecutionError(
-                f"Job no encontrado en el proyecto activo: {args.job_id!r}"
-            )
+            raise ToolExecutionError(f"Job no encontrado en el proyecto activo: {args.job_id!r}")
         return {"project_id": context.project_id, "job": job}
 
     jobs = context.store.list_jobs(project_id=context.project_id)[: args.limit]
@@ -2298,9 +2291,7 @@ async def _handle_resolve_review_pin(
     pid = args.project_id or context.project_id
     current = context.store.get_review_pin(pid, args.pin_id)
     if current is None:
-        raise ToolExecutionError(
-            f"Pin no encontrado en el proyecto {pid!r}: {args.pin_id!r}"
-        )
+        raise ToolExecutionError(f"Pin no encontrado en el proyecto {pid!r}: {args.pin_id!r}")
     if current["status"] != "open":
         raise ToolExecutionError(
             f"El pin {args.pin_id!r} ya está en estado {current['status']!r}; "
@@ -2343,9 +2334,7 @@ async def _handle_tag_asset(
         metadata=extra_meta,
     )
     if updated is None:
-        raise ToolExecutionError(
-            f"Asset no encontrado en el proyecto activo: {args.asset_id!r}"
-        )
+        raise ToolExecutionError(f"Asset no encontrado en el proyecto activo: {args.asset_id!r}")
     return {
         "status": "tagged",
         "project_id": context.project_id,
@@ -2458,8 +2447,7 @@ async def _handle_render_animatic(
         plan = CameraPlan(
             shot_id=args.shot_id,
             keyframes=[
-                CameraKeyframe(t=k.t, position=k.position, target=k.target)
-                for k in args.keyframes
+                CameraKeyframe(t=k.t, position=k.position, target=k.target) for k in args.keyframes
             ],
             focal_mm=args.focal_mm,
             sensor_mm=args.sensor_mm,
@@ -2552,9 +2540,7 @@ async def _handle_ab_compare_models(
                 f"ab_compare_models falló en el brazo {label!r}: {exc}"
             ) from exc
         video_assets = [
-            a
-            for a in submission.get("gallery_assets") or []
-            if a.get("kind") == "video"
+            a for a in submission.get("gallery_assets") or [] if a.get("kind") == "video"
         ]
         if str(submission.get("status")) != "done" or not video_assets:
             raise ToolExecutionError(
@@ -2657,9 +2643,7 @@ async def _handle_produce_video(
 
         job_status = str(submission.get("status") or "")
         video_assets = [
-            a
-            for a in submission.get("gallery_assets") or []
-            if a.get("kind") == "video"
+            a for a in submission.get("gallery_assets") or [] if a.get("kind") == "video"
         ]
         if job_status != "done" or not video_assets:
             raise ToolExecutionError(
@@ -2685,9 +2669,7 @@ async def _handle_produce_video(
             "project_id": context.project_id,
             "template_id": args.template_id,
             "windows": windows_report,
-            "output_asset": context.store.get_asset(
-                context.project_id, chunk_assets[0]
-            ),
+            "output_asset": context.store.get_asset(context.project_id, chunk_assets[0]),
             "assembled": False,
         }
 
@@ -2755,9 +2737,7 @@ async def _handle_upscale_asset(
             )
             note_engine_run("upscaler", result.ok)
             if not result.ok:
-                raise ToolExecutionError(
-                    f"upscaler falló: {result.error or 'error desconocido'}"
-                )
+                raise ToolExecutionError(f"upscaler falló: {result.error or 'error desconocido'}")
             suffix = f"_x{args.scale}"
             stem = Path(asset.get("filename") or "asset").stem
             out_asset = context.store.save_upload(
@@ -2836,9 +2816,7 @@ async def _handle_generate_music(
             )
             note_engine_run("music_gen", result.ok)
             if not result.ok:
-                raise ToolExecutionError(
-                    f"music_gen falló: {result.error or 'error desconocido'}"
-                )
+                raise ToolExecutionError(f"music_gen falló: {result.error or 'error desconocido'}")
             asset = context.store.save_upload(
                 context.project_id,
                 filename="generated_music.wav",
@@ -2970,8 +2948,7 @@ async def _handle_generate_speech(
                     voice_clone_applied = True
                 else:
                     voice_clone_skipped_reason = (
-                        f"clonación de voz no disponible: "
-                        f"{vc_result.error or 'error desconocido'}"
+                        f"clonación de voz no disponible: {vc_result.error or 'error desconocido'}"
                     )
 
             asset = context.store.save_upload(
@@ -3045,9 +3022,7 @@ async def _handle_lipsync_video(
             )
             note_engine_run("lipsync", result.ok)
             if not result.ok:
-                raise ToolExecutionError(
-                    f"lipsync falló: {result.error or 'error desconocido'}"
-                )
+                raise ToolExecutionError(f"lipsync falló: {result.error or 'error desconocido'}")
             stem = Path(video_asset.get("filename") or "video").stem
             out_asset = context.store.save_upload(
                 context.project_id,
@@ -3086,6 +3061,7 @@ async def _handle_vision_check(
 
     frames: list[dict[str, Any]] = []
     if asset.get("kind") == "video":
+
         def _do_extract() -> list[dict[str, Any]]:
             return extract_video_keyframes(
                 context.store,
@@ -3107,21 +3083,15 @@ async def _handle_vision_check(
             kf_path = context.store.get_asset_path(context.project_id, kf_id)
             if kf_path is None:
                 continue
-            content_parts.append(
-                build_vision_content_part(kf_path.read_bytes(), "image/png")
-            )
+            content_parts.append(build_vision_content_part(kf_path.read_bytes(), "image/png"))
     else:
         asset_path = context.store.get_asset_path(context.project_id, args.asset_id)
         if asset_path is None:
             raise ToolExecutionError("El asset no tiene archivo físico.")
         mime = "image/png" if asset.get("kind") == "image" else "video/mp4"
         if asset.get("kind") != "image":
-            raise ToolExecutionError(
-                "vision_check requiere un asset de vídeo o imagen."
-            )
-        content_parts.append(
-            build_vision_content_part(asset_path.read_bytes(), mime)
-        )
+            raise ToolExecutionError("vision_check requiere un asset de vídeo o imagen.")
+        content_parts.append(build_vision_content_part(asset_path.read_bytes(), mime))
 
     if not content_parts:
         raise ToolExecutionError(
@@ -3284,8 +3254,7 @@ async def _handle_render_asset3d_views(
         note_engine_run("blender", result.ok and not result.simulated)
         if not result.ok:
             raise ToolExecutionError(
-                "Blender no pudo renderizar las cámaras 3D: "
-                f"{result.error or 'fallo desconocido'}"
+                f"Blender no pudo renderizar las cámaras 3D: {result.error or 'fallo desconocido'}"
             )
         if result.simulated:
             raise ToolExecutionError(
@@ -3343,6 +3312,239 @@ async def _handle_render_asset3d_views(
     }
 
 
+def _staging_aabb_from_manifest(manifest: Any) -> dict[str, list[float]]:
+    """Build a conservative AABB from every manifest part's transformed bbox."""
+    parts = list(manifest.parts)
+    if not parts or any(part.bbox is None for part in parts):
+        raise ToolExecutionError(
+            "El manifiesto requiere bbox para todas las partes antes de optimizar el staging."
+        )
+    by_id = {part.part_id: part for part in parts}
+    identity = tuple(
+        tuple(1.0 if row == column else 0.0 for column in range(4)) for row in range(4)
+    )
+
+    def multiply(left: Any, right: Any) -> tuple[tuple[float, ...], ...]:
+        return tuple(
+            tuple(sum(left[row][k] * right[k][column] for k in range(4)) for column in range(4))
+            for row in range(4)
+        )
+
+    def part_matrix(part: Any) -> tuple[tuple[float, ...], ...]:
+        chain = []
+        current = part
+        while current is not None:
+            chain.append(current)
+            current = by_id.get(current.parent_part_id) if current.parent_part_id else None
+        matrix = identity
+        for ancestor in reversed(chain):
+            matrix = multiply(matrix, ancestor.transform)
+        return matrix
+
+    points = []
+    for part in parts:
+        x0, y0, z0, x1, y1, z1 = part.bbox
+        matrix = part_matrix(part)
+        for x in (x0, x1):
+            for y in (y0, y1):
+                for z in (z0, z1):
+                    points.append(
+                        tuple(
+                            sum(
+                                matrix[row][column] * value
+                                for column, value in enumerate((x, y, z, 1.0))
+                            )
+                            for row in range(3)
+                        )
+                    )
+    return {
+        "min": [min(point[axis] for point in points) for axis in range(3)],
+        "max": [max(point[axis] for point in points) for axis in range(3)],
+    }
+
+
+async def _handle_optimize_asset3d_staging(
+    args: OptimizeAsset3DStagingArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    """Search up to eight deterministic camera/light setups on a project GLB."""
+    import tempfile
+
+    from PIL import Image
+
+    from ..asset3d_manifest import get_asset3d_manifest
+    from ..assets3d import Asset3D
+    from ..engines import EngineRunSpec
+    from ..engines.blender import BlenderEngine
+    from ..staging_optimizer import generate_staging_candidates, score_rgba_render
+
+    asset = context.store.get_asset(context.project_id, args.asset_id)
+    asset_path = context.store.get_asset_path(context.project_id, args.asset_id)
+    if asset is None or asset.get("kind") != "model3d" or asset_path is None:
+        raise ToolExecutionError("optimize_asset3d_staging requiere un asset 3D del proyecto.")
+    if asset_path.suffix.lower() != ".glb":
+        raise ToolExecutionError("optimize_asset3d_staging requiere un GLB del proyecto.")
+    try:
+        record = await run_in_threadpool(
+            get_asset3d_manifest, context.store, context.project_id, args.asset_id
+        )
+        if record is None:
+            raise ToolExecutionError("Registra primero el manifiesto 3D del GLB.")
+        manifest = Asset3D.from_dict(record.get("manifest") or {})
+        aabb = _staging_aabb_from_manifest(manifest)
+        candidates = generate_staging_candidates(
+            aabb, str(manifest.up_axis), max_candidates=args.max_candidates
+        )
+    except (LookupError, ValueError) as exc:
+        if isinstance(exc, ToolExecutionError):
+            raise
+        raise ToolExecutionError(f"No se pudo preparar el staging 3D: {exc}") from exc
+
+    cameras = [
+        {
+            "name": candidate["candidate_id"],
+            "position": candidate["camera_position"],
+            "target": candidate["camera_target"],
+            "fov_deg": candidate["camera_fov_degrees"],
+            "light_rig": candidate["light_rig"],
+        }
+        for candidate in candidates
+    ]
+    with tempfile.TemporaryDirectory(prefix="comfy_asset3d_staging_") as temporary:
+        output_dir = Path(temporary) / "renders"
+        engine = BlenderEngine(log_dir=context.config.studio_data_dir / "logs" / "blender")
+        result = await engine.run(
+            EngineRunSpec(
+                job={
+                    "mode": "render",
+                    "scene_path": str(asset_path),
+                    "output_dir": str(output_dir),
+                    "engine": "cycles",
+                    "device": "cpu",
+                    "samples": 16,
+                    "width": 512,
+                    "height": 512,
+                    "frames": 1,
+                    "camera_views": cameras,
+                    "asset_transform": [list(row) for row in manifest.transform],
+                    "up_axis": str(manifest.up_axis),
+                    "transparent_background": True,
+                },
+                timeout_s=240,
+            )
+        )
+        note_engine_run("blender", result.ok and not result.simulated)
+        if not result.ok:
+            raise ToolExecutionError(
+                f"Blender no pudo evaluar el staging: {result.error or 'fallo desconocido'}"
+            )
+        if result.simulated:
+            raise ToolExecutionError("El staging requiere Blender real; stub no es evidencia.")
+        output_paths = [Path(path) for path in (result.payload or {}).get("outputs", [])]
+        if len(output_paths) != len(candidates):
+            raise ToolExecutionError("Blender no produjo exactamente un PNG por candidato.")
+        by_name = {path.name: path for path in output_paths}
+        scored = []
+        for index, candidate in enumerate(candidates, start=1):
+            path = by_name.get(f"view_{index:02d}_{candidate['candidate_id']}.png")
+            if (
+                path is None
+                or not path.is_file()
+                or path.stat().st_size > context.config.max_upload_bytes
+            ):
+                raise ToolExecutionError(f"Falta el PNG válido de {candidate['candidate_id']}.")
+            try:
+                with Image.open(path) as source:
+                    image = source.convert("RGBA")
+                    if image.size != (512, 512):
+                        raise ValueError("dimensiones distintas de 512×512")
+                    pixels = list(struct.iter_unpack("BBBB", image.tobytes()))
+                    rgba = [
+                        [
+                            tuple(channel / 255.0 for channel in pixels[y * image.width + x])
+                            for x in range(image.width)
+                        ]
+                        for y in range(image.height)
+                    ]
+                metrics = score_rgba_render(rgba)
+            except (OSError, ValueError) as exc:
+                raise ToolExecutionError(
+                    f"PNG no puntuable para {candidate['candidate_id']}: {exc}"
+                ) from exc
+            scored.append({"candidate": candidate, "metrics": metrics, "path": path})
+        best = max(scored, key=lambda item: item["metrics"]["score"])
+        try:
+            preview_data = best["path"].read_bytes()
+            preview = context.store.save_upload(
+                context.project_id,
+                filename=f"{Path(asset.get('filename') or 'asset').stem}_staging.png",
+                content_type="image/png",
+                data=preview_data,
+                max_upload_bytes=context.config.max_upload_bytes,
+                category="outputs",
+                metadata={
+                    "engine": "blender",
+                    "mode": "asset3d_staging_preview",
+                    "source_asset_id": args.asset_id,
+                    "source_sha256": record["model_sha256"],
+                    "candidate_id": best["candidate"]["candidate_id"],
+                    "score": best["metrics"]["score"],
+                    "render_engine": "cycles_cpu",
+                },
+            )
+            report_data = json.dumps(
+                {
+                    "schema": "comfy_studio.asset3d_staging_report.v1",
+                    "source_asset_id": args.asset_id,
+                    "source_sha256": record["model_sha256"],
+                    "render_engine": "cycles_cpu",
+                    "objective": (
+                        "bounded transparent-object coverage, centering, luminance, and "
+                        "contrast heuristic"
+                    ),
+                    "semantic_salience_evaluated": False,
+                    "gpu_used": False,
+                    "best_candidate_id": best["candidate"]["candidate_id"],
+                    "evaluated_candidates": [
+                        {"candidate": item["candidate"], "metrics": item["metrics"]}
+                        for item in scored
+                    ],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            ).encode("utf-8")
+            report_asset = context.store.save_upload(
+                context.project_id,
+                filename=f"{Path(asset.get('filename') or 'asset').stem}_staging.json",
+                content_type="application/json",
+                data=report_data,
+                max_upload_bytes=context.config.max_upload_bytes,
+                category="outputs",
+                metadata={
+                    "mode": "asset3d_staging_report",
+                    "source_asset_id": args.asset_id,
+                    "source_sha256": record["model_sha256"],
+                },
+            )
+        except (OSError, KeyError, ValueError) as exc:
+            raise ToolExecutionError(f"No se pudo guardar el resultado del staging: {exc}") from exc
+    return {
+        "status": "completed",
+        "project_id": context.project_id,
+        "source_asset_id": args.asset_id,
+        "source_sha256": record["model_sha256"],
+        "best_candidate_id": best["candidate"]["candidate_id"],
+        "best_metrics": best["metrics"],
+        "preview": preview,
+        "report": report_asset,
+        "rendered_candidates": len(scored),
+        "render_engine": "cycles_cpu",
+        "simulated": False,
+        "semantic_salience_evaluated": False,
+    }
+
+
 async def _handle_list_identities(
     _args: ListIdentitiesArgs,
     context: ToolContext,
@@ -3397,9 +3599,7 @@ async def _handle_simulate_physics(
     def _simulate() -> dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix="comfy_physics_") as tmp:
             output_dir = Path(tmp) / "out"
-            engine = BlenderEngine(
-                log_dir=context.config.studio_data_dir / "logs" / "blender"
-            )
+            engine = BlenderEngine(log_dir=context.config.studio_data_dir / "logs" / "blender")
             result = asyncio.run(
                 engine.run(
                     EngineRunSpec(
@@ -3521,9 +3721,7 @@ async def _handle_local_llm_chat(
         )
         note_engine_run("llm_server", result.ok)
         if not result.ok:
-            raise ToolExecutionError(
-                f"llm_server falló: {result.error or 'error desconocido'}"
-            )
+            raise ToolExecutionError(f"llm_server falló: {result.error or 'error desconocido'}")
         payload = result.payload or {}
         return {
             "status": "ok",
@@ -3791,8 +3989,7 @@ async def _handle_download_model(
     }.get(group)
     if flag is None:
         raise ToolExecutionError(
-            f"Grupo de pesos desconocido: {group!r}. "
-            "Grupos válidos: animate, minimax, three_d."
+            f"Grupo de pesos desconocido: {group!r}. Grupos válidos: animate, minimax, three_d."
         )
     # Se valida antes de mirar disponibilidad: un job_id de otro proyecto es un
     # error siempre, no solo cuando toca descargar.
@@ -3870,9 +4067,8 @@ async def _handle_download_model(
         # callable de la petición), no siempre «el job asociado».
         payload["reason"] = _cancellation_reason(should_cancel)
     elif not now_available:
-        payload["reason"] = (
-            "La descarga no completó todos los archivos del grupo: "
-            + ", ".join(payload["failed"] or ["desconocido"])
+        payload["reason"] = "La descarga no completó todos los archivos del grupo: " + ", ".join(
+            payload["failed"] or ["desconocido"]
         )
     return payload
 
@@ -3932,9 +4128,7 @@ async def _handle_render_recipes(
                 # porqué; el CHECK del esquema sigue siendo el que limita
                 # `status` a ('ok','error').
                 "measurement_status": (
-                    "measured"
-                    if m.get("status") == MEASUREMENT_STATUS_OK
-                    else "lost"
+                    "measured" if m.get("status") == MEASUREMENT_STATUS_OK else "lost"
                 ),
                 "error": m.get("error"),
                 "created_at": m.get("created_at"),
@@ -4009,9 +4203,7 @@ async def _handle_request_capability(
         )
         payload["acquisition"] = report.to_public_dict()
         payload["job_id"] = job_id
-        payload["downloaded"] = [
-            e.filename for e in report.entries if e.status == "downloaded"
-        ]
+        payload["downloaded"] = [e.filename for e in report.entries if e.status == "downloaded"]
         payload["failed"] = [e.filename for e in report.failed]
         # R29: una adquisición cancelada se dice cancelada, no «no se pudo
         # adquirir». Sin esta rama el payload solo la delataba por
@@ -4084,9 +4276,7 @@ async def _handle_export_subtitles(
     from ..subtitles import render_subtitles, subtitle_filename
 
     if args.transcription_id:
-        transcription = context.store.get_transcription(
-            context.project_id, args.transcription_id
-        )
+        transcription = context.store.get_transcription(context.project_id, args.transcription_id)
     else:
         transcription = context.store.get_latest_transcription(context.project_id)
     if transcription is None:
@@ -4119,7 +4309,8 @@ async def _handle_export_subtitles(
     }
 
 
-async def _handle_update_plan(    args: UpdatePlanArgs,
+async def _handle_update_plan(
+    args: UpdatePlanArgs,
     context: ToolContext,
 ) -> dict[str, Any]:
     plan_id = args.plan_id
@@ -4307,13 +4498,15 @@ async def _handle_update_creative_brief(
             raise ToolExecutionError(
                 f"Campo no editable: {key!r}. Editables: {sorted(EDITABLE_FIELDS)}"
             )
-        changes.append({
-            "field": key,
-            "from": brief.get(key),
-            "to": value,
-            "source": "user",
-            "at": datetime.now(UTC).isoformat(),
-        })
+        changes.append(
+            {
+                "field": key,
+                "from": brief.get(key),
+                "to": value,
+                "source": "user",
+                "at": datetime.now(UTC).isoformat(),
+            }
+        )
         brief[key] = value
     if brief.get("status") not in BRIEF_STATUSES:
         raise ToolExecutionError(f"status inválido: {brief.get('status')!r}")
@@ -4379,6 +4572,8 @@ async def _handle_review_output(
         },
     )
     return {"status": "reviewed", "project_id": context.project_id, "report": report}
+
+
 async def _handle_ad_script(
     args: AdScriptArgs,
     context: ToolContext,
@@ -4973,6 +5168,20 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=RenderAsset3DViewsArgs,
             handler=_handle_render_asset3d_views,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="optimize_asset3d_staging",
+            description=(
+                "Evalúa hasta ocho combinaciones deterministas de cámara y luz para un GLB "
+                "del proyecto usando Blender Cycles CPU real. Puntúa encuadre, centrado, "
+                "luminancia y contraste; guarda el mejor preview y un informe con hashes "
+                "y parámetros. No evalúa saliencia semántica ni usa GPU."
+            ),
+            args_model=OptimizeAsset3DStagingArgs,
+            handler=_handle_optimize_asset3d_staging,
             parallel_safe=False,
         )
     )

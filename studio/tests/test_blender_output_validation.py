@@ -140,7 +140,39 @@ def test_camera_view_render_spec_is_bounded_and_generates_python(tmp_path: Path)
     assert '"name": "front"' in script
     assert "bpy.ops.render.render(write_still=True)" in script
     assert "camera views rendered" in script
-    assert "asset_up_axis = \"y_up\"" in script
+    assert 'asset_up_axis = "y_up"' in script
+
+
+def test_staging_view_renders_rgba_with_bounded_candidate_lights(tmp_path: Path) -> None:
+    rig = {
+        "key": {"position": [2.0, 2.0, 2.0], "intensity": 1.0, "size": 2.0},
+        "fill": {"position": [-2.0, 1.0, 1.0], "intensity": 0.35, "size": 3.0},
+        "ambient_intensity": 0.12,
+    }
+    spec = _render_spec(tmp_path)
+    spec.device = "cpu"
+    spec.camera_views = (BlenderCameraView("candidate", (0, -4, 2), (0, 0, 0), 40, rig),)
+    spec.transparent_background = True
+    spec.validate()
+    script = build_render_script(spec)
+    compile(script, "generated_staging_preview.py", "exec")
+    assert "transparent_background = True" in script
+    assert 'scene.render.image_settings.color_mode = "RGBA"' in script
+    assert "scene.render.film_transparent = transparent_background" in script
+    assert 'bpy.data.lights.new("ComfyStaging_" + light_name' in script
+
+
+def test_staging_view_rejects_unbounded_candidate_light(tmp_path: Path) -> None:
+    rig = {
+        "key": {"position": [2.0, 2.0, 2.0], "intensity": 100.0, "size": 2.0},
+        "fill": {"position": [-2.0, 1.0, 1.0], "intensity": 0.35, "size": 3.0},
+        "ambient_intensity": 0.12,
+    }
+    spec = _render_spec(tmp_path)
+    spec.device = "cpu"
+    spec.camera_views = (BlenderCameraView("candidate", (0, -4, 2), (0, 0, 0), 40, rig),)
+    with pytest.raises(ValueError, match="valores del light key inválidos"):
+        spec.validate()
 
 
 def test_camera_view_render_rejects_duplicate_or_unbounded_views(tmp_path: Path) -> None:
@@ -153,8 +185,7 @@ def test_camera_view_render_rejects_duplicate_or_unbounded_views(tmp_path: Path)
     with pytest.raises(ValueError, match="nombres duplicados"):
         spec.validate()
     spec.camera_views = tuple(
-        BlenderCameraView(f"view-{index}", (0, -4, index), (0, 0, 0))
-        for index in range(9)
+        BlenderCameraView(f"view-{index}", (0, -4, index), (0, 0, 0)) for index in range(9)
     )
     with pytest.raises(ValueError, match="no puede superar 8"):
         spec.validate()
@@ -164,9 +195,7 @@ def test_camera_view_render_rejects_duplicate_or_unbounded_views(tmp_path: Path)
 
 
 def test_export_claimed_glb_with_bad_magic_fails_typed(tmp_path: Path) -> None:
-    fake = _fake_blender(
-        tmp_path, 'printf "GLTF-fake-no-magic" > "$PWD/car.glb"'
-    )
+    fake = _fake_blender(tmp_path, 'printf "GLTF-fake-no-magic" > "$PWD/car.glb"')
     result = asyncio.run(
         run_blender_spec(_export_spec(tmp_path), log_dir=tmp_path / "logs", blender_bin=fake)
     )
@@ -176,9 +205,7 @@ def test_export_claimed_glb_with_bad_magic_fails_typed(tmp_path: Path) -> None:
 
 
 def test_export_claimed_gltf_without_glb_file_fails_typed(tmp_path: Path) -> None:
-    fake = _fake_blender(
-        tmp_path, 'printf "usda" > "$PWD/car.usdc"; printf "fbx" > "$PWD/car.fbx"'
-    )
+    fake = _fake_blender(tmp_path, 'printf "usda" > "$PWD/car.usdc"; printf "fbx" > "$PWD/car.fbx"')
     result = asyncio.run(
         run_blender_spec(_export_spec(tmp_path), log_dir=tmp_path / "logs", blender_bin=fake)
     )
@@ -206,18 +233,14 @@ def test_stub_render_outputs_pass_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("STUDIO_STUB_BLENDER", "1")
-    result = asyncio.run(
-        run_blender_spec(_render_spec(tmp_path), log_dir=tmp_path / "logs")
-    )
+    result = asyncio.run(run_blender_spec(_render_spec(tmp_path), log_dir=tmp_path / "logs"))
     assert result.stubbed is True
     assert result.ok is True
     assert result.validation_error is None
     assert result.outputs[0].read_bytes()[:8] == _STUB_PNG[:8]
 
 
-def test_stub_exr_render_uses_exr_magic(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stub_exr_render_uses_exr_magic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STUDIO_STUB_BLENDER", "1")
     spec = _render_spec(tmp_path)
     spec.output_format = "exr"
@@ -227,13 +250,9 @@ def test_stub_exr_render_uses_exr_magic(
     assert result.outputs[0].read_bytes()[:4] == _STUB_EXR[:4]
 
 
-def test_stub_export_glb_has_gltf_magic(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stub_export_glb_has_gltf_magic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STUDIO_STUB_BLENDER", "1")
-    result = asyncio.run(
-        run_blender_spec(_export_spec(tmp_path), log_dir=tmp_path / "logs")
-    )
+    result = asyncio.run(run_blender_spec(_export_spec(tmp_path), log_dir=tmp_path / "logs"))
     assert result.ok is True
     glb = next(p for p in result.outputs if p.suffix == ".glb")
     assert glb.read_bytes()[:4] == _STUB_GLB_HEADER[:4]
@@ -247,12 +266,16 @@ def test_engine_run_reports_invalid_output_kind(tmp_path: Path) -> None:
     eng = BlenderEngine(log_dir=tmp_path / "logs", blender_bin=fake)
     spec = _render_spec(tmp_path)
     res = asyncio.run(
-        eng.run(EngineRunSpec(job={
-            "mode": "render",
-            "scene_path": str(spec.scene_path),
-            "output_dir": str(spec.output_dir),
-            "frames": 1,
-        }))
+        eng.run(
+            EngineRunSpec(
+                job={
+                    "mode": "render",
+                    "scene_path": str(spec.scene_path),
+                    "output_dir": str(spec.output_dir),
+                    "frames": 1,
+                }
+            )
+        )
     )
     assert res.ok is False
     assert res.exit_code == 0  # blender acabó bien; el artefacto no existe
@@ -267,12 +290,16 @@ def test_engine_run_accepts_valid_outputs(tmp_path: Path) -> None:
     eng = BlenderEngine(log_dir=tmp_path / "logs", blender_bin=fake)
     spec = _render_spec(tmp_path)
     res = asyncio.run(
-        eng.run(EngineRunSpec(job={
-            "mode": "render",
-            "scene_path": str(spec.scene_path),
-            "output_dir": str(spec.output_dir),
-            "frames": 1,
-        }))
+        eng.run(
+            EngineRunSpec(
+                job={
+                    "mode": "render",
+                    "scene_path": str(spec.scene_path),
+                    "output_dir": str(spec.output_dir),
+                    "frames": 1,
+                }
+            )
+        )
     )
     assert res.ok is True
     assert res.payload["failure_kind"] == "ok"
