@@ -12,7 +12,9 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import shutil
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -22,9 +24,11 @@ import wave
 import zlib
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .atlas import ENV_ATLAS_DIR, default_atlas_root
+from .atlas.geo import haversine_m
 from .media_bins import find_ffmpeg, find_ffprobe
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "data" / "demos"
@@ -178,6 +182,203 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _demo_atlas_root() -> Path:
+    """Use the configured Atlas; fall back to the checkout bundle for local runs."""
+    configured = default_atlas_root()
+    if (configured / "catalog.db").is_file() or ENV_ATLAS_DIR in os.environ:
+        return configured
+    checkout_bundle = Path(__file__).resolve().parents[2] / "atlas"
+    return checkout_bundle if (checkout_bundle / "catalog.db").is_file() else configured
+
+
+def _check_d01_atlas_references(
+    data: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Verify D01's licensed reference photos without treating GPS as calibration."""
+    spec = data.get("atlas_site")
+    if not isinstance(spec, dict):
+        raise DemoError("D01: falta la selección de referencias del Atlas")
+    place_id = spec.get("place_id")
+    view_ids = spec.get("view_ids")
+    max_span_m = spec.get("max_gps_span_m")
+    if (
+        not isinstance(place_id, str)
+        or not place_id
+        or not isinstance(view_ids, list)
+        or len(view_ids) < 2
+        or any(not isinstance(view_id, str) or not view_id for view_id in view_ids)
+        or len(set(view_ids)) != len(view_ids)
+        or isinstance(max_span_m, bool)
+        or not isinstance(max_span_m, (int, float))
+        or not math.isfinite(max_span_m)
+        or max_span_m < 0
+    ):
+        raise DemoError("D01: selección de vistas del Atlas inválida")
+
+    atlas_root = _demo_atlas_root()
+    db_path = atlas_root / "catalog.db"
+    files_root = atlas_root / "files"
+    if not db_path.is_file() or not files_root.is_dir():
+        raise DemoError(f"D01: Atlas no disponible en {atlas_root}")
+
+    records: list[dict[str, Any]] = []
+    coordinates: list[tuple[float, float]] = []
+    verified_view_count = 0
+    estimated_view_count = 0
+    orientation_metadata_view_count = 0
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(
+            f"{db_path.resolve().as_uri()}?mode=ro&immutable=1", uri=True
+        )
+        connection.row_factory = sqlite3.Row
+        place = connection.execute(
+            "SELECT place_id, name, municipality FROM places WHERE place_id=?",
+            (place_id,),
+        ).fetchone()
+        if place is None:
+            raise DemoError(f"D01: lugar del Atlas inexistente: {place_id}")
+        for view_id in view_ids:
+            row = connection.execute(
+                """SELECT v.view_id, v.place_id, v.ref_id, v.lat, v.lon,
+                          v.heading_deg, v.fov_deg, v.calib_state, v.usable AS view_usable,
+                          r.place_id AS ref_place_id, r.title, r.file_path, r.sha256,
+                          r.source_page, r.license, r.license_url, r.attribution,
+                          r.intrinsics, r.usable AS ref_usable,
+                          l.license AS registered_license,
+                          l.license_url AS registered_license_url,
+                          l.attribution AS registered_attribution
+                   FROM views v
+                   JOIN atlas_refs r ON r.ref_id=v.ref_id
+                   LEFT JOIN licenses l ON l.ref_id=r.ref_id
+                   WHERE v.view_id=?""",
+                (view_id,),
+            ).fetchone()
+            if (
+                row is None
+                or not row["view_usable"]
+                or row["place_id"] != place_id
+            ):
+                raise DemoError(f"D01: vista ausente, no usable o de otro lugar: {view_id}")
+            if (
+                not row["ref_usable"]
+                or row["ref_place_id"] != place_id
+            ):
+                raise DemoError(f"D01: referencia ausente o no usable: {row['ref_id']}")
+
+            for field_name in ("license", "license_url", "attribution"):
+                value = row[field_name]
+                if not value or value != row[f"registered_{field_name}"]:
+                    raise DemoError(
+                        f"D01: metadatos de licencia incompletos o inconsistentes: "
+                        f"{row['ref_id']}/{field_name}"
+                    )
+            if row["license"].strip().upper() in {"UNKNOWN", "UNLICENSED"}:
+                raise DemoError(f"D01: referencia sin licencia utilizable: {row['ref_id']}")
+
+            relative_path = PurePosixPath(row["file_path"])
+            if (
+                relative_path.is_absolute()
+                or ".." in relative_path.parts
+                or "\\" in row["file_path"]
+                or not relative_path.parts
+            ):
+                raise DemoError(f"D01: ruta de referencia inválida: {row['file_path']}")
+            try:
+                resolved_files = files_root.resolve(strict=True)
+                asset_path = (resolved_files / Path(*relative_path.parts)).resolve(strict=True)
+                asset_path.relative_to(resolved_files)
+            except (OSError, ValueError) as exc:
+                raise DemoError(
+                    f"D01: archivo Atlas ausente o fuera de files/: {row['file_path']}"
+                ) from exc
+            if not asset_path.is_file() or len(row["sha256"]) != 64:
+                raise DemoError(f"D01: archivo o SHA-256 inválido: {row['ref_id']}")
+            actual_sha256 = _sha256(asset_path)
+            if actual_sha256 != row["sha256"]:
+                raise DemoError(f"D01: SHA-256 del Atlas no coincide: {row['ref_id']}")
+
+            if (
+                row["lat"] is None
+                or row["lon"] is None
+                or not math.isfinite(row["lat"])
+                or not math.isfinite(row["lon"])
+                or not -90 <= row["lat"] <= 90
+                or not -180 <= row["lon"] <= 180
+            ):
+                raise DemoError(f"D01: coordenadas GPS inválidas o ausentes: {view_id}")
+            coordinates.append((row["lat"], row["lon"]))
+            calibration = str(row["calib_state"])
+            verified_view_count += calibration == "verified"
+            estimated_view_count += calibration == "estimated"
+            orientation_metadata_view_count += (
+                row["heading_deg"] is not None and row["fov_deg"] is not None
+            )
+            records.append(
+                {
+                    "kind": "atlas_reference",
+                    "path": f"atlas://{place_id}/{row['view_id']}",
+                    "file_path": f"files/{row['file_path']}",
+                    "sha256": row["sha256"],
+                    "sha256_verified": True,
+                    "place_id": place_id,
+                    "view_id": row["view_id"],
+                    "ref_id": row["ref_id"],
+                    "title": row["title"],
+                    "source_page": row["source_page"],
+                    "license": row["license"],
+                    "license_url": row["license_url"],
+                    "attribution": row["attribution"],
+                    "gps_lat": row["lat"],
+                    "gps_lon": row["lon"],
+                    "calib_state": calibration,
+                    "heading_deg": row["heading_deg"],
+                    "fov_deg": row["fov_deg"],
+                    "intrinsics_available": bool(row["intrinsics"]),
+                }
+            )
+    except sqlite3.Error as exc:
+        raise DemoError(f"D01: no se pudo leer el catálogo Atlas: {type(exc).__name__}") from exc
+    finally:
+        if connection is not None:
+            connection.close()
+
+    gps_span_m = max(
+        haversine_m(lat1, lon1, lat2, lon2)
+        for index, (lat1, lon1) in enumerate(coordinates)
+        for lat2, lon2 in coordinates[index + 1 :]
+    )
+    if gps_span_m > float(max_span_m):
+        raise DemoError(
+            f"D01: las coordenadas del Atlas abarcan {gps_span_m:.1f} m; "
+            f"el límite declarado es {float(max_span_m):.1f} m"
+        )
+    evidence = {
+        "place_id": place_id,
+        "place_name": place["name"],
+        "municipality": place["municipality"],
+        "reference_count": len(records),
+        "gps_coordinate_span_m": round(gps_span_m, 3),
+        "verified_camera_view_count": verified_view_count,
+        "estimated_camera_view_count": estimated_view_count,
+        "views_with_heading_and_fov": orientation_metadata_view_count,
+        "camera_coverage_status": "not_established",
+        "geometry_scope": (
+            "GPS proximity and source integrity only; does not establish camera calibration, "
+            "field of view, occlusion, or multiview reconstruction"
+        ),
+    }
+    return evidence, [
+        {
+            "kind": "atlas_place",
+            "place_id": place_id,
+            "name": place["name"],
+            "municipality": place["municipality"],
+        },
+        *records,
+    ]
+
+
 def _load_fixture(demo: Demo) -> tuple[Path, dict[str, Any]]:
     relative = demo.inputs[0].removeprefix("fixtures/")
     path = (FIXTURE_DIR / relative).resolve()
@@ -246,7 +447,8 @@ def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
         logos_same = data["logo_mask_before"] == data["logo_mask_after"]
         limit = float(data["max_reprojection_rmse_px"])
         return {"reprojection_rmse_px": rmse, "fixture_limit_px": limit,
-                "reprojection_fixture_check": rmse <= limit, "logo_mask_unchanged": logos_same}
+                "reprojection_rmse_below_fixture_limit": rmse <= limit,
+                "logo_mask_unchanged": logos_same}
     if demo_id == "D02":
         before, after, mask = data["before"], data["after"], data["causal_mask"]
         if not (len(before) == len(after) == len(mask)):
@@ -709,6 +911,16 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
     fixture, fixture_data = _load_fixture(demo)
     out_dir, manifest_path = _prepare_demo_output(demo_id, output_root)
     input_hash = _sha256(fixture)
+    checks = _check_fixture(demo_id, fixture_data)
+    inputs = [{
+        "kind": "fixture",
+        "path": f"fixtures/{fixture.name}",
+        "sha256": input_hash,
+    }]
+    if demo_id == "D01":
+        atlas_evidence, atlas_inputs = _check_d01_atlas_references(fixture_data)
+        checks["atlas_reference_evidence"] = atlas_evidence
+        inputs.extend(atlas_inputs)
     if resume and manifest_path.is_file():
         def artifact_is_valid(item: dict[str, Any]) -> bool:
             name = item.get("path")
@@ -726,7 +938,8 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
             prior = json.loads(manifest_path.read_text(encoding="utf-8"))
             valid = (
                 prior.get("schema") == "comfy_studio.demo_run.v2"
-                and prior.get("inputs", [{}])[0].get("sha256") == input_hash
+                and prior.get("result") == "cpu_fixture_checks_passed"
+                and prior.get("inputs") == inputs
                 and isinstance(prior.get("artifacts", []), list)
                 and all(artifact_is_valid(item) for item in prior.get("artifacts", []))
             )
@@ -737,7 +950,6 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
             return {"result": prior["result"], "manifest": str(manifest_path),
                     "artifacts": prior.get("artifacts", []), "checks": prior.get("checks", {}),
                     "resumed": True}
-    checks = _check_fixture(demo_id, fixture_data)
     artifact: Path | None = None
     project_artifact: Path | None = None
     if demo_id == "D05":
@@ -751,8 +963,13 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
         "schema": "comfy_studio.demo_run.v2",
         "demo": demo.to_dict(),
         "result": "cpu_fixture_checks_passed",
-        "claim_scope": "fixture consistency/toolchain only; no model quality or capability proof",
-        "inputs": [{"path": f"fixtures/{fixture.name}", "sha256": _sha256(fixture)}],
+        "claim_scope": (
+            "fixture consistency/toolchain and Atlas source integrity only; no real camera "
+            "calibration, scene coverage, model quality, or capability proof"
+            if demo_id == "D01"
+            else "fixture consistency/toolchain only; no model quality or capability proof"
+        ),
+        "inputs": inputs,
         "checks": checks,
         "checkpoints": checks.get("checkpoints", []),
         "stages": [
