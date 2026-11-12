@@ -234,7 +234,8 @@ class BlenderEngine(Engine):
                 "weights": "not_required",
             },
             error=error or (None if ready else (
-                "binario de Blender no encontrado (STUDIO_BLENDER_BIN, PATH o /opt/blender)"
+                "binario de Blender ausente o no encontrado "
+                "(STUDIO_BLENDER_BIN, PATH o /opt/blender)"
             )),
             reason=reason or (None if ready else "not_installed"),
         )
