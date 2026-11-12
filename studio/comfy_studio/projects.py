@@ -105,6 +105,7 @@ ALLOWED_MEDIA_MIMES: dict[str, tuple[str, set[str]]] = {
     "model/gltf-binary": ("model3d", {".glb"}),
     "model/gltf+json": ("model3d", {".gltf"}),
     "model/obj": ("model3d", {".obj"}),
+    "application/json": ("data", {".json"}),
 }
 
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")

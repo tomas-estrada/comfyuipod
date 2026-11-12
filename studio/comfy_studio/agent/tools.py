@@ -1227,6 +1227,47 @@ class ListEnginesArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SimulatePhysicsArgs(BaseModel):
+    """Bounded Blender CPU free-fall or hinge run for a project-owned GLB/GLTF."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(..., min_length=1, description="Asset 3D del proyecto (.glb/.gltf).")
+    moving_object: str = Field(..., min_length=1, max_length=200)
+    maneuver: Literal["free_fall", "hinge"] = "free_fall"
+    ground_object: str | None = Field(default=None, min_length=1, max_length=200)
+    fixed_object: str | None = Field(default=None, min_length=1, max_length=200)
+    hinge_pivot_m: tuple[float, float, float] | None = None
+    hinge_axis: tuple[float, float, float] = (0.0, 1.0, 0.0)
+    hinge_lower_limit_deg: float = Field(default=-45.0, ge=-180, le=180)
+    hinge_upper_limit_deg: float = Field(default=45.0, ge=-180, le=180)
+    fps: int = Field(default=24, ge=1, le=60)
+    duration_s: float = Field(default=2.0, gt=0, le=10)
+    seed: int = Field(default=0, ge=0, le=2**31 - 1)
+    mass_kg: float = Field(default=1.0, ge=0.001, le=1_000_000)
+    gravity_mps2: float = Field(default=9.81, ge=0, le=100)
+    solver_substeps: int = Field(default=8, ge=1, le=64)
+    solver_iterations: int = Field(default=20, ge=1, le=128)
+    contact_tolerance_m: float = Field(default=0.03, gt=0, le=0.25)
+
+    @model_validator(mode="after")
+    def validate_maneuver(self) -> SimulatePhysicsArgs:
+        if self.maneuver == "free_fall" and not self.ground_object:
+            raise ValueError("free_fall requiere ground_object")
+        if self.maneuver == "free_fall" and self.ground_object == self.moving_object:
+            raise ValueError("moving_object y ground_object deben ser distintos")
+        if self.maneuver == "hinge":
+            if not self.fixed_object or self.hinge_pivot_m is None:
+                raise ValueError("hinge requiere fixed_object y hinge_pivot_m")
+            if self.fixed_object == self.moving_object:
+                raise ValueError("moving_object y fixed_object deben ser distintos")
+            if self.hinge_lower_limit_deg >= self.hinge_upper_limit_deg:
+                raise ValueError("los límites del hinge deben estar ordenados")
+            if sum(value * value for value in self.hinge_axis) == 0:
+                raise ValueError("hinge_axis no puede ser cero")
+        return self
+
+
 class LocalLlmChatArgs(BaseModel):
     """Argumentos para la herramienta `local_llm_chat`."""
 
@@ -3171,6 +3212,132 @@ async def _handle_list_engines(
     }
 
 
+async def _handle_simulate_physics(
+    args: SimulatePhysicsArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    import asyncio
+    import tempfile
+
+    from starlette.concurrency import run_in_threadpool
+
+    from ..engines import EngineRunSpec
+    from ..engines.blender import BlenderEngine
+    from ..projects import MediaValidationError
+
+    asset = context.store.get_asset(context.project_id, args.asset_id)
+    if asset is None:
+        raise ToolExecutionError(f"Asset no encontrado: {args.asset_id!r}")
+    if asset.get("kind") != "model3d":
+        raise ToolExecutionError("simulate_physics requiere un asset 3D del proyecto.")
+    source_path = context.store.get_asset_path(context.project_id, args.asset_id)
+    if source_path is None or source_path.suffix.lower() not in {".glb", ".gltf"}:
+        raise ToolExecutionError("simulate_physics requiere un archivo .glb o .gltf accesible.")
+
+    def _simulate() -> dict[str, Any]:
+        with tempfile.TemporaryDirectory(prefix="comfy_physics_") as tmp:
+            output_dir = Path(tmp) / "out"
+            engine = BlenderEngine(
+                log_dir=context.config.studio_data_dir / "logs" / "blender"
+            )
+            result = asyncio.run(
+                engine.run(
+                    EngineRunSpec(
+                        job={
+                            "mode": "physics",
+                            "maneuver": args.maneuver,
+                            "scene_path": str(source_path),
+                            "output_dir": str(output_dir),
+                            "moving_object": args.moving_object,
+                            "ground_object": args.ground_object,
+                            "fixed_object": args.fixed_object,
+                            "hinge_pivot_m": args.hinge_pivot_m,
+                            "hinge_axis": args.hinge_axis,
+                            "hinge_lower_limit_deg": args.hinge_lower_limit_deg,
+                            "hinge_upper_limit_deg": args.hinge_upper_limit_deg,
+                            "fps": args.fps,
+                            "duration_s": args.duration_s,
+                            "seed": args.seed,
+                            "mass_kg": args.mass_kg,
+                            "gravity_mps2": args.gravity_mps2,
+                            "solver_substeps": args.solver_substeps,
+                            "solver_iterations": args.solver_iterations,
+                            "contact_tolerance_m": args.contact_tolerance_m,
+                        },
+                        timeout_s=180,
+                        cancel_event=context.cancel_requested,
+                    )
+                )
+            )
+            note_engine_run("blender", result.ok)
+            if not result.ok:
+                raise ToolExecutionError(
+                    f"Blender physics falló: {result.error or 'error desconocido'}"
+                )
+            payload = (result.payload or {}).get("physics") or {}
+            glb_path = Path((result.payload or {})["outputs"][0])
+            trace_path = Path((result.payload or {})["outputs"][1])
+            max_bytes = context.config.max_upload_bytes
+            for path in (glb_path, trace_path):
+                if not path.is_file() or path.stat().st_size > max_bytes:
+                    raise ToolExecutionError(
+                        "Un artefacto de física supera el límite de carga configurado."
+                    )
+            try:
+                output_scene = context.store.save_upload(
+                    context.project_id,
+                    filename=f"{Path(asset.get('filename') or 'asset').stem}_physics.glb",
+                    content_type="model/gltf-binary",
+                    data=glb_path.read_bytes(),
+                    max_upload_bytes=max_bytes,
+                    category="outputs",
+                    metadata={
+                        "engine": "blender",
+                        "mode": "physics",
+                        "source_asset_id": args.asset_id,
+                        "state_hash": payload.get("state_hash"),
+                        "seed": args.seed,
+                    },
+                )
+                trace = context.store.save_upload(
+                    context.project_id,
+                    filename=f"{Path(asset.get('filename') or 'asset').stem}_physics.json",
+                    content_type="application/json",
+                    data=trace_path.read_bytes(),
+                    max_upload_bytes=max_bytes,
+                    category="outputs",
+                    metadata={
+                        "engine": "blender",
+                        "mode": "physics_trace",
+                        "source_asset_id": args.asset_id,
+                        "state_hash": payload.get("state_hash"),
+                        "scene_asset_id": output_scene["id"],
+                    },
+                )
+            except (MediaValidationError, OSError, KeyError, ValueError) as exc:
+                raise ToolExecutionError(
+                    f"No se pudieron guardar los artefactos de física: {exc}"
+                ) from exc
+            return {
+                "status": "simulated",
+                "project_id": context.project_id,
+                "source_asset_id": args.asset_id,
+                "scene_asset": output_scene,
+                "trace_asset": trace,
+                "state_hash": payload.get("state_hash"),
+                "frame_count": payload.get("frame_count"),
+                "contact_count": len(payload.get("contacts") or []),
+                "joint": payload.get("joint"),
+                "max_hinge_angle_deg": payload.get("max_hinge_angle_deg"),
+                "reset_pose_delta_m": payload.get("reset_pose_delta_m"),
+                "reset_rotation_delta_deg": payload.get("reset_rotation_delta_deg"),
+                "solver": payload.get("solver"),
+                "simulated": bool(result.simulated),
+            }
+
+    return await run_in_threadpool(_simulate)
+
+
 async def _handle_local_llm_chat(
     args: LocalLlmChatArgs,
     context: ToolContext,
@@ -4646,6 +4813,18 @@ def create_default_tool_belt() -> ToolBelt:
             args_model=ListEnginesArgs,
             handler=_handle_list_engines,
             parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="simulate_physics",
+            description=(
+                "Ejecuta una simulación CPU real con Blender Bullet sobre un asset GLB/GLTF "
+                "propio del proyecto: caída libre con suelo o articulación hinge con pivote, "
+                "eje y límites explícitos; exporta escena animada y traza JSON medida."
+            ),
+            args_model=SimulatePhysicsArgs,
+            handler=_handle_simulate_physics,
         )
     )
     belt.register(

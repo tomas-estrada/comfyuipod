@@ -154,7 +154,7 @@ def _resolve_binary(candidate: str, env: Mapping[str, str]) -> str | None:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
         return None
-    return shutil.which(path)
+    return shutil.which(path, path=env.get("PATH"))
 
 
 def _module_available(name: str) -> bool:
