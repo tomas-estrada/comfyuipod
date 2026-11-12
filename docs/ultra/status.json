@@ -2,11 +2,11 @@
   "schema": "ultra-status/1",
   "goal_revision": "upgrades-ultra-version @ PR#64 (merged)",
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
-  "main_sha": "6e6aa63",
+  "main_sha": "9a3238d0de2d1004fc9f0ad2da2dded20e1ca761",
   "stage": "gpu_partial_L3",
   "overall": "GPU_L3_PARTIAL",
-  "overall_note": "Backlog Ultra W00-W25 completo a nivel contrato L1 (cero mocks). W26: campana GPU acotada EJECUTADA (0.59 USD) con la imagen candidata por digest en RTX PRO 6000 Blackwell 96GB / RAM 503GB. Evidencia L3 REAL: generacion SDXL 1024x1024 en 24.6s, pico VRAM medido 7684MB (vs 18000 estimado), imagen verificada, pod destruido (0 instancias). Falta para L4/Ultra validada: D01-D05 completas (video/voz/3D), baselines/holdouts, y arreglar 2 hallazgos de ops (entrypoint no auto-arranca; require_disk_space falso negativo en overlay). Ver docs/ultra/W26_GPU_RESULTS.md.",
-  "updated_utc": "2026-11-11T04:25:31Z",
+  "overall_note": "El workflow de main 43246478902 paso validacion del repositorio, Rust, build candidato, smoke full-stack, Atlas y perfil Studio en 9a3238d0. Esto prueba el software y la imagen, no una ejecucion GPU en el digest actual. W26 sigue siendo una sola ejecucion L3 de SDXL en un digest anterior. Las capacidades y A00-A29 conservan brechas no GPU abiertas: 14 capacidades en L0, otras parciales, A07 con 280 bloqueos de manifiesto en 56 de 58 engines seleccionados, y criterios D01-D05/baselines/holdouts pendientes. No declarar Ultra validada hasta cerrar esos criterios y repetir mediciones GPU.",
+  "updated_utc": "2026-11-12T15:48:17Z",
   "merged": {
     "W00": "done",
     "W01": "#65",
@@ -36,17 +36,24 @@
     "W25": "#100",
     "capabilities_doc": "#94,#98"
   },
-  "capability_coverage": "C01-C34 completas a nivel contrato L1 (modulo+contrato+unit tests, sin mocks ni wrappers vacios). C07 (atlas) a L2 parcial por estar fisicamente horneado offline en la imagen. Elevacion a L2 (adapter+engine real por capacidad) y L3/L4 (GPU) = trabajo restante.",
-  "pending_capabilities": [],
+  "capability_coverage": "En CAPABILITY_EVIDENCE.md (snapshot main 9a3238d0): 14 capacidades estan en L0, 14 en L1 parcial y 6 en L2 parcial; ninguna tiene aceptacion integral. El estado mas alto es W26 GPU L3 parcial solo para SDXL en su digest historico. Los bloqueos de CPU, integracion y evidencia se mantienen abiertos hasta demostrar cierre.",
+  "pending_capabilities": [
+    "C01-C34: completar la aceptacion integral por capability sin elevar el nivel por evidencia parcial",
+    "C06,C11-C14,C16-C17,C21-C22,C25-C26,C28-C30: implementar y conectar las rutas actualmente L0",
+    "A07: resolver 280 bloqueos de release en 56 de 58 engines seleccionados con evidencia real por componente",
+    "A05/A06/A08-A26: completar las brechas de persistencia, proveedores, adapters, datasets y rutas de producto registradas en CAPABILITY_EVIDENCE.md",
+    "D01-D05: completar los escenarios de produccion, artefactos verificables, baselines y holdouts; la evidencia GPU queda para su campaña autorizada"
+  ],
   "candidate_image_current": {
-    "main_sha": "f5c29dc",
-    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-f5c29dc",
-    "latest_manifest_digest": "sha256:0eddf85db32ed141da0e77ae636c226a73f5b1e232f646e55c92385affb2b53f",
+    "main_sha": "9a3238d0de2d1004fc9f0ad2da2dded20e1ca761",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-9a3238d",
+    "candidate_manifest_digest": "sha256:a6578a60acdd7ec9d6f51df2d36f0810645c3fe627b9c6c39f7eacb901d421e7",
+    "latest_manifest_digest": "sha256:544da21c73eb01de9d1f0a7d76b13657bffe0bef5771a628d9291160babdf271",
     "promoted_to_latest": true,
-    "build_run": "42005385668",
-    "smoke": "unit + full-stack E2E + MODEL_PROFILE=studio E2E verde; job 'Build Candidate, Smoke-Test & Promote to Latest' conclusion=success; imagen copiada a :latest",
-    "contains": "W00-W25 completos (infra + 34 capacidades + atlas offline + director/investigador/UI client + demos + reporte final) a nivel contrato L1",
-    "note": "Imagen candidata reproducible para el SHA final de main. Digest real se fija cuando el build GHCR termina en verde. Base para validacion GPU (W26), NO Ultra validada."
+    "build_run": "43246478902",
+    "smoke": "passed: repo validation, Rust, candidate build, full-stack E2E, Atlas validation and MODEL_PROFILE=studio E2E; image promoted to latest",
+    "contains": "main 9a3238d0 including PR #338 staging optimizer, #340 repair-frame provenance and #341 D01 Atlas source evidence; CAPABILITY_EVIDENCE.md remains partial and A07 release_ready=false",
+    "note": "Digest and CI correspond to current main. No target-GPU measurement was run on this image; W26 evidence remains tied to its previous image digest."
   },
   "candidate_image_previous": {
     "main_sha": "71822b7",
@@ -59,11 +66,11 @@
     "note": "Imagen candidata previa con digest real verificable."
   },
   "sub_items_pending": [
-    "completar la evidencia A07 para las 58 rutas build_selected de engines.json",
-    "protocolo describe/execute/cancel/unload uniforme por engine",
-    "enganchar av_recipes->seleccion en el planner/executor real",
-    "LangGraph real ejecutando la ruta efectiva en la imagen",
-    "provider profiles (A06)"
+    "A07: 280 engine release blockers across 56 of 58 selected routes; verify pins, locks, licenses/notices and implemented entrypoints per engine",
+    "Production planner/executor must select and run real av_recipes through the configured LangGraph path",
+    "Close the non-GPU capability gaps and D01-D05 product acceptance listed in CAPABILITY_EVIDENCE.md and acceptance.md",
+    "A06 provider contract profiles exist, but configured provider connectivity and model behavior remain unverified",
+    "Only after these non-GPU blockers are closed: target-GPU recipe execution, baselines/holdouts and current-main revalidation"
   ],
   "gpu_campaign_W26": {
     "status": "demo_acotada_ejecutada_L3",
@@ -79,11 +86,13 @@
       "D01-D05 completas (video/voz/3D)",
       "baselines/holdouts",
       "perfiles 128 y 256 por separado"
-    ]
+    ],
+    "current_main_revalidation": "not performed; run 43246478902 validates software/image only",
+    "current_main_image": "ghcr.io/tomas-estrada/comfyuipod:sha-9a3238d@sha256:a6578a60acdd7ec9d6f51df2d36f0810645c3fe627b9c6c39f7eacb901d421e7"
   },
   "ops_findings_W26": [
-    "entrypoint de la imagen no auto-arranca el servicio en vast: hubo que lanzar /start.sh a mano (onstart.log 0 bytes).",
-    "require_disk_space en download-models.sh da falso 'sin espacio' con el overlay de vast (259GB libres reales); bloquea la adquisicion de pesos por el camino normal. Release-blocker de ops."
+    "Historical W26 finding: Vast did not auto-start the service in that run. PR #108 added an idempotent start guard and an ENTRYPOINT regression; reproduction on the current main image remains part of real-pod revalidation.",
+    "Historical W26 finding: require_disk_space misread free space. PR #105 resolved missing staging paths to the nearest existing ancestor; follow-up commit ec3a5b7 corrected df block-to-byte conversion and added regression coverage. Current-main CI passes; live acquisition revalidation remains for the real-pod campaign."
   ],
   "blockers": [],
   "known_env_issues": [
@@ -91,5 +100,5 @@
     "Los 7 fallos son sensibles al entorno POSIX: 3x test_mac_helper (fixture limpia os.environ -> sin SYSTEMROOT en Windows), 2x test_m5_capture3d (setenv PATH='' rompe el lanzamiento de subprocess en Windows), 2x test_atlas_* (lanzan scripts/storage_requirement.py como subprocess bajo entorno despojado). storage_requirement.py --profile studio --json ejecutado directo produce JSON valido.",
     "test_gpu_lease multiproceso y tests POSIX son sensibles a Windows; verificados en CI Linux."
   ],
-  "notes": "No GPU rentada, no APIs facturadas. CI Linux es la autoridad. 108 PRs mergeados verificados por API (#58,#63,#64 integrados; #65-#101; #102-#125,#127-#137,#139-#147,#149-#174,#178,#182; #126 cerrado sin mergear; abiertos #138,#148,#175,#176,#177,#179,#180,#181,#183). Backlog Ultra W00-W25 cerrado a nivel contrato L1. W26 (GPU) fuera de fase por diseno. candidate_image_*: bloques con digests reales verificados en su momento, sin tocar (nuevo digest solo cuando un build de main termine verde). ruff check studio scripts config/probes: All checks passed."
+  "notes": "Este estado se verifico en main 9a3238d0 y run 43246478902. W26 conserva evidencia L3 parcial para una sola receta SDXL en un digest anterior. No usar ese resultado para declarar validada la imagen actual ni otras recetas. El trabajo vigente cierra primero las brechas no GPU documentadas; la campana target-GPU queda como fase separada y requiere autorizacion especifica de presupuesto conforme A29."
 }
