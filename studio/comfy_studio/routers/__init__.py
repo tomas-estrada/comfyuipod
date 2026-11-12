@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from . import (
     ads,
     assets,
+    assets3d,
     atlas,
     audio,
     brief,
@@ -33,6 +34,7 @@ _MODULES = (
     projects,
     productions,
     assets,
+    assets3d,
     jobs,
     templates,
     cinematic,

@@ -175,6 +175,8 @@ SYSTEM_PROMPT_ES = (
     "('menos publicidad', 'más emoción', 'conserva la voz original', 'usa solo estos clips').\n"
     "36. `review_output`: revisar el render real contra el brief (ffprobe + criterios), con "
     "correcciones localizadas.\n"
+    "37. `register_3d_manifest`: guardar cámaras, jerarquía, pivotes y partes reabribles "
+    "ligadas al hash de un GLB del proyecto; conserva provenance observed/inferred.\n"
     "Flujo recomendado ante un pedido de pieza audiovisual: `understand_project` → "
     "`create_creative_brief` → (producción con las herramientas existentes) → `review_output`. "
     "No inventes fechas, frases, escenas ni identidades: usa solo lo trazable a la evidencia. "
