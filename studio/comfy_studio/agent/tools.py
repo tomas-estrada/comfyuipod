@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
+from ..blender_extensions import search_extensions as search_blender_extension_catalog
 from ..cache_policy import record_use
 from ..comfyui_client import ComfyUIClient
 from ..config import StudioConfig
@@ -305,6 +306,24 @@ class SearchAssetsArgs(BaseModel):
         le=100,
         description="Número máximo de assets a devolver.",
     )
+
+
+class SearchBlenderExtensionsArgs(BaseModel):
+    """Filtros para el catálogo local de extensiones Blender."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(
+        default="",
+        max_length=200,
+        description="Busca por nombre, función, categoría o licencia.",
+    )
+    category: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Filtro exacto opcional por etiqueta oficial, por ejemplo Materials o Rigging.",
+    )
+    limit: int = Field(default=10, ge=1, le=25, description="Máximo de resultados (1–25).")
 
 
 class EdlCutItem(BaseModel):
@@ -1593,6 +1612,7 @@ ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
     "artist3d": (
         "enqueue_render",
         "list_templates",
+        "search_blender_extensions",
         "search_assets",
         "tag_asset",
         "register_3d_manifest",
@@ -1799,6 +1819,18 @@ async def _handle_search_assets(
         "count": len(results),
         "assets": results,
     }
+
+
+async def _handle_search_blender_extensions(
+    args: SearchBlenderExtensionsArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    del context
+    return search_blender_extension_catalog(
+        args.query,
+        category=args.category,
+        limit=args.limit,
+    )
 
 
 async def _handle_propose_edl(
@@ -4612,6 +4644,19 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=SearchAssetsArgs,
             handler=_handle_search_assets,
+            parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="search_blender_extensions",
+            description=(
+                "Busca sin red en el catálogo oficial fijado de Blender 5.2.4 para Linux x64 "
+                "(más de mil extensiones). Devuelve versión, hash, licencia, permisos y "
+                "compatibilidad. Solo descubre opciones: no instala ni habilita código."
+            ),
+            args_model=SearchBlenderExtensionsArgs,
+            handler=_handle_search_blender_extensions,
             parallel_safe=True,
         )
     )

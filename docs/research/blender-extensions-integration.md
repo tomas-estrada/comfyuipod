@@ -1,6 +1,6 @@
 # Blender Extensions for the agent harness
 
-Research snapshot: 2026-11-12. Recheck the official repository metadata before
+Research snapshot: 2026-11-11. Recheck the official repository metadata before
 pinning a package; marketplace versions and compatibility change.
 
 ## What the catalogue gives us
@@ -14,7 +14,7 @@ download URL, minimum/maximum Blender versions, maintainer, SPDX license, tags,
 and declared permissions. The [API schema](https://developer.blender.org/docs/features/extensions/api_listing/v1/)
 defines these fields.
 
-The [platform](https://extensions.blender.org/about/) hosts free and open-source
+The platform hosts free and open-source
 extensions compatible with Blender's GPL requirements. The [license policy](https://docs.blender.org/manual/en/latest/advanced/extensions/licenses.html)
 requires GPL v3 or later for add-ons on the platform. The [Blender manual](https://docs.blender.org/manual/en/latest/editors/preferences/extensions.html)
 documents repository-based and local ZIP installation and says repository updates
@@ -72,17 +72,35 @@ convenience and existing Blender features should not be mistaken for a missing
 Studio capability. Prioritize add-ons only when they close a named acceptance
 gap and their exact operation is measurable in the production path.
 
-## Current repository connection
+## Repository connection
 
-Blender is exposed through `BlenderEngine` and the Studio `artist3d` role. The
-shared agent harness controls the available tools, but the older engine
-`install(submotor, ref=...)` shape accepts a module name and optional package
-path when dynamic installation is enabled. Before connecting marketplace
-packages, replace that path with an immutable lock lookup and make “not in lock”
-fail closed. Do not let marketplace discovery call the install operation.
+The repository carries the complete 1,162-entry API snapshot for Blender
+5.2.4 on Linux x64 at
+`config/blender-extensions/catalog-5.2.4-linux-x64.json`. Studio's
+`artist3d` role can call `search_blender_extensions` to search names, tags,
+functions, and licenses. Results include exact package version, archive hash,
+size, permissions, compatibility, and source URL. Search runs offline and is
+read-only; it cannot install, enable, or execute an extension. The snapshot is
+target-specific, so a different Blender version or platform needs a refreshed
+catalogue rather than assumptions from this one.
 
-Useful follow-up implementation: an offline catalogue search tool, a
-version/platform-specific extension lock with archive hashes, and a build-time
-installer that consumes only the lock. Keep the catalogue refresh separate from
-the immutable runtime lock. Record the chosen extension version and hash in
-every Blender run's provenance.
+The first shortlist for investigation remains Rigify (verify whether the
+selected Blender build already bundles it), Ucupaint (materials and texture
+baking), Amaranth (diagnostics), and Editable Motion Paths (likely an
+interactive review workflow). None is marked production-enabled until the
+exact image is checked and its task operation passes a headless smoke.
+
+Refreshing the catalogue must update its source URL, Blender version, platform,
+retrieval date, and archive hashes together. Runtime searches must not fetch
+metadata from the network or install packages. A future immutable lock should
+name only smoke-tested packages and record their compatibility, hash, and
+operation evidence.
+
+## Current execution boundary
+
+Blender is exposed through `BlenderEngine` and the Studio `artist3d` role. Its
+existing `install(submotor, ref=...)` shape accepts a module name and optional
+package path when dynamic installation is enabled. Replace that path with an
+immutable lock lookup and fail closed for packages outside the lock before
+enabling optional extensions. Discovery results are not installation
+authorization.
