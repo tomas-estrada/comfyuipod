@@ -43,9 +43,7 @@ _ENGINES = ("cycles", "eevee")
 _EXPORT_FORMATS = ("usd", "gltf", "fbx")
 
 # Bytes mínimos válidos-ish para el modo stub (tests): PNG 1x1 y cabeceras.
-_STUB_PNG = (
-    b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
-)
+_STUB_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 _STUB_EXR = b"\x76\x2f\x31\x01" + b"\x00" * 32
 _STUB_GLB_HEADER = b"glTF\x02\x00\x00\x00\x14\x00\x00\x00" + b"\x00" * 12
 _STUB_USD = b'#usda 1.0\n( defaultPrim = "World" )\ndef Xform "World" {}\n'
@@ -69,6 +67,7 @@ class BlenderCameraView:
     position: tuple[float, float, float]
     target: tuple[float, float, float]
     fov_deg: float = 50.0
+    light_rig: dict[str, Any] | None = None
 
     def validate(self) -> None:
         if not self.name.strip() or len(self.name) > 80:
@@ -86,6 +85,38 @@ class BlenderCameraView:
             raise ValueError(f"camera view {self.name}: position y target no pueden coincidir")
         if not math.isfinite(self.fov_deg) or not 1.0 <= self.fov_deg <= 175.0:
             raise ValueError(f"camera view {self.name}: fov_deg debe estar entre 1 y 175")
+        if self.light_rig is not None:
+            if set(self.light_rig) != {"key", "fill", "ambient_intensity"}:
+                raise ValueError(f"camera view {self.name}: light_rig tiene campos inválidos")
+            ambient = self.light_rig["ambient_intensity"]
+            if (
+                not isinstance(ambient, (int, float))
+                or not math.isfinite(ambient)
+                or not 0 <= ambient <= 1
+            ):
+                raise ValueError(f"camera view {self.name}: ambient_intensity fuera de [0, 1]")
+            for name in ("key", "fill"):
+                light = self.light_rig[name]
+                if not isinstance(light, dict) or set(light) != {"position", "intensity", "size"}:
+                    raise ValueError(f"camera view {self.name}: light {name} inválida")
+                position = light["position"]
+                intensity = light["intensity"]
+                size = light["size"]
+                if (
+                    not isinstance(position, (list, tuple))
+                    or len(position) != 3
+                    or any(
+                        not isinstance(value, (int, float)) or not math.isfinite(value)
+                        for value in position
+                    )
+                    or not isinstance(intensity, (int, float))
+                    or not math.isfinite(intensity)
+                    or not 0 <= intensity <= 4
+                    or not isinstance(size, (int, float))
+                    or not math.isfinite(size)
+                    or not 0 < size <= 100_000
+                ):
+                    raise ValueError(f"camera view {self.name}: valores del light {name} inválidos")
 
 
 def find_blender_bin() -> str | None:
@@ -128,6 +159,7 @@ class BlenderRenderSpec:
         (0.0, 0.0, 0.0, 1.0),
     )
     up_axis: str = "y_up"
+    transparent_background: bool = False
     timeout_s: float = DEFAULT_BLENDER_TIMEOUT_S
 
     def validate(self) -> None:
@@ -159,6 +191,8 @@ class BlenderRenderSpec:
             or self.device != "cpu"
         ):
             raise ValueError("camera_views requiere un frame PNG con Cycles CPU")
+        if self.transparent_background and not self.camera_views:
+            raise ValueError("transparent_background requiere camera_views")
         if self.up_axis not in ("y_up", "z_up"):
             raise ValueError("up_axis debe ser y_up o z_up")
         if len(self.asset_transform) != 4 or any(len(row) != 4 for row in self.asset_transform):
@@ -167,9 +201,7 @@ class BlenderRenderSpec:
             raise ValueError("asset_transform contiene valores no finitos")
         if any(
             abs(actual - expected) > 1e-9
-            for actual, expected in zip(
-                self.asset_transform[3], (0.0, 0.0, 0.0, 1.0), strict=True
-            )
+            for actual, expected in zip(self.asset_transform[3], (0.0, 0.0, 0.0, 1.0), strict=True)
         ):
             raise ValueError("asset_transform debe ser afín con última fila [0, 0, 0, 1]")
 
@@ -226,8 +258,7 @@ def validate_blender_outputs(
     if not outputs:
         if isinstance(spec, BlenderRenderSpec):
             return (
-                "render sin artefactos: Blender terminó sin escribir frames "
-                f"en {spec.output_dir}"
+                f"render sin artefactos: Blender terminó sin escribir frames en {spec.output_dir}"
             )
         return f"export sin artefactos: no se escribió ningún fichero en {spec.output_dir}"
     if isinstance(spec, BlenderExportSpec) and "gltf" in spec.formats:
@@ -265,10 +296,14 @@ def classify_blender_failure(exit_code: int, log_tail: str) -> str:
 
 def _camera_view_render_script(spec: BlenderRenderSpec) -> str:
     """Generate a real CPU scene render for each persisted asset camera pose."""
-    views = json.dumps([asdict(view) for view in spec.camera_views], ensure_ascii=True)
+    # Blender executes this payload as Python source, so JSON's `null`/`true`/
+    # `false` tokens are invalid here. Dataclass values are validated above and
+    # repr emits safe Python literals for None, booleans, strings, and numbers.
+    views = repr([asdict(view) for view in spec.camera_views])
     transform = json.dumps([list(row) for row in spec.asset_transform])
     up_axis = json.dumps(spec.up_axis)
-    return f'''\
+    transparent_background = "True" if spec.transparent_background else "False"
+    return f"""\
 import math
 import re
 from mathutils import Matrix, Vector
@@ -276,10 +311,12 @@ from mathutils import Matrix, Vector
 camera_views = {views}
 asset_matrix = Matrix({transform})
 asset_up_axis = {up_axis}
+transparent_background = {transparent_background}
 scene.render.image_settings.file_format = "PNG"
-scene.render.image_settings.color_mode = "RGB"
+scene.render.image_settings.color_mode = "RGBA" if transparent_background else "RGB"
 scene.render.resolution_percentage = 100
 scene.view_settings.view_transform = "Standard"
+scene.render.film_transparent = transparent_background
 
 # Apply the manifest's global transform to imported asset roots. Child nodes
 # retain their local hierarchy and Blender composes their world transforms.
@@ -336,6 +373,26 @@ if not any(obj.type == "LIGHT" for obj in scene.objects):
         aim_at(light_obj, asset_center)
 
 for index, view in enumerate(camera_views, start=1):
+    rig = view.get("light_rig")
+    muted_lights = []
+    rig_lights = []
+    if rig:
+        for existing_light in (obj for obj in scene.objects if obj.type == "LIGHT"):
+            muted_lights.append((existing_light, existing_light.hide_render))
+            existing_light.hide_render = True
+        if background is not None:
+            background.inputs["Strength"].default_value = float(rig["ambient_intensity"])
+        for light_name in ("key", "fill"):
+            config = rig[light_name]
+            light_data = bpy.data.lights.new("ComfyStaging_" + light_name, type="AREA")
+            light_data.energy = 500.0 * float(config["intensity"]) * asset_radius * asset_radius
+            light_data.shape = "DISK"
+            light_data.size = float(config["size"])
+            light_obj = bpy.data.objects.new(light_data.name, light_data)
+            scene.collection.objects.link(light_obj)
+            light_obj.location = to_blender_space(config["position"])
+            aim_at(light_obj, asset_center)
+            rig_lights.append(light_obj)
     camera_data = bpy.data.cameras.new("ComfyPreviewCamera_" + str(index))
     camera_obj = bpy.data.objects.new(camera_data.name, camera_data)
     scene.collection.objects.link(camera_obj)
@@ -352,8 +409,14 @@ for index, view in enumerate(camera_views, start=1):
     scene.render.filepath = out_dir + "/view_" + str(index).zfill(2) + "_" + slug + ".png"
     bpy.ops.render.render(write_still=True)
     bpy.data.objects.remove(camera_obj, do_unlink=True)
+    for light_obj in rig_lights:
+        light_data = light_obj.data
+        bpy.data.objects.remove(light_obj, do_unlink=True)
+        bpy.data.lights.remove(light_data)
+    for existing_light, was_hidden in muted_lights:
+        existing_light.hide_render = was_hidden
 print("[BlenderRunner] camera views rendered:", len(camera_views))
-'''
+"""
 
 
 def build_render_script(spec: BlenderRenderSpec) -> str:
@@ -363,7 +426,7 @@ def build_render_script(spec: BlenderRenderSpec) -> str:
     engine_setup = (
         'scene.render.engine = "CYCLES"'
         if spec.engine == "cycles"
-        else '''\
+        else """\
 available_engines = {
     item.identifier
     for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items
@@ -374,11 +437,11 @@ eevee_engine = next(
 )
 if eevee_engine is None:
     raise RuntimeError("this Blender build does not provide EEVEE")
-scene.render.engine = eevee_engine'''
+scene.render.engine = eevee_engine"""
     )
     gpu_setup = ""
     if spec.device == "gpu":
-        gpu_setup = '''\
+        gpu_setup = """\
     prefs = bpy.context.preferences.addons.get("cycles")
     if prefs is not None:
         cprefs = prefs.preferences
@@ -398,7 +461,7 @@ scene.render.engine = eevee_engine'''
                 d.use = (idx == target)
                 idx += 1
             else:
-                d.use = False'''.replace("DEVICE_INDEX", str(spec.device_index))
+                d.use = False""".replace("DEVICE_INDEX", str(spec.device_index))
     render_invocation = (
         _camera_view_render_script(spec)
         if spec.camera_views
@@ -431,7 +494,7 @@ scene.frame_end = {spec.frames}
 
 if scene.render.engine == "CYCLES":
     scene.cycles.samples = {spec.samples}
-    scene.cycles.device = {json.dumps('CPU' if spec.device == 'cpu' else 'GPU')}
+    scene.cycles.device = {json.dumps("CPU" if spec.device == "cpu" else "GPU")}
 {gpu_setup}
 else:
     scene.eevee.taa_render_samples = {spec.samples}
@@ -463,7 +526,7 @@ def build_export_script(spec: BlenderExportSpec) -> str:
         "else:",
         "    bpy.ops.wm.open_mainfile(filepath=scene_path)",
         "",
-        'if not bpy.data.objects:',
+        "if not bpy.data.objects:",
         '    raise RuntimeError("nothing to export: escena sin objetos")',
         "",
     ]
@@ -624,9 +687,7 @@ async def run_blender_spec(
     exit_code = -1 if timed_out else (proc.returncode if proc.returncode is not None else -1)
     outputs = sorted(p for p in out_dir.iterdir() if p.is_file()) if out_dir.is_dir() else []
     outputs = [
-        p
-        for p in outputs
-        if p.name not in ("blender_job.py", "blender.log", BLENDER_LOG_NAME)
+        p for p in outputs if p.name not in ("blender_job.py", "blender.log", BLENDER_LOG_NAME)
     ]
     validation_error = validate_blender_outputs(spec, outputs)
     tail = redactor.redact(raw[-LOG_TAIL_BYTES:])

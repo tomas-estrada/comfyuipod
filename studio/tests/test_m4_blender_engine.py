@@ -5,12 +5,14 @@ Modo stub (STUDIO_STUB_BLENDER=1): sin binario de Blender ni GPU.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import stat
 from pathlib import Path
 
 import pytest
 
+from comfy_studio.blender import BlenderCameraView, BlenderRenderSpec, build_render_script
 from comfy_studio.engines import EngineRunSpec, EngineTier
 from comfy_studio.engines.blender import BlenderEngine
 
@@ -95,6 +97,29 @@ def test_camera_view_job_builds_eevee_cpu_spec(tmp_path: Path) -> None:
     assert spec.device == "cpu"
     assert spec.camera_views[0].name == "front"
     assert spec.up_axis == "z_up"
+
+
+def test_camera_render_script_uses_python_none_literal() -> None:
+    spec = BlenderRenderSpec(
+        scene_path=Path("scene.glb"),
+        output_dir=Path("renders"),
+        device="cpu",
+        camera_views=(BlenderCameraView("front", (0, -4, 0), (0, 0, 0)),),
+    )
+
+    generated = ast.parse(build_render_script(spec))
+    assignment = next(
+        node
+        for node in generated.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "camera_views"
+            for target in node.targets
+        )
+    )
+
+    views = ast.literal_eval(assignment.value)
+    assert views[0]["light_rig"] is None
 
 
 def test_install_blocked_when_dynamic_off(

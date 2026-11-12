@@ -34,18 +34,22 @@ def _glb() -> bytes:
         "scene": 0,
         "scenes": [{"nodes": [0]}],
         "nodes": [{"mesh": 0}],
-        "meshes": [{
-            "name": "product",
-            "primitives": [{"attributes": {"POSITION": 0}, "material": 0}],
-        }],
-        "accessors": [{
-            "bufferView": 0,
-            "componentType": 5126,
-            "count": 3,
-            "type": "VEC3",
-            "min": [-1, -1, -1],
-            "max": [1, 1, 1],
-        }],
+        "meshes": [
+            {
+                "name": "product",
+                "primitives": [{"attributes": {"POSITION": 0}, "material": 0}],
+            }
+        ],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": 3,
+                "type": "VEC3",
+                "min": [-1, -1, -1],
+                "max": [1, 1, 1],
+            }
+        ],
         "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962}],
         "buffers": [{"byteLength": 36}],
         "materials": [{"name": "paint"}],
@@ -54,13 +58,15 @@ def _glb() -> bytes:
     json_chunk += b" " * (-len(json_chunk) % 4)
     binary = struct.pack("<9f", -1, -1, -1, 1, -1, -1, 0, 1, 1)
     total_size = 12 + 8 + len(json_chunk) + 8 + len(binary)
-    return b"".join((
-        struct.pack("<4sII", b"glTF", 2, total_size),
-        struct.pack("<II", len(json_chunk), 0x4E4F534A),
-        json_chunk,
-        struct.pack("<II", len(binary), 0x004E4942),
-        binary,
-    ))
+    return b"".join(
+        (
+            struct.pack("<4sII", b"glTF", 2, total_size),
+            struct.pack("<II", len(json_chunk), 0x4E4F534A),
+            json_chunk,
+            struct.pack("<II", len(binary), 0x004E4942),
+            binary,
+        )
+    )
 
 
 def _manifest(asset_id: str) -> dict[str, Any]:
@@ -195,9 +201,7 @@ def test_manifest_api_and_agent_tool_are_real_entrypoints(client: TestClient) ->
 
     belt = create_default_tool_belt()
     assert "register_3d_manifest" in belt.list_names()
-    assert "register_3d_manifest" in belt.restricted_to(
-        ROLE_TOOL_SUBSETS["artist3d"]
-    ).list_names()
+    assert "register_3d_manifest" in belt.restricted_to(ROLE_TOOL_SUBSETS["artist3d"]).list_names()
 
 
 @pytest.mark.anyio
@@ -291,13 +295,13 @@ async def test_artist3d_renders_and_persists_manifest_camera_previews(
             path = output_dir / f"view_{index + 1:02d}.png"
             path.write_bytes(encoded.getvalue())
             outputs.append(str(path))
-        return EngineResult(
-            ok=True, engine="blender", verb="run", payload={"outputs": outputs}
-        )
+        return EngineResult(ok=True, engine="blender", verb="run", payload={"outputs": outputs})
 
     monkeypatch.setattr(BlenderEngine, "run", fake_render)
-    result = await create_default_tool_belt().restricted_to(allowed).execute(
-        "render_asset3d_views", {"asset_id": asset["id"]}, context
+    result = (
+        await create_default_tool_belt()
+        .restricted_to(allowed)
+        .execute("render_asset3d_views", {"asset_id": asset["id"]}, context)
     )
     assert result["status"] == "completed"
     assert result["camera_count"] == 3
@@ -306,9 +310,84 @@ async def test_artist3d_renders_and_persists_manifest_camera_previews(
     assert calls[0]["device"] == "cpu"
     assert calls[0]["up_axis"] == "y_up"
     assert [preview["metadata"]["camera_name"] for preview in result["previews"]] == [
-        "front", "side", "rear"
+        "front",
+        "side",
+        "rear",
     ]
     assert all(preview["metadata"]["source_sha256"] for preview in result["previews"])
+
+
+@pytest.mark.anyio
+async def test_artist3d_staging_search_scores_real_cpu_renders_and_persists_report(
+    studio_data_dir: Path,
+    studio_config,
+    stub_comfyui_transport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+
+    from PIL import Image, ImageDraw
+
+    from comfy_studio.comfyui_client import ComfyUIClient
+    from comfy_studio.engines import EngineResult
+    from comfy_studio.engines.blender import BlenderEngine
+    from comfy_studio.progress import ProgressBroker
+
+    store = ProjectStore(studio_data_dir)
+    project_id = store.create_project("Staging CPU")["id"]
+    asset = _save_glb(store, project_id)
+    manifest = _manifest(asset["id"])
+    for part in manifest["parts"]:
+        part["bbox"] = [-1, -1, -1, 1, 1, 1]
+    save_asset3d_manifest(store, project_id, asset["id"], manifest)
+    broker = ProgressBroker()
+    context = ToolContext(
+        project_id=project_id,
+        store=store,
+        comfyui_client=ComfyUIClient(
+            base_url=studio_config.studio_comfyui_url,
+            transport=stub_comfyui_transport,
+            store=store,
+            broker=broker,
+            redactor=studio_config.redactor(),
+        ),
+        broker=broker,
+        config=studio_config,
+        allowed_tools=frozenset(ROLE_TOOL_SUBSETS["artist3d"]),
+    )
+    jobs: list[dict[str, Any]] = []
+
+    async def fake_render(self, spec):
+        del self
+        jobs.append(spec.job)
+        output_dir = Path(spec.job["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        outputs = []
+        for index, view in enumerate(spec.job["camera_views"], start=1):
+            image = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+            ImageDraw.Draw(image).rectangle((160 + index, 120, 350, 390), fill=(160, 120, 80, 255))
+            path = output_dir / f"view_{index:02d}_{view['name']}.png"
+            image.save(path)
+            outputs.append(str(path))
+        return EngineResult(ok=True, engine="blender", verb="run", payload={"outputs": outputs})
+
+    monkeypatch.setattr(BlenderEngine, "run", fake_render)
+    result = (
+        await create_default_tool_belt()
+        .restricted_to(frozenset(ROLE_TOOL_SUBSETS["artist3d"]))
+        .execute("optimize_asset3d_staging", {"asset_id": asset["id"]}, context)
+    )
+    assert result["status"] == "completed"
+    assert result["rendered_candidates"] == 8
+    assert result["simulated"] is False
+    assert result["semantic_salience_evaluated"] is False
+    assert result["source_sha256"]
+    assert jobs[0]["device"] == "cpu"
+    assert jobs[0]["transparent_background"] is True
+    assert len(jobs[0]["camera_views"]) == 8
+    assert result["preview"]["metadata"]["source_sha256"] == result["source_sha256"]
+    report = store.get_asset_path(project_id, result["report"]["id"]).read_text()
+    assert '"gpu_used": false' in report
+    assert '"semantic_salience_evaluated": false' in report
 
 
 @pytest.mark.anyio
