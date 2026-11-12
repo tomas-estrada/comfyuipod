@@ -4,13 +4,11 @@ name: Build, Validate and Publish ComfyUI Vast.ai Image (GHCR)
   push:
     branches:
       - main
-      - master
     tags:
       - "v*"
   pull_request:
     branches:
       - main
-      - master
       - codex/gpu-lease-recovery
       - codex/fail-closed-gpu-lease-recovery
   workflow_dispatch:
@@ -32,11 +30,59 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  detect-changes:
+    name: Detect changed files (docs-only fast path)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - name: Checkout del repositorio (historial completo para el diff del PR)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Clasificar el PR como docs-only
+        id: filter
+        run: |
+          set -euo pipefail
+          # En push/tag/dispatch NUNCA se salta nada: la promoción a latest depende de build-and-push.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "[info] event=${{ github.event_name }}: pipeline completo"
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          files="$(git diff --name-only "${base}...${head}" --)"
+          if [ -z "${files}" ]; then
+            files="$(git diff --name-only "${base}" "${head}" --)"
+          fi
+          echo "[info] ficheros cambiados en el PR:"
+          echo "${files}"
+          # Allowlist estricta de ficheros sin impacto en ejecución. Cualquier otro
+          # path (código, Dockerfile, config/, .github/workflows/, JSON de contratos,
+          # manifiestos, atlas...) fuerza el pipeline completo: fail-closed por defecto.
+          docs_only=true
+          while IFS= read -r f; do
+            [ -n "${f}" ] || continue
+            case "${f}" in
+              *.md|*.puml|LICENSE) ;;
+              *)
+                docs_only=false
+                echo "[info] fichero con impacto en ejecución: ${f} -> pipeline completo"
+                break
+                ;;
+            esac
+          done <<< "${files}"
+          echo "docs_only=${docs_only}" >> "$GITHUB_OUTPUT"
+
   validate:
     name: Validate Scripts, Action SHAs, Dockerfile & HF Catalog (CI-01 / CI-03)
-    # ubuntu-latest migra 24.04->26.04 entre 2026-10-19 y 2026-11-19 (no determinismo a mitad
-    # del rollout); fijamos 24.04 para determinismo run a run. Todos los jobs verificados
-    # compatibles con 26.04, así que tras 2026-11-19 se puede volver a ubuntu-latest.
+    # Pin permanente a ubuntu-24.04 por determinismo run a run: ubuntu-latest migró
+    # 24.04->26.04 durante 2026-10-19..2026-11-19. Jobs verificados compatibles con 26.04,
+    # pero se conserva el pin: un runner flotante puede cambiar bajo tus pies.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -59,6 +105,9 @@ jobs:
           set -euo pipefail
           curl -fsSL --retry 3 -o /tmp/plantuml.jar \
             "https://github.com/plantuml/plantuml/releases/download/v1.2024.7/plantuml-1.2024.7.jar"
+          # Integridad del asset: SHA-256 y tamaño de plantuml-1.2024.7.jar (release v1.2024.7).
+          echo "e34c12bbe9944f1f338ca3d88c9b116b86300cc8e90b35c4086b825b5ae96d24  /tmp/plantuml.jar" | sha256sum -c -
+          [ "$(stat -c%s /tmp/plantuml.jar)" = "22073496" ] || { echo "::error::tamaño inesperado de plantuml.jar"; exit 1; }
           out="$(mktemp -d)"
           java -jar /tmp/plantuml.jar -Playout=smetana \
             -tsvg -charset UTF-8 -o "$out" \
@@ -708,7 +757,11 @@ jobs:
 
   build-and-push:
     name: Build Candidate, Smoke-Test & Promote to Latest (ALTA-01 / ALTA-02 / H-01 / M-02 / §9.2)
-    needs: [validate, rust]
+    # docs-only PRs (solo *.md/*.puml/LICENSE) saltan el build de imagen (~16 GB, hasta 180 min).
+    # validate y rust corren SIEMPRE y son los únicos status checks requeridos en el ruleset de
+    # `main`; en push/tag/dispatch el build nunca se salta, así que la promoción a latest queda intacta.
+    needs: [detect-changes, validate, rust]
+    if: github.event_name != 'pull_request' || needs.detect-changes.outputs.docs_only != 'true'
     # Fijado a ubuntu-24.04 por el rollout de ubuntu-latest (ver comentario en el job validate).
     runs-on: ubuntu-24.04
     permissions:
