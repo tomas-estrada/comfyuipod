@@ -12,6 +12,7 @@ from comfy_studio.comfyui_client import ComfyUIClient, ComfyUIError
 from comfy_studio.config import (
     StudioConfig,
 )
+from comfy_studio.inspiration import analyze_reference_asset, derive_recipe
 from comfy_studio.projects import MediaValidationError, ProjectStore, sanitize_filename
 
 
@@ -177,9 +178,8 @@ def register_routes(app: FastAPI) -> None:
                         )
 
         if filename:
-            # Studio no puede confiar en que ComfyUI valide `/view`: se rechaza
-            # aquí cualquier separador o `..` antes de proxyar, para que un
-            # `?filename=../../../../etc/passwd` no llegue a una lectura de disco.
+            # Do not delegate path validation to ComfyUI's /view endpoint.
+            # Reject separators and traversal components before proxying.
             for label, value in (("filename", filename), ("subfolder", subfolder or "")):
                 if "/" in value or "\\" in value or ".." in value.split("/"):
                     raise HTTPException(
@@ -222,3 +222,34 @@ def register_routes(app: FastAPI) -> None:
         if not deleted:
             raise HTTPException(status_code=404, detail="Medio no encontrado")
         return {"deleted": True, "id": asset_id}
+
+    @app.post("/studio/api/projects/{project_id}/assets/{asset_id}/inspiration/analyze")
+    def analyze_project_reference(
+        project_id: str,
+        asset_id: str,
+        request: Request,
+        brief_shots: int | None = Query(default=None, ge=1, le=100),
+        scene_threshold: float = Query(default=0.25, ge=0.05, le=0.95),
+    ) -> dict[str, Any]:
+        """Analyze an authorized project video locally and return its editable recipe."""
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        try:
+            analysis = analyze_reference_asset(
+                active_store,
+                project_id,
+                asset_id,
+                scene_threshold=scene_threshold,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        recipe = derive_recipe(analysis, brief_shots=brief_shots)
+        return {
+            "analysis": analysis.to_dict(),
+            "recipe": recipe.to_dict(),
+            "simulated": False,
+            "network_used": False,
+        }

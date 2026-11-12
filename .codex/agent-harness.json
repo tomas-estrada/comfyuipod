@@ -1,0 +1,11 @@
+{
+  "schema": "comfyuipod.agent-runtime",
+  "schema_version": 1,
+  "runtime_id": "codex",
+  "allowed_tools": ["Agent", "Bash", "apply_patch"],
+  "max_iterations": 12,
+  "max_llm_calls": 24,
+  "max_tool_calls": 200,
+  "max_context_chars": 4000000,
+  "max_wall_seconds": 1800
+}
