@@ -444,11 +444,13 @@ jobs:
           STUDIO_STUB_COMFYUI: "1"
           STUDIO_ORCH_REAL_ENGINES: "0"
           STUDIO_STUB_BLENDER: "1"
+          STUDIO_GLTF_VALIDATOR_DIR: ${{ github.workspace }}/studio/gltf-validator
         run: |
           set -euo pipefail
           python3 -m venv /tmp/studio-ci-venv
           /tmp/studio-ci-venv/bin/pip install --no-cache-dir --upgrade pip
           /tmp/studio-ci-venv/bin/pip install --no-cache-dir -e "./studio[dev]"
+          npm ci --prefix studio/gltf-validator --ignore-scripts --no-audit --no-fund --loglevel=error
           /tmp/studio-ci-venv/bin/ruff check studio panel scripts config/probes
           /tmp/studio-ci-venv/bin/pytest studio/tests -q
           # Panel: tests deterministas del SPA (Node + DOM mínimo, sin navegador ni red).

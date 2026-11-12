@@ -36,7 +36,7 @@ Subscores are `fit / speed / novelty / impact / maintenance / security`.
 
 | Rank | Repository | Scores | Total | Integration opportunity and decision |
 |---:|---|---:|---:|---|
-| 1 | [KhronosGroup/glTF-Validator](https://github.com/KhronosGroup/glTF-Validator) | 4 / 4 / 4 / 4 / 5 / 5 | **4.25** | Add its standards-based JSON validation report beside `studio/comfy_studio/asset3d_manifest.py` for uploaded GLB/glTF. The Khronos validator complements the current structural checks. Pin the exact JS/WASM artifact and run it in a bounded local subprocess; first prove that its license, size, and image packaging fit. |
+| 1 | [KhronosGroup/glTF-Validator](https://github.com/KhronosGroup/glTF-Validator) | 4 / 4 / 4 / 4 / 5 / 5 | **4.25** | Add its standards-based report beside `studio/comfy_studio/asset3d_manifest.py`. The repo pins the official [npm package](https://www.npmjs.com/package/gltf-validator) `gltf-validator@2.0.0-dev.3.10` (Apache-2.0, zero runtime dependencies, 383,347 unpacked bytes, SHA-512 integrity in `studio/gltf-validator/package-lock.json`). A bounded local Node wrapper validates only bytes from the project-owned GLB and has no external-resource resolver. The [upstream release](https://github.com/KhronosGroup/glTF-Validator/releases/tag/2.0.0-dev.3.10) is a pre-release last published in 2024, despite newer upstream source activity; it is pinned exactly and remains replaceable. |
 | 2 | [Netflix/vmaf](https://github.com/Netflix/vmaf) | 4 / 3 / 3 / 4 / 5 / 5 | **3.90** | Potential perceptual metric for `engines/qa.py` and delivery checks. It needs an FFmpeg build with `libvmaf` and a valid reference signal; VBench already exists in a separate environment, so this is useful only for reference-based comparisons that current FFmpeg checks cannot cover. |
 | 3 | [Breakthrough/PySceneDetect](https://github.com/Breakthrough/PySceneDetect) | 5 / 3 / 2 / 3 / 5 / 4 | **3.75** | CPU cut detection for reference analysis, highlights, or montage. Existing `_scene_cut_times` already uses FFmpeg, lowering novelty. OpenCV dependency size and changed boundary semantics must be measured before replacement. |
 | 4 | [snyk/agent-scan](https://github.com/snyk/agent-scan) | 3 / 4 / 4 / 3 / 3 / 5 | **3.55** | Possible CI scan for external skills/MCP tool definitions before they enter a lock or runtime. Confirm the current license and whether signatures/rules work offline before making it a release gate; scanner output is detection evidence, not enforcement. |
@@ -95,18 +95,21 @@ Studio's subtitle editing/export rather than adding a clear headless operation.
 
 ## First implementation candidate
 
-The connected Parallel Decisions comparison selected **glTF-Validator** with
-probability 0.852 and reported confidence 0.823. This aligns with the weighted
-score and an existing uncovered path: add a reproducible, report-producing
-validation step for project-owned 3D assets, without a new agent service or
-GPU requirement. The selection is a prioritization signal, not proof that the
-binary, license, or resource profile is already acceptable. Next implementation
-must verify the exact release/license, immutable artifact pin, bounded subprocess
-behavior, and malformed/valid GLB fixtures before changing the C09 evidence.
-A separate follow-up choice call also selected glTF-Validator (reported option
-probability 0.776, confidence 0.732). That result included unrelated citations,
-so it is only a consistency check; the ranking remains based on the explicit
-weighted rubric and direct repository metadata.
+The first connected Parallel Decisions comparison selected **glTF-Validator**
+with probability 0.852 and confidence 0.823. After verifying current package
+metadata, a later comparison selected the minimal npm integration with
+probability 0.774 and confidence 0.662; both are prioritization signals, not
+ground truth. The weighted ranking pointed to a useful uncovered path: add a
+reproducible, report-producing validation step for project-owned 3D assets,
+without a new agent service or GPU requirement. The project now pins the
+official package and exact SHA-512 integrity, installs it in a minimal lockfile
+project in the image and CI, and records a deterministic report when registering
+project-owned GLBs. The wrapper omits timestamps and absolute paths, bounds
+input/time/output, rejects validator errors, preserves warnings, and never
+resolves external URIs. CPU fixtures exercise valid and semantically invalid
+GLBs, external-resource non-fetching, missing package, timeout, and bounded
+report persistence. This raises validation coverage only; it does not establish
+3D quality, reconstruction fidelity, or GPU performance.
 
 ## Evidence boundary
 

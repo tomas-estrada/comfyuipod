@@ -9,6 +9,7 @@ tools
 *.txt
 !config/constraints.txt
 .venv
+**/node_modules
 .kilo
 studio/tests
 **/__pycache__/

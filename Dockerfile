@@ -270,6 +270,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && node --version && npm --version \
     && rm -rf /var/lib/apt/lists/*
+COPY studio/gltf-validator/ /opt/gltf-validator/
+RUN npm ci --prefix /opt/gltf-validator --ignore-scripts --no-audit --no-fund --loglevel=error
+ENV STUDIO_GLTF_VALIDATOR_DIR=/opt/gltf-validator
 COPY studio/remotion/ /opt/remotion/
 WORKDIR /opt/remotion
 RUN npm ci --no-audit --no-fund --loglevel=error \
