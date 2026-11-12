@@ -425,7 +425,15 @@ class ProductionService:
                 f"la producción ya es terminal ({state.phase})"
             )
         binding = state.metadata.get("recipe_binding")
-        if isinstance(binding, dict) and int(binding.get("unresolved", 0) or 0) > 0:
+        unresolved_layers = [
+            layer
+            for shot in state.all_shots()
+            for layer in shot.layers
+            if layer.params.get("recipe_unresolved")
+        ]
+        if unresolved_layers or (
+            isinstance(binding, dict) and int(binding.get("unresolved", 0) or 0) > 0
+        ):
             raise ProductionNotApprovedError(
                 "el plan contiene capas de generación sin receta admitida; "
                 "edita el plan o aumenta el presupuesto de recursos antes de aprobar"

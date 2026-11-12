@@ -191,6 +191,74 @@ def test_engine_runner_unknown_engine_is_typed_failure():
     assert "no disponible" in res["error"]
 
 
+def test_engine_runner_rejects_unimplemented_recipe_before_dispatch():
+    eng = _SyncEngine("comfyui")
+    runner = EngineRunnerAdapter({"comfyui": eng})
+    res = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "image",
+            "recipe_id": "qwen_image_1024",
+            "recipe_engine": "qwen-image21",
+            "template_id": "sdxl_image",
+        },
+    )
+    assert res["ok"] is False
+    assert "no implementada" in res["error"]
+    assert eng.runs == 0
+
+
+def test_engine_runner_rejects_unresolved_recipe_before_default_template():
+    eng = _GraphCapturingEngine()
+    reg = _FakeRegistry()
+    runner = EngineRunnerAdapter({"comfyui": eng}, template_registry=reg)
+    res = runner.run_layer(
+        "comfyui",
+        {"kind": "gen", "recipe_unresolved": "no existe workflow compatible"},
+    )
+    assert res["ok"] is False
+    assert "sin resolver" in res["error"]
+    assert reg.calls == []
+    assert eng.last_job is None
+
+
+def test_engine_runner_rejects_recipe_template_mismatch_before_dispatch():
+    eng = _SyncEngine("comfyui")
+    runner = EngineRunnerAdapter({"comfyui": eng})
+    res = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "gen",
+            "recipe_id": "wan22_t2v_480p",
+            "recipe_engine": "wan22",
+            "template_id": "wan_i2v",
+        },
+    )
+    assert res["ok"] is False
+    assert "incompatible" in res["error"]
+    assert eng.runs == 0
+
+
+def test_engine_runner_rejects_prebuilt_graph_for_recipe_bound_job():
+    eng = _GraphCapturingEngine()
+    reg = _FakeRegistry()
+    runner = EngineRunnerAdapter({"comfyui": eng}, template_registry=reg)
+    res = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "gen",
+            "recipe_id": "wan22_t2v_480p",
+            "recipe_engine": "wan22",
+            "template_id": "wan_t2v",
+            "graph": {"evil": {"class_type": "UnrelatedWorkflow", "inputs": {}}},
+        },
+    )
+    assert res["ok"] is False
+    assert "grafo" in res["error"]
+    assert reg.calls == []
+    assert eng.last_job is None
+
+
 def test_engine_runner_engine_failure_is_typed():
     runner = EngineRunnerAdapter({"bad": _FailingEngine()})
     res = runner.run_layer("bad", {"kind": "gen"})

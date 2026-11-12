@@ -246,7 +246,7 @@ def _verified_hardware_profile():
 
 
 def test_studio_profile_defaults_to_real_backend_through_production_api(
-    monkeypatch, studio_config, stub_comfyui_transport
+    monkeypatch, studio_config, stub_comfyui_transport, stub_comfyui_state
 ) -> None:
     """Studio deployment uses live adapters, recipe binding, and budgets by default."""
     from comfy_studio.app import create_app
@@ -255,7 +255,9 @@ def test_studio_profile_defaults_to_real_backend_through_production_api(
         EngineRunnerAdapter,
         SemanticQaEvaluator,
     )
+    from comfy_studio.orchestration.evaluator import StubShotEvaluator
     from comfy_studio.orchestration.leased_runner import LeasedEngineRunner
+    from comfy_studio.orchestration.recipe_binding import bind_recipes
 
     monkeypatch.setenv("MODEL_PROFILE", "studio")
     monkeypatch.delenv("STUDIO_ORCH_REAL_ENGINES", raising=False)
@@ -275,6 +277,21 @@ def test_studio_profile_defaults_to_real_backend_through_production_api(
     assert isinstance(collab.assembler, EngineAssembler)
     assert collab.planner is not None
     assert collab.reselect_template is not None
+    # Keep engine dispatch real through the HTTP stub, while avoiding unrelated
+    # model-based QA/editor dependencies in this CPU routing contract.
+    collab.evaluator = StubShotEvaluator()
+
+    class CpuDispatchAssembler:
+        def assemble(self, production_id, clips, *, cancel_event=None):
+            output = studio_config.studio_data_dir / f"{production_id}-reel.mp4"
+            output.write_bytes(b"cpu-test-mp4")
+            return {"ok": True, "output_path": str(output), "clips": len(clips)}
+
+    collab.assembler = CpuDispatchAssembler()
+    monkeypatch.setattr(
+        "comfy_studio.perception.keyframes.probe_media_info",
+        lambda _path: {"probe_ok": True, "has_video": True},
+    )
 
     # Exercise the normal human production HTTP route. Planning remains cheap:
     # it admits resources and binds a recipe without starting a GPU engine.
@@ -293,6 +310,58 @@ def test_studio_profile_defaults_to_real_backend_through_production_api(
     assert binding["estimate_only"] is True
     assert app.state.config.target_ram_gb == 200
     assert app.state.config.hardware_profile.ram_gb == 200
+
+    # Bind a known supported recipe, then cross the human approval boundary
+    # through the real LangGraph/service/adapter stack and the CPU ComfyUI stub.
+    production_id = response.json()["production_id"]
+    state = app.state.production_service.checkpointer.load(production_id)
+    layer = next(
+        layer
+        for shot in state.all_shots()
+        for layer in shot.layers
+        if layer.kind in {"gen", "generate", "t2v"}
+    )
+    layer.kind = "gen"
+    layer.engine = "comfyui"
+    layer.template_id = None
+    layer.params.update(
+        {
+            "width": 832,
+            "height": 480,
+            "frames": 81,
+        }
+    )
+    layer.params.pop("recipe_unresolved", None)
+    summary = bind_recipes(state, vram_budget_mb=90 * 1024)
+    assert summary["bound"] == 1
+    assert layer.params["recipe_id"] == "wan22_t2v_480p"
+    assert layer.params["recipe_engine"] == "wan22"
+    assert layer.template_id == "wan_t2v"
+    assert layer.engine == "comfyui"
+    app.state.production_service.checkpointer.save(state)
+
+    approved = client.post(f"/studio/api/productions/{production_id}/approve")
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["phase"] == "done", [
+        (s.status, s.error, [(ly.engine, ly.params) for ly in s.layers])
+        for s in app.state.production_service.checkpointer.load(production_id).all_shots()
+    ]
+    assert stub_comfyui_state.prompts
+    dispatched_graph = stub_comfyui_state.prompts[0]["prompt"]
+    assert dispatched_graph
+    assert any(
+        node.get("class_type") == "KSamplerAdvanced"
+        for node in dispatched_graph.values()
+    )
+    unet_names = {
+        node.get("inputs", {}).get("unet_name")
+        for node in dispatched_graph.values()
+        if node.get("class_type") == "UNETLoader"
+    }
+    assert unet_names == {
+        "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors",
+        "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors",
+    }
 
 
 def test_studio_profile_fails_closed_without_verified_hardware(

@@ -420,6 +420,7 @@ class EngineRunnerAdapter:
             "background_sha256",
             "atlas_resolved",
             "recipe_id",
+            "recipe_engine",
             "recipe_unresolved",
             "lease_vram_mb",
             "lease_ram_mb",
@@ -477,6 +478,46 @@ class EngineRunnerAdapter:
         cost_cap: float | None = None,
         cancel_event: Event | None = None,
     ) -> dict[str, Any]:
+        if job.get("recipe_unresolved"):
+            return {
+                "ok": False,
+                "engine": engine,
+                "error": f"receta sin resolver: {job['recipe_unresolved']}",
+            }
+        recipe_id = job.get("recipe_id")
+        if recipe_id:
+            from comfy_studio.av_recipes import recipe_by_id
+
+            recipe = recipe_by_id(str(recipe_id))
+            expected_template = job.get("template_id")
+            if recipe is None or not recipe.runtime_supported:
+                return {
+                    "ok": False,
+                    "engine": engine,
+                    "error": f"receta no implementada/verificada: {recipe_id!r}",
+                }
+            if (
+                engine != "comfyui"
+                or expected_template != recipe.template_id
+                or job.get("recipe_engine") != recipe.engine
+            ):
+                return {
+                    "ok": False,
+                    "engine": engine,
+                    "error": (
+                        f"receta {recipe_id!r} incompatible con adapter/plantilla/engine "
+                        f"({engine!r}, {expected_template!r}, {job.get('recipe_engine')!r})"
+                    ),
+                }
+            if job.get("graph"):
+                return {
+                    "ok": False,
+                    "engine": engine,
+                    "error": (
+                        "grafo prearmado no permitido para receta vinculada; "
+                        "el workflow debe renderizarse desde su plantilla verificada"
+                    ),
+                }
         impl = self._engines.get(engine)
         if impl is None:
             return {

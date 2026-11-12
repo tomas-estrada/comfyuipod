@@ -26,6 +26,11 @@ def test_catalog_lists_recipes_with_declared_limits() -> None:
         assert "NO medición" in r["est_vram_note"]
 
 
+def test_only_workflow_and_asset_verified_recipes_are_runtime_supported() -> None:
+    supported = {r["recipe_id"] for r in catalog() if r["runtime_supported"]}
+    assert supported == {"wan22_t2v_480p", "wan22_i2v_720p"}
+
+
 def test_recipes_for_capability_sorted_by_vram() -> None:
     t2v = recipes_for("video.text_to_video")
     assert len(t2v) >= 2
@@ -33,21 +38,33 @@ def test_recipes_for_capability_sorted_by_vram() -> None:
     assert vrams == sorted(vrams), "deben venir de menor a mayor VRAM"
 
 
-def test_selects_highest_fidelity_that_fits_the_budget() -> None:
-    """En 96 GB cabe la receta de mayor fidelidad (LTX 720p)."""
+def test_unimplemented_recipe_families_are_not_selectable() -> None:
+    """Large VRAM must not make a mismatched, unimplemented workflow runnable."""
     res = select_recipe(
         "video.text_to_video",
         width=1280,
         height=720,
-        frames=120,
+        frames=81,
+        vram_budget_mb=VRAM_96GB_USABLE,
+    )
+    assert res.selected is None
+    assert any(r["recipe"] == "ltx25_t2v_720p" for r in res.rejected)
+
+
+def test_selects_only_verified_wan_recipe_that_fits() -> None:
+    res = select_recipe(
+        "video.text_to_video",
+        width=832,
+        height=480,
+        frames=81,
         vram_budget_mb=VRAM_96GB_USABLE,
     )
     assert res.selected is not None
-    assert res.selected.recipe_id == "ltx25_t2v_720p"  # mayor VRAM viable
+    assert res.selected.recipe_id == "wan22_t2v_480p"
 
 
 def test_small_budget_falls_back_to_the_cheaper_recipe() -> None:
-    """Con 32 GB y 480p, LTX 720p no cabe por VRAM; se elige Wan 480p."""
+    """Con 32 GB y 480p, se elige el workflow Wan verificado."""
     res = select_recipe(
         "video.text_to_video",
         width=832,
@@ -57,7 +74,7 @@ def test_small_budget_falls_back_to_the_cheaper_recipe() -> None:
     )
     assert res.selected is not None
     assert res.selected.recipe_id == "wan22_t2v_480p"
-    # LTX quedó rechazada (por resolución o VRAM): visible en rejected.
+    # LTX no puede seleccionarse hasta que tenga su propio workflow y assets.
     assert any("ltx25" in r["recipe"] for r in res.rejected)
 
 
@@ -103,9 +120,18 @@ def test_prefer_honoured_when_viable() -> None:
 
 
 def test_upscale_recipes_target_4k() -> None:
-    ups = recipes_for("video.upscale")
-    assert ups, "debe haber recetas de finishing/upscale"
-    assert all(r.max_width >= 3840 for r in ups)
+    res = select_recipe(
+        "video.upscale",
+        width=3840,
+        height=2160,
+        frames=81,
+        vram_budget_mb=VRAM_96GB_USABLE,
+    )
+    assert res.selected is None
+    assert {r["recipe"] for r in res.rejected} == {
+        "seedvr2_upscale_4k",
+        "flashvsr_upscale_4k",
+    }
 
 
 def test_unknown_capability_returns_no_recipe_with_reason() -> None:
