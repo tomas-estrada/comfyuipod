@@ -8,11 +8,14 @@ shortlist rather than a claim to enumerate every related public repository.
 ## Method and scoring
 
 Repository discovery used the connected GitHub repository-search tool and
-parallel OpenCode Go `glm-5.3-flash` read-only agents. Agents used `gh search
-repos` plus GitHub's public repository API and raw README/license files. No
-repositories were cloned, installed, or modified. Searches covered ComfyUI MCP
-and workflows, Blender MCP/skills/headless automation, agent security/sandbox
-and tracing, video scene detection/quality evaluation, 3D validation, and
+parallel OpenCode Go `glm-5.3-flash` read-only agents. A follow-up dispatched
+four concurrent, non-overlapping domain searches for agent deployment and
+resource use, Blender/3D, ComfyUI workflows, and media pipelines. Agents
+inspected the pod first, then used GitHub public repository search/API and
+README/license files. No repositories were cloned, installed, or modified.
+Searches covered ComfyUI MCP and workflows, Blender MCP/skills/headless
+automation, agent security/sandbox and tracing, video scene detection/quality
+evaluation, 3D validation/optimization, context compression, deployment, and
 review-player UX.
 
 Each eligible candidate receives six evidence-informed ratings from 0–5:
@@ -48,7 +51,41 @@ Subscores are `fit / speed / novelty / impact / maintenance / security`.
 | 11 | [agentgateway/agentgateway](https://github.com/agentgateway/agentgateway) | 2 / 2 / 3 / 2 / 4 / 4 | **2.65** | MCP policy proxy may help if the pod starts connecting additional MCP servers. None are configured in `opencode.json`; introducing a gateway now solves no active runtime gap. |
 | 14 | [comet-ml/opik](https://github.com/comet-ml/opik) | 2 / 2 / 1 / 3 / 5 / 2 | **2.45** | Mature tracing/evaluation platform, but a full self-hosted deployment adds substantial services and overlaps durable `.agent-runs`/checkpoint evidence. Reconsider if trace-based evals become a specific acceptance requirement. |
 
+## Follow-up discovery: additional candidates
+
+This second pass uses the same six dimensions and formula above, and only adds
+repositories not already scored in the first shortlist. Repository metadata
+and `pushed_at` were checked against the linked GitHub API endpoints on
+2026-11-12. Scores are project-specific estimates, not benchmark results.
+
+| Rank among additions | Repository | Scores | Total | Incremental fit and disposition |
+|---:|---|---:|---:|---|
+| 1 | [zeux/meshoptimizer](https://github.com/zeux/meshoptimizer) · [metadata](https://api.github.com/repos/zeux/meshoptimizer) | 4.5 / 3.5 / 3.5 / 4 / 4.5 / 4.5 | **4.08** | MIT; pushed 2026-10-14. An optional GLB optimization stage can reduce asset size after validation. Start with a CPU fixture and preserve the original; compare byte size and geometry/material invariants. Estimated 1–3 days. |
+| 2 | [microsoft/LLMLingua](https://github.com/microsoft/LLMLingua) · [metadata](https://api.github.com/repos/microsoft/LLMLingua) | 3.5 / 3.5 / 3.5 / 3.5 / 4.5 / 3.5 | **3.65** | MIT; pushed 2026-11-09. Adds model-based prompt compression, but overlaps the existing memory/context work and is already in the proposal catalog. Benchmark only on representative sessions; preserve protected instructions and evidence verbatim, and measure quality, latency and memory. Do not enable globally. |
+| 3 | [WyattBlue/auto-editor](https://github.com/WyattBlue/auto-editor) · [metadata](https://api.github.com/repos/WyattBlue/auto-editor) | 3.5 / 4 / 3 / 3.8 / 4 / 3.5 | **3.65** | Unlicense; active 2026-11-12. A quick adapter could turn silence-based edits into a reviewable EDL. It overlaps FFmpeg/EDL and needs a reversible-import spike before any render path uses it. |
+| 4 | [modelcontextprotocol/python-sdk](https://github.com/modelcontextprotocol/python-sdk) · [metadata](https://api.github.com/repos/modelcontextprotocol/python-sdk) | 3.5 / 3.5 / 2.5 / 3.5 / 4.8 / 4 | **3.60** | Official MIT SDK; pushed 2026-11-05. Use for protocol-conformance tests against the custom local MCP endpoint first. Migrate only if those tests expose a concrete maintenance or interoperability gap; keep the existing auth, redaction and tool allowlist. |
+| 5 | [microsoft/TRELLIS.2](https://github.com/microsoft/TRELLIS.2) · [metadata](https://api.github.com/repos/microsoft/TRELLIS.2) | 4 / 1.5 / 4.5 / 5 / 3.5 / 2.5 | **3.50** | GitHub reports MIT and a 2026-07-10 push. New 3D-generation capability, but CUDA/model dependencies, memory profile, license terms for model artifacts, asset provenance and quality evaluation make this a later opt-in engine experiment rather than a fast MVP. |
+| 6 | [Comfy-Org/comfy-mcp](https://github.com/Comfy-Org/comfy-mcp) · [metadata](https://api.github.com/repos/Comfy-Org/comfy-mcp) | 4.5 / 2.5 / 1.5 / 4 / 4 / 2 | **3.25** | Useful as a feature benchmark for node/model discovery, workflow validation and queue lifecycle, but Studio already owns these seams. GitHub metadata has no SPDX identifier; the repository describes AGPL-3.0-or-later or a commercial license. Do not add a second server or copy code before license review. |
+| 7 | [dstackai/dstack](https://github.com/dstackai/dstack) · [metadata](https://api.github.com/repos/dstackai/dstack) | 2.5 / 2 / 3.5 / 4 / 4.5 / 3.5 | **3.18** | MPL-2.0; active 2026-11-12. Unified scheduling for GPU clouds, VMs and clusters could matter if deployment grows to multiple pods. It adds a control plane without solving today's single-pod dynamic-memory or Vast deployment gap. Defer until there is a multi-pod acceptance requirement. |
+
+The existing first-pass score for [Breakthrough/PySceneDetect](https://github.com/Breakthrough/PySceneDetect)
+remains unchanged; it is already in the first ranking and the proposal catalog.
+The follow-up verified its source was pushed on 2026-11-10, but did not find
+evidence that it is integrated in the active FFmpeg keyframe path. Compare it on
+a labeled CPU fixture before deciding whether its additional dependency is
+worth keeping.
+
 ## Excluded or deferred
+
+Other near matches were not promoted: `SYSTRAN/faster-whisper` is already part
+of the Studio ASR design; `ggml-org/whisper.cpp` is a possible CPU fallback but
+duplicates the existing transcription chain; `Tencent-Hunyuan/Hunyuan3D-2.1`
+overlaps the opt-in Hunyuan path and GitHub reports no SPDX license and an older
+2025-10-17 push; `shaka-packager` adds HLS/DASH packaging beyond the current
+single-file delivery path and has no SPDX identifier; `BAVC/qctools` is a
+desktop-oriented QC application with missing SPDX metadata; and
+`URUWorks/TeroSubtitler` is an active MPL-2.0 desktop editor that overlaps
+Studio's subtitle editing/export rather than adding a clear headless operation.
 
 - [LingyiChen-AI/comfyui-workflow-skill](https://github.com/LingyiChen-AI/comfyui-workflow-skill): README advertises 360+ node definitions, but no license was declared and its automatic model downloads conflict with the manifest-gated acquisition policy. Do not vendor it. Existing `LangGraph`, curated templates, and graph validation reduce the novelty of its natural-language planner.
 - [ahujasid/mcp-for-blender](https://github.com/ahujasid/mcp-for-blender) and [Blender Foundation MCP](https://projects.blender.org/lab/blender_mcp): useful feature maps, but both expose Blender's Python API to model-written actions. That crosses the repo's no-arbitrary-code boundary; keep typed, allowlisted operations in the existing subprocess runner.
@@ -66,6 +103,10 @@ GPU requirement. The selection is a prioritization signal, not proof that the
 binary, license, or resource profile is already acceptable. Next implementation
 must verify the exact release/license, immutable artifact pin, bounded subprocess
 behavior, and malformed/valid GLB fixtures before changing the C09 evidence.
+A separate follow-up choice call also selected glTF-Validator (reported option
+probability 0.776, confidence 0.732). That result included unrelated citations,
+so it is only a consistency check; the ranking remains based on the explicit
+weighted rubric and direct repository metadata.
 
 ## Evidence boundary
 
