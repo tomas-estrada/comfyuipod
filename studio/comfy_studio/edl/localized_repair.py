@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import math
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -310,6 +312,16 @@ def build_localized_repair_video(
 
     with tempfile.TemporaryDirectory(prefix="comfy_localized_repair_") as tmp_str:
         tmp = Path(tmp_str)
+        yuv420_frame_bytes = w * h + 2 * ((w + 1) // 2) * ((h + 1) // 2)
+        lossless_workspace_estimate = math.ceil(
+            yuv420_frame_bytes * int(fps) * duration * 2.25 + MAX_LOCALIZED_OUTPUT_BYTES
+        )
+        available_bytes = shutil.disk_usage(tmp).free
+        if available_bytes < lossless_workspace_estimate:
+            raise LocalizedRepairError(
+                "Espacio temporal insuficiente para preparar una asamblea sin pérdida: "
+                f"disponibles={available_bytes}, estimados={lossless_workspace_estimate} bytes."
+            )
         segs = []
         if head_dur > 1e-3:
             head_path = tmp / "head.mkv"
@@ -353,41 +365,6 @@ def build_localized_repair_video(
             )
             segs.append(tail_path)
 
-        assembled = tmp / "assembled.mkv"
-        if len(segs) == 1:
-            import shutil as _shutil
-
-            _shutil.copyfile(segs[0], assembled)
-        else:
-            concat_list = tmp / "concat.txt"
-            concat_list.write_text(
-                "\n".join(f"file '{p.as_posix()}'" for p in segs) + "\n", encoding="utf-8"
-            )
-            cmd = [
-                ffmpeg_bin,
-                "-y",
-                "-v",
-                "error",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_list),
-                "-c",
-                "copy",
-                "-movflags",
-                "+faststart",
-                str(assembled),
-            ]
-            try:
-                proc = _run(cmd, ffmpeg_timeout_s)
-            except subprocess.TimeoutExpired as exc:
-                raise LocalizedRepairError("ffmpeg excedio el timeout concatenando.") from exc
-            if proc.returncode != 0 or not assembled.is_file():
-                err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
-                raise LocalizedRepairError(f"Error de ffmpeg concatenando: {err}")
-
         head_hashes = (
             _frame_hashes(
                 head_path,
@@ -411,6 +388,45 @@ def build_localized_repair_video(
             if tail_dur > 1e-3
             else []
         )
+
+        assembled = tmp / "assembled.mkv"
+        if len(segs) == 1:
+            shutil.copyfile(segs[0], assembled)
+        else:
+            concat_list = tmp / "concat.txt"
+            concat_list.write_text(
+                "\n".join(f"file '{p.as_posix()}'" for p in segs) + "\n", encoding="utf-8"
+            )
+            cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(assembled),
+            ]
+            try:
+                proc = _run(
+                    cmd,
+                    cut_subprocess_timeout(duration, base_s=ffmpeg_timeout_s),
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise LocalizedRepairError("ffmpeg excedio el timeout concatenando.") from exc
+            if proc.returncode != 0 or not assembled.is_file():
+                err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+                raise LocalizedRepairError(f"Error de ffmpeg concatenando: {err}")
+        for segment_path in segs:
+            if segment_path != assembled:
+                segment_path.unlink(missing_ok=True)
         assembled_hashes = _frame_hashes(
             assembled,
             ffmpeg_bin=ffmpeg_bin,
@@ -455,7 +471,10 @@ def build_localized_repair_video(
             str(out),
         ]
         try:
-            proc = _run(remux, ffmpeg_timeout_s)
+            proc = _run(
+                remux,
+                cut_subprocess_timeout(duration, base_s=ffmpeg_timeout_s),
+            )
         except subprocess.TimeoutExpired as exc:
             raise LocalizedRepairError("ffmpeg excedió el timeout remuxeando el audio.") from exc
         if proc.returncode != 0 or not out.is_file():

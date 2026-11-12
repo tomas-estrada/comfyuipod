@@ -253,6 +253,25 @@ def test_replacement_duration_must_match_interval(tmp_path):
         build_localized_repair_video(src, repl, out, edit_start_sec=2.0, edit_end_sec=4.0)
 
 
+def test_localized_repair_checks_dynamic_temp_disk_space(tmp_path, monkeypatch):
+    from importlib import import_module
+    from types import SimpleNamespace
+
+    repair_module = import_module("comfy_studio.edl.localized_repair")
+    src = tmp_path / "src.mp4"
+    repl = tmp_path / "repl.mp4"
+    out = tmp_path / "out.mp4"
+    _make_video(src, 4.0, "red")
+    _make_video(repl, 1.0, "blue")
+    monkeypatch.setattr(
+        repair_module.shutil, "disk_usage", lambda _path: SimpleNamespace(free=0)
+    )
+
+    with pytest.raises(LocalizedRepairError, match="Espacio temporal insuficiente"):
+        build_localized_repair_video(src, repl, out, edit_start_sec=1.0, edit_end_sec=2.0)
+    assert not out.exists()
+
+
 def test_localized_repair_tool_registered():
     from comfy_studio.agent.tools import create_default_tool_belt
 
