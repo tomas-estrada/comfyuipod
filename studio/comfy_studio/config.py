@@ -39,6 +39,8 @@ DEFAULT_STUDIO_RECOVERY_DRAIN_S = 10.0
 # lo que hacía fallar cualquier EDL con clips largos. Ahora son configurables.
 DEFAULT_STUDIO_FFMPEG_TIMEOUT_S = 60.0
 DEFAULT_STUDIO_FFPROBE_TIMEOUT_S = 20.0
+DEFAULT_STUDIO_INGEST_MAX_ASSETS = 1000
+DEFAULT_STUDIO_INGEST_MAX_TOTAL_BYTES = 10 * 1024 * 1024 * 1024
 # M7-SCR-001: techo de renders en segundo plano ejecutándose a la vez contra ComfyUI
 # (ComfyUI serializa la ejecución, pero cada tarea en vuelo retiene su sondeo WS/poll).
 DEFAULT_MAX_CONCURRENT_RENDERS = 2
@@ -513,6 +515,8 @@ class StudioConfig:
     studio_reconcile_interval_s: float = 30.0
     studio_ffmpeg_timeout_s: float = DEFAULT_STUDIO_FFMPEG_TIMEOUT_S
     studio_ffprobe_timeout_s: float = DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
+    studio_ingest_max_assets: int = DEFAULT_STUDIO_INGEST_MAX_ASSETS
+    studio_ingest_max_total_bytes: int = DEFAULT_STUDIO_INGEST_MAX_TOTAL_BYTES
     max_concurrent_renders: int = DEFAULT_MAX_CONCURRENT_RENDERS
     # Política (puntos 3 y 5): descargar modelos de VRAM cuando no queda trabajo.
     unload_models_when_idle: bool = True
@@ -710,6 +714,12 @@ class StudioConfig:
             studio_ffprobe_timeout_s=_positive_float(
                 "STUDIO_FFPROBE_TIMEOUT_S", DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
             ),
+            studio_ingest_max_assets=_positive_int(
+                "STUDIO_INGEST_MAX_ASSETS", DEFAULT_STUDIO_INGEST_MAX_ASSETS
+            ),
+            studio_ingest_max_total_bytes=_positive_int(
+                "STUDIO_INGEST_MAX_TOTAL_BYTES", DEFAULT_STUDIO_INGEST_MAX_TOTAL_BYTES
+            ),
             max_concurrent_renders=_positive_int(
                 "STUDIO_MAX_CONCURRENT_RENDERS", DEFAULT_MAX_CONCURRENT_RENDERS
             ),
@@ -866,6 +876,8 @@ class StudioConfig:
             "STUDIO_RECOVERY_DRAIN_S": str(self.studio_recovery_drain_s),
             "STUDIO_FFMPEG_TIMEOUT_S": str(self.studio_ffmpeg_timeout_s),
             "STUDIO_FFPROBE_TIMEOUT_S": str(self.studio_ffprobe_timeout_s),
+            "STUDIO_INGEST_MAX_ASSETS": str(self.studio_ingest_max_assets),
+            "STUDIO_INGEST_MAX_TOTAL_BYTES": str(self.studio_ingest_max_total_bytes),
             "STUDIO_MAX_CONCURRENT_RENDERS": str(self.max_concurrent_renders),
             "STUDIO_UNLOAD_WHEN_IDLE": "1" if self.unload_models_when_idle else "0",
             "STUDIO_HARDWARE_PROFILE": str(self.hardware_profile_name),

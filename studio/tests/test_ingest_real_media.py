@@ -12,7 +12,7 @@ import pytest
 
 from comfy_studio.ingest import AssetStatus, ingest_assets
 from comfy_studio.media_bins import find_ffmpeg, find_ffprobe
-from comfy_studio.perception.keyframes import _make_solid_png
+from comfy_studio.perception.keyframes import _make_solid_png, probe_media_info
 
 
 def _make_video(path: Path, color: str, *, mobile_vfr: bool = False) -> Path:
@@ -155,9 +155,37 @@ def test_hundred_real_mixed_files_probe_dedup_and_isolate_corruption(
     stream = next(item for item in mobile.media_info["streams"] if item["codec_type"] == "video")
     assert stream["avg_frame_rate"] != stream["r_frame_rate"]
     assert stream["start_time"] == "0.500000"
+    assert stream["time_base"]
     assert stream["side_data_list"][0]["rotation"] == 90
     assert mobile.transforms["observed_rotation_degrees"] == 90
     assert mobile.transforms["frame_rate_relation"] == "different_rates_possible_vfr"
+    probe = probe_media_info(mobile.source_path)
+    assert probe["rotation_degrees"] == 90
+    assert (probe["source_width"], probe["source_height"]) == (48, 32)
+    assert (probe["width"], probe["height"]) == (32, 48)
+    # FFmpeg's default autorotation turns the encoded 48x32 frame into a 32x48
+    # display frame; the ingest metadata retains the unmodified source geometry.
+    rendered = subprocess.run(
+        [
+            find_ffmpeg(),
+            "-v",
+            "error",
+            "-i",
+            mobile.source_path,
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=15,
+    ).stdout
+    assert rendered[:8] == b"\x89PNG\r\n\x1a\n"
+    assert struct.unpack(">II", rendered[16:24]) == (32, 48)
     for segment in mobile.segments:
         assert segment["source_asset_id"] == mobile.asset_id
         assert segment["source_path"] == mobile.source_path
@@ -183,4 +211,54 @@ def test_duplicate_reference_is_a_valid_ffprobe_media_file(
     duplicate = report.by_status(AssetStatus.DUPLICATE)
     assert len(duplicate) == 1
     assert duplicate[0].duplicate_of
+
+
+def test_ingest_configurable_asset_and_byte_limits_are_not_a_100_item_cap(
+    mixed_real_media_corpus: list[Path],
+) -> None:
+    # A caller can deliberately request more than the A08 fixture size.
+    report = ingest_assets(
+        mixed_real_media_corpus,
+        weights_available=False,
+        verify_media=True,
+        max_assets=120,
+        max_total_bytes=1_000_000,
+    )
+    assert len(report.assets) == 100
+    assert report.omitted_assets == 0
+    assert report.counts()["pending_weights"] == 98
+
+    bounded = ingest_assets(
+        mixed_real_media_corpus,
+        weights_available=False,
+        verify_media=True,
+        max_assets=10,
+        max_total_bytes=100_000,
+    )
+    assert len(bounded.assets) == 10
+    assert bounded.omitted_assets == 90
+    assert bounded.counts()["limit_exceeded"] == 90
+
+
+def test_ingest_byte_limit_skips_oversize_asset_and_continues(
+    tmp_path: Path,
+) -> None:
+    small = _make_wav(tmp_path / "small.wav", 440)
+    large = tmp_path / "large.wav"
+    large.write_bytes(b"large" * 1000)
+    later = _make_wav(tmp_path / "later.wav", 880)
+
+    report = ingest_assets(
+        [small, large, later],
+        weights_available=False,
+        max_total_bytes=small.stat().st_size + later.stat().st_size,
+    )
+
+    assert [asset.source_path for asset in report.assets] == [
+        str(small),
+        str(large),
+        str(later),
+    ]
+    assert report.counts() == {"pending_weights": 2, "limit_exceeded": 1}
+    assert report.assets[1].error == "asset exceeds configured ingest byte budget"
 

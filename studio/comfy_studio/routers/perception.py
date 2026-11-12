@@ -169,6 +169,8 @@ def register_routes(app: FastAPI) -> None:
                 weights_available=is_real_backend(),
                 verify_media=True,
                 ffprobe_timeout_s=request.app.state.config.studio_ffprobe_timeout_s,
+                max_assets=request.app.state.config.studio_ingest_max_assets,
+                max_total_bytes=request.app.state.config.studio_ingest_max_total_bytes,
             )
             canonical_by_sha: dict[str, str] = {}
             for item in ingest_report.assets:
@@ -191,11 +193,16 @@ def register_routes(app: FastAPI) -> None:
                     if item.status is AssetStatus.DUPLICATE
                     else candidate["id"]
                 )
+                segments = [
+                    {**segment, "source_asset_id": candidate["id"]}
+                    for segment in item.segments
+                ]
                 record = {
                     "status": str(item.status),
                     "content_sha256": item.content_sha256,
                     "duplicate_of": canonical_id if item.status is AssetStatus.DUPLICATE else None,
-                    "segments": item.segments,
+                    "transforms": item.transforms,
+                    "segments": segments,
                     "media_info": item.media_info,
                     "media_validation": (
                         "verified"
@@ -232,6 +239,7 @@ def register_routes(app: FastAPI) -> None:
             )
             ingestion = {
                 "counts": ingest_report.counts(),
+                "omitted_assets": ingest_report.omitted_assets,
                 "assets": ingest_items,
             }
 
