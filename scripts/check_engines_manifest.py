@@ -86,6 +86,43 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _implementation_evidence_blocker(
+    engine_id: str,
+    label: str,
+    value: Any,
+    *,
+    repo_root: Path,
+    tracked_paths: set[str] | None,
+    require_git_tracked: bool,
+) -> str | None:
+    """Require implementation evidence to be a real, tracked repository file."""
+    if not isinstance(value, str) or not value.strip():
+        return f"{engine_id}: A07 requiere evidence_{label} (ruta de archivo versionada)"
+    relative_path = Path(value)
+    if relative_path.is_absolute():
+        return f"{engine_id}: evidence_{label} {value} fuera de la raíz del repositorio"
+    try:
+        resolved_path = (repo_root / relative_path).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return f"{engine_id}: evidence_{label} {value} no existe o tiene una ruta inválida"
+    if not resolved_path.is_relative_to(repo_root):
+        return f"{engine_id}: evidence_{label} {value} fuera de la raíz del repositorio"
+    if not resolved_path.is_file():
+        return f"{engine_id}: evidence_{label} {value} no es un archivo"
+    if require_git_tracked:
+        if tracked_paths is None:
+            return (
+                f"{engine_id}: no se pudo comprobar el versionado Git de "
+                f"evidence_{label} {value}"
+            )
+        if value not in tracked_paths:
+            return f"{engine_id}: evidence_{label} {value} no está versionado"
+        resolved_name = resolved_path.relative_to(repo_root).as_posix()
+        if resolved_name not in tracked_paths:
+            return f"{engine_id}: target de evidence_{label} {resolved_name} no está versionado"
+    return None
+
+
 def _git_tracked_paths(repo_root: Path) -> set[str] | None:
     try:
         result = subprocess.run(
@@ -232,6 +269,18 @@ def validate(
                 blockers.append(
                     f"{eid}: adapter/entrypoint real aún no está declarado implementado"
                 )
+            else:
+                for field_name in ("entrypoint", "test"):
+                    evidence_blocker = _implementation_evidence_blocker(
+                        eid,
+                        field_name,
+                        eng.get(f"evidence_{field_name}"),
+                        repo_root=evidence_root,
+                        tracked_paths=tracked_paths,
+                        require_git_tracked=require_git_tracked,
+                    )
+                    if evidence_blocker:
+                        blockers.append(evidence_blocker)
 
         # 5. excluded / reference_only no se hornean.
         if dispo in {"excluded", "reference_only"} and selected:

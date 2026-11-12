@@ -39,10 +39,13 @@ La misión contiene 34 objetivos funcionales, 14 programas y 30 opciones adicion
 Para que una ruta marcada `build_selected` cuente como preparada para A07,
 `scripts/check_engines_manifest.py` reporta como bloqueos los SHA de código
 inmutables, hashes SHA-256 de locks, decisión explícita de redistribución,
-revisión de notices y estado de implementación del adapter. Ese informe evalúa
-declaraciones del manifiesto; inventario de la imagen, boot offline y probes de
-runtime requieren evidencia separada de CI. Un manifiesto coherente no implica
-que el release esté listo.
+revisión de notices, estado de implementación del adapter y rutas versionadas
+de evidencia para su entrypoint y prueba. El checker verifica que esas rutas
+existan dentro del repositorio y estén versionadas; la revisión humana confirma
+que demuestran el comportamiento reclamado. Ese informe evalúa declaraciones
+del manifiesto; inventario de la imagen, boot offline y probes de runtime
+requieren evidencia separada de CI. Un manifiesto coherente no implica que el
+release esté listo.
 
 ## Reglas de lectura y ejecución
 

@@ -242,6 +242,8 @@
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
       "implementation_status": "implemented",
+      "evidence_entrypoint": "studio/comfy_studio/engines/blender.py",
+      "evidence_test": "studio/tests/test_m4_blender_engine.py",
       "upstream_url": "https://projects.blender.org/blender/blender",
       "binary_artifact_url": "https://download.blender.org/release/Blender5.2/blender-5.2.4-linux-x64.tar.xz",
       "binary_artifact_sha256": "2fd14c50987426897ba60237ee996edf2b4151f4b1a72a460ca20be58c1d2d86",
@@ -1681,6 +1683,7 @@
       "upstream_url": "https://github.com/mitsuba-renderer/mitsuba3",
       "dependency_packages": ["mitsuba==3.9.1", "drjit==1.5.0", "typing_extensions==4.15.0"],
       "evidence_entrypoint": "scripts/smoke_mitsuba_cpu_fit.py",
+      "evidence_test": "scripts/smoke_mitsuba_cpu_fit.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },

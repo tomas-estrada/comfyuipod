@@ -141,9 +141,24 @@ def test_a07_accepts_only_complete_declared_component_pins(tmp_path: Path) -> No
     mod = _load_module()
     lock_path = tmp_path / "requirements.lock"
     lock_path.write_text("package==1.2.3 --hash=sha256:abc\n", encoding="utf-8")
+    entrypoint_path = tmp_path / "src" / "engine.py"
+    entrypoint_path.parent.mkdir()
+    entrypoint_path.write_text("def run(): return True\n", encoding="utf-8")
+    test_path = tmp_path / "tests" / "test_engine.py"
+    test_path.parent.mkdir()
+    test_path.write_text("def test_run(): assert True\n", encoding="utf-8")
     subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
     subprocess.run(
-        ["git", "-C", str(tmp_path), "add", "requirements.lock"], check=True
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "add",
+            "requirements.lock",
+            "src/engine.py",
+            "tests/test_engine.py",
+        ],
+        check=True,
     )
     manifest = {
         "engines": [
@@ -160,6 +175,8 @@ def test_a07_accepts_only_complete_declared_component_pins(tmp_path: Path) -> No
                 "redistribution_decision": "allowed",
                 "notices_reviewed": True,
                 "implementation_status": "implemented",
+                "evidence_entrypoint": "src/engine.py",
+                "evidence_test": "tests/test_engine.py",
             }
         ]
     }
@@ -168,6 +185,50 @@ def test_a07_accepts_only_complete_declared_component_pins(tmp_path: Path) -> No
     )
     assert problems == []
     assert blockers == []
+
+
+def test_a07_blocks_implemented_engine_without_tracked_entrypoint_and_test(
+    tmp_path: Path,
+) -> None:
+    mod = _load_module()
+    lock_path = tmp_path / "requirements.lock"
+    lock_path.write_text("package==1.2.3 --hash=sha256:abc\n", encoding="utf-8")
+    entrypoint_path = tmp_path / "src" / "engine.py"
+    entrypoint_path.parent.mkdir()
+    entrypoint_path.write_text("def run(): return True\n", encoding="utf-8")
+    test_path = tmp_path / "tests" / "test_engine.py"
+    test_path.parent.mkdir()
+    test_path.write_text("def test_run(): assert True\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "requirements.lock"], check=True)
+    manifest = {
+        "engines": [
+            {
+                "id": "engine",
+                "disposition": "required",
+                "build_selected": True,
+                "terms_review": "reviewed",
+                "lock_required_before_build": True,
+                "code_revision": "a" * 40,
+                "dependency_lock_hashes": {
+                    "requirements.lock": hashlib.sha256(lock_path.read_bytes()).hexdigest()
+                },
+                "redistribution_decision": "allowed",
+                "notices_reviewed": True,
+                "implementation_status": "implemented",
+                "evidence_entrypoint": "src/engine.py",
+                "evidence_test": "tests/test_engine.py",
+            }
+        ]
+    }
+
+    problems, blockers = mod.validate(
+        manifest, set(), repo_root=tmp_path, require_git_tracked=True
+    )
+
+    assert problems == []
+    assert any("entrypoint src/engine.py no está versionado" in item for item in blockers)
+    assert any("test tests/test_engine.py no está versionado" in item for item in blockers)
 
 
 def test_a07_blocks_untracked_lock_file(tmp_path: Path) -> None:
