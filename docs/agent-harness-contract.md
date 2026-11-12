@@ -39,6 +39,7 @@ evidence must be checkpointed outside model context.
 | Runtime | Tool enforcement | Shared budgets | Context compaction | Durable evidence |
 | --- | --- | --- | --- | --- |
 | Studio | Tool allowlist checked in dispatch | LLM calls, iterations, wall/cancel checks at loop boundaries | Bounds messages before model calls | Project-scoped run store |
+| Codex CLI/Desktop | `.codex/hooks.json` creates primary/child records, injects contracts, and denies unlisted local tools at `PreToolUse`; child tools intersect the parent's allowlist | Shared local tool and wall budgets enforced at dispatch; model-request limits are advisory because Codex model hooks cannot block | Codex owns automatic model-aware compaction; pre/post hooks persist checkpoint guidance | `.agent-runs/<run-id>/run.json` and `checkpoint.md` |
 | OpenCode | Plugin filters request tools and rejects unlisted tool dispatch; only `harnessed-builder` can be spawned | Shared LLM/tool budgets; 12-step agent cap; wall time checked at tool/model boundaries | Native automatic compaction uses the selected model's context window and 20% reserve; compaction keeps checkpoint guidance | `.agent-runs/<run-id>/run.json` and `checkpoint.md` |
 | Command Code | Mod filters primary tools; native child profile limits the child tool set and four turns | Primary LLM/tool budgets and wall time enforced at loop boundaries; child turns are capped by the runtime profile, while child tool calls/tokens are observed after dispatch and cannot be interrupted by the parent mod | Primary mod compacts at 75% of its measured model window; native children use the host's configured compaction policy, but their context window is not exposed to the parent mod | Parent and each child have separate durable run records; child tool-call/token evidence is collected from native subagent lifecycle events |
 | Kilo | Plugin rejects unlisted tools at dispatch; if task delegation is exposed, it targets registered project profiles and child tool sets intersect the parent's | Shared LLM/tool call and wall-time budgets enforced at model/tool boundaries; child depth is capped at three | Native auto-compaction is configured at 75% of the selected model's available context window; the plugin preserves checkpoint guidance | `.agent-runs/<run-id>/run.json` and `checkpoint.md` for each session |
@@ -53,6 +54,29 @@ covered. A runtime that bypasses its repository plugin/mod/adapter is an
 untracked run and does not satisfy this repository's harness requirement.
 Runtime hooks cannot interrupt a provider request already in flight; those
 time limits are enforced at the next safe boundary.
+
+Codex project hooks are defined in `.codex/hooks.json` and use the shared
+`scripts/codex_agent_harness.py` adapter. Codex requires a person to review and
+trust the project hooks before they run; changed hook definitions require a
+new review. Until trusted, the Codex adapter is **not active** and Codex is an
+unsupported runtime for repository work. The synchronous `PreToolUse` hook
+fails closed for local tool calls when no run is registered, denies unlisted
+tools, enforces shared local tool/wall budgets, and records secret-free
+evidence. Codex's hosted tools bypass the local hook path, and model-request
+hooks cannot deny a model call, so those controls remain advisory; do not count
+such runs as fully harness-enforced. Subagent start hooks inject the child
+contract and the child's first local tool call is denied if its run mapping was
+not created. Automatic compaction remains owned by Codex and is checkpointed
+before/after through native hooks. Codex's `SubagentStart` event omits the child
+prompt, so the child record labels its task hash as role-only rather than
+claiming prompt-level provenance. Review and trust these hooks in the Codex
+desktop's Settings → Hooks or CLI `/hooks` view; see the [Codex hook reference](https://developers.openai.com/codex/hooks).
+
+This is a runtime-by-runtime integration contract, not a claim that arbitrary
+agents can be controlled from one universal wrapper. A runtime must either
+intercept its actual model/tool/child dispatch or be marked unsupported. If a
+runtime allows an agent to bypass its adapter, that run is outside the
+repository's harness guarantee.
 
 Kilo's `.kilo/plugin/agent-harness.ts` is auto-loaded for project CLI and editor
 sessions. It creates a record and injects the run contract before the first
