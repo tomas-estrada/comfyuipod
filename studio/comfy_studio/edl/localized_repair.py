@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -112,9 +115,9 @@ def _normalize_segment(
         "-vf",
         vf,
         "-c:v",
-        "libx264",
-        "-preset",
-        "ultrafast",
+        "ffv1",
+        "-level",
+        "3",
         "-pix_fmt",
         "yuv420p",
         "-an",
@@ -127,6 +130,109 @@ def _normalize_segment(
     if proc.returncode != 0 or not Path(out).is_file():
         err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
         raise LocalizedRepairError(f"Error de ffmpeg normalizando segmento: {err}")
+
+
+def _frame_hashes(path, *, ffmpeg_bin, timeout_s):
+    """Hash every decoded RGB frame without retaining raw frames in memory."""
+    with tempfile.TemporaryFile(mode="w+b") as rows_file:
+        cmd = [
+            ffmpeg_bin,
+            "-hide_banner",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-fps_mode",
+            "passthrough",
+            "-c:v",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-f",
+            "framehash",
+            "-hash",
+            "sha256",
+            "pipe:1",
+        ]
+        try:
+            proc = subprocess.run(
+                cmd, check=False, stdout=rows_file, stderr=subprocess.PIPE, timeout=timeout_s
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise LocalizedRepairError(
+                "ffmpeg excedio el timeout calculando hashes de fotogramas."
+            ) from exc
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+            raise LocalizedRepairError(f"Error de ffmpeg calculando hashes: {err}")
+        rows_file.seek(0)
+        hashes = []
+        for raw_line in rows_file:
+            line = raw_line.decode("ascii", errors="ignore").strip()
+            if not line or line.startswith("#"):
+                continue
+            fields = [part.strip() for part in line.split(",")]
+            if len(fields) < 6 or fields[0] != "0":
+                raise LocalizedRepairError("ffmpeg devolvio una fila framehash invalida.")
+            digest = fields[-1].lower()
+            if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+                raise LocalizedRepairError("ffmpeg devolvio un SHA-256 de fotograma invalido.")
+            hashes.append(bytes.fromhex(digest))
+        if not hashes:
+            raise LocalizedRepairError("No se pudieron leer hashes de fotogramas.")
+        return hashes
+
+
+def _ordered_hash_digest(hashes):
+    digest = hashlib.sha256()
+    for frame_hash in hashes:
+        digest.update(frame_hash)
+    return digest.hexdigest()
+
+
+def _compare_unchanged_frames(
+    head_hashes, replacement_frame_count, tail_hashes, assembled_hashes
+):
+    head_count = len(head_hashes)
+    tail_count = len(tail_hashes)
+    expected_count = head_count + replacement_frame_count + tail_count
+    if len(assembled_hashes) != expected_count:
+        return {
+            "provenance_ok": False,
+            "head_frame_count": head_count,
+            "unchanged_frame_count": head_count + tail_count,
+            "replacement_frame_count": replacement_frame_count,
+            "tail_frame_count": tail_count,
+            "assembled_frame_count": len(assembled_hashes),
+            "expected_assembled_frame_count": expected_count,
+            "head_hashes_match": False,
+            "tail_hashes_match": False,
+        }
+    actual_head = assembled_hashes[:head_count]
+    tail_start = head_count + replacement_frame_count
+    actual_tail = assembled_hashes[tail_start:]
+    head_ok = actual_head == head_hashes
+    tail_ok = actual_tail == tail_hashes
+    return {
+        "provenance_ok": head_ok and tail_ok,
+        "head_frame_count": head_count,
+        "unchanged_frame_count": head_count + tail_count,
+        "replacement_frame_count": replacement_frame_count,
+        "tail_frame_count": tail_count,
+        "assembled_frame_count": len(assembled_hashes),
+        "expected_assembled_frame_count": expected_count,
+        "head_hashes_match": head_ok,
+        "tail_hashes_match": tail_ok,
+        "head_expected_sha256": _ordered_hash_digest(head_hashes),
+        "head_assembled_sha256": _ordered_hash_digest(actual_head),
+        "tail_expected_sha256": _ordered_hash_digest(tail_hashes),
+        "tail_assembled_sha256": _ordered_hash_digest(actual_tail),
+        "comparison": "sha256_per_frame_pre_final_encode",
+        "byte_identity_claimed": False,
+        "lossy_final_encode": True,
+    }
 
 
 def _resolve_replacement_path(
@@ -208,9 +314,19 @@ def build_localized_repair_video(
 
     with tempfile.TemporaryDirectory(prefix="comfy_localized_repair_") as tmp_str:
         tmp = Path(tmp_str)
+        yuv420_frame_bytes = w * h + 2 * ((w + 1) // 2) * ((h + 1) // 2)
+        lossless_workspace_estimate = math.ceil(
+            yuv420_frame_bytes * int(fps) * duration * 2.25 + MAX_LOCALIZED_OUTPUT_BYTES
+        )
+        available_bytes = shutil.disk_usage(tmp).free
+        if available_bytes < lossless_workspace_estimate:
+            raise LocalizedRepairError(
+                "Espacio temporal insuficiente para preparar una asamblea sin pérdida: "
+                f"disponibles={available_bytes}, estimados={lossless_workspace_estimate} bytes."
+            )
         segs = []
         if head_dur > 1e-3:
-            head_path = tmp / "head.mp4"
+            head_path = tmp / "head.mkv"
             _normalize_segment(
                 ffmpeg_bin,
                 src,
@@ -223,7 +339,7 @@ def build_localized_repair_video(
                 timeout_s=ffmpeg_timeout_s,
             )
             segs.append(head_path)
-        repl_path = tmp / "repl.mp4"
+        repl_path = tmp / "repl.mkv"
         _normalize_segment(
             ffmpeg_bin,
             repl,
@@ -237,7 +353,7 @@ def build_localized_repair_video(
         )
         segs.append(repl_path)
         if tail_dur > 1e-3:
-            tail_path = tmp / "tail.mp4"
+            tail_path = tmp / "tail.mkv"
             _normalize_segment(
                 ffmpeg_bin,
                 src,
@@ -251,11 +367,33 @@ def build_localized_repair_video(
             )
             segs.append(tail_path)
 
-        assembled = tmp / "assembled.mp4"
-        if len(segs) == 1:
-            import shutil as _shutil
+        head_hashes = (
+            _frame_hashes(
+                head_path,
+                ffmpeg_bin=ffmpeg_bin,
+                timeout_s=cut_subprocess_timeout(head_dur, base_s=ffmpeg_timeout_s),
+            )
+            if head_dur > 1e-3
+            else []
+        )
+        replacement_hashes = _frame_hashes(
+            repl_path,
+            ffmpeg_bin=ffmpeg_bin,
+            timeout_s=cut_subprocess_timeout(repl_duration, base_s=ffmpeg_timeout_s),
+        )
+        tail_hashes = (
+            _frame_hashes(
+                tail_path,
+                ffmpeg_bin=ffmpeg_bin,
+                timeout_s=cut_subprocess_timeout(tail_dur, base_s=ffmpeg_timeout_s),
+            )
+            if tail_dur > 1e-3
+            else []
+        )
 
-            _shutil.copyfile(segs[0], assembled)
+        assembled = tmp / "assembled.mkv"
+        if len(segs) == 1:
+            shutil.copyfile(segs[0], assembled)
         else:
             concat_list = tmp / "concat.txt"
             concat_list.write_text(
@@ -279,12 +417,31 @@ def build_localized_repair_video(
                 str(assembled),
             ]
             try:
-                proc = _run(cmd, ffmpeg_timeout_s)
+                proc = _run(
+                    cmd,
+                    cut_subprocess_timeout(duration, base_s=ffmpeg_timeout_s),
+                )
             except subprocess.TimeoutExpired as exc:
                 raise LocalizedRepairError("ffmpeg excedio el timeout concatenando.") from exc
             if proc.returncode != 0 or not assembled.is_file():
                 err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
                 raise LocalizedRepairError(f"Error de ffmpeg concatenando: {err}")
+        for segment_path in segs:
+            if segment_path != assembled:
+                segment_path.unlink(missing_ok=True)
+        assembled_hashes = _frame_hashes(
+            assembled,
+            ffmpeg_bin=ffmpeg_bin,
+            timeout_s=cut_subprocess_timeout(duration, base_s=ffmpeg_timeout_s),
+        )
+        frame_provenance = _compare_unchanged_frames(
+            head_hashes, len(replacement_hashes), tail_hashes, assembled_hashes
+        )
+        if not frame_provenance["provenance_ok"]:
+            raise LocalizedRepairError(
+                "Los hashes SHA-256 de los fotogramas sin editar no coinciden en la asamblea "
+                "sin pérdida previa al encode final."
+            )
 
         # Mantener las pistas de audio originales en toda la duración del video.
         # El mapa opcional permite fuentes que no tienen audio.
@@ -302,7 +459,11 @@ def build_localized_repair_video(
             "-map",
             "1:a?",
             "-c:v",
-            "copy",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
             "-c:a",
             "aac",
             "-t",
@@ -312,7 +473,10 @@ def build_localized_repair_video(
             str(out),
         ]
         try:
-            proc = _run(remux, ffmpeg_timeout_s)
+            proc = _run(
+                remux,
+                cut_subprocess_timeout(duration, base_s=ffmpeg_timeout_s),
+            )
         except subprocess.TimeoutExpired as exc:
             raise LocalizedRepairError("ffmpeg excedió el timeout remuxeando el audio.") from exc
         if proc.returncode != 0 or not out.is_file():
@@ -332,6 +496,7 @@ def build_localized_repair_video(
         "edit_end_sec": end,
         "source_duration_sec": duration,
         "replacement_duration_sec": repl_duration,
+        "frame_provenance": frame_provenance,
         "verification": {
             "probe_ok": True,
             "width": int(probe.get("width") or w),
@@ -506,7 +671,8 @@ def localized_repair(
             ffprobe_timeout_s=ffprobe_timeout_s,
             fps=fps,
         )
-        provenance = verify_source_frame_provenance(
+        provenance = build["frame_provenance"]
+        post_encode_diagnostic = verify_source_frame_provenance(
             src_path,
             out_file,
             edit_start_sec=build["edit_start_sec"],
@@ -517,10 +683,10 @@ def localized_repair(
         )
         if not provenance["provenance_ok"]:
             raise LocalizedRepairError(
-                "La comparación RGB de muestra fuera del intervalo editado no pasó; "
-                "la salida no se registró en el proyecto. Esta comparación es un "
-                "indicador limitado y no una prueba de identidad de fotogramas."
+                "Los hashes SHA-256 de fotogramas sin editar no coinciden antes del encode "
+                "final; la salida no se registró en el proyecto."
             )
+        provenance["post_encode_rgb_diagnostic"] = post_encode_diagnostic
 
         if out_file.stat().st_size > MAX_LOCALIZED_OUTPUT_BYTES:
             raise LocalizedRepairError("El MP4 reparado supera el limite de tamano.")
@@ -546,10 +712,20 @@ def localized_repair(
                 "width": build["width"],
                 "height": build["height"],
                 "frame_provenance_ok": provenance["provenance_ok"],
-                "frame_provenance_max_delta_rgb": provenance["max_delta_rgb"],
-                "frame_provenance_tolerance_rgb": provenance["tolerance_rgb"],
+                "frame_provenance_head_frame_count": provenance["head_frame_count"],
+                "frame_provenance_unchanged_frame_count": provenance[
+                    "unchanged_frame_count"
+                ],
+                "frame_provenance_tail_frame_count": provenance["tail_frame_count"],
+                "frame_provenance_head_expected_sha256": provenance.get("head_expected_sha256"),
+                "frame_provenance_head_assembled_sha256": provenance.get("head_assembled_sha256"),
+                "frame_provenance_tail_expected_sha256": provenance.get("tail_expected_sha256"),
+                "frame_provenance_tail_assembled_sha256": provenance.get("tail_assembled_sha256"),
+                "frame_post_encode_rgb_ok": post_encode_diagnostic["provenance_ok"],
+                "frame_post_encode_rgb_max_delta": post_encode_diagnostic["max_delta_rgb"],
+                "frame_post_encode_rgb_tolerance": post_encode_diagnostic["tolerance_rgb"],
                 "frame_check_method": provenance["comparison"],
-                "frame_check_sample_count": provenance["sample_count"],
+                "frame_post_encode_rgb_sample_count": post_encode_diagnostic["sample_count"],
                 "byte_identity_claimed": False,
             },
         )
@@ -567,6 +743,7 @@ def localized_repair(
         "verification": {
             **build["verification"],
             "frame_provenance_ok": provenance["provenance_ok"],
+            "frame_post_encode_rgb_ok": post_encode_diagnostic["provenance_ok"],
             "byte_identity_claimed": False,
         },
     }
