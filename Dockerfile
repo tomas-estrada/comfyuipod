@@ -551,6 +551,7 @@ COPY studio/ /opt/studio/
 COPY panel/ /etc/comfyui/panel/
 COPY scripts/smoke_blender_cpu.py /tmp/smoke_blender_cpu.py
 COPY scripts/smoke_blender_physics.py /tmp/smoke_blender_physics.py
+COPY scripts/smoke_mitsuba_cpu_fit.py /tmp/smoke_mitsuba_cpu_fit.py
 
 # Código de aplicación (studio/panel): capa separada para no rehacer el warmup.
 RUN find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json" \) -exec sed -i 's/\r$//' {} + && \
@@ -560,12 +561,13 @@ RUN find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json"
         /etc/comfyui/panel/app.js && \
     python3 -m venv /opt/venvs/studio && \
     /opt/venvs/studio/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    /opt/venvs/studio/bin/pip install --no-cache-dir /opt/studio && \
+    /opt/venvs/studio/bin/pip install --no-cache-dir '/opt/studio[inverse-rendering]' && \
     /opt/venvs/studio/bin/python -m compileall -q /opt/venvs/studio/lib && \
     /opt/venvs/studio/bin/python -m comfy_studio.templates && \
     /opt/venvs/studio/bin/python /tmp/smoke_blender_cpu.py && \
     /opt/venvs/studio/bin/python /tmp/smoke_blender_physics.py && \
-    rm -f /tmp/smoke_blender_cpu.py /tmp/smoke_blender_physics.py
+    /opt/venvs/studio/bin/python /tmp/smoke_mitsuba_cpu_fit.py && \
+    rm -f /tmp/smoke_blender_cpu.py /tmp/smoke_blender_physics.py /tmp/smoke_mitsuba_cpu_fit.py
 
 # Atlas audiovisual georreferenciado del Valle de Aburrá: los BYTES REALES del
 # bundle (catálogo SQLite, fotos, licencias, OSM) dentro de la imagen en una ruta
