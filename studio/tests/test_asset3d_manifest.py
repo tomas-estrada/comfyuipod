@@ -238,3 +238,124 @@ async def test_artist3d_agent_dispatch_registers_the_persisted_manifest(
     assert result["status"] == "registered"
     assert result["manifest"]["manifest"]["asset_id"] == asset["id"]
     assert get_asset3d_manifest(store, project_id, asset["id"]) is not None
+
+
+@pytest.mark.anyio
+async def test_artist3d_renders_and_persists_manifest_camera_previews(
+    studio_data_dir: Path,
+    studio_config,
+    stub_comfyui_transport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from io import BytesIO
+
+    from PIL import Image
+
+    from comfy_studio.comfyui_client import ComfyUIClient
+    from comfy_studio.engines import EngineResult
+    from comfy_studio.engines.blender import BlenderEngine
+    from comfy_studio.progress import ProgressBroker
+
+    store = ProjectStore(studio_data_dir)
+    project_id = store.create_project("Previews 3D")["id"]
+    asset = _save_glb(store, project_id)
+    save_asset3d_manifest(store, project_id, asset["id"], _manifest(asset["id"]))
+    broker = ProgressBroker()
+    comfyui_client = ComfyUIClient(
+        base_url=studio_config.studio_comfyui_url,
+        transport=stub_comfyui_transport,
+        store=store,
+        broker=broker,
+        redactor=studio_config.redactor(),
+    )
+    allowed = frozenset(ROLE_TOOL_SUBSETS["artist3d"])
+    context = ToolContext(
+        project_id=project_id,
+        store=store,
+        comfyui_client=comfyui_client,
+        broker=broker,
+        config=studio_config,
+        allowed_tools=allowed,
+    )
+    calls: list[dict[str, Any]] = []
+
+    async def fake_render(self, spec):
+        del self
+        calls.append(spec.job)
+        output_dir = Path(spec.job["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        encoded = BytesIO()
+        Image.new("RGB", (512, 512), (45, 90, 135)).save(encoded, format="PNG")
+        outputs = []
+        for index in range(3):
+            path = output_dir / f"view_{index + 1:02d}.png"
+            path.write_bytes(encoded.getvalue())
+            outputs.append(str(path))
+        return EngineResult(
+            ok=True, engine="blender", verb="run", payload={"outputs": outputs}
+        )
+
+    monkeypatch.setattr(BlenderEngine, "run", fake_render)
+    result = await create_default_tool_belt().restricted_to(allowed).execute(
+        "render_asset3d_views", {"asset_id": asset["id"]}, context
+    )
+    assert result["status"] == "completed"
+    assert result["camera_count"] == 3
+    assert result["simulated"] is False
+    assert calls[0]["engine"] == "cycles"
+    assert calls[0]["device"] == "cpu"
+    assert calls[0]["up_axis"] == "y_up"
+    assert [preview["metadata"]["camera_name"] for preview in result["previews"]] == [
+        "front", "side", "rear"
+    ]
+    assert all(preview["metadata"]["source_sha256"] for preview in result["previews"])
+
+
+@pytest.mark.anyio
+async def test_artist3d_preview_fails_closed_when_blender_is_simulated(
+    studio_data_dir: Path,
+    studio_config,
+    stub_comfyui_transport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from comfy_studio.agent.tools import ToolExecutionError
+    from comfy_studio.comfyui_client import ComfyUIClient
+    from comfy_studio.engines import EngineResult
+    from comfy_studio.engines.blender import BlenderEngine
+    from comfy_studio.progress import ProgressBroker
+
+    store = ProjectStore(studio_data_dir)
+    project_id = store.create_project("Previews 3D stub")["id"]
+    asset = _save_glb(store, project_id)
+    save_asset3d_manifest(store, project_id, asset["id"], _manifest(asset["id"]))
+    broker = ProgressBroker()
+    context = ToolContext(
+        project_id=project_id,
+        store=store,
+        comfyui_client=ComfyUIClient(
+            base_url=studio_config.studio_comfyui_url,
+            transport=stub_comfyui_transport,
+            store=store,
+            broker=broker,
+            redactor=studio_config.redactor(),
+        ),
+        broker=broker,
+        config=studio_config,
+        allowed_tools=frozenset(ROLE_TOOL_SUBSETS["artist3d"]),
+    )
+
+    async def fake_stub(self, spec):
+        del self, spec
+        return EngineResult(
+            ok=True,
+            engine="blender",
+            verb="run",
+            payload={"outputs": []},
+            simulated=True,
+        )
+
+    monkeypatch.setattr(BlenderEngine, "run", fake_stub)
+    with pytest.raises(ToolExecutionError, match="stub no es evidencia"):
+        await create_default_tool_belt().execute(
+            "render_asset3d_views", {"asset_id": asset["id"]}, context
+        )

@@ -25,6 +25,7 @@ from comfy_studio.blender import (
     _STUB_EXR,
     _STUB_GLB_HEADER,
     _STUB_PNG,
+    BlenderCameraView,
     BlenderExportSpec,
     BlenderRenderSpec,
     build_render_script,
@@ -122,6 +123,40 @@ def test_render_spec_rejects_unknown_compute_device(tmp_path: Path) -> None:
     spec = _render_spec(tmp_path)
     spec.device = "automatic"
     with pytest.raises(ValueError, match="device debe ser 'cpu' o 'gpu'"):
+        spec.validate()
+
+
+def test_camera_view_render_spec_is_bounded_and_generates_python(tmp_path: Path) -> None:
+    spec = _render_spec(tmp_path)
+    spec.engine = "cycles"
+    spec.device = "cpu"
+    spec.camera_views = (
+        BlenderCameraView("front", (0, -4, 0), (0, 0, 0)),
+        BlenderCameraView("side", (4, 0, 0), (0, 0, 0), 60),
+    )
+    spec.validate()
+    script = build_render_script(spec)
+    compile(script, "generated_blender_camera_preview.py", "exec")
+    assert '"name": "front"' in script
+    assert "bpy.ops.render.render(write_still=True)" in script
+    assert "camera views rendered" in script
+    assert "asset_up_axis = \"y_up\"" in script
+
+
+def test_camera_view_render_rejects_duplicate_or_unbounded_views(tmp_path: Path) -> None:
+    spec = _render_spec(tmp_path)
+    spec.engine = "cycles"
+    spec.camera_views = (
+        BlenderCameraView("front", (0, -4, 0), (0, 0, 0)),
+        BlenderCameraView("front", (4, 0, 0), (0, 0, 0)),
+    )
+    with pytest.raises(ValueError, match="nombres duplicados"):
+        spec.validate()
+    spec.camera_views = tuple(
+        BlenderCameraView(f"view-{index}", (0, -4, index), (0, 0, 0))
+        for index in range(9)
+    )
+    with pytest.raises(ValueError, match="no puede superar 8"):
         spec.validate()
 
 

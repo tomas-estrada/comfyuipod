@@ -23,10 +23,11 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,33 @@ _FORMAT_MAGICS = {".png": _PNG_MAGIC, ".exr": _EXR_MAGIC, ".glb": _GLTF_MAGIC}
 
 #: clase de fallo cuando el run acaba "bien" pero los artefactos no valen.
 FAILURE_INVALID_OUTPUT = "blender_invalid_output"
+
+
+@dataclass(frozen=True, slots=True)
+class BlenderCameraView:
+    """A named, bounded still camera pose in the asset's declared coordinates."""
+
+    name: str
+    position: tuple[float, float, float]
+    target: tuple[float, float, float]
+    fov_deg: float = 50.0
+
+    def validate(self) -> None:
+        if not self.name.strip() or len(self.name) > 80:
+            raise ValueError("camera view name debe tener entre 1 y 80 caracteres")
+        if (
+            len(self.position) != 3
+            or len(self.target) != 3
+            or any(not math.isfinite(value) for value in (*self.position, *self.target))
+        ):
+            raise ValueError(f"camera view {self.name}: position y target deben ser 3D finitos")
+        if all(
+            math.isclose(a, b, abs_tol=1e-9)
+            for a, b in zip(self.position, self.target, strict=True)
+        ):
+            raise ValueError(f"camera view {self.name}: position y target no pueden coincidir")
+        if not math.isfinite(self.fov_deg) or not 1.0 <= self.fov_deg <= 175.0:
+            raise ValueError(f"camera view {self.name}: fov_deg debe estar entre 1 y 175")
 
 
 def find_blender_bin() -> str | None:
@@ -92,6 +120,14 @@ class BlenderRenderSpec:
     device_index: int = 0
     device: str = "gpu"  # gpu | cpu; CPU is required for deterministic engine fixtures.
     output_format: str = "png"  # png | exr (secuencia) — el MP4 se compone con ffmpeg
+    camera_views: tuple[BlenderCameraView, ...] = ()
+    asset_transform: tuple[tuple[float, ...], ...] = (
+        (1.0, 0.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0, 0.0),
+        (0.0, 0.0, 0.0, 1.0),
+    )
+    up_axis: str = "y_up"
     timeout_s: float = DEFAULT_BLENDER_TIMEOUT_S
 
     def validate(self) -> None:
@@ -109,6 +145,33 @@ class BlenderRenderSpec:
             raise ValueError("device_index fuera de rango (0..15)")
         if self.device not in ("cpu", "gpu"):
             raise ValueError("device debe ser 'cpu' o 'gpu'")
+        if len(self.camera_views) > 8:
+            raise ValueError("camera_views no puede superar 8 vistas por ejecución")
+        names = [view.name for view in self.camera_views]
+        if len(names) != len(set(names)):
+            raise ValueError("camera_views contiene nombres duplicados")
+        for view in self.camera_views:
+            view.validate()
+        if self.camera_views and (
+            self.frames != 1
+            or self.output_format != "png"
+            or self.engine != "cycles"
+            or self.device != "cpu"
+        ):
+            raise ValueError("camera_views requiere un frame PNG con Cycles CPU")
+        if self.up_axis not in ("y_up", "z_up"):
+            raise ValueError("up_axis debe ser y_up o z_up")
+        if len(self.asset_transform) != 4 or any(len(row) != 4 for row in self.asset_transform):
+            raise ValueError("asset_transform debe ser 4x4")
+        if any(not math.isfinite(value) for row in self.asset_transform for value in row):
+            raise ValueError("asset_transform contiene valores no finitos")
+        if any(
+            abs(actual - expected) > 1e-9
+            for actual, expected in zip(
+                self.asset_transform[3], (0.0, 0.0, 0.0, 1.0), strict=True
+            )
+        ):
+            raise ValueError("asset_transform debe ser afín con última fila [0, 0, 0, 1]")
 
 
 @dataclass(slots=True)
@@ -200,11 +263,119 @@ def classify_blender_failure(exit_code: int, log_tail: str) -> str:
     return "blender_nonzero_exit"
 
 
+def _camera_view_render_script(spec: BlenderRenderSpec) -> str:
+    """Generate a real CPU scene render for each persisted asset camera pose."""
+    views = json.dumps([asdict(view) for view in spec.camera_views], ensure_ascii=True)
+    transform = json.dumps([list(row) for row in spec.asset_transform])
+    up_axis = json.dumps(spec.up_axis)
+    return f'''\
+import math
+import re
+from mathutils import Matrix, Vector
+
+camera_views = {views}
+asset_matrix = Matrix({transform})
+asset_up_axis = {up_axis}
+scene.render.image_settings.file_format = "PNG"
+scene.render.image_settings.color_mode = "RGB"
+scene.render.resolution_percentage = 100
+scene.view_settings.view_transform = "Standard"
+
+# Apply the manifest's global transform to imported asset roots. Child nodes
+# retain their local hierarchy and Blender composes their world transforms.
+for obj in list(scene.objects):
+    if obj.type in {{"MESH", "EMPTY", "ARMATURE"}} and obj.parent is None:
+        obj.matrix_world = asset_matrix @ obj.matrix_world
+
+mesh_objects = [obj for obj in scene.objects if obj.type == "MESH"]
+if not mesh_objects:
+    raise RuntimeError("asset camera preview requires verified mesh geometry")
+depsgraph = bpy.context.evaluated_depsgraph_get()
+world_corners = [
+    obj.evaluated_get(depsgraph).matrix_world @ Vector(corner)
+    for obj in mesh_objects
+    for corner in obj.evaluated_get(depsgraph).bound_box
+]
+bounds_min = Vector(tuple(min(point[i] for point in world_corners) for i in range(3)))
+bounds_max = Vector(tuple(max(point[i] for point in world_corners) for i in range(3)))
+asset_center = (bounds_min + bounds_max) * 0.5
+asset_radius = max((bounds_max - bounds_min).length * 0.5, 0.1)
+
+def to_blender_space(values):
+    point = Vector(values)
+    if asset_up_axis == "y_up":
+        point = Vector((point.x, -point.z, point.y))
+    return asset_matrix @ point
+
+def aim_at(obj, target):
+    obj.rotation_euler = (target - obj.location).to_track_quat("-Z", "Y").to_euler()
+
+if scene.world is None:
+    scene.world = bpy.data.worlds.new("Comfy Studio Preview World")
+scene.world.use_nodes = True
+background = scene.world.node_tree.nodes.get("Background")
+if background is not None:
+    background.inputs["Color"].default_value = (0.055, 0.065, 0.08, 1.0)
+    background.inputs["Strength"].default_value = 0.8
+
+# Add a small, reproducible three-point studio rig only when the imported scene
+# does not already provide lights.
+if not any(obj.type == "LIGHT" for obj in scene.objects):
+    for light_name, direction, energy_scale, size_scale in (
+        ("ComfyPreviewKey", (1.4, -2.0, 2.2), 500.0, 2.0),
+        ("ComfyPreviewFill", (-2.0, -1.0, 0.8), 220.0, 2.5),
+        ("ComfyPreviewRim", (0.4, 2.0, 1.6), 350.0, 1.8),
+    ):
+        light_data = bpy.data.lights.new(light_name, type="AREA")
+        light_data.energy = energy_scale * asset_radius * asset_radius
+        light_data.shape = "DISK"
+        light_data.size = size_scale * asset_radius
+        light_obj = bpy.data.objects.new(light_name, light_data)
+        scene.collection.objects.link(light_obj)
+        light_obj.location = asset_center + Vector(direction) * (3.0 * asset_radius)
+        aim_at(light_obj, asset_center)
+
+for index, view in enumerate(camera_views, start=1):
+    camera_data = bpy.data.cameras.new("ComfyPreviewCamera_" + str(index))
+    camera_obj = bpy.data.objects.new(camera_data.name, camera_data)
+    scene.collection.objects.link(camera_obj)
+    camera_obj.location = to_blender_space(view["position"])
+    target = to_blender_space(view["target"])
+    aim_at(camera_obj, target)
+    camera_data.angle = math.radians(float(view["fov_deg"]))
+    camera_data.clip_start = max(asset_radius * 0.001, 0.001)
+    camera_data.clip_end = max(asset_radius * 1000.0, 100.0)
+    scene.camera = camera_obj
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", view["name"]).strip("_")[:60]
+    if not slug:
+        slug = "view"
+    scene.render.filepath = out_dir + "/view_" + str(index).zfill(2) + "_" + slug + ".png"
+    bpy.ops.render.render(write_still=True)
+    bpy.data.objects.remove(camera_obj, do_unlink=True)
+print("[BlenderRunner] camera views rendered:", len(camera_views))
+'''
+
+
 def build_render_script(spec: BlenderRenderSpec) -> str:
     """Genera el script Python que Blender ejecuta en modo `-b`."""
     scene_literal = json.dumps(str(spec.scene_path).replace("\\", "/"))
     out_dir_literal = json.dumps(str(spec.output_dir).replace("\\", "/"))
-    engine = "CYCLES" if spec.engine == "cycles" else "BLENDER_EEVEE_NEXT"
+    engine_setup = (
+        'scene.render.engine = "CYCLES"'
+        if spec.engine == "cycles"
+        else '''\
+available_engines = {
+    item.identifier
+    for item in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items
+}
+eevee_engine = next(
+    (name for name in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE") if name in available_engines),
+    None,
+)
+if eevee_engine is None:
+    raise RuntimeError("this Blender build does not provide EEVEE")
+scene.render.engine = eevee_engine'''
+    )
     gpu_setup = ""
     if spec.device == "gpu":
         gpu_setup = '''\
@@ -228,6 +399,11 @@ def build_render_script(spec: BlenderRenderSpec) -> str:
                 idx += 1
             else:
                 d.use = False'''.replace("DEVICE_INDEX", str(spec.device_index))
+    render_invocation = (
+        _camera_view_render_script(spec)
+        if spec.camera_views
+        else f"bpy.ops.render.render(animation={spec.frames > 1}, write_still=True)"
+    )
     return f'''# Generado por Comfy Studio BlenderRunner (M3-D). No editar a mano.
 import bpy, sys
 
@@ -244,7 +420,7 @@ else:
     bpy.ops.wm.open_mainfile(filepath=scene_path)
 
 scene = bpy.context.scene
-scene.render.engine = "{engine}"
+{engine_setup}
 scene.render.resolution_x = {spec.width}
 scene.render.resolution_y = {spec.height}
 scene.render.resolution_percentage = 100
@@ -260,7 +436,7 @@ if scene.render.engine == "CYCLES":
 else:
     scene.eevee.taa_render_samples = {spec.samples}
 
-bpy.ops.render.render(animation={spec.frames > 1}, write_still=True)
+{render_invocation}
 print("[BlenderRunner] render completado:", out_dir)
 '''
 

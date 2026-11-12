@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import struct
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -1215,6 +1216,14 @@ class Register3DManifestArgs(BaseModel):
     )
 
 
+class RenderAsset3DViewsArgs(BaseModel):
+    """Render the saved camera poses of a project-owned 3D asset on CPU."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(..., min_length=1, max_length=64)
+
+
 class ListIdentitiesArgs(BaseModel):
     """Argumentos para la herramienta `list_identities`."""
 
@@ -1587,6 +1596,7 @@ ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
         "search_assets",
         "tag_asset",
         "register_3d_manifest",
+        "render_asset3d_views",
         "job_status",
         "index_media",
         "find_shots_text",
@@ -3180,6 +3190,124 @@ async def _handle_register_3d_manifest(
             "Reutiliza este asset_id para todas las cámaras; las partes inferidas siguen "
             "marcadas inferred y no son observaciones ni CAD verificado."
         ),
+    }
+
+
+async def _handle_render_asset3d_views(
+    args: RenderAsset3DViewsArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    import tempfile
+
+    from ..asset3d_manifest import get_asset3d_manifest
+    from ..assets3d import Asset3D
+    from ..engines import EngineRunSpec
+    from ..engines.blender import BlenderEngine
+    from ..engines.preparedness import note_engine_run
+
+    asset = context.store.get_asset(context.project_id, args.asset_id)
+    asset_path = context.store.get_asset_path(context.project_id, args.asset_id)
+    if asset is None or asset.get("kind") != "model3d" or asset_path is None:
+        raise ToolExecutionError("render_asset3d_views requiere un asset 3D del proyecto.")
+    if asset_path.suffix.lower() != ".glb":
+        raise ToolExecutionError("render_asset3d_views requiere un GLB del proyecto.")
+    try:
+        record = await run_in_threadpool(
+            get_asset3d_manifest, context.store, context.project_id, args.asset_id
+        )
+    except (LookupError, ValueError) as exc:
+        raise ToolExecutionError(f"Manifiesto 3D inválido: {exc}") from exc
+    if record is None:
+        raise ToolExecutionError("Registra primero un manifiesto 3D con cámaras reabribles.")
+    try:
+        manifest = Asset3D.from_dict(record.get("manifest") or {})
+    except ValueError as exc:
+        raise ToolExecutionError(f"Manifiesto 3D inválido: {exc}") from exc
+    cameras = manifest.cameras
+    if not cameras or len(cameras) > 8:
+        raise ToolExecutionError("El manifiesto debe incluir entre 1 y 8 cámaras.")
+
+    with tempfile.TemporaryDirectory(prefix="comfy_asset3d_views_") as temporary:
+        output_dir = Path(temporary) / "renders"
+        engine = BlenderEngine(log_dir=context.config.studio_data_dir / "logs" / "blender")
+        result = await engine.run(
+            EngineRunSpec(
+                job={
+                    "mode": "render",
+                    "scene_path": str(asset_path),
+                    "output_dir": str(output_dir),
+                    "engine": "cycles",
+                    "device": "cpu",
+                    "samples": 16,
+                    "width": 512,
+                    "height": 512,
+                    "frames": 1,
+                    "camera_views": [camera.to_dict() for camera in cameras],
+                    "asset_transform": [list(row) for row in manifest.transform],
+                    "up_axis": str(manifest.up_axis),
+                },
+                timeout_s=180,
+            )
+        )
+        note_engine_run("blender", result.ok and not result.simulated)
+        if not result.ok:
+            raise ToolExecutionError(
+                "Blender no pudo renderizar las cámaras 3D: "
+                f"{result.error or 'fallo desconocido'}"
+            )
+        if result.simulated:
+            raise ToolExecutionError(
+                "Los previews 3D requieren Blender real; stub no es evidencia."
+            )
+        output_paths = [Path(path) for path in (result.payload or {}).get("outputs", [])]
+        if len(output_paths) != len(cameras):
+            raise ToolExecutionError("Blender no produjo exactamente un PNG por cámara.")
+        previews = []
+        for index, (camera, path) in enumerate(zip(cameras, output_paths, strict=True), start=1):
+            try:
+                if not path.is_file() or path.stat().st_size > context.config.max_upload_bytes:
+                    raise ValueError("PNG ausente o supera el límite de tamaño")
+                data = path.read_bytes()
+                if (
+                    len(data) < 24
+                    or data[:8] != b"\x89PNG\r\n\x1a\n"
+                    or data[12:16] != b"IHDR"
+                    or struct.unpack(">II", data[16:24]) != (512, 512)
+                ):
+                    raise ValueError("PNG inválido o dimensiones distintas de 512x512")
+                preview = context.store.save_upload(
+                    context.project_id,
+                    filename=(
+                        f"{Path(asset.get('filename') or 'asset').stem}_view_{index:02d}.png"
+                    ),
+                    content_type="image/png",
+                    data=data,
+                    max_upload_bytes=context.config.max_upload_bytes,
+                    category="outputs",
+                    metadata={
+                        "engine": "blender",
+                        "mode": "asset3d_camera_preview",
+                        "source_asset_id": args.asset_id,
+                        "source_sha256": record["model_sha256"],
+                        "camera_name": camera.name,
+                        "camera_provenance": str(camera.provenance),
+                        "preview_index": index,
+                        "render_engine": "cycles_cpu",
+                    },
+                )
+            except (OSError, KeyError, ValueError) as exc:
+                raise ToolExecutionError(
+                    f"No se pudo guardar el preview de {camera.name}: {exc}"
+                ) from exc
+            previews.append(preview)
+    return {
+        "status": "completed",
+        "project_id": context.project_id,
+        "source_asset_id": args.asset_id,
+        "previews": previews,
+        "camera_count": len(previews),
+        "render_engine": "cycles_cpu",
+        "simulated": False,
     }
 
 
@@ -4788,6 +4916,19 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=Register3DManifestArgs,
             handler=_handle_register_3d_manifest,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="render_asset3d_views",
+            description=(
+                "Renderiza en Blender Cycles CPU las cámaras guardadas en el manifiesto 3D "
+                "de un GLB del proyecto. Registra PNGs 512×512 con hash de origen y "
+                "procedencia de cada cámara; requiere Blender real, no usa el modo stub."
+            ),
+            args_model=RenderAsset3DViewsArgs,
+            handler=_handle_render_asset3d_views,
+            parallel_safe=False,
         )
     )
     belt.register(

@@ -10,11 +10,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from comfy_studio.blender import BlenderRenderSpec, run_blender_spec
+from comfy_studio.blender import BlenderCameraView, BlenderRenderSpec, run_blender_spec
 from PIL import Image, ImageStat
 
 
-def _make_scene(blender: str, scene_path: Path, work: Path) -> None:
+def _make_scene(blender: str, scene_path: Path, glb_path: Path, work: Path) -> None:
     script = work / "make_scene.py"
     script.write_text(
         """import bpy
@@ -46,7 +46,10 @@ world = bpy.data.worlds.new('cpu-smoke-world')
 world.color = (0.025, 0.025, 0.025)
 scene.world = world
 bpy.ops.wm.save_as_mainfile(filepath=SCENE_PATH)
-""".replace("SCENE_PATH", repr(str(scene_path))),
+bpy.ops.export_scene.gltf(filepath=GLB_PATH, export_format='GLB')
+""".replace("SCENE_PATH", repr(str(scene_path))).replace(
+            "GLB_PATH", repr(str(glb_path))
+        ),
         encoding="utf-8",
     )
     result = subprocess.run(
@@ -74,7 +77,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="studio-blender-cpu-") as temporary:
         root = Path(temporary)
         scene_path = root / "smoke.blend"
-        _make_scene(blender, scene_path, root)
+        glb_path = root / "camera-smoke.glb"
+        _make_scene(blender, scene_path, glb_path, root)
         spec = BlenderRenderSpec(
             scene_path=scene_path,
             output_dir=root / "render",
@@ -102,6 +106,50 @@ def main() -> int:
                 raise RuntimeError(f"render dimensions are {image.size}, expected (96, 64)")
             if max(ImageStat.Stat(image.convert("RGB")).var) <= 0:
                 raise RuntimeError("CPU render contains no image variation")
+        camera_spec = BlenderRenderSpec(
+            scene_path=glb_path,
+            output_dir=root / "camera-renders",
+            engine="cycles",
+            samples=2,
+            width=96,
+            height=64,
+            frames=1,
+            device="cpu",
+            up_axis="y_up",
+            camera_views=(
+                BlenderCameraView("front", (0, 0, 4), (0, 0, 0)),
+                BlenderCameraView("side", (4, 0, 0), (0, 0, 0)),
+                BlenderCameraView("top", (0, 4, 0), (0, 0, 0)),
+            ),
+            timeout_s=120,
+        )
+        camera_result = asyncio.run(
+            run_blender_spec(camera_spec, log_dir=root / "logs", blender_bin=blender)
+        )
+        if not camera_result.ok or camera_result.stubbed:
+            raise RuntimeError(
+                "Blender camera preview did not produce real renders: "
+                f"exit={camera_result.exit_code}, stubbed={camera_result.stubbed}, "
+                f"validation={camera_result.validation_error}, "
+                f"log={camera_result.log_tail[-1200:]}"
+            )
+        camera_pngs = sorted(camera_result.outputs)
+        if len(camera_pngs) != 3:
+            raise RuntimeError(f"expected 3 camera PNG renders, got {len(camera_pngs)}")
+        camera_images = []
+        for camera_png in camera_pngs:
+            with Image.open(camera_png) as image:
+                image.load()
+                if image.size != (96, 64):
+                    raise RuntimeError(
+                        f"camera render dimensions are {image.size}, expected (96, 64)"
+                    )
+                rgb = image.convert("RGB")
+                if max(ImageStat.Stat(rgb).var) <= 0:
+                    raise RuntimeError(f"camera render is flat: {camera_png.name}")
+                camera_images.append(rgb.copy())
+        if len({image.tobytes() for image in camera_images}) != 3:
+            raise RuntimeError("saved camera poses did not produce three distinct previews")
         print(
             json.dumps(
                 {
@@ -112,6 +160,8 @@ def main() -> int:
                     "outputs": len(pngs),
                     "dimensions": [96, 64],
                     "bytes": pngs[0].stat().st_size,
+                    "camera_views": len(camera_pngs),
+                    "camera_bytes": [path.stat().st_size for path in camera_pngs],
                 },
                 sort_keys=True,
             )
