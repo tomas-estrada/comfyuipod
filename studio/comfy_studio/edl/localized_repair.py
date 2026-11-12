@@ -202,6 +202,7 @@ def _compare_unchanged_frames(
         return {
             "provenance_ok": False,
             "head_frame_count": head_count,
+            "unchanged_frame_count": head_count + tail_count,
             "replacement_frame_count": replacement_frame_count,
             "tail_frame_count": tail_count,
             "assembled_frame_count": len(assembled_hashes),
@@ -217,6 +218,7 @@ def _compare_unchanged_frames(
     return {
         "provenance_ok": head_ok and tail_ok,
         "head_frame_count": head_count,
+        "unchanged_frame_count": head_count + tail_count,
         "replacement_frame_count": replacement_frame_count,
         "tail_frame_count": tail_count,
         "assembled_frame_count": len(assembled_hashes),
@@ -711,6 +713,9 @@ def localized_repair(
                 "height": build["height"],
                 "frame_provenance_ok": provenance["provenance_ok"],
                 "frame_provenance_head_frame_count": provenance["head_frame_count"],
+                "frame_provenance_unchanged_frame_count": provenance[
+                    "unchanged_frame_count"
+                ],
                 "frame_provenance_tail_frame_count": provenance["tail_frame_count"],
                 "frame_provenance_head_expected_sha256": provenance.get("head_expected_sha256"),
                 "frame_provenance_head_assembled_sha256": provenance.get("head_assembled_sha256"),
@@ -720,7 +725,7 @@ def localized_repair(
                 "frame_post_encode_rgb_max_delta": post_encode_diagnostic["max_delta_rgb"],
                 "frame_post_encode_rgb_tolerance": post_encode_diagnostic["tolerance_rgb"],
                 "frame_check_method": provenance["comparison"],
-                "frame_check_sample_count": post_encode_diagnostic["sample_count"],
+                "frame_post_encode_rgb_sample_count": post_encode_diagnostic["sample_count"],
                 "byte_identity_claimed": False,
             },
         )

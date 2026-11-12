@@ -167,6 +167,11 @@ def test_localized_repair_store_flow(tmp_path, store):
     assert meta.get("localized_repair") is True
     assert meta.get("frame_provenance_ok") is True
     assert meta.get("frame_check_method") == "sha256_per_frame_pre_final_encode"
+    assert meta.get("frame_provenance_unchanged_frame_count") == (
+        meta.get("frame_provenance_head_frame_count")
+        + meta.get("frame_provenance_tail_frame_count")
+    )
+    assert meta.get("frame_post_encode_rgb_sample_count", 0) > 0
     assert meta.get("byte_identity_claimed") is False
     assert store.get_asset_path(pid, out_asset["id"]) is not None
 
