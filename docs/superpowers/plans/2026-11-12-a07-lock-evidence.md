@@ -23,6 +23,7 @@
 - A nonexistent lock path must remain a release blocker.
 - Absolute paths and symlinks escaping the repository must not be read as lock evidence.
 - Untracked lock files must not count as release pins.
+- A tracked symlink is insufficient when the bytes it points to are untracked.
 - A changed lock file must invalidate its digest.
 - Existing valid lock files must continue to resolve and verify.
 

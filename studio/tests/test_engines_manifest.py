@@ -337,6 +337,39 @@ def test_a07_blocks_lock_symlink_that_escapes_repository_root(tmp_path: Path) ->
     assert any("fuera de la raíz del repositorio" in blocker for blocker in blockers)
 
 
+def test_a07_blocks_tracked_symlink_with_untracked_lock_target(tmp_path: Path) -> None:
+    mod = _load_module()
+    target = tmp_path / "actual.lock"
+    target.write_text("package==1.2.3\n", encoding="utf-8")
+    lock_link = tmp_path / "dependency.lock"
+    try:
+        lock_link.symlink_to(target)
+    except (NotImplementedError, OSError):
+        pytest.skip("symlink creation is not available")
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "dependency.lock"], check=True)
+    manifest = {"engines": [{
+        "id": "engine",
+        "disposition": "required",
+        "build_selected": True,
+        "terms_review": "reviewed",
+        "lock_required_before_build": True,
+        "code_revision": "a" * 40,
+        "dependency_lock_hashes": {
+            "dependency.lock": hashlib.sha256(target.read_bytes()).hexdigest()
+        },
+        "redistribution_decision": "allowed",
+        "notices_reviewed": True,
+        "implementation_status": "implemented",
+    }]}
+
+    problems, blockers = mod.validate(manifest, set(), repo_root=tmp_path)
+
+    assert problems == []
+    assert any("target de lock actual.lock no está versionado" in blocker
+               for blocker in blockers)
+
+
 def test_a07_blocks_absolute_lock_path(tmp_path: Path) -> None:
     mod = _load_module()
     absolute_lock = tmp_path.parent / "absolute.lock"

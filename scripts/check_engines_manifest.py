@@ -208,6 +208,12 @@ def validate(
                                 f"{eid}: lock file {lock_name} no está versionado"
                             )
                             continue
+                        resolved_name = resolved_lock.relative_to(evidence_root).as_posix()
+                        if resolved_name not in tracked_paths:
+                            blockers.append(
+                                f"{eid}: target de lock {resolved_name} no está versionado"
+                            )
+                            continue
                     try:
                         actual_hash = _sha256_file(resolved_lock)
                     except OSError:
