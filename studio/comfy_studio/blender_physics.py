@@ -14,6 +14,7 @@ import math
 import os
 import re
 import shutil
+import struct
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -24,6 +25,7 @@ from comfy_studio.config import SecretRedactor
 _GLB_MAGIC = b"glTF"
 _MAX_FRAMES = 600
 _ALLOWED_SCENES = {".blend", ".glb", ".gltf"}
+_SUPPORTED_MANEUVERS = {"free_fall", "hinge"}
 
 
 def _sha256_file(path: Path) -> str:
@@ -32,6 +34,13 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _physics_state_hash(payload: dict[str, Any]) -> str:
+    """Recompute the trace digest from the canonical payload fields."""
+    core = {key: value for key, value in payload.items() if key != "state_hash"}
+    canonical = json.dumps(core, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class BlenderPhysicsError(ValueError):
@@ -47,6 +56,11 @@ class BlenderPhysicsSpec:
     moving_object: str
     maneuver: str = "free_fall"
     ground_object: str | None = None
+    fixed_object: str | None = None
+    hinge_pivot_m: tuple[float, float, float] | None = None
+    hinge_axis: tuple[float, float, float] = (0.0, 1.0, 0.0)
+    hinge_lower_limit_deg: float = -45.0
+    hinge_upper_limit_deg: float = 45.0
     fps: int = 24
     duration_s: float = 2.0
     seed: int = 0
@@ -64,10 +78,39 @@ class BlenderPhysicsSpec:
             raise BlenderPhysicsError("scene_path no existe o no es un archivo")
         if not self.moving_object.strip():
             raise BlenderPhysicsError("moving_object no puede estar vacío")
-        if self.maneuver != "free_fall":
-            raise BlenderPhysicsError("Blender physics actualmente soporta free_fall")
-        if not self.ground_object:
+        if self.maneuver not in _SUPPORTED_MANEUVERS:
+            raise BlenderPhysicsError(
+                f"maneuver debe estar en {sorted(_SUPPORTED_MANEUVERS)}"
+            )
+        if self.maneuver == "free_fall" and not self.ground_object:
             raise BlenderPhysicsError("free_fall requiere ground_object")
+        if self.maneuver == "free_fall" and self.ground_object == self.moving_object:
+            raise BlenderPhysicsError("moving_object y ground_object deben ser distintos")
+        if self.maneuver == "hinge":
+            if not self.fixed_object or self.hinge_pivot_m is None:
+                raise BlenderPhysicsError(
+                    "hinge requiere fixed_object y hinge_pivot_m"
+                )
+            if self.fixed_object == self.moving_object:
+                raise BlenderPhysicsError("moving_object y fixed_object deben ser distintos")
+            if (
+                len(self.hinge_pivot_m) != 3
+                or not all(math.isfinite(value) for value in self.hinge_pivot_m)
+                or len(self.hinge_axis) != 3
+                or not all(math.isfinite(value) for value in self.hinge_axis)
+                or math.isclose(math.sqrt(sum(value**2 for value in self.hinge_axis)), 0.0)
+            ):
+                raise BlenderPhysicsError(
+                    "hinge_pivot_m y hinge_axis deben ser vectores 3D finitos"
+                )
+            if (
+                not math.isfinite(self.hinge_lower_limit_deg)
+                or not math.isfinite(self.hinge_upper_limit_deg)
+                or not -180 <= self.hinge_lower_limit_deg < self.hinge_upper_limit_deg <= 180
+            ):
+                raise BlenderPhysicsError(
+                    "límites del hinge deben estar ordenados entre -180 y 180 grados"
+                )
         if not 1 <= self.fps <= 60:
             raise BlenderPhysicsError("fps debe estar entre 1 y 60")
         if not math.isfinite(self.duration_s) or not 0 < self.duration_s <= 10:
@@ -187,18 +230,62 @@ if body is None:
     raise RuntimeError("moving object not found: " + cfg["moving_object"])
 ensure_rigidbody(body, "ACTIVE")
 body.rigid_body.mass = float(cfg["mass_kg"])
-ground = bpy.data.objects.get(cfg["ground_object"])
-if ground is None:
-    raise RuntimeError("ground object not found: " + cfg["ground_object"])
-ensure_rigidbody(ground, "PASSIVE")
+ground = None
+ground_tree = None
+ground_inverse = None
+ground_eval = None
+joint_info = None
+if cfg["maneuver"] == "free_fall":
+    ground = bpy.data.objects.get(cfg["ground_object"])
+    if ground is None:
+        raise RuntimeError("ground object not found: " + cfg["ground_object"])
+    ensure_rigidbody(ground, "PASSIVE")
+elif cfg["maneuver"] == "hinge":
+    fixed = bpy.data.objects.get(cfg["fixed_object"])
+    if fixed is None:
+        raise RuntimeError("fixed object not found: " + cfg["fixed_object"])
+    ensure_rigidbody(fixed, "PASSIVE")
+    axis = Vector(cfg["hinge_axis"]).normalized()
+    joint = bpy.data.objects.new(cfg.get("joint_name") or "comfyuipod_hinge", None)
+    scene.collection.objects.link(joint)
+    joint.location = Vector(cfg["hinge_pivot_m"]) / unit_scale
+    joint.rotation_mode = "QUATERNION"
+    joint.rotation_quaternion = Vector((0, 0, 1)).rotation_difference(axis)
+    set_active(joint)
+    bpy.ops.rigidbody.constraint_add(type="HINGE")
+    constraint = joint.rigid_body_constraint
+    constraint.object1 = fixed
+    constraint.object2 = body
+    constraint.enabled = True
+    constraint.disable_collisions = True
+    constraint.use_limit_ang_z = True
+    constraint.limit_ang_z_lower = math.radians(float(cfg["hinge_lower_limit_deg"]))
+    constraint.limit_ang_z_upper = math.radians(float(cfg["hinge_upper_limit_deg"]))
+    constraint.solver_iterations = int(cfg["solver_iterations"])
+    joint_info = {{
+        "name": joint.name,
+        "type": "HINGE",
+        "fixed_object": fixed.name,
+        "moving_object": body.name,
+        "pivot_m": [float(value) for value in cfg["hinge_pivot_m"]],
+        "axis_world": [float(value) for value in axis],
+        "axis_local": "Z",
+        "lower_limit_deg": float(cfg["hinge_lower_limit_deg"]),
+        "upper_limit_deg": float(cfg["hinge_upper_limit_deg"]),
+        "lower_limit_rad": float(constraint.limit_ang_z_lower),
+        "upper_limit_rad": float(constraint.limit_ang_z_upper),
+    }}
+    body["comfyuipod_joint"] = json.dumps(joint_info, sort_keys=True)
 
 scene.frame_set(1)
 bpy.context.view_layer.update()
 depsgraph = bpy.context.evaluated_depsgraph_get()
 initial_q = body.evaluated_get(depsgraph).matrix_world.to_quaternion().copy()
-ground_eval = ground.evaluated_get(depsgraph)
-ground_tree = BVHTree.FromObject(ground_eval, depsgraph, epsilon=0.0)
-ground_inverse = ground_eval.matrix_world.inverted()
+initial_position = body.evaluated_get(depsgraph).matrix_world.translation.copy()
+if ground is not None:
+    ground_eval = ground.evaluated_get(depsgraph)
+    ground_tree = BVHTree.FromObject(ground_eval, depsgraph, epsilon=0.0)
+    ground_inverse = ground_eval.matrix_world.inverted()
 
 frames = []
 contacts = []
@@ -224,21 +311,22 @@ for frame in range(1, frame_count + 1):
         delta_axis, delta_angle = delta.to_axis_angle()
         angular_velocity = delta_axis * (delta_angle / dt)
     nearest = None
-    best = None
-    for corner in evaluated.bound_box:
-        world_corner = matrix @ Vector(corner)
-        local_corner = ground_inverse @ world_corner
-        hit = ground_tree.find_nearest(local_corner)
-        if hit and hit[0] is not None and (best is None or hit[3] < best[3]):
-            best = hit
-            best_world_point = ground_eval.matrix_world @ hit[0]
-            best_world_normal = (ground_eval.matrix_world.to_3x3() @ hit[1]).normalized()
-    if best is not None:
-        nearest = {{
-            "distance_m": float(best[3]) * unit_scale,
-            "point_m": [float(x) * unit_scale for x in best_world_point],
-            "normal": [float(x) for x in best_world_normal],
-        }}
+    if ground_tree is not None:
+        best = None
+        for corner in evaluated.bound_box:
+            world_corner = matrix @ Vector(corner)
+            local_corner = ground_inverse @ world_corner
+            hit = ground_tree.find_nearest(local_corner)
+            if hit and hit[0] is not None and (best is None or hit[3] < best[3]):
+                best = hit
+                best_world_point = ground_eval.matrix_world @ hit[0]
+                best_world_normal = (ground_eval.matrix_world.to_3x3() @ hit[1]).normalized()
+        if best is not None:
+            nearest = {{
+                "distance_m": float(best[3]) * unit_scale,
+                "point_m": [float(x) * unit_scale for x in best_world_point],
+                "normal": [float(x) for x in best_world_normal],
+            }}
     in_contact = bool(
         nearest is not None and nearest["distance_m"] <= float(cfg["contact_tolerance_m"])
     )
@@ -252,7 +340,7 @@ for frame in range(1, frame_count + 1):
             "detection": "evaluated_mesh_proximity_after_bullet_step",
         }}
         contacts.append(contact_event)
-    frames.append({{
+    row = {{
         "frame": frame,
         "time_s": time_s,
         "position_m": [float(x) * unit_scale for x in position],
@@ -266,10 +354,46 @@ for frame in range(1, frame_count + 1):
         "angular_velocity_rad_s": [float(x) for x in angular_velocity],
         "in_contact": in_contact,
         "nearest_contact": nearest,
-    }})
+    }}
+    if joint_info is not None:
+        relative = (rotation @ initial_q.inverted()).normalized()
+        signed_projection = (
+            relative.x * joint_info["axis_world"][0]
+            + relative.y * joint_info["axis_world"][1]
+            + relative.z * joint_info["axis_world"][2]
+        )
+        angle_deg = math.degrees(2.0 * math.atan2(signed_projection, relative.w))
+        while angle_deg > 180.0:
+            angle_deg -= 360.0
+        while angle_deg < -180.0:
+            angle_deg += 360.0
+        row["joint_angle_deg"] = angle_deg
+        row["joint_limit_ok"] = (
+            joint_info["lower_limit_deg"] - 1.0
+            <= angle_deg
+            <= joint_info["upper_limit_deg"] + 1.0
+        )
+    frames.append(row)
     previous_position = position.copy()
     previous_rotation = rotation.copy()
     was_in_contact = in_contact
+
+if joint_info is not None and not all(row["joint_limit_ok"] for row in frames):
+    raise RuntimeError("hinge trajectory exceeded configured angular limits")
+
+reset_pose_delta_m = None
+reset_rotation_delta_deg = None
+if joint_info is not None:
+    scene.frame_set(1)
+    bpy.context.view_layer.update()
+    replayed = body.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    reset_pose_delta_m = float(
+        (replayed.matrix_world.translation - initial_position).length * unit_scale
+    )
+    replayed_q = replayed.matrix_world.to_quaternion().normalized()
+    reset_rotation_delta_deg = math.degrees(replayed_q.rotation_difference(initial_q).angle)
+    if reset_pose_delta_m > 1e-5 or reset_rotation_delta_deg > 1e-4:
+        raise RuntimeError("hinge reset did not restore its initial pose")
 
 finite_channels = (
     row["position_m"] + row["linear_velocity_mps"] + row["angular_velocity_rad_s"]
@@ -313,7 +437,15 @@ core = {{
     "source_sha256": cfg["source_sha256"],
     "ground_object": cfg.get("ground_object"),
     "fixed_object": cfg.get("fixed_object"),
-    "joint": None,
+    "joint": joint_info,
+    "initial_pose_m": [float(value) * unit_scale for value in initial_position],
+    "reset_pose_delta_m": reset_pose_delta_m,
+    "reset_rotation_delta_deg": reset_rotation_delta_deg,
+    "max_hinge_angle_deg": (
+        max(abs(row["joint_angle_deg"]) for row in frames)
+        if joint_info is not None
+        else None
+    ),
     "contact_method": "evaluated_mesh_proximity_after_bullet_step",
     "contact_tolerance_m": float(cfg["contact_tolerance_m"]),
     "contacts": contacts,
@@ -366,6 +498,8 @@ async def run_blender_physics_spec(
     result_path = spec.output_dir / "physics-result.json"
     glb_path = spec.output_dir / "physics-scene.glb"
     script_path = spec.output_dir / "blender_physics_job.py"
+    result_path.unlink(missing_ok=True)
+    glb_path.unlink(missing_ok=True)
     script_path.write_text(build_physics_script(spec, result_path, glb_path), encoding="utf-8")
     redactor = SecretRedactor.from_env()
     try:
@@ -441,15 +575,22 @@ async def run_blender_physics_spec(
     try:
         payload = json.loads(result_path.read_text(encoding="utf-8"))
         with glb_path.open("rb") as exported_scene:
-            glb_magic = exported_scene.read(4)
+            glb_header = exported_scene.read(12)
+        if len(glb_header) != 12:
+            raise ValueError("physics GLB is missing its complete header")
+        glb_magic, glb_version, glb_length = struct.unpack("<4sII", glb_header)
         if (
             payload.get("schema") != "comfy_studio.blender-physics.v1"
             or not isinstance(payload.get("frames"), list)
             or not payload["frames"]
+            or payload.get("frame_count") != len(payload["frames"])
             or len(payload["state_hash"]) != 64
             or not re.fullmatch(r"[0-9a-f]{64}", payload["state_hash"])
+            or payload["state_hash"] != _physics_state_hash(payload)
             or not glb_path.is_file()
             or glb_magic != _GLB_MAGIC
+            or glb_version != 2
+            or glb_length != glb_path.stat().st_size
         ):
             raise ValueError("physics result failed schema or artifact checks")
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
