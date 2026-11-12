@@ -261,6 +261,16 @@ def test_val_perc_002_clip_sqlite_vec_semantic_search_ranks_target_shot_top(
     assert ingested_video["status"] == "pending_weights"
     assert ingested_video["media_info"]["duration_sec"] > 0
     assert ingested_video["media_validation"] == "verified"
+    assert ingested_video["transforms"]["source_time_base"]
+    assert ingested_video["transforms"]["observed_rotation_degrees"] == 0
+    assert ingested_video["segments"]
+    assert all(
+        segment["source_asset_id"] == vid_id
+        and segment["source_path"]
+        and segment["source_interval_sec"]["end_sec"]
+        > segment["source_interval_sec"]["start_sec"]
+        for segment in ingested_video["segments"]
+    )
 
     # 1. Consulta por escena verde ("plano con gorra verde")
     green_search = client.get(
