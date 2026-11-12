@@ -6,6 +6,7 @@ Modo stub (STUDIO_STUB_BLENDER=1): sin binario de Blender ni GPU.
 from __future__ import annotations
 
 import asyncio
+import stat
 from pathlib import Path
 
 import pytest
@@ -94,3 +95,22 @@ def test_install_addon_stub_when_dynamic_on(
     assert res.ok is True and res.simulated is True
     assert res.payload["addon"] == "io_scene_custom"
     assert res.payload["enabled"] is True
+
+
+def test_verify_reports_and_enforces_pinned_binary_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("STUDIO_STUB_BLENDER", raising=False)
+    binary = tmp_path / "blender"
+    binary.write_text("#!/bin/sh\nprintf 'Blender 5.2.4\\n'\n", encoding="utf-8")
+    binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("STUDIO_BLENDER_EXPECTED_VERSION", "5.2.4")
+    result = BlenderEngine(log_dir=tmp_path / "logs", blender_bin=str(binary)).verify("render")
+    assert result.ok is True
+    assert result.payload["version"] == "Blender 5.2.4"
+    assert result.payload["expected_version"] == "5.2.4"
+
+    monkeypatch.setenv("STUDIO_BLENDER_EXPECTED_VERSION", "5.2.3")
+    mismatch = BlenderEngine(log_dir=tmp_path / "logs", blender_bin=str(binary)).verify("render")
+    assert mismatch.ok is False
+    assert mismatch.reason == "version_mismatch"

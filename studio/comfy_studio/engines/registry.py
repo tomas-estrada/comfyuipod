@@ -109,8 +109,8 @@ def build_default_registry() -> EngineRegistry:
             EngineTier.WARM,
             wired=True,
             note=(
-                "runner existente (blender.py); SIN binario en la imagen — "
-                "modo 3D requiere Blender instalado (ver preparedness)"
+                "Blender 5.2.4 LTS headless está fijado por SHA-256 en la imagen; "
+                "los pesos externos siguen sujetos a su disponibilidad"
             ),
         )
     )

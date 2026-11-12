@@ -27,6 +27,7 @@ from comfy_studio.blender import (
     _STUB_PNG,
     BlenderExportSpec,
     BlenderRenderSpec,
+    build_render_script,
     run_blender_spec,
 )
 from comfy_studio.engines import EngineRunSpec
@@ -107,6 +108,21 @@ def test_render_with_valid_png_passes(tmp_path: Path) -> None:
     assert result.ok is True
     assert result.validation_error is None
     assert len(result.outputs) == 1
+
+
+def test_cpu_render_spec_selects_cpu_without_gpu_device_discovery(tmp_path: Path) -> None:
+    spec = _render_spec(tmp_path)
+    spec.device = "cpu"
+    generated = build_render_script(spec)
+    assert 'scene.cycles.device = "CPU"' in generated
+    assert "get_devices_for_type" not in generated
+
+
+def test_render_spec_rejects_unknown_compute_device(tmp_path: Path) -> None:
+    spec = _render_spec(tmp_path)
+    spec.device = "automatic"
+    with pytest.raises(ValueError, match="device debe ser 'cpu' o 'gpu'"):
+        spec.validate()
 
 
 # --- export glTF: magic bytes obligatorios ----------------------------------

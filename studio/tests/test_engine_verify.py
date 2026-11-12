@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,8 @@ def _no_stubs(monkeypatch: pytest.MonkeyPatch):
 
 def _writable_exe(path: Path) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"fake")
+    path.write_text("#!/bin/sh\nprintf 'Blender 5.2.4\\n'\n", encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return str(path)
 
 
