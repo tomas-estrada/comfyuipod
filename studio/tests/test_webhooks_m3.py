@@ -82,6 +82,7 @@ def _make_notifier(
         retries=retries,
         retry_base_delay_s=0.01,
         backlog=backlog,
+        validate_url=False,
     )
 
 
@@ -392,6 +393,7 @@ async def test_each_event_is_signed_and_payload_never_contains_secrets(event: st
         redactor=cfg.redactor(),
         transport=httpx.ASGITransport(app=_make_receiver(state)),
         retry_base_delay_s=0.01,
+        validate_url=False,
     )
     detail = " ".join(WEBHOOK_TEST_SECRETS.values())
     notifier.fire(event, {"job_id": "j1", "error": detail, "detail": detail})
