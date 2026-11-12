@@ -100,6 +100,7 @@ def test_install_addon_stub_when_dynamic_on(
 def test_verify_reports_and_enforces_pinned_binary_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("STUDIO_STUB_BLENDER", raising=False)
     binary = tmp_path / "blender"
     binary.write_text("#!/bin/sh\nprintf 'Blender 5.2.4\\n'\n", encoding="utf-8")
     binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
