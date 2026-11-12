@@ -7,7 +7,7 @@ const CONTRACT_MARKER = 'COMFYUIPOD_AGENT_RUN_CONTRACT=';
 const DEFAULT_LIMITS = {turns: 12, llmCalls: 24, toolCalls: 48};
 const ALLOWED_TOOLS = new Set([
 	'read_file', 'read_directory', 'glob', 'grep', 'write_file', 'edit_file',
-	'shell_command', 'agent', 'agent_output',
+	'shell_command', 'agent_output',
 ]);
 const RUNS = new WeakMap();
 const GROUPS = new Map();
