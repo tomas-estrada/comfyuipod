@@ -285,6 +285,7 @@ def test_parallel_safe_defaults_to_serial_and_readonly_tools_opt_in() -> None:
     belt = create_default_tool_belt()
     readonly = {
         "search_assets",
+        "search_blender_extensions",
         "find_shots_text",
         "find_shots_face",
         "list_templates",
