@@ -1,12 +1,17 @@
 # Research retrieval for builder agents
 
-The investigation document in this directory is the initial evidence corpus.
+The investigation documents in this directory are the initial evidence corpus.
 Its bibliographic claims came from Consensus search and have **not** been
 independently verified; it mixes peer-reviewed work, preprints, and reports.
 Use it to find candidate approaches, then verify important claims against the
 linked primary paper before relying on them.
 
 ## Query the corpus
+
+`github-integration-scan-2026-11-12.md` is a scored shortlist of public
+repositories for fast capability upgrades. The cited GitHub links are the
+starting point for a new integration; verify the current license, release
+artifact, runtime cost, and project fit before adoption.
 
 From the repository root:
 
