@@ -36,7 +36,7 @@ def test_list_reports_modes_and_formats(tmp_path: Path) -> None:
     eng = BlenderEngine(log_dir=tmp_path / "logs")
     res = eng.list()
     assert res.ok is True
-    assert set(res.payload["modes"]) == {"render", "export"}
+    assert set(res.payload["modes"]) == {"render", "export", "physics"}
     assert "usd" in res.payload["export_formats"]
 
 

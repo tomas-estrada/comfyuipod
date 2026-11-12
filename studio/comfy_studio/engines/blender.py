@@ -38,7 +38,7 @@ from comfy_studio.engines import (
 )
 from comfy_studio.engines.base import Engine
 
-_MODES = ("render", "export")
+_MODES = ("render", "export", "physics")
 
 
 class BlenderEngine(Engine):
@@ -247,6 +247,9 @@ class BlenderEngine(Engine):
         ComfyUI). El contrato es la forma de `EngineResult`, no el color del
         método.
         """
+        if isinstance(spec.job, dict) and spec.job.get("mode") == "physics":
+            return await self._run_physics(spec)
+
         try:
             blender_spec = self._build_spec(spec.job)
         except (KeyError, ValueError, TypeError) as exc:
@@ -279,6 +282,84 @@ class BlenderEngine(Engine):
             exit_code=result.exit_code,
             stderr_tail=stderr_tail,
             simulated=result.stubbed,
+        )
+
+    async def _run_physics(self, run_spec: EngineRunSpec) -> EngineResult:
+        from comfy_studio.blender_physics import (
+            BlenderPhysicsSpec,
+            run_blender_physics_spec,
+        )
+
+        job = run_spec.job
+        try:
+            physics_spec = BlenderPhysicsSpec(
+                scene_path=Path(str(job["scene_path"])),
+                output_dir=Path(str(job["output_dir"])),
+                moving_object=str(job["moving_object"]),
+                maneuver=str(job.get("maneuver", "free_fall")),
+                ground_object=str(job["ground_object"]) if job.get("ground_object") else None,
+                fps=int(job.get("fps", 24)),
+                duration_s=float(job.get("duration_s", 2.0)),
+                seed=int(job.get("seed", 0)),
+                mass_kg=float(job.get("mass_kg", 1.0)),
+                gravity_mps2=float(job.get("gravity_mps2", 9.81)),
+                solver_substeps=int(job.get("solver_substeps", 8)),
+                solver_iterations=int(job.get("solver_iterations", 20)),
+                contact_tolerance_m=float(job.get("contact_tolerance_m", 0.03)),
+                timeout_s=float(run_spec.timeout_s or job.get("timeout_s", 180.0)),
+            )
+            physics_spec.validate()
+        except (KeyError, TypeError, ValueError) as exc:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=f"spec de física inválida: {exc}",
+                reason="spec_invalid",
+            )
+        if self.is_stub():
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error="simulación física requiere Blender real; el modo stub no es evidencia",
+                simulated=True,
+                reason="backend_missing",
+            )
+        result = await run_blender_physics_spec(
+            physics_spec,
+            blender_bin=self._blender_bin,
+            cancel_event=run_spec.cancel_event,
+        )
+        if not result.ok:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                payload={"mode": "physics", "duration_s": result.duration_s},
+                error=result.error or "falló la simulación física con Blender",
+                exit_code=result.exit_code,
+                stderr_tail=result.log_tail or None,
+                simulated=False,
+                reason="timeout" if result.exit_code == 124 else "execution_failed",
+            )
+        return EngineResult(
+            ok=True,
+            engine=self.name,
+            verb="run",
+            payload={
+                "mode": "physics",
+                "physics": result.payload or {},
+                "outputs": [
+                    str(path)
+                    for path in (result.scene_output_path, result.result_path)
+                    if path is not None
+                ],
+                "duration_s": round(result.duration_s, 3),
+            },
+            exit_code=0,
+            stderr_tail=result.log_tail or None,
+            simulated=False,
         )
 
     # -- helpers -------------------------------------------------------------
