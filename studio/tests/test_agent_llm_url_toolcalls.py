@@ -475,7 +475,7 @@ async def test_provider_failures_are_typed_and_fallback_attempt_is_bounded(
 
     assert error.value.kind == expected_kind
     assert error.value.status_code == status
-    assert error.value.retryable is False
+    assert error.value.retryable is (status == 429)
     assert calls == [_PRIMARY_ENDPOINT, _FALLBACK_ENDPOINT]
 
 
