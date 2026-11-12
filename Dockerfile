@@ -86,6 +86,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxdamage1 \
         libxfixes3 \
         libxrandr2 \
+        libxi6 \
+        libxinerama1 \
+        libxxf86vm1 \
         libgbm1 \
         libxkbcommon0 \
         libasound2t64 \
@@ -94,6 +97,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ffmpeg -version \
     && ttyd --version \
     && rm -rf /var/lib/apt/lists/*
+
+# 1b. Blender LTS headless renderer, pinned by the official release archive SHA-256.
+#     The complete distribution is retained under /opt/blender, including its
+#     bundled license/notices tree. CPU renders are used for deterministic smoke
+#     checks; GPU renders remain subject to the existing resource lease.
+ENV STUDIO_BLENDER_BIN=/opt/blender/blender \
+    STUDIO_BLENDER_EXPECTED_VERSION=5.2.4
+RUN curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
+        -o /tmp/blender.tar.xz \
+        https://download.blender.org/release/Blender5.2/blender-5.2.4-linux-x64.tar.xz \
+    && echo "2fd14c50987426897ba60237ee996edf2b4151f4b1a72a460ca20be58c1d2d86  /tmp/blender.tar.xz" | sha256sum --check --strict \
+    && mkdir -p /opt/blender \
+    && tar -xJf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
+    && rm -f /tmp/blender.tar.xz \
+    && test -x /opt/blender/blender \
+    && test -n "$(find /opt/blender -type f -path '*/license/license.md' -print -quit)" \
+    && test -n "$(find /opt/blender -type f -path '*/license/licenses.json' -print -quit)" \
+    && /opt/blender/blender --background --factory-startup --python-expr "import bpy; assert bpy.app.version_string == '5.2.4', bpy.app.version_string; print('Blender LTS:', bpy.app.version_string)"
 
 # 2. Copiar archivos de bloqueo y restricciones de versión (REP-01 / REP-02 / ALTA-05)
 RUN mkdir -p /etc/comfyui /etc/comfyui/portal /etc/comfyui/probes /etc/comfyui/panel
@@ -478,6 +499,8 @@ COPY config/probes/ /etc/comfyui/probes/
 COPY config/nginx.conf /etc/nginx/nginx.conf
 COPY config/models-studio.json /etc/comfyui/models-studio.json
 COPY config/models-core.json /etc/comfyui/models-core.json
+COPY upgrades-ultra-version/engines.json /etc/comfyui/engines.json
+COPY docs/licenses/blender.md /usr/share/doc/blender/
 COPY scripts/storage_requirement.py /usr/local/bin/storage_requirement.py
 COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
@@ -526,6 +549,7 @@ RUN sed -i 's/\r$//' \
 
 COPY studio/ /opt/studio/
 COPY panel/ /etc/comfyui/panel/
+COPY scripts/smoke_blender_cpu.py /tmp/smoke_blender_cpu.py
 
 # Código de aplicación (studio/panel): capa separada para no rehacer el warmup.
 RUN find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json" \) -exec sed -i 's/\r$//' {} + && \
@@ -537,7 +561,9 @@ RUN find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json"
     /opt/venvs/studio/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
     /opt/venvs/studio/bin/pip install --no-cache-dir /opt/studio && \
     /opt/venvs/studio/bin/python -m compileall -q /opt/venvs/studio/lib && \
-    /opt/venvs/studio/bin/python -m comfy_studio.templates
+    /opt/venvs/studio/bin/python -m comfy_studio.templates && \
+    /opt/venvs/studio/bin/python /tmp/smoke_blender_cpu.py && \
+    rm -f /tmp/smoke_blender_cpu.py
 
 # Atlas audiovisual georreferenciado del Valle de Aburrá: los BYTES REALES del
 # bundle (catálogo SQLite, fotos, licencias, OSM) dentro de la imagen en una ruta

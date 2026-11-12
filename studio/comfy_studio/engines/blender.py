@@ -18,6 +18,9 @@ Mantiene su modo stub existente (`STUDIO_STUB_BLENDER=1`).
 from __future__ import annotations
 
 import json
+import os
+import re
+import subprocess
 from pathlib import Path
 
 from comfy_studio.blender import (
@@ -186,6 +189,38 @@ class BlenderEngine(Engine):
 
         binary = self._blender_bin or find_blender_bin()
         ready = bool(binary)
+        version = None
+        reason = None
+        error = None
+        expected_version = (os.environ.get("STUDIO_BLENDER_EXPECTED_VERSION") or "").strip()
+        if binary:
+            try:
+                probe = subprocess.run(
+                    [binary, "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                ready = False
+                reason = "version_probe_failed"
+                error = f"no se pudo consultar Blender: {exc}"
+            else:
+                first_line = (probe.stdout or "").splitlines()
+                version = first_line[0].strip() if first_line else None
+                match = re.fullmatch(r"Blender\s+(\d+\.\d+\.\d+)", version or "")
+                if probe.returncode != 0 or match is None:
+                    ready = False
+                    reason = "version_probe_failed"
+                    error = "el binario no devolvió una versión Blender válida"
+                elif expected_version and match.group(1) != expected_version:
+                    ready = False
+                    reason = "version_mismatch"
+                    error = (
+                        f"versión Blender {match.group(1)} no coincide con "
+                        f"la fijada {expected_version}"
+                    )
         return EngineResult(
             ok=ready,
             engine=self.name,
@@ -193,13 +228,15 @@ class BlenderEngine(Engine):
             payload={
                 "capability": submotor,
                 "binary": binary,
+                "version": version,
+                "expected_version": expected_version or None,
                 "stub": False,
                 "weights": "not_required",
             },
-            error=None if ready else (
-                "binario de Blender ausente (STUDIO_BLENDER_BIN, PATH o /opt/blender)"
-            ),
-            reason=None if ready else "not_installed",
+            error=error or (None if ready else (
+                "binario de Blender no encontrado (STUDIO_BLENDER_BIN, PATH o /opt/blender)"
+            )),
+            reason=reason or (None if ready else "not_installed"),
         )
 
     async def run(self, spec: EngineRunSpec) -> EngineResult:
@@ -264,4 +301,5 @@ class BlenderEngine(Engine):
             width=int(job.get("width", 1280)),
             height=int(job.get("height", 720)),
             frames=int(job.get("frames", 1)),
+            device=str(job.get("device", "gpu")).lower(),
         )

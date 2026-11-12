@@ -90,6 +90,7 @@ class BlenderRenderSpec:
     height: int = 720
     frames: int = 1
     device_index: int = 0
+    device: str = "gpu"  # gpu | cpu; CPU is required for deterministic engine fixtures.
     output_format: str = "png"  # png | exr (secuencia) — el MP4 se compone con ffmpeg
     timeout_s: float = DEFAULT_BLENDER_TIMEOUT_S
 
@@ -106,6 +107,8 @@ class BlenderRenderSpec:
             raise ValueError("output_format debe ser 'png' o 'exr'")
         if self.device_index < 0 or self.device_index > 15:
             raise ValueError("device_index fuera de rango (0..15)")
+        if self.device not in ("cpu", "gpu"):
+            raise ValueError("device debe ser 'cpu' o 'gpu'")
 
 
 @dataclass(slots=True)
@@ -202,6 +205,29 @@ def build_render_script(spec: BlenderRenderSpec) -> str:
     scene_literal = json.dumps(str(spec.scene_path).replace("\\", "/"))
     out_dir_literal = json.dumps(str(spec.output_dir).replace("\\", "/"))
     engine = "CYCLES" if spec.engine == "cycles" else "BLENDER_EEVEE_NEXT"
+    gpu_setup = ""
+    if spec.device == "gpu":
+        gpu_setup = '''\
+    prefs = bpy.context.preferences.addons.get("cycles")
+    if prefs is not None:
+        cprefs = prefs.preferences
+        try:
+            cprefs.get_devices_for_type("OPTIX")
+            cprefs.compute_device_type = "OPTIX"
+        except Exception:
+            try:
+                cprefs.compute_device_type = "CUDA"
+            except Exception:
+                cprefs.compute_device_type = "NONE"
+        devices = getattr(cprefs, "devices", [])
+        target = DEVICE_INDEX
+        idx = 0
+        for d in devices:
+            if getattr(d, "type", "") in ("OPTIX", "CUDA"):
+                d.use = (idx == target)
+                idx += 1
+            else:
+                d.use = False'''.replace("DEVICE_INDEX", str(spec.device_index))
     return f'''# Generado por Comfy Studio BlenderRunner (M3-D). No editar a mano.
 import bpy, sys
 
@@ -229,31 +255,12 @@ scene.frame_end = {spec.frames}
 
 if scene.render.engine == "CYCLES":
     scene.cycles.samples = {spec.samples}
-    scene.cycles.device = "GPU"
-    prefs = bpy.context.preferences.addons.get("cycles")
-    if prefs is not None:
-        cprefs = prefs.preferences
-        try:
-            cprefs.get_devices_for_type("OPTIX")
-            cprefs.compute_device_type = "OPTIX"
-        except Exception:
-            try:
-                cprefs.compute_device_type = "CUDA"
-            except Exception:
-                cprefs.compute_device_type = "NONE"
-        devices = getattr(cprefs, "devices", [])
-        target = {spec.device_index}
-        idx = 0
-        for d in devices:
-            if getattr(d, "type", "") in ("OPTIX", "CUDA"):
-                d.use = (idx == target)
-                idx += 1
-            else:
-                d.use = False
+    scene.cycles.device = {json.dumps('CPU' if spec.device == 'cpu' else 'GPU')}
+{gpu_setup}
 else:
     scene.eevee.taa_render_samples = {spec.samples}
 
-bpy.ops.render.render(animation={str(spec.frames > 1).lower()}, write_still=True)
+bpy.ops.render.render(animation={spec.frames > 1}, write_still=True)
 print("[BlenderRunner] render completado:", out_dir)
 '''
 
