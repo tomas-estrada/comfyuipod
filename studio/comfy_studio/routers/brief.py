@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
@@ -72,7 +73,20 @@ def _publish(request: Request, event_type: str, data: dict[str, Any]) -> None:
 
 def _learned_preferences(store: ProjectStore, project_id: str) -> list[dict[str, Any]]:
     prefs = store.get_meta(project_id, "creative_feedback", [])
-    return prefs if isinstance(prefs, list) else []
+    if not isinstance(prefs, list):
+        return []
+    cleaned = [item for item in prefs if isinstance(item, dict)]
+    migrated = False
+    for item in cleaned:
+        if not item.get("id"):
+            item["id"] = uuid4().hex
+            item["revision"] = 1
+            item["updated_at"] = None
+            migrated = True
+        item.setdefault("project_id", project_id)
+    if migrated:
+        store.set_meta(project_id, "creative_feedback", cleaned)
+    return cleaned
 
 
 def register_routes(app: FastAPI) -> None:
@@ -203,6 +217,22 @@ def register_routes(app: FastAPI) -> None:
             "learned_preferences": _learned_preferences(store, project_id),
         }
         return redactor.redact_value(payload)
+
+    @app.get("/studio/api/projects/{project_id}/brief/preferences")
+    async def list_brief_preferences_endpoint(
+        project_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Lista la memoria creativa privada de un solo proyecto."""
+        store: ProjectStore = request.app.state.store
+        redactor = request.app.state.config.redactor()
+        _require_project(store, project_id)
+        preferences = _learned_preferences(store, project_id)
+        return redactor.redact_value({
+            "project_id": project_id,
+            "preferences": preferences,
+            "count": len(preferences),
+        })
 
     @app.get("/studio/api/projects/{project_id}/briefs")
     async def list_briefs_endpoint(
@@ -382,10 +412,13 @@ def register_routes(app: FastAPI) -> None:
         _require_project(store, project_id)
         latest = store.get_latest_creative_brief(project_id)
         entry = {
+            "id": uuid4().hex,
             "text": body.text.strip(),
             "applies_to": body.applies_to,
             "project_id": project_id,
             "created_at": _utc_now_iso(),
+            "updated_at": None,
+            "revision": 1,
             "applied": False,
         }
         prefs = _learned_preferences(store, project_id)
@@ -426,6 +459,54 @@ def register_routes(app: FastAPI) -> None:
             },
         )
         return redactor.redact_value({"project_id": project_id, "stored": True, "brief": saved})
+
+    @app.patch("/studio/api/projects/{project_id}/brief/preferences/{preference_id}")
+    async def update_brief_preference_endpoint(
+        project_id: str,
+        preference_id: str,
+        body: BriefFeedbackRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Corrige una preferencia sin moverla de su proyecto."""
+        store: ProjectStore = request.app.state.store
+        redactor = request.app.state.config.redactor()
+        _require_project(store, project_id)
+        preferences = _learned_preferences(store, project_id)
+        entry = next((item for item in preferences if item.get("id") == preference_id), None)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Preferencia no encontrada")
+        entry["text"] = body.text.strip()
+        entry["applies_to"] = body.applies_to
+        entry["updated_at"] = _utc_now_iso()
+        entry["revision"] = int(entry.get("revision") or 1) + 1
+        store.set_meta(project_id, "creative_feedback", preferences)
+        return redactor.redact_value({
+            "project_id": project_id,
+            "updated": True,
+            "preference": entry,
+        })
+
+    @app.delete("/studio/api/projects/{project_id}/brief/preferences/{preference_id}")
+    async def delete_brief_preference_endpoint(
+        project_id: str,
+        preference_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Elimina una preferencia del almacén activo de ese proyecto."""
+        store: ProjectStore = request.app.state.store
+        redactor = request.app.state.config.redactor()
+        _require_project(store, project_id)
+        preferences = _learned_preferences(store, project_id)
+        remaining = [item for item in preferences if item.get("id") != preference_id]
+        if len(remaining) == len(preferences):
+            raise HTTPException(status_code=404, detail="Preferencia no encontrada")
+        store.set_meta(project_id, "creative_feedback", remaining)
+        return redactor.redact_value({
+            "project_id": project_id,
+            "deleted": True,
+            "preference_id": preference_id,
+            "remaining": len(remaining),
+        })
 
     @app.post("/studio/api/projects/{project_id}/brief/review")
     async def review_output_endpoint(
