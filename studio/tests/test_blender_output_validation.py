@@ -128,7 +128,7 @@ def test_render_spec_rejects_unknown_compute_device(tmp_path: Path) -> None:
 
 def test_camera_view_render_spec_is_bounded_and_generates_python(tmp_path: Path) -> None:
     spec = _render_spec(tmp_path)
-    spec.engine = "eevee"
+    spec.engine = "cycles"
     spec.device = "cpu"
     spec.camera_views = (
         BlenderCameraView("front", (0, -4, 0), (0, 0, 0)),
@@ -145,7 +145,7 @@ def test_camera_view_render_spec_is_bounded_and_generates_python(tmp_path: Path)
 
 def test_camera_view_render_rejects_duplicate_or_unbounded_views(tmp_path: Path) -> None:
     spec = _render_spec(tmp_path)
-    spec.engine = "eevee"
+    spec.engine = "cycles"
     spec.camera_views = (
         BlenderCameraView("front", (0, -4, 0), (0, 0, 0)),
         BlenderCameraView("front", (4, 0, 0), (0, 0, 0)),

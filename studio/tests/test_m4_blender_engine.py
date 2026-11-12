@@ -79,7 +79,7 @@ def test_camera_view_job_builds_eevee_cpu_spec(tmp_path: Path) -> None:
     job = _render_job(tmp_path)
     job.update(
         {
-            "engine": "eevee",
+            "engine": "cycles",
             "device": "cpu",
             "camera_views": [
                 {"name": "front", "position": [0, -4, 0], "target": [0, 0, 0]},
@@ -91,7 +91,7 @@ def test_camera_view_job_builds_eevee_cpu_spec(tmp_path: Path) -> None:
         }
     )
     spec = BlenderEngine._build_spec(job)
-    assert spec.engine == "eevee"
+    assert spec.engine == "cycles"
     assert spec.device == "cpu"
     assert spec.camera_views[0].name == "front"
     assert spec.up_axis == "z_up"

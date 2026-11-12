@@ -3236,7 +3236,7 @@ async def _handle_render_asset3d_views(
                     "mode": "render",
                     "scene_path": str(asset_path),
                     "output_dir": str(output_dir),
-                    "engine": "eevee",
+                    "engine": "cycles",
                     "device": "cpu",
                     "samples": 16,
                     "width": 512,
@@ -3292,7 +3292,7 @@ async def _handle_render_asset3d_views(
                         "camera_name": camera.name,
                         "camera_provenance": str(camera.provenance),
                         "preview_index": index,
-                        "render_engine": "eevee_cpu",
+                        "render_engine": "cycles_cpu",
                     },
                 )
             except (OSError, KeyError, ValueError) as exc:
@@ -3306,7 +3306,7 @@ async def _handle_render_asset3d_views(
         "source_asset_id": args.asset_id,
         "previews": previews,
         "camera_count": len(previews),
-        "render_engine": "eevee_cpu",
+        "render_engine": "cycles_cpu",
         "simulated": False,
     }
 
@@ -4922,7 +4922,7 @@ def create_default_tool_belt() -> ToolBelt:
         ToolSpec(
             name="render_asset3d_views",
             description=(
-                "Renderiza en Blender EEVEE CPU las cámaras guardadas en el manifiesto 3D "
+                "Renderiza en Blender Cycles CPU las cámaras guardadas en el manifiesto 3D "
                 "de un GLB del proyecto. Registra PNGs 512×512 con hash de origen y "
                 "procedencia de cada cámara; requiere Blender real, no usa el modo stub."
             ),

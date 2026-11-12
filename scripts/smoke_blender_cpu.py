@@ -109,8 +109,8 @@ def main() -> int:
         camera_spec = BlenderRenderSpec(
             scene_path=glb_path,
             output_dir=root / "camera-renders",
-            engine="eevee",
-            samples=8,
+            engine="cycles",
+            samples=2,
             width=96,
             height=64,
             frames=1,

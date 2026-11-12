@@ -153,9 +153,12 @@ class BlenderRenderSpec:
         for view in self.camera_views:
             view.validate()
         if self.camera_views and (
-            self.frames != 1 or self.output_format != "png" or self.engine != "eevee"
+            self.frames != 1
+            or self.output_format != "png"
+            or self.engine != "cycles"
+            or self.device != "cpu"
         ):
-            raise ValueError("camera_views requiere un frame PNG con EEVEE")
+            raise ValueError("camera_views requiere un frame PNG con Cycles CPU")
         if self.up_axis not in ("y_up", "z_up"):
             raise ValueError("up_axis debe ser y_up o z_up")
         if len(self.asset_transform) != 4 or any(len(row) != 4 for row in self.asset_transform):

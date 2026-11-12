@@ -302,6 +302,7 @@ async def test_artist3d_renders_and_persists_manifest_camera_previews(
     assert result["status"] == "completed"
     assert result["camera_count"] == 3
     assert result["simulated"] is False
+    assert calls[0]["engine"] == "cycles"
     assert calls[0]["device"] == "cpu"
     assert calls[0]["up_axis"] == "y_up"
     assert [preview["metadata"]["camera_name"] for preview in result["previews"]] == [
