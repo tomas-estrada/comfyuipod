@@ -29,3 +29,10 @@ studio/tests
 atlas/selection*.json
 atlas/catalog.db-wal
 atlas/catalog.db-shm
+
+# Blender's runtime archive has a required license notice copied into the image.
+!docs/
+docs/*
+!docs/licenses/
+docs/licenses/*
+!docs/licenses/blender.md
