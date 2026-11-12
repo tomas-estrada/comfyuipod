@@ -482,6 +482,7 @@ def handle(event: dict[str, Any], *, root: Path, runs_dir: Path) -> dict[str, An
 
 
 def main() -> int:
+    event: Any = {}
     try:
         event = json.load(sys.stdin)
         if not isinstance(event, dict):
