@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from comfy_studio.assets3d import Asset3D, Asset3DError
+from comfy_studio.gltf_validation import validate_glb
 
 MANIFEST_SCHEMA = "comfy_studio.asset3d_manifest.v1"
 _META_PREFIX = "asset3d_manifest:"
@@ -127,6 +128,11 @@ def save_asset3d_manifest(
     if asset.get("kind") != "model3d" or path.suffix.lower() != ".glb":
         raise Asset3DError("el manifiesto solo puede vincularse a un asset GLB del proyecto")
     gltf, digest = _read_glb(path)
+    validation = validate_glb(
+        path,
+        project_root=store.projects_root / project_id,
+        asset_sha256=digest,
+    )
     model = Asset3D.from_dict(manifest_data)
     if model.asset_id != asset_id:
         raise Asset3DError("asset_id del manifiesto debe coincidir con el GLB del proyecto")
@@ -176,6 +182,7 @@ def save_asset3d_manifest(
         "project_id": project_id,
         "model_filename": asset.get("original_filename"),
         "model_sha256": digest,
+        "gltf_validation": validation,
         "mesh_count": mesh_count,
         "node_count": node_count,
         "manifest": model.to_dict(),
@@ -198,6 +205,10 @@ def get_asset3d_manifest(store: Any, project_id: str, asset_id: str) -> dict[str
     _gltf, digest = _read_glb(path)
     if digest != record.get("model_sha256"):
         raise Asset3DError("el GLB cambió; el manifiesto debe revisarse antes de reabrirlo")
+    validation = record.get("gltf_validation")
+    if validation is not None:
+        if not isinstance(validation, dict) or validation.get("asset_sha256") != digest:
+            raise Asset3DError("el informe glTF no corresponde al hash actual del GLB")
     Asset3D.from_dict(record.get("manifest") or {})
     return record
 

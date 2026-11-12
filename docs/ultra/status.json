@@ -2,11 +2,11 @@
   "schema": "ultra-status/1",
   "goal_revision": "upgrades-ultra-version @ PR#64 (merged)",
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
-  "main_sha": "9a3238d0de2d1004fc9f0ad2da2dded20e1ca761",
+  "main_sha": "b65757ffaac5b6ce3c9eb0619e12f75a07e1f405",
   "stage": "gpu_partial_L3",
   "overall": "GPU_L3_PARTIAL",
-  "overall_note": "El workflow de main 43246478902 paso validacion del repositorio, Rust, build candidato, smoke full-stack, Atlas y perfil Studio en 9a3238d0. Esto prueba el software y la imagen, no una ejecucion GPU en el digest actual. W26 sigue siendo una sola ejecucion L3 de SDXL en un digest anterior. Las capacidades y A00-A29 conservan brechas no GPU abiertas: 14 capacidades en L0, otras parciales, A07 con 280 bloqueos de manifiesto en 56 de 58 engines seleccionados, y criterios D01-D05/baselines/holdouts pendientes. No declarar Ultra validada hasta cerrar esos criterios y repetir mediciones GPU.",
-  "updated_utc": "2026-11-12T15:48:17Z",
+  "overall_note": "El workflow de main 43260544679 paso validacion del repositorio, 2840 pruebas Python, Rust, build candidato, smoke full-stack, Atlas, perfil Studio y promocion de imagen en b65757ff. Esto prueba el software y la imagen, no una ejecucion GPU en el digest actual. W26 sigue siendo una sola ejecucion L3 de SDXL en un digest anterior. Las capacidades y A00-A29 conservan brechas no GPU abiertas: 14 capacidades en L0, otras parciales, A07 con 280 bloqueos de manifiesto en 56 de 58 engines seleccionados, y criterios D01-D05/baselines/holdouts pendientes. No declarar Ultra validada hasta cerrar esos criterios y repetir mediciones GPU.",
+  "updated_utc": "2026-11-12T17:01:49Z",
   "merged": {
     "W00": "done",
     "W01": "#65",
@@ -45,15 +45,15 @@
     "D01-D05: completar los escenarios de produccion, artefactos verificables, baselines y holdouts; la evidencia GPU queda para su campaña autorizada"
   ],
   "candidate_image_current": {
-    "main_sha": "9a3238d0de2d1004fc9f0ad2da2dded20e1ca761",
-    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-9a3238d",
-    "candidate_manifest_digest": "sha256:a6578a60acdd7ec9d6f51df2d36f0810645c3fe627b9c6c39f7eacb901d421e7",
-    "latest_manifest_digest": "sha256:544da21c73eb01de9d1f0a7d76b13657bffe0bef5771a628d9291160babdf271",
+    "main_sha": "b65757ffaac5b6ce3c9eb0619e12f75a07e1f405",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-b65757f",
+    "candidate_manifest_digest": "sha256:f1dbda0515c557f0c2ed7fe93407f18d9268ca6fdff7c32758fea742cbc41ccd",
+    "latest_manifest_digest": "sha256:a498992939234a68e2158fe464271d25b12894fabf0f73f2603e30696ab5332e",
     "promoted_to_latest": true,
-    "build_run": "43246478902",
-    "smoke": "passed: repo validation, Rust, candidate build, full-stack E2E, Atlas validation and MODEL_PROFILE=studio E2E; image promoted to latest",
-    "contains": "main 9a3238d0 including PR #338 staging optimizer, #340 repair-frame provenance and #341 D01 Atlas source evidence; CAPABILITY_EVIDENCE.md remains partial and A07 release_ready=false",
-    "note": "Digest and CI correspond to current main. No target-GPU measurement was run on this image; W26 evidence remains tied to its previous image digest."
+    "build_run": "43260544679",
+    "smoke": "passed: 2,840 Python tests, repository validation, Rust, candidate build, full-stack E2E, Atlas validation, MODEL_PROFILE=studio E2E, requirements-lock upload and image promotion",
+    "contains": "main b65757ff including PR #338 staging optimizer, #340 repair-frame provenance, #341 D01 Atlas source evidence and #343 bounded C02 camera-motion estimator; CAPABILITY_EVIDENCE.md remains partial and A07 release_ready=false",
+    "note": "Candidate and latest manifest digests are verified from GHCR. No target-GPU measurement was run on this image; W26 evidence remains tied to its previous image digest."
   },
   "candidate_image_previous": {
     "main_sha": "71822b7",
@@ -87,8 +87,8 @@
       "baselines/holdouts",
       "perfiles 128 y 256 por separado"
     ],
-    "current_main_revalidation": "not performed; run 43246478902 validates software/image only",
-    "current_main_image": "ghcr.io/tomas-estrada/comfyuipod:sha-9a3238d@sha256:a6578a60acdd7ec9d6f51df2d36f0810645c3fe627b9c6c39f7eacb901d421e7"
+    "current_main_revalidation": "software/image CI passed and image promoted in run 43260544679; target-GPU revalidation not performed",
+    "current_main_image": "ghcr.io/tomas-estrada/comfyuipod:sha-b65757f@sha256:f1dbda0515c557f0c2ed7fe93407f18d9268ca6fdff7c32758fea742cbc41ccd"
   },
   "ops_findings_W26": [
     "Historical W26 finding: Vast did not auto-start the service in that run. PR #108 added an idempotent start guard and an ENTRYPOINT regression; reproduction on the current main image remains part of real-pod revalidation.",
