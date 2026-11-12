@@ -36,7 +36,8 @@ def test_binds_recipe_to_gen_layer_without_template() -> None:
     layer = shot.layers[0]
     assert layer.template_id, "debe quedar con una plantilla ejecutable"
     assert layer.params.get("recipe_id")  # receta trazable
-    assert layer.engine in {"ltx25", "wan22"}  # motor AV real
+    assert layer.engine == "comfyui"  # adapter runtime, separate from model identity
+    assert layer.params["recipe_engine"] == "wan22"
 
 
 def test_existing_template_is_respected() -> None:
@@ -66,6 +67,32 @@ def test_explicit_template_without_fitting_recipe_is_unresolved() -> None:
     assert summary["unresolved"] == 1
     assert "recipe_unresolved" in shot.layers[0].params
     assert "lease_vram_mb" not in shot.layers[0].params
+
+
+def test_explicit_recipe_engine_conflict_is_unresolved() -> None:
+    st, shot = _state_with_gen_layer(template_id="wan_t2v")
+    shot.layers[0].engine = "ltx25"
+
+    summary = bind_recipes(st, vram_budget_mb=VRAM_96)
+
+    assert summary["unresolved"] == 1
+    assert shot.layers[0].params.get("recipe_id") is None
+    assert shot.layers[0].params.get("recipe_unresolved")
+
+
+def test_rebinding_clears_stale_unresolved_after_template_is_corrected() -> None:
+    st, shot = _state_with_gen_layer(template_id="sdxl_image")
+    first = bind_recipes(st, vram_budget_mb=VRAM_96)
+    assert first["unresolved"] == 1
+
+    layer = shot.layers[0]
+    layer.template_id = "wan_i2v"
+    layer.params.update({"width": 1280, "height": 720, "frames": 81})
+    second = bind_recipes(st, vram_budget_mb=VRAM_96)
+
+    assert second["skipped_has_template"] == 1
+    assert layer.params["recipe_id"] == "wan22_i2v_720p"
+    assert "recipe_unresolved" not in layer.params
 
 
 def test_unresolvable_layer_is_marked_not_invented() -> None:
@@ -133,12 +160,12 @@ def test_image_kind_binds_image_recipe() -> None:
     """Una capa kind='image' enlaza la receta de imagen (image.generate)."""
     st, shot = _state_with_layer("image", params={"width": 1024, "height": 1024, "frames": 1})
     summary = bind_recipes(st, vram_budget_mb=VRAM_96)
-    assert summary["bound"] == 1
+    assert summary["unresolved"] == 1
     layer = shot.layers[0]
-    assert layer.params.get("recipe_id") == "qwen_image_1024"
-    assert layer.params.get("lease_vram_mb") == int(18000 * 1.15)
-    assert layer.template_id == "sdxl_image"
-    assert layer.engine == "qwen-image21"
+    assert "recipe_id" not in layer.params
+    assert "recipe_unresolved" in layer.params
+    assert layer.template_id is None
+    assert layer.engine == "comfyui"
 
 
 def test_i2v_kind_binds_i2v_recipe() -> None:
@@ -151,7 +178,8 @@ def test_i2v_kind_binds_i2v_recipe() -> None:
     layer = shot.layers[0]
     assert layer.params.get("recipe_id") == "wan22_i2v_720p"
     assert layer.template_id == "wan_i2v"
-    assert layer.engine == "wan22"
+    assert layer.engine == "comfyui"
+    assert layer.params["recipe_engine"] == "wan22"
 
 
 def test_explicit_capability_overrides_kind() -> None:
@@ -161,10 +189,10 @@ def test_explicit_capability_overrides_kind() -> None:
         params={"capability": "image.generate", "width": 1024, "height": 1024, "frames": 1},
     )
     summary = bind_recipes(st, vram_budget_mb=VRAM_96)
-    assert summary["bound"] == 1
+    assert summary["unresolved"] == 1
     layer = shot.layers[0]
     # La capability explícita (image.generate) gana: enlaza la receta de imagen,
     # no la de i2v que correspondería al kind.
-    assert layer.params.get("recipe_id") == "qwen_image_1024"
-    assert layer.template_id == "sdxl_image"
-    assert layer.engine == "qwen-image21"
+    assert "recipe_id" not in layer.params
+    assert "recipe_unresolved" in layer.params
+    assert layer.template_id is None
