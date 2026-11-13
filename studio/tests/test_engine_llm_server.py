@@ -65,7 +65,7 @@ def test_install_siempre_rechazado_tipado(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("STUDIO_DYNAMIC", "1")
     res = LlmServerEngine().install("llama-cpp")
     assert res.ok is False and res.verb == "install"
-    assert "no está incluido" in (res.error or "")
+    assert "pesos .gguf" in (res.error or "")
 
 
 def test_run_rechaza_spec_invalido() -> None:
@@ -126,7 +126,8 @@ def test_registrado_en_el_roster() -> None:
     reg = build_default_registry()
     assert "llm_server" in reg.names()
     note = reg.get("llm_server").note
-    assert "no está incluido en la imagen" in note
+    assert "incluido en la imagen" in note
+    assert "pesos .gguf no incluidos" in note
     assert "STUDIO_LLM_SERVER_BIN" in note
     assert "llm_server" in ENGINE_CLASSES
     cls = resolve_engine_class("llm_server")

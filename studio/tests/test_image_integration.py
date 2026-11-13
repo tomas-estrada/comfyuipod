@@ -54,6 +54,15 @@ def test_dockerfile_installs_isolated_studio_venv_and_templates() -> None:
     assert pos_lock < pos_venv
 
 
+def test_dockerfile_builds_pinned_cpu_llama_server_and_keeps_notices() -> None:
+    text = DOCKERFILE_PATH.read_text(encoding="utf-8")
+    assert "COPY upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json" in text
+    assert "COPY scripts/build_llm_server.py" in text
+    assert "build_llm_server.py" in text
+    assert "/usr/local/bin/llama-server --version" in text
+    assert "/usr/share/licenses/llama.cpp" in text
+
+
 def test_dockerfile_hadolint_warnings_cleaned() -> None:
     """Los 6 warnings Hadolint preexistentes (DL3003, DL4006, DL3025) están limpios."""
     text = DOCKERFILE_PATH.read_text(encoding="utf-8")

@@ -481,7 +481,10 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
             binaries=("{STUDIO_LLM_SERVER_BIN}", "llama-server"),
             weight_paths=("{STUDIO_LLM_SERVER_MODEL}",),
             weights_required=True,
-            note="el binario llama-server no está incluido ni supervisado; modelo .gguf en runtime",
+            note=(
+                "llama-server CPU está incluido; el proceso no se supervisa y los pesos "
+                ".gguf no incluidos se configuran en runtime"
+            ),
         ),
         EnginePrepSpec(
             name="ad_studio",

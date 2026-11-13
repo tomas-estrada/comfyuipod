@@ -48,7 +48,7 @@
       ],
       "code_revision": "n9.0.2",
       "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+      "release_gate": "source_and_lock_pinned; Unicode notice review and actual image build; no GPU validation claim"
     },
     {
       "id": "whisperx",
@@ -1988,19 +1988,26 @@
       "source_ids": [
         "LOCAL-LLM-01"
       ],
-      "scope": "Preparación planificada de llama-server (llama.cpp) en 127.0.0.1 para chat completions OpenAI-compatibles sin APIs facturadas. El adaptador existe, pero el binario aún no está incluido ni supervisado; el modelo .gguf sería una dependencia de tarea en runtime.",
-      "terms_review": "Revisión preliminar: MIT del código principal verificado para ggml-org/llama.cpp v0.9.0 (2026-11-04), commit cd959bae99ff4bed22bef2604f45241c09bbb8c8. Los avisos de dependencias vendorizadas/configuración de build siguen pendientes; no redistribuir un binario hasta completar esa revisión. Sin pesos en la imagen; loopback-only.",
+      "scope": "llama-server CPU (llama.cpp) fijado y compilado en la imagen; el adaptador OpenAI-compatible se conecta solo a 127.0.0.1. El proceso no se supervisa ni se inicia automáticamente; el usuario configura sus propios pesos .gguf en runtime.",
+      "terms_review": "llama.cpp v0.9.0 (commit cd959bae99ff4bed22bef2604f45241c09bbb8c8) está bajo MIT y el build desactiva CUDA, HTTPS y UI precompilada. El lock conserva los notices explícitos de componentes vendorizados; falta resolver la atribución de las tablas Unicode generadas antes de completar la revisión de redistribución. No se redistribuyen pesos.",
       "hardware_notes": "CPU u offload GPU segun modelo; binario de decenas de MB; WARM sin residencia VRAM por defecto.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C03",
         "C08"
       ],
       "code_revision": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json": "6d5491ce1e44d829e6fc8fe88965527c541e5b6b42c23b866dd5ced5df10f8c0"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": false,
+      "evidence_entrypoint": "studio/comfy_studio/engines/llm_server.py",
+      "evidence_test": "studio/tests/test_engine_llm_server.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     }
