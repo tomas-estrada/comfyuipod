@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import BaseModel
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
@@ -22,6 +24,7 @@ from comfy_studio.engines.editor import EditorEngine
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
 from comfy_studio.subtitles import render_subtitles, subtitle_filename
+from comfy_studio.temporal_restoration import TemporalRestoreError, restore_video
 from comfy_studio.webutil import (
     DiarizeRequest,
     EdlBuildRequest,
@@ -34,8 +37,72 @@ from comfy_studio.webutil import (
 )
 
 
+class TemporalRestoreRequest(BaseModel):
+    asset_id: str
+    reference_asset_id: str | None = None
+
+
 def register_routes(app: FastAPI) -> None:
     """Registra las rutas de este módulo directamente sobre `app` (mismo route_class)."""
+
+    @app.post(
+        "/studio/api/projects/{project_id}/assets/{asset_id}/restore-temporal", status_code=201
+    )
+    async def restore_project_video_endpoint(
+        project_id: str, asset_id: str, body: TemporalRestoreRequest, request: Request
+    ) -> dict[str, Any]:
+        """Run the fixed CPU baseline only against assets owned by this project."""
+        active_store: ProjectStore = request.app.state.store
+        if active_store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        if body.asset_id != asset_id:
+            raise HTTPException(status_code=400, detail="asset_id de ruta y cuerpo no coincide")
+        source = active_store.get_asset(project_id, asset_id)
+        source_path = active_store.get_asset_path(project_id, asset_id)
+        if source is None or source.get("kind") != "video" or source_path is None:
+            raise HTTPException(status_code=404, detail="Video del proyecto no encontrado")
+        reference_path = None
+        if body.reference_asset_id:
+            reference = active_store.get_asset(project_id, body.reference_asset_id)
+            reference_path = active_store.get_asset_path(project_id, body.reference_asset_id)
+            if reference is None or reference.get("kind") != "video" or reference_path is None:
+                raise HTTPException(
+                    status_code=404, detail="Referencia de video del proyecto no encontrada"
+                )
+        tmpdir = Path(tempfile.mkdtemp(prefix="studio-temporal-restore-"))
+        rendered = tmpdir / "restored.mp4"
+        try:
+            report = await run_in_threadpool(
+                restore_video, source_path, rendered, reference=reference_path
+            )
+            output = active_store.save_upload(
+                project_id,
+                filename=f"{Path(source['original_filename']).stem}-restored-4k.mp4",
+                content_type="video/mp4",
+                data=rendered.read_bytes(),
+                max_upload_bytes=max(
+                    request.app.state.config.max_upload_bytes, rendered.stat().st_size
+                ),
+                category="outputs",
+                metadata={
+                    "temporal_restoration_v1": {
+                        "source_asset_id": asset_id,
+                        "reference_asset_id": body.reference_asset_id,
+                        **report,
+                    }
+                },
+            )
+            return {
+                "status": "rendered",
+                "project_id": project_id,
+                "source_asset_id": asset_id,
+                "asset": output,
+                "restoration": report,
+            }
+        except (TemporalRestoreError, OSError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     @app.get("/studio/api/projects/{project_id}/transcriptions")
     async def list_project_transcriptions(
