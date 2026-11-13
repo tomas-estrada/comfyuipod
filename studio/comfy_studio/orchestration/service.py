@@ -32,6 +32,7 @@ from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
 from comfy_studio.orchestration.conductor import Collaborators, build_production_graph
 from comfy_studio.orchestration.planner import plan_production as _plan
 from comfy_studio.orchestration.recipe_binding import bind_recipes
+from comfy_studio.orchestration.reference_selection import compile_project_references
 from comfy_studio.orchestration.state import ProductionState, ShotStatus
 from comfy_studio.progress import ProgressBroker
 
@@ -173,7 +174,29 @@ class ProductionService:
             state.metadata["project_id"] = project_id
         state.metadata["execution_mode"] = "real" if self._fully_wired else "simulated"
         state.metadata["simulated"] = not self._fully_wired
-        _plan(state, self.collaborators.planner)
+        project_assets: list[dict[str, Any]] = []
+        planner_context: dict[str, Any] = {}
+        has_project_catalog = bool(project_id and self.store is not None)
+        if has_project_catalog:
+            project_assets = self.store.list_assets(project_id, kind="image")
+            catalog = []
+            for asset in project_assets:
+                metadata = asset.get("metadata") or {}
+                tags = metadata.get("tags") or []
+                if isinstance(tags, str):
+                    tags = [tags]
+                catalog.append(
+                    {
+                        "asset_id": str(asset["id"]),
+                        "filename": str(
+                            asset.get("original_filename") or asset.get("filename") or ""
+                        ),
+                        "tags": [str(tag) for tag in tags],
+                        "description": str(metadata.get("description") or ""),
+                    }
+                )
+            planner_context["project_reference_catalog"] = catalog
+        _plan(state, self.collaborators.planner, extra_context=planner_context)
         if state.phase == "failed":
             # P1: plan imposible (propósito ambiguo sin hipótesis que preservar)
             # termina con razón tipada: no hay puerta ni aprobación que sufrir,
@@ -185,6 +208,15 @@ class ProductionService:
                 "terminal_reason": _terminal_reason(state),
                 "plan": state.to_dict(),
             }
+        contains_explicit_reference = any(
+            layer.params.get("reference_asset_ids") or layer.params.get("image_asset_id")
+            for shot in state.all_shots()
+            for layer in shot.layers
+        )
+        if has_project_catalog or contains_explicit_reference:
+            reference_summary = compile_project_references(state, project_assets)
+            state.metadata["project_reference_selection"] = reference_summary
+            state.record("project_references_compiled", **reference_summary)
         if self.resource_vram_budget_mb is not None:
             binding = bind_recipes(
                 state,

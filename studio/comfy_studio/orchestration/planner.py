@@ -151,6 +151,7 @@ def plan_production(
     state: ProductionState,
     llm: PlannerLLM | None = None,
     *,
+    extra_context: dict[str, Any] | None = None,
     vbench_min: float = DEFAULT_VBENCH_MIN,
     semantic_min: float = DEFAULT_SEMANTIC_MIN,
 ) -> ProductionState:
@@ -168,6 +169,10 @@ def plan_production(
     # resolver desde la idea con el atlas local (selección activa o mejor
     # cobertura). Nunca bloquea el plan si el atlas no está disponible.
     context: dict[str, Any] = {"idea": state.idea, "atlas": state.metadata.get("atlas")}
+    if extra_context:
+        # Additional project-local context is supplied by the service only for
+        # this planning call; it is not copied wholesale into every checkpoint.
+        context.update(extra_context)
     if not context["atlas"]:
         try:
             from comfy_studio.atlas.agent_tools import shared_atlas_service
