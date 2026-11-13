@@ -22,10 +22,17 @@ from comfy_studio.audio import (
     validate_render_bounds,
 )
 from comfy_studio.media_bins import find_ffmpeg, find_ffprobe
+from comfy_studio.music import (
+    Arrangement,
+    ArrangementSection,
+    MusicError,
+    TempoGrid,
+)
 from comfy_studio.projects import ProjectStore
 
 _META_KEY = "ultra_audio_mix_v1"
 _STEMS_META_KEY = "ultra_audio_stems_v1"
+_ARRANGEMENT_META_KEY = "ultra_music_arrangement_v1"
 
 
 class SoundEventRequest(BaseModel):
@@ -42,6 +49,22 @@ class MixRequest(BaseModel):
     fps: int = Field(ge=1)
     duration_s: float = Field(default=0.0, ge=0)
     stems: dict[str, list[SoundEventRequest]] = Field(default_factory=dict)
+
+
+class ArrangementSectionRequest(BaseModel):
+    section_id: str
+    kind: str
+    start_s: float
+    duration_s: float
+    stem: str
+    variant: str | None = None
+
+
+class ArrangementRequest(BaseModel):
+    bpm: float
+    duration_s: float
+    timebase_ppq: int = Field(default=480, ge=1)
+    sections: list[ArrangementSectionRequest] = Field(default_factory=list)
 
 
 def _store(request: Request) -> ProjectStore:
@@ -140,6 +163,52 @@ def _response(mix: Mix) -> dict[str, Any]:
             "user_declared_not_independently_verified" if has_samples else "no_sample_assets"
         ),
     }
+
+
+def _arrangement_response(arrangement: Arrangement) -> dict[str, Any]:
+    return {
+        **arrangement.to_dict(),
+        "audio_generation": "not_run",
+        "generation_claim": "metadata_only",
+    }
+
+
+def _load_arrangement(store: ProjectStore, project_id: str) -> Arrangement | None:
+    """Carga el arreglo almacenado; un dict no conforme es metadato corrupto."""
+    raw = store.get_meta(project_id, _ARRANGEMENT_META_KEY)
+    if raw is None:
+        return None
+    try:
+        return Arrangement.from_dict(raw)
+    except MusicError as exc:
+        raise HTTPException(
+            status_code=409, detail=f"Arreglo musical almacenado corrupto: {exc}"
+        ) from exc
+
+
+def _validate_arrangement_stems(
+    store: ProjectStore, project_id: str, arrangement: Arrangement
+) -> None:
+    """Cada sección suena sobre un stem del mix de ESTE proyecto."""
+    try:
+        mix = _load(store, project_id)
+    except AudioError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if mix is None:
+        raise HTTPException(
+            status_code=400,
+            detail="El proyecto no tiene mix almacenado: los stems del arreglo no existen",
+        )
+    known = {stem.name for stem in mix.stems}
+    missing = [stem for stem in arrangement.stems() if stem not in known]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "El arreglo referencía stems que no están en el mix del proyecto: "
+                f"{missing}"
+            ),
+        )
 
 
 def _source_rights(mix: Mix, event_ids: list[str]) -> list[dict[str, str]]:
@@ -395,3 +464,54 @@ def register_routes(app: FastAPI) -> None:
             "removed_stem_asset_ids": sorted(removed_asset_ids),
             "stale_stems": stale_stems,
         }
+
+    @app.get("/studio/api/projects/{project_id}/music/arrangement")
+    async def get_project_arrangement(project_id: str, request: Request) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        arrangement = _load_arrangement(store, project_id)
+        if arrangement is None:
+            raise HTTPException(status_code=404, detail="Arreglo musical no encontrado")
+        return _arrangement_response(arrangement)
+
+    @app.put("/studio/api/projects/{project_id}/music/arrangement")
+    async def put_project_arrangement(
+        project_id: str,
+        body: ArrangementRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        try:
+            arrangement = Arrangement(
+                grid=TempoGrid(bpm=body.bpm, timebase_ppq=body.timebase_ppq),
+                duration_s=body.duration_s,
+                sections=tuple(
+                    ArrangementSection(
+                        section_id=section.section_id,
+                        kind=section.kind,
+                        start_s=section.start_s,
+                        duration_s=section.duration_s,
+                        stem=section.stem,
+                        variant=section.variant,
+                    )
+                    for section in body.sections
+                ),
+            )
+        except MusicError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _validate_arrangement_stems(store, project_id, arrangement)
+        store.set_meta(project_id, _ARRANGEMENT_META_KEY, arrangement.to_dict())
+        return _arrangement_response(arrangement)
+
+    @app.delete("/studio/api/projects/{project_id}/music/arrangement")
+    async def delete_project_arrangement(
+        project_id: str, request: Request
+    ) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        arrangement = _load_arrangement(store, project_id)
+        if arrangement is None:
+            raise HTTPException(status_code=404, detail="Arreglo musical no encontrado")
+        store.set_meta(project_id, _ARRANGEMENT_META_KEY, None)
+        return {"removed_section_ids": sorted(arrangement.section_ids())}
