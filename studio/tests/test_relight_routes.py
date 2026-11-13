@@ -59,3 +59,62 @@ def test_corrupt_persisted_aov_set_fails_closed(client: TestClient) -> None:
         {"schema": "unknown"},
     )
     assert client.get(f"/studio/api/projects/{project_id}/aovs").status_code == 409
+
+
+def test_relight_render_route_persists_deterministic_png_asset(
+    client: TestClient,
+) -> None:
+    import base64
+    import hashlib
+
+    from comfy_studio.relight import render_relight
+
+    project_id = client.post("/studio/api/projects", json={"name": "Relight render"}).json()["id"]
+    width, height = 2, 1
+    albedo = bytes((255, 0, 0, 255, 0, 255, 0, 255))
+    shading = bytes((255, 128))
+    expected = render_relight(albedo, shading, width, height)
+    response = client.post(
+        f"/studio/api/projects/{project_id}/aovs/relight/render",
+        json={
+            "albedo": base64.b64encode(albedo).decode("ascii"),
+            "shading": base64.b64encode(shading).decode("ascii"),
+            "width": width,
+            "height": height,
+            "intensity": 1.0,
+            "ambient": 0.0,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    asset = body["asset"]
+    assert asset["category"] == "outputs"
+    assert asset["mime_type"] == "image/png"
+    assert asset["size_bytes"] == len(expected["png"])
+    evidence = body["evidence"]
+    assert evidence["sha256"] == hashlib.sha256(expected["png"]).hexdigest()
+    assert evidence["albedo_sha256"] == expected["albedo_sha256"]
+    assert evidence["shading_sha256"] == expected["shading_sha256"]
+
+    # Longitud de buffer inconsistente → 422 (falla cerrada).
+    invalid = client.post(
+        f"/studio/api/projects/{project_id}/aovs/relight/render",
+        json={
+            "albedo": base64.b64encode(albedo[:-1]).decode("ascii"),
+            "shading": base64.b64encode(shading).decode("ascii"),
+            "width": width,
+            "height": height,
+        },
+    )
+    assert invalid.status_code == 422
+    # Proyecto inexistente → 404 antes de tocar píxeles.
+    missing = client.post(
+        f"/studio/api/projects/{project_id}-missing/aovs/relight/render",
+        json={
+            "albedo": base64.b64encode(albedo).decode("ascii"),
+            "shading": base64.b64encode(shading).decode("ascii"),
+            "width": width,
+            "height": height,
+        },
+    )
+    assert missing.status_code == 404
