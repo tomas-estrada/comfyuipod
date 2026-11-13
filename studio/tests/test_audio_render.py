@@ -74,13 +74,22 @@ def _mix_with_samples(sample_a: str, sample_b: str) -> Mix:
     foley = Stem(
         name="foley",
         events=[
-            SoundEvent("step-1", onset_s=0.5, caused_by="walk", sample_asset_id=sample_a),
-            SoundEvent("door-1", onset_s=1.5, caused_by="door", sample_asset_id=sample_b),
+            SoundEvent(
+                "step-1", onset_s=0.5, caused_by="walk", sample_asset_id=sample_a,
+                sample_license="user-owned", sample_attribution="Provided by project owner",
+            ),
+            SoundEvent(
+                "door-1", onset_s=1.5, caused_by="door", sample_asset_id=sample_b,
+                sample_license="user-owned", sample_attribution="Provided by project owner",
+            ),
         ],
     )
     ambience = Stem(
         name="ambience",
-        events=[SoundEvent("wind", onset_s=0.0, sample_asset_id=sample_a)],
+        events=[SoundEvent(
+            "wind", onset_s=0.0, sample_asset_id=sample_a,
+            sample_license="user-owned", sample_attribution="Provided by project owner",
+        )],
     )
     dialogue = Stem(name="dialogue", events=[SoundEvent("line-1", onset_s=1.0)])
     return Mix(fps=24, stems=[foley, ambience, dialogue], duration_s=3.0)
@@ -123,6 +132,43 @@ def test_validate_render_bounds_rejects_single_mixed_stem() -> None:
     mix = Mix(fps=24, stems=[stem], duration_s=3.0)
     with pytest.raises(AudioError, match="no acredita separación"):
         validate_render_bounds(mix)
+
+
+def test_validate_render_bounds_requires_license_and_attribution_for_samples() -> None:
+    mix = Mix(
+        fps=24,
+        stems=[Stem(name="foley", events=[SoundEvent("e0", 0.0, sample_asset_id="a1")])],
+        duration_s=3.0,
+    )
+
+    with pytest.raises(AudioError, match="licencia y atribución"):
+        validate_render_bounds(mix)
+
+
+def test_sound_event_preserves_user_declared_source_rights() -> None:
+    mix = Mix(
+        fps=24,
+        stems=[
+            Stem(
+                name="foley",
+                events=[
+                    SoundEvent(
+                        "e0",
+                        0.0,
+                        sample_asset_id="a1",
+                        sample_license="CC0-1.0",
+                        sample_attribution="Source: project Foley library",
+                    )
+                ],
+            )
+        ],
+        duration_s=3.0,
+    )
+
+    restored = Mix.from_dict(mix.to_dict())
+    event = restored.stems[0].events[0]
+    assert event.sample_license == "CC0-1.0"
+    assert event.sample_attribution == "Source: project Foley library"
 
 
 def test_build_stem_assembly_cmd_is_deterministic_and_bounded() -> None:
@@ -386,15 +432,25 @@ def test_render_endpoint_produces_measured_separate_stem_assets(
                     "onset_s": 0.5,
                     "caused_by": "walk",
                     "sample_asset_id": asset_a["id"],
+                    "sample_license": "CC0-1.0",
+                    "sample_attribution": "Project Foley library",
                 },
                 {
                     "event_id": "door-1",
                     "onset_s": 1.5,
                     "caused_by": "door",
                     "sample_asset_id": asset_b["id"],
+                    "sample_license": "CC-BY-4.0",
+                    "sample_attribution": "Example sound by A. Artist",
                 },
             ],
-            "ambience": [{"event_id": "wind", "onset_s": 0.0, "sample_asset_id": asset_a["id"]}],
+            "ambience": [{
+                "event_id": "wind",
+                "onset_s": 0.0,
+                "sample_asset_id": asset_a["id"],
+                "sample_license": "CC0-1.0",
+                "sample_attribution": "Project Foley library",
+            }],
             "dialogue": [{"event_id": "line-1", "onset_s": 1.0}],
         },
     }
@@ -425,8 +481,25 @@ def test_render_endpoint_produces_measured_separate_stem_assets(
         assert asset["kind"] == "audio"
         assert asset["metadata"]["stem"] == name
         assert asset["metadata"]["rendered_by"] == "ffmpeg"
+        assert asset["metadata"]["rights_state"] == "user_declared_not_independently_verified"
+        assert asset["metadata"]["source_rights"]
         probe = client.get(f"/studio/api/projects/{project_id}/assets/{stem['asset_id']}/file")
         assert probe.status_code == 200
+    foley_asset = client.get(
+        f"/studio/api/projects/{project_id}/assets/{stems['foley']['asset_id']}"
+    ).json()
+    assert foley_asset["metadata"]["source_rights"] == sorted([
+        {
+            "sample_asset_id": asset_a["id"],
+            "license": "CC0-1.0",
+            "attribution": "Project Foley library",
+        },
+        {
+            "sample_asset_id": asset_b["id"],
+            "license": "CC-BY-4.0",
+            "attribution": "Example sound by A. Artist",
+        },
+    ], key=lambda rights: rights["sample_asset_id"])
 
     # El índice de stems muestra los renders no obsoletos.
     index = client.get(_stems_url(project_id)).json()
@@ -447,8 +520,14 @@ def test_render_endpoint_is_deterministic_across_runs(client: TestClient, tmp_pa
         "duration_s": 3.0,
         "stems": {
             "foley": [
-                {"event_id": "e0", "onset_s": 0.5, "sample_asset_id": asset_a["id"]},
-                {"event_id": "e1", "onset_s": 1.5, "sample_asset_id": asset_a["id"]},
+                {
+                    "event_id": "e0", "onset_s": 0.5, "sample_asset_id": asset_a["id"],
+                    "sample_license": "user-owned", "sample_attribution": "Project owner upload",
+                },
+                {
+                    "event_id": "e1", "onset_s": 1.5, "sample_asset_id": asset_a["id"],
+                    "sample_license": "user-owned", "sample_attribution": "Project owner upload",
+                },
             ]
         },
     }
@@ -460,6 +539,30 @@ def test_render_endpoint_is_deterministic_across_runs(client: TestClient, tmp_pa
     a = client.get(f"/studio/api/projects/{project_id}/assets/{first_assets['foley']}/file")
     b = client.get(f"/studio/api/projects/{project_id}/assets/{second_assets['foley']}/file")
     assert hashlib.sha256(a.content).hexdigest() == hashlib.sha256(b.content).hexdigest()
+
+
+@FF_REQUIRED
+def test_render_endpoint_rejects_sample_without_declared_rights(
+    client: TestClient, tmp_path: Path
+) -> None:
+    project_id = client.post("/studio/api/projects", json={"name": "Sin licencia"}).json()["id"]
+    sample = tmp_path / "sample.wav"
+    _make_sample(sample)
+    asset = _upload_sample(client, project_id, sample)
+    payload = {
+        "fps": 24,
+        "duration_s": 3.0,
+        "stems": {
+            "foley": [{"event_id": "e0", "onset_s": 0.5, "sample_asset_id": asset["id"]}]
+        },
+    }
+    assert _put_mix(client, project_id, payload).status_code == 200
+
+    response = client.post(_render_url(project_id))
+
+    assert response.status_code == 422
+    assert "licencia y atribución" in response.json()["detail"]
+    assert client.get(_stems_url(project_id)).status_code == 404
 
 
 def test_render_endpoint_rejects_sample_from_another_project(
@@ -517,7 +620,10 @@ def test_render_endpoint_rejects_clipped_output_and_persists_nothing(
     payload = {
         "fps": 24,
         "duration_s": 3.0,
-        "stems": {"foley": [{"event_id": "e0", "onset_s": 0.5, "sample_asset_id": asset["id"]}]},
+        "stems": {"foley": [{
+            "event_id": "e0", "onset_s": 0.5, "sample_asset_id": asset["id"],
+            "sample_license": "user-owned", "sample_attribution": "Project owner upload",
+        }]},
     }
     assert _put_mix(client, project_id, payload).status_code == 200
     rendered = client.post(_render_url(project_id))
@@ -576,7 +682,10 @@ def test_render_endpoint_respects_runtime_output_byte_budget(
         "fps": 24,
         "duration_s": 100.0,
         "stems": {
-            "foley": [{"event_id": "e0", "onset_s": 0.5, "sample_asset_id": asset["id"]}]
+                "foley": [{
+                    "event_id": "e0", "onset_s": 0.5, "sample_asset_id": asset["id"],
+                    "sample_license": "user-owned", "sample_attribution": "Project owner upload",
+                }]
         },
     }
     assert _put_mix(client, project_id, payload).status_code == 200
@@ -608,15 +717,22 @@ def test_delete_cause_removes_only_linked_rendered_stems_and_preserves_unrelated
                     "onset_s": 0.5,
                     "caused_by": "walk",
                     "sample_asset_id": asset_a["id"],
+                        "sample_license": "user-owned",
+                        "sample_attribution": "Project owner upload",
                 },
                 {
                     "event_id": "door-1",
                     "onset_s": 1.5,
                     "caused_by": "door",
                     "sample_asset_id": asset_b["id"],
+                        "sample_license": "user-owned",
+                        "sample_attribution": "Project owner upload",
                 },
             ],
-            "ambience": [{"event_id": "wind", "onset_s": 0.0, "sample_asset_id": asset_a["id"]}],
+                "ambience": [{
+                    "event_id": "wind", "onset_s": 0.0, "sample_asset_id": asset_a["id"],
+                    "sample_license": "user-owned", "sample_attribution": "Project owner upload",
+                }],
         },
     }
     assert _put_mix(client, project_id, payload).status_code == 200
@@ -682,7 +798,10 @@ def test_delete_cause_with_no_links_preserves_every_rendered_stem(
         "fps": 24,
         "duration_s": 3.0,
         "stems": {
-            "ambience": [{"event_id": "wind", "onset_s": 0.0, "sample_asset_id": asset["id"]}]
+                "ambience": [{
+                    "event_id": "wind", "onset_s": 0.0, "sample_asset_id": asset["id"],
+                    "sample_license": "user-owned", "sample_attribution": "Project owner upload",
+                }]
         },
     }
     assert _put_mix(client, project_id, payload).status_code == 200

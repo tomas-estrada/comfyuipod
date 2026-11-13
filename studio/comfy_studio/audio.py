@@ -72,6 +72,9 @@ class SoundEvent:
     #: id del asset de audio (muestra) del proyecto que suena en este evento,
     #: o None en el contrato metadata-only antiguo (W18).
     sample_asset_id: str | None = None
+    #: Declaración aportada por el usuario; no se verifica legalmente.
+    sample_license: str | None = None
+    sample_attribution: str | None = None
 
     def validate(self) -> None:
         if not self.event_id.strip():
@@ -84,6 +87,12 @@ class SoundEvent:
             raise AudioError(f"evento {self.event_id}: caused_by vacío")
         if self.sample_asset_id is not None and not str(self.sample_asset_id).strip():
             raise AudioError(f"evento {self.event_id}: sample_asset_id vacío")
+        for field_name, value in (
+            ("sample_license", self.sample_license),
+            ("sample_attribution", self.sample_attribution),
+        ):
+            if value is not None and not value.strip():
+                raise AudioError(f"evento {self.event_id}: {field_name} vacío")
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -95,6 +104,10 @@ class SoundEvent:
         # Solo cuando está declarada: los dicts legacy sin muestras no cambian.
         if self.sample_asset_id is not None:
             data["sample_asset_id"] = self.sample_asset_id
+        if self.sample_license is not None:
+            data["sample_license"] = self.sample_license
+        if self.sample_attribution is not None:
+            data["sample_attribution"] = self.sample_attribution
         return data
 
 
@@ -190,6 +203,16 @@ class Mix:
                                     if event.get("sample_asset_id") is not None
                                     else None
                                 ),
+                                sample_license=(
+                                    str(event["sample_license"])
+                                    if event.get("sample_license") is not None
+                                    else None
+                                ),
+                                sample_attribution=(
+                                    str(event["sample_attribution"])
+                                    if event.get("sample_attribution") is not None
+                                    else None
+                                ),
                             )
                             for event in events
                         ],
@@ -277,6 +300,22 @@ def validate_render_bounds(mix: Mix) -> None:
         if len(stem.events) > MAX_STEM_EVENTS:
             raise AudioError(
                 f"stem {stem.name}: demasiados eventos ({len(stem.events)} > {MAX_STEM_EVENTS})"
+            )
+    source_rights: dict[str, tuple[str, str]] = {}
+    for event in mix.all_events():
+        if event.sample_asset_id is None:
+            continue
+        if not event.sample_license or not event.sample_attribution:
+            raise AudioError(
+                f"evento {event.event_id}: cada muestra requiere licencia y atribución "
+                "declaradas antes del render"
+            )
+        rights = (event.sample_license, event.sample_attribution)
+        previous = source_rights.setdefault(event.sample_asset_id, rights)
+        if previous != rights:
+            raise AudioError(
+                f"asset {event.sample_asset_id}: declaraciones de licencia/atribución "
+                "inconsistentes entre eventos"
             )
 
 
