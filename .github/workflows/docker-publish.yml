@@ -243,11 +243,12 @@ jobs:
           base = sum(1 for m in models if not m.get("opt_in"))
           animate = sum(1 for m in models if m.get("opt_in") == "STUDIO_INCLUDE_ANIMATE")
           three_d = sum(1 for m in models if m.get("opt_in") == "STUDIO_INCLUDE_3D")
-          print(base, base + animate, base + three_d)
+          qwen_layered = sum(1 for m in models if m.get("opt_in") == "STUDIO_INCLUDE_QWEN_LAYERED")
+          print(base, base + animate, base + three_d, base + qwen_layered)
           PYEOF
           )"
-          read -r plan_base plan_animate plan_3d <<< "${plan_counts//$'\r'/}"
-          echo "[INFO] Recuentos derivados del manifest: base=${plan_base} animate=${plan_animate} 3d=${plan_3d}"
+          read -r plan_base plan_animate plan_3d plan_qwen_layered <<< "${plan_counts//$'\r'/}"
+          echo "[INFO] Recuentos derivados del manifest: base=${plan_base} animate=${plan_animate} 3d=${plan_3d} qwen_layered=${plan_qwen_layered}"
           mkdir -p "$tmp_root/studio_data" "$tmp_root/studio_app/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints"
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio \
             bash scripts/download-models.sh --phase2 > "$tmp_root/dl_studio.log" 2>"$tmp_root/dl_studio.err" || { cat "$tmp_root/dl_studio.log"; cat "$tmp_root/dl_studio.err"; exit 1; }
@@ -255,7 +256,7 @@ jobs:
           grep -q "PLAN FASE 2: 8 archivos (studio)" "$tmp_root/dl_studio.log"
           grep -q "FASE 2 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
           grep -q "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: studio)" "$tmp_root/dl_studio.log"
-          grep -q "PLAN FASE 3: ${plan_base} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0)" "$tmp_root/dl_studio.log"
+          grep -q "PLAN FASE 3: ${plan_base} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=0)" "$tmp_root/dl_studio.log"
           grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_studio.log"
           grep -q "FASE 3 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors" ]
@@ -295,7 +296,7 @@ jobs:
 
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_ANIMATE=1 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_anim.log" 2>"$tmp_root/dl_studio_anim.err" || { cat "$tmp_root/dl_studio_anim.log"; cat "$tmp_root/dl_studio_anim.err"; exit 1; }
-          grep -q "PLAN FASE 3: ${plan_animate} archivos (studio, STUDIO_INCLUDE_ANIMATE=1, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0)" "$tmp_root/dl_studio_anim.log"
+          grep -q "PLAN FASE 3: ${plan_animate} archivos (studio, STUDIO_INCLUDE_ANIMATE=1, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=0)" "$tmp_root/dl_studio_anim.log"
           grep -q "SKIP (ya existe): wan2.2_ti2v_5B_fp16.safetensors" "$tmp_root/dl_studio_anim.log"
           grep -q "INICIO: wan2.2_animate_14B_int8_convrot.safetensors" "$tmp_root/dl_studio_anim.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors" ]
@@ -307,7 +308,7 @@ jobs:
           plan_minimax="$((plan_base + 6))"
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_MINIMAX=1 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_mmx.log" 2>"$tmp_root/dl_studio_mmx.err" || { cat "$tmp_root/dl_studio_mmx.log"; cat "$tmp_root/dl_studio_mmx.err"; exit 1; }
-          grep -q "PLAN FASE 3: ${plan_minimax} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=1)" "$tmp_root/dl_studio_mmx.log"
+          grep -q "PLAN FASE 3: ${plan_minimax} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=1, STUDIO_INCLUDE_QWEN_LAYERED=0)" "$tmp_root/dl_studio_mmx.log"
           grep -q "INICIO: minimax_h3_ref2va_pruned_int8_convrot.safetensors" "$tmp_root/dl_studio_mmx.log"
           grep -q "INICIO: qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors" "$tmp_root/dl_studio_mmx.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors" ]
@@ -318,13 +319,26 @@ jobs:
           [ -s "$tmp_root/studio_data/models/diffusion_models/Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors" ]
           echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio + STUDIO_INCLUDE_MINIMAX=1: 6 archivos H3) verificado en seco (S-01)"
 
+          # C28: el grupo Qwen Layered es opt-in, usa artefactos oficiales FP8 fijados y
+          # no añade 30 GB al perfil base. Validar el recuento y los tres destinos.
+          COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_QWEN_LAYERED=1 \
+            bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_qwen_layered.log" 2>"$tmp_root/dl_studio_qwen_layered.err" || { cat "$tmp_root/dl_studio_qwen_layered.log"; cat "$tmp_root/dl_studio_qwen_layered.err"; exit 1; }
+          grep -q "PLAN FASE 3: ${plan_qwen_layered} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=1)" "$tmp_root/dl_studio_qwen_layered.log"
+          grep -q "INICIO: qwen_image_layered_fp8mixed.safetensors" "$tmp_root/dl_studio_qwen_layered.log"
+          grep -q "INICIO: qwen_image_layered_vae.safetensors" "$tmp_root/dl_studio_qwen_layered.log"
+          grep -q "INICIO: qwen_2.5_vl_7b_fp8_scaled.safetensors" "$tmp_root/dl_studio_qwen_layered.log"
+          [ -s "$tmp_root/studio_data/models/diffusion_models/qwen_image_layered_fp8mixed.safetensors" ]
+          [ -s "$tmp_root/studio_data/models/vae/qwen_image_layered_vae.safetensors" ]
+          [ -s "$tmp_root/studio_data/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors" ]
+          echo "[OK] download-models.sh Fase 3 (STUDIO_INCLUDE_QWEN_LAYERED=1: tres archivos C28) verificado en seco"
+
           # VAL-UNREAL-003 (M3-D): el perfil 'unreal' implica STUDIO_INCLUDE_3D=1 (Hunyuan3D 2.1:
           # PLAN FASE 3 = base + 1 3D archivos, destino models/checkpoints/hunyuan_3d_v2.1.safetensors)
           # y la renuncia explícita STUDIO_INCLUDE_3D=0 devuelve el plan a la base sin descargar el 3D.
           mkdir -p "$tmp_root/unreal_data" "$tmp_root/unreal_app"
           COMFY_DATA_DIR="$tmp_root/unreal_data" COMFY_APP_DIR="$tmp_root/unreal_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=unreal \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_unreal.log" 2>"$tmp_root/dl_unreal.err" || { cat "$tmp_root/dl_unreal.log"; cat "$tmp_root/dl_unreal.err"; exit 1; }
-          grep -q "PLAN FASE 3: ${plan_3d} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=1, STUDIO_INCLUDE_MINIMAX=0)" "$tmp_root/dl_unreal.log"
+          grep -q "PLAN FASE 3: ${plan_3d} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=1, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=0)" "$tmp_root/dl_unreal.log"
           grep -q "INICIO: hunyuan_3d_v2.1.safetensors" "$tmp_root/dl_unreal.log"
           grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_unreal.log"
           grep -q "FASE 3 COMPLETADA (Perfil: unreal)\." "$tmp_root/dl_unreal.log"
@@ -332,7 +346,7 @@ jobs:
           mkdir -p "$tmp_root/unreal_optout_data" "$tmp_root/unreal_optout_app"
           COMFY_DATA_DIR="$tmp_root/unreal_optout_data" COMFY_APP_DIR="$tmp_root/unreal_optout_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=unreal STUDIO_INCLUDE_3D=0 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_unreal_optout.log" 2>"$tmp_root/dl_unreal_optout.err" || { cat "$tmp_root/dl_unreal_optout.log"; cat "$tmp_root/dl_unreal_optout.err"; exit 1; }
-          grep -q "PLAN FASE 3: ${plan_base} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0)" "$tmp_root/dl_unreal_optout.log"
+          grep -q "PLAN FASE 3: ${plan_base} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=0)" "$tmp_root/dl_unreal_optout.log"
           [ ! -e "$tmp_root/unreal_optout_data/models/checkpoints/hunyuan_3d_v2.1.safetensors" ]
           echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=unreal: Hunyuan3D 2.1 implícito + renuncia STUDIO_INCLUDE_3D=0) verificado en seco (VAL-UNREAL-003)"
 
@@ -507,7 +521,7 @@ jobs:
             exit 1
           fi
           python3 -c "import json; d=json.load(open('/tmp/smoke-health.json')); assert d['status']=='ok', d; print('health ok:', d['status'], '| edge_auth:', d['edge_auth'], '| comfyui:', d['comfyui'])"
-          curl -fsS --max-time 5 http://127.0.0.1:18199/studio/api/templates | python3 -c "import json,sys; d=json.load(sys.stdin); n=len(d['templates']); print('templates:', n); assert n == 17, n"
+          curl -fsS --max-time 5 http://127.0.0.1:18199/studio/api/templates | python3 -c "import json,sys; d=json.load(sys.stdin); n=len(d['templates']); print('templates:', n); assert n == 18, n"
           curl -fsS --max-time 5 http://127.0.0.1:18199/studio/api/mcp/health | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['status']=='ok', d; print('mcp health ok:', d['server'], d['version'])"
           echo "studio-server smoke OK"
 
@@ -1333,6 +1347,7 @@ jobs:
           # sin sus pesos se declaran unavailable con reason, el resto disponibles.
           assert unavailable == {
             "hunyuan3d_image_to_3d",
+            "qwen_image_layered",
             "wan_animate",
             "wan_animate_cont",
             "minimax_r2v",

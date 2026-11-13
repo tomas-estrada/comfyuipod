@@ -498,6 +498,7 @@ class StudioConfig:
     studio_include_animate: bool = False
     studio_include_3d: bool = False
     studio_include_minimax: bool = False
+    studio_include_qwen_layered: bool = False
     comfy_user: str = "admin"
     comfy_pass: str | None = field(default=None, repr=False)
     vast_api_key: str | None = field(default=None, repr=False)
@@ -690,6 +691,9 @@ class StudioConfig:
             studio_include_minimax=_parse_bool(
                 source.get("STUDIO_INCLUDE_MINIMAX"), default=False
             ),
+            studio_include_qwen_layered=_parse_bool(
+                source.get("STUDIO_INCLUDE_QWEN_LAYERED"), default=False
+            ),
             comfy_user=(
                 source.get("COMFY_USER", "").strip()
                 or source.get("STUDIO_AUTH_USER", "").strip()
@@ -835,6 +839,15 @@ class StudioConfig:
             "STUDIO_INCLUDE_3D", env
         )
 
+    def qwen_layered_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """True only when the Qwen layered opt-in group was requested and is on disk."""
+        return self.qwen_layered_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_QWEN_LAYERED", env
+        )
+
+    def qwen_layered_weights_expected(self) -> bool:
+        return bool(self.studio_include_qwen_layered)
+
     def redactor(self) -> SecretRedactor:
         return SecretRedactor.from_config(self)
 
@@ -864,6 +877,9 @@ class StudioConfig:
             "STUDIO_INCLUDE_ANIMATE": "1" if self.studio_include_animate else "0",
             "STUDIO_INCLUDE_3D": "1" if self.studio_include_3d else "0",
             "STUDIO_INCLUDE_MINIMAX": "1" if self.studio_include_minimax else "0",
+            "STUDIO_INCLUDE_QWEN_LAYERED": (
+                "1" if self.studio_include_qwen_layered else "0"
+            ),
             "COMFY_USER": self.comfy_user,
             "COMFY_PASS": self.masked_comfy_pass_status(),
             "VAST_API_KEY": "<definida>" if self.vast_api_key else "<no definida>",

@@ -4,8 +4,8 @@
  "meta": {
   "default_entries": 79,
   "default_bytes": 163706792041,
-  "opt_in_entries": 8,
-  "opt_in_bytes": 88776694577,
+  "opt_in_entries": 11,
+  "opt_in_bytes": 118948773694,
   "classes": {
    "bootstrap": {
     "entries": 0,
@@ -16,8 +16,8 @@
     "bytes": 163706792041
    },
    "optional": {
-    "entries": 8,
-    "bytes": 88776694577
+    "entries": 11,
+    "bytes": 118948773694
    }
   },
   "phase2_sdxl_checkpoint": {
@@ -95,15 +95,20 @@
    "minimax_h3_opt_in": {
     "entries": 6,
     "bytes": 62997682615
+   },
+   "qwen_layered_opt_in": {
+    "entries": 3,
+    "bytes": 30172079117,
+    "license": "Apache-2.0"
    }
   },
   "integrity": {
    "algorithm": "sha256 (LFS) / sha1 (git blob) según publique HuggingFace",
    "source": "HuggingFace X-Linked-Etag",
-   "pinned_entries": 87,
-   "total_entries": 87,
+   "pinned_entries": 90,
+   "total_entries": 90,
    "by_algorithm": {
-    "sha256": 58,
+    "sha256": 61,
     "sha1": 29,
     "none": 0
    }
@@ -1414,6 +1419,51 @@
    "opt_in": "STUDIO_INCLUDE_MINIMAX",
    "revision": "1259cf16cd0b655ba691a32fb46a409142762972",
    "sha256": "d7637c2c35cd30facd9e93778c491f6d82f91c4a441aecbdb4c384a62a5f3d9f"
+  },
+  {
+   "category": "qwen_layered_opt_in",
+   "repo_id": "Comfy-Org/Qwen-Image-Layered",
+   "remote_path": "split_files/diffusion_models/qwen_image_layered_fp8mixed.safetensors",
+   "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Layered/resolve/02130716aaf54a36f84c9fcfa8a373ab06284e2b/split_files/diffusion_models/qwen_image_layered_fp8mixed.safetensors",
+   "bytes": 20533591821,
+   "target_dir": "models/diffusion_models",
+   "filename": "qwen_image_layered_fp8mixed.safetensors",
+   "dest_path": "models/diffusion_models/qwen_image_layered_fp8mixed.safetensors",
+   "license": "Apache-2.0",
+   "class": "optional",
+   "opt_in": "STUDIO_INCLUDE_QWEN_LAYERED",
+   "revision": "02130716aaf54a36f84c9fcfa8a373ab06284e2b",
+   "sha256": "e68c406b1bc08c97382a46dce6ed46699bc18a0f50422d97952ee4e8b63ad50a"
+  },
+  {
+   "category": "qwen_layered_opt_in",
+   "repo_id": "Comfy-Org/Qwen-Image-Layered",
+   "remote_path": "split_files/vae/qwen_image_layered_vae.safetensors",
+   "url": "https://huggingface.co/Comfy-Org/Qwen-Image-Layered/resolve/02130716aaf54a36f84c9fcfa8a373ab06284e2b/split_files/vae/qwen_image_layered_vae.safetensors",
+   "bytes": 253816616,
+   "target_dir": "models/vae",
+   "filename": "qwen_image_layered_vae.safetensors",
+   "dest_path": "models/vae/qwen_image_layered_vae.safetensors",
+   "license": "Apache-2.0",
+   "class": "optional",
+   "opt_in": "STUDIO_INCLUDE_QWEN_LAYERED",
+   "revision": "02130716aaf54a36f84c9fcfa8a373ab06284e2b",
+   "sha256": "c5320595fc61859ccdd0282184208f7b781c983b8ce4c6bc3e7723a807d3d28d"
+  },
+  {
+   "category": "qwen_layered_opt_in",
+   "repo_id": "Comfy-Org/Qwen-Image",
+   "remote_path": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+   "url": "https://huggingface.co/Comfy-Org/Qwen-Image/resolve/1f12b17be14c89b026c51a91d67c32f84bb047bc/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+   "bytes": 9384670680,
+   "target_dir": "models/text_encoders",
+   "filename": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+   "dest_path": "models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+   "license": "Apache-2.0",
+   "class": "optional",
+   "opt_in": "STUDIO_INCLUDE_QWEN_LAYERED",
+   "revision": "1f12b17be14c89b026c51a91d67c32f84bb047bc",
+   "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4"
   }
  ]
 }

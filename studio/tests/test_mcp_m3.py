@@ -103,9 +103,10 @@ def test_mcp_tools_call_list_projects_and_assets(client: TestClient) -> None:
 def test_mcp_tools_call_belt_tool_list_templates(client: TestClient) -> None:
     client.post("/studio/api/projects", json={"name": "Proyecto Plantillas MCP"})
     payload = _tool_payload(_call_tool(client, "list_templates"))
-    assert payload["count"] == 17
+    assert payload["count"] == 18
     ids = {t["id"] for t in payload["templates"]}
     assert "sdxl_image" in ids
+    assert "qwen_image_layered" in ids
 
 
 def test_mcp_unknown_project_returns_is_error(client: TestClient) -> None:

@@ -1,0 +1,130 @@
+{
+  "id": "qwen_image_layered",
+  "name": "Qwen-Image-Layered — Descomposición editable RGBA",
+  "category": "image_editing",
+  "output_kind": "image",
+  "summary": "Descompone una imagen del proyecto en capas RGBA independientes con la plantilla nativa de ComfyUI.",
+  "description": "Produce capas de imagen editables a partir de un asset del proyecto. La salida no se considera validada hasta que las capas se recompongan y se comparen con la imagen de entrada.",
+  "performance_defaults": {
+    "precision": "fp8_mixed",
+    "resolution": "source",
+    "steps": 50,
+    "cfg": 4.0,
+    "layers": 4,
+    "offload": false
+  },
+  "models": [
+    "qwen_image_layered_fp8mixed.safetensors",
+    "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "qwen_image_layered_vae.safetensors"
+  ],
+  "required_nodes": [
+    "CLIPLoader",
+    "VAELoader",
+    "UNETLoader",
+    "ModelSamplingAuraFlow",
+    "LoadImage",
+    "GetImageSize",
+    "VAEEncode",
+    "ReferenceLatent",
+    "EmptyQwenImageLayeredLatentImage",
+    "KSampler",
+    "LatentCut",
+    "LatentCutToBatch",
+    "VAEDecode",
+    "SaveImage"
+  ],
+  "parameters": {
+    "image_asset_id": {
+      "type": "string",
+      "required": true,
+      "min_length": 1,
+      "asset_kind": "image",
+      "description": "Imagen PNG o JPEG propiedad del proyecto que se va a descomponer."
+    },
+    "image_input": {
+      "type": "string",
+      "required": false,
+      "default": "input_reference.png",
+      "description": "Nombre interno de archivo generado al subir image_asset_id al worker ComfyUI."
+    },
+    "prompt": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Contexto opcional de la composición para orientar la descomposición."
+    },
+    "negative_prompt": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Contenido que el modelo debe evitar al reconstruir las capas."
+    },
+    "layers": {
+      "type": "integer",
+      "required": false,
+      "default": 4,
+      "min": 1,
+      "max": 8,
+      "description": "Número de capas RGBA a producir (1–8). La composición de referencia adicional del modelo se descarta."
+    },
+    "steps": {
+      "type": "integer",
+      "required": false,
+      "default": 50,
+      "min": 1,
+      "max": 80,
+      "description": "Pasos de muestreo; el valor original del modelo es 50."
+    },
+    "cfg": {
+      "type": "number",
+      "required": false,
+      "default": 4.0,
+      "min": 1.0,
+      "max": 8.0,
+      "description": "Guía del modelo."
+    },
+    "seed": {
+      "type": "integer",
+      "required": false,
+      "default": 777,
+      "min": 0,
+      "max": 2147483647,
+      "description": "Semilla del sampler."
+    }
+  },
+  "docs": {
+    "uso": "El asset del proyecto se carga como imagen inicial; el workflow devuelve solo los planos de capas RGBA, no el frame reconstruido adicional.",
+    "inputs": [
+      "image_asset_id: asset de imagen propio del proyecto.",
+      "layers: entre 1 y 8 capas semánticas.",
+      "prompt: contexto descriptivo opcional."
+    ],
+    "defaults": {
+      "layers": 4,
+      "steps": 50,
+      "cfg": 4.0,
+      "resolution": "dimensiones de la fuente; ancho y alto deben ser múltiplos de 16"
+    },
+    "notas_rendimiento": "Modelo FP8 mixed bajo demanda (20,533,591,821 bytes), encoder FP8 (9,384,670,680 bytes) y VAE (253,816,616 bytes). El conjunto agrega 30,172,079,117 bytes al almacenamiento opt-in; no es parte del perfil por defecto. Ninguna métrica de calidad o VRAM se infiere desde esta ruta CPU. Licencia declarada: Apache-2.0 para los artefactos Comfy-Org/Qwen."
+  },
+  "workflow": {
+    "1": {"class_type": "LoadImage", "inputs": {"image": "{{image_input}}"}, "_meta": {"title": "Imagen original del proyecto"}},
+    "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default"}, "_meta": {"title": "Encoder Qwen VL FP8"}},
+    "3": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_layered_vae.safetensors"}, "_meta": {"title": "VAE Qwen Image Layered"}},
+    "4": {"class_type": "UNETLoader", "inputs": {"unet_name": "qwen_image_layered_fp8mixed.safetensors", "weight_dtype": "default"}, "_meta": {"title": "Qwen Image Layered FP8"}},
+    "5": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["4", 0], "sampling": "flow", "shift": 1.0}, "_meta": {"title": "Sampling AuraFlow"}},
+    "6": {"class_type": "VAEEncode", "inputs": {"pixels": ["1", 0], "vae": ["3", 0]}, "_meta": {"title": "Codificar imagen de referencia"}},
+    "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{prompt}}", "clip": ["2", 0]}, "_meta": {"title": "Contexto positivo"}},
+    "8": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{negative_prompt}}", "clip": ["2", 0]}, "_meta": {"title": "Contexto negativo"}},
+    "9": {"class_type": "ReferenceLatent", "inputs": {"conditioning": ["7", 0], "latent": ["6", 0]}, "_meta": {"title": "Referencia positiva"}},
+    "10": {"class_type": "ReferenceLatent", "inputs": {"conditioning": ["8", 0], "latent": ["6", 0]}, "_meta": {"title": "Referencia negativa"}},
+    "11": {"class_type": "GetImageSize", "inputs": {"image": ["1", 0]}, "_meta": {"title": "Tamaño de entrada"}},
+    "12": {"class_type": "EmptyQwenImageLayeredLatentImage", "inputs": {"width": ["11", 0], "height": ["11", 1], "layers": "{{layers}}", "batch_size": 1}, "_meta": {"title": "Latente con número acotado de capas"}},
+    "13": {"class_type": "KSampler", "inputs": {"seed": "{{seed}}", "steps": "{{steps}}", "cfg": "{{cfg}}", "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0, "model": ["5", 0], "positive": ["9", 0], "negative": ["10", 0], "latent_image": ["12", 0]}, "_meta": {"title": "Muestreo reproducible Qwen Layered"}},
+    "14": {"class_type": "LatentCut", "inputs": {"samples": ["13", 0], "dim": "t", "index": 1, "amount": 16384}, "_meta": {"title": "Eliminar composición de referencia"}},
+    "15": {"class_type": "LatentCutToBatch", "inputs": {"samples": ["14", 0], "dim": "t", "slice_size": 1}, "_meta": {"title": "Separar capas"}},
+    "16": {"class_type": "VAEDecode", "inputs": {"samples": ["15", 0], "vae": ["3", 0]}, "_meta": {"title": "Decodificar capas RGBA"}},
+    "17": {"class_type": "SaveImage", "inputs": {"filename_prefix": "{{output_prefix}}", "images": ["16", 0]}, "_meta": {"title": "Guardar capas RGBA del proyecto"}}
+  }
+}

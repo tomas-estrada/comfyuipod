@@ -1370,9 +1370,8 @@ class DownloadModelArgs(BaseModel):
     model_group: str = Field(
         ...,
         description=(
-            "Grupo de pesos opt-in a descargar: 'animate' (STUDIO_INCLUDE_ANIMATE=1, "
-            "+17.15 GiB), 'minimax' (STUDIO_INCLUDE_MINIMAX=1, +63.00 GB, Hailuo 3.0 "
-            "local) o 'three_d' (STUDIO_INCLUDE_3D=1)."
+            "Grupo de pesos opt-in a descargar: 'animate', 'minimax', 'three_d' o "
+            "'qwen_layered' (STUDIO_INCLUDE_QWEN_LAYERED=1, 30.17 GB; Qwen-Image-Layered)."
         ),
     )
 
@@ -1814,6 +1813,7 @@ async def _handle_enqueue_render(
             three_d_available=context.config.three_d_weights_available(),
             animate_available=context.config.animate_weights_available(),
             minimax_available=context.config.minimax_weights_available(),
+            qwen_layered_available=context.config.qwen_layered_weights_available(),
         )
     except (TemplateNotFoundError, TemplateParamError, LookupError) as exc:
         raise ToolExecutionError(str(exc)) from exc
@@ -4174,10 +4174,12 @@ async def _handle_download_model(
         "minimax": "STUDIO_INCLUDE_MINIMAX",
         "three_d": "STUDIO_INCLUDE_3D",
         "3d": "STUDIO_INCLUDE_3D",
+        "qwen_layered": "STUDIO_INCLUDE_QWEN_LAYERED",
     }.get(group)
     if flag is None:
         raise ToolExecutionError(
-            f"Grupo de pesos desconocido: {group!r}. Grupos válidos: animate, minimax, three_d."
+            f"Grupo de pesos desconocido: {group!r}. Grupos válidos: "
+            "animate, minimax, three_d, qwen_layered."
         )
     # Se valida antes de mirar disponibilidad: un job_id de otro proyecto es un
     # error siempre, no solo cuando toca descargar.
@@ -4188,12 +4190,14 @@ async def _handle_download_model(
         "minimax": cfg.minimax_weights_expected,
         "three_d": cfg.three_d_weights_expected,
         "3d": cfg.three_d_weights_expected,
+        "qwen_layered": cfg.qwen_layered_weights_expected,
     }[group]()
     available = {
         "animate": cfg.animate_weights_available,
         "minimax": cfg.minimax_weights_available,
         "three_d": cfg.three_d_weights_available,
         "3d": cfg.three_d_weights_available,
+        "qwen_layered": cfg.qwen_layered_weights_available,
     }[group]()
 
     templates = {
@@ -4201,6 +4205,7 @@ async def _handle_download_model(
         "minimax": ["minimax_r2v"],
         "three_d": ["hunyuan3d_image_to_3d"],
         "3d": ["hunyuan3d_image_to_3d"],
+        "qwen_layered": ["qwen_image_layered"],
     }[group]
     payload: dict[str, Any] = {
         "status": "available" if available else "unavailable",
@@ -4247,6 +4252,7 @@ async def _handle_download_model(
         "minimax": cfg.minimax_weights_available,
         "three_d": cfg.three_d_weights_available,
         "3d": cfg.three_d_weights_available,
+        "qwen_layered": cfg.qwen_layered_weights_available,
     }[group]()
     payload["available"] = now_available
     payload["status"] = "available" if now_available else "unavailable"

@@ -1,6 +1,6 @@
 # Registro de Plantillas de Comfy Studio (`templates-registry`)
 
-Este documento describe las **17 plantillas curadas** incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de cada grafo, el validador estructural y los endpoints HTTP de `studio-server` (`127.0.0.1:18190`). Los valores de grafo no son benchmarks de velocidad ni de VRAM.
+Este documento describe las **18 plantillas curadas** incluidas en [`studio/comfy_studio/templates/data/`](../studio/comfy_studio/templates/data/), sus parámetros tipados, los valores por defecto de cada grafo, el validador estructural y los endpoints HTTP de `studio-server` (`127.0.0.1:18190`). Los valores de grafo no son benchmarks de velocidad ni de VRAM.
 
 ---
 
@@ -308,6 +308,14 @@ El registro de plantillas encapsula workflows en **formato API de ComfyUI** (`pr
 
 ---
 
+### 2.8 `qwen_image_layered` — Descomposición de imagen en capas
+
+- **Archivo**: [`studio/comfy_studio/templates/data/qwen_image_layered.json`](../studio/comfy_studio/templates/data/qwen_image_layered.json)
+- **Uso**: separar una imagen del proyecto en capas independientes con alpha mediante el workflow oficial Qwen-Image-Layered de ComfyUI. Las capas deben revisarse/recomponerse antes de considerarlas una reconstrucción fiel.
+- **Entradas**: `image_asset_id` (imagen obligatoria del proyecto), `prompt`, `negative_prompt`, `layers` (1–8, predeterminado 4), `steps` (1–80, predeterminado 50), `cfg` (1–8, predeterminado 4) y `seed`.
+- **Modelos**: pesos FP8, encoder Qwen-VL FP8 y VAE; se descargan solo con `STUDIO_INCLUDE_QWEN_LAYERED=1` (30.17 GB adicionales). La plantilla queda listada como no disponible hasta que los tres archivos existan. Los pesos están fijados por revisión y SHA-256 en `config/models-studio.json`.
+- **Límite de evidencia**: el grafo nativo y la descarga están cubiertos por validación estructural y pruebas CPU; no se afirma calidad de separación, reconstrucción exacta ni consumo/viabilidad de VRAM sin ejecución GPU.
+
 ## 3. Validador Estructural (`comfy_studio.templates.validator`)
 
 El módulo [`studio/comfy_studio/templates/validator.py`](../studio/comfy_studio/templates/validator.py) verifica todas las plantillas al arrancar `TemplateRegistry` y puede ejecutarse desde CLI o CI:
@@ -335,7 +343,7 @@ python -m comfy_studio.templates
 
 | Método y Ruta | Descripción |
 |---|---|
-| `GET /studio/api/templates` | Lista las 17 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
+| `GET /studio/api/templates` | Lista las 18 plantillas con metadatos, `performance_defaults`, `parameters`, `params_schema` (JSON Schema) y `docs` en español. Acepta `?include_workflow=true`. |
 | `GET /studio/api/templates/{template_id}` | Devuelve el detalle completo de una plantilla incluyendo su grafo `workflow` en formato API (`404` si no existe). |
 | `POST /studio/api/templates/{template_id}/submit` | Valida `params` contra el schema de la plantilla (`422` con detalle si hay campos inválidos, fuera de rango o desconocidos, sin encolar en ComfyUI), sube a ComfyUI los `*_asset_id` referenciados del proyecto y crea el job en `studio.db`. Por defecto responde `202 Accepted` con el `job_id` y el render corre en segundo plano (seguimiento por `GET /studio/api/jobs/{job_id}` y SSE `/studio/api/progress`, acotado por `STUDIO_MAX_CONCURRENT_RENDERS`); con `?wait=1` se ejecuta en línea y devuelve el resultado. Al terminar descarga las salidas vía `/view` y las registra en la galería del proyecto (`category="outputs"`). |
 | `GET /studio/api/projects/{project_id}/gallery` | Lista los assets generados en la galería del proyecto enriquecidos con `preview_url`, `download_url` y `view_url`. |

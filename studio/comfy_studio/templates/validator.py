@@ -45,6 +45,36 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": (),
         "outputs": 1,
     },
+    "VAEEncode": {
+        "required_inputs": ("pixels", "vae"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "ReferenceLatent": {
+        "required_inputs": ("conditioning", "latent"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "EmptyQwenImageLayeredLatentImage": {
+        "required_inputs": ("width", "height", "layers", "batch_size"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "GetImageSize": {
+        "required_inputs": ("image",),
+        "optional_inputs": (),
+        "outputs": 3,
+    },
+    "LatentCut": {
+        "required_inputs": ("samples", "dim", "index", "amount"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "LatentCutToBatch": {
+        "required_inputs": ("samples", "dim", "slice_size"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
     "CheckpointLoaderSimple": {
         "required_inputs": ("ckpt_name",),
         "optional_inputs": (),
@@ -480,11 +510,9 @@ def _validate_parameter_declarations(
                         f"({default_val}) > max ({max_v})."
                     )
 
-    if require_prompt and (
-        "prompt" not in parameters or not parameters["prompt"].get("required")
-    ):
+    if require_prompt and "prompt" not in parameters:
         raise TemplateValidationError(
-            f"Plantilla {template_id!r}: debe declarar 'prompt' como parámetro obligatorio."
+            f"Plantilla {template_id!r}: debe declarar el parámetro 'prompt'."
         )
 
     return parameters

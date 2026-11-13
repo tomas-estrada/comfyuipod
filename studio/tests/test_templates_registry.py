@@ -5,10 +5,12 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from comfy_studio.app import create_app
 from comfy_studio.config import StudioConfig
@@ -41,7 +43,7 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
     body = resp.json()
     assert "templates" in body
     templates = body["templates"]
-    assert len(templates) == 17
+    assert len(templates) == 18
 
     by_id = {tpl["id"]: tpl for tpl in templates}
     assert set(by_id.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
@@ -56,12 +58,15 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
     assert "STUDIO_INCLUDE_ANIMATE" in by_id["wan_animate_cont"]["unavailable_reason"]
     assert by_id["minimax_r2v"]["available"] is False
     assert "STUDIO_INCLUDE_MINIMAX" in by_id["minimax_r2v"]["unavailable_reason"]
+    assert by_id["qwen_image_layered"]["available"] is False
+    assert "STUDIO_INCLUDE_QWEN_LAYERED" in by_id["qwen_image_layered"]["unavailable_reason"]
     for tpl_id, tpl in by_id.items():
         if tpl_id not in (
             "hunyuan3d_image_to_3d",
             "wan_animate",
             "wan_animate_cont",
             "minimax_r2v",
+            "qwen_image_layered",
         ):
             assert tpl["available"] is True
             assert tpl["unavailable_reason"] is None
@@ -104,6 +109,9 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
             # M3-D: imagen->3D no usa prompt textual; su entrada obligatoria es la imagen
             assert "image_asset_id" in schema["properties"]
             assert "image_asset_id" in schema["required"]
+        elif tpl_id == "qwen_image_layered":
+            assert "prompt" in schema["properties"]
+            assert "prompt" not in schema["required"]
         else:
             assert "prompt" in schema["properties"]
             assert "prompt" in schema["required"]
@@ -132,7 +140,7 @@ def test_structural_validator_passes_all_builtin_templates() -> None:
     """Todas las plantillas en comfy_studio/templates/data/ pasan el validador estructural."""
     registry = get_default_registry()
     results = validate_all_templates(registry.data_dir)
-    assert len(results) == 17
+    assert len(results) == 18
     assert set(results.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
 
     # Verificar que todos los modelos referenciados existen en el catálogo del pod
@@ -597,6 +605,8 @@ def test_render_template_workflow_helper_for_all_six_templates() -> None:
         if tpl_id == "hunyuan3d_image_to_3d":
             # M3-D: la entrada obligatoria es la imagen de referencia, no un prompt
             params = {"image_asset_id": "asset_img_01"}
+        elif tpl_id == "qwen_image_layered":
+            params = {"image_asset_id": "asset_img_01", "prompt": "Separar en capas"}
         graph = render_template_workflow(
             tpl_id,
             params,
@@ -608,7 +618,7 @@ def test_render_template_workflow_helper_for_all_six_templates() -> None:
         assert "proj_test_01" in raw
 
 
-def test_spanish_docs_file_exists_and_documents_all_six_templates() -> None:
+def test_spanish_docs_file_exists_and_documents_all_builtin_templates() -> None:
     """El documento docs/plantillas.md documenta uso, inputs y defaults de las 6 plantillas."""
     docs_path = REPO_ROOT / "docs" / "plantillas.md"
     assert docs_path.is_file()
@@ -792,7 +802,7 @@ def test_hunyuan3d_is_offered_when_three_d_weights_opt_in(
         c.auth = ("admin", "changeme-test-pass-42")
 
         templates = c.get("/studio/api/templates").json()["templates"]
-        assert len(templates) == 17
+        assert len(templates) == 18
         by_id = {tpl["id"]: tpl for tpl in templates}
         assert by_id["hunyuan3d_image_to_3d"]["available"] is True
 
@@ -880,3 +890,104 @@ def test_config_weights_become_available_once_files_land(
     assert cfg.animate_weights_available() is False
 
 
+def test_qwen_layered_weights_follow_opt_in_and_actual_files(
+    studio_data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from comfy_studio import model_assets
+
+    monkeypatch.setenv("COMFY_DATA_DIR", str(studio_data_dir))
+    cfg = StudioConfig.from_env(
+        {
+            "STUDIO_DATA_DIR": str(studio_data_dir),
+            "COMFY_DATA_DIR": str(studio_data_dir),
+        }
+    )
+    assert cfg.qwen_layered_weights_expected() is False
+    assert cfg.qwen_layered_weights_available() is False
+
+    requested = StudioConfig.from_env(
+        {
+            "STUDIO_DATA_DIR": str(studio_data_dir),
+            "COMFY_DATA_DIR": str(studio_data_dir),
+            "STUDIO_INCLUDE_QWEN_LAYERED": "1",
+        }
+    )
+    assert requested.qwen_layered_weights_expected() is True
+    assert requested.qwen_layered_weights_available() is False
+    paths = model_assets.paths_for_flag("STUDIO_INCLUDE_QWEN_LAYERED")
+    assert len(paths) == 3
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fixture weights")
+    assert requested.qwen_layered_weights_available() is True
+
+
+def test_qwen_layered_template_gates_on_opt_in_weights_and_renders_layers(
+    studio_config: StudioConfig,
+    studio_data_dir: Path,
+    stub_comfyui_transport,
+    stub_comfyui_state: ComfyUIStubState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from comfy_studio import model_assets
+
+    monkeypatch.setenv("COMFY_DATA_DIR", str(studio_data_dir))
+    cfg = dataclasses.replace(studio_config, studio_include_qwen_layered=True)
+    for path in model_assets.paths_for_flag("STUDIO_INCLUDE_QWEN_LAYERED"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fixture weights")
+
+    app = create_app(config=cfg, comfyui_transport=stub_comfyui_transport)
+    with TestClient(app) as c:
+        c.auth = ("admin", "changeme-test-pass-42")
+        template = c.get("/studio/api/templates/qwen_image_layered").json()
+        assert template["available"] is True
+        assert "prompt" not in template["params_schema"].get("required", [])
+        workflow = template["workflow"]
+        assert workflow["12"]["inputs"]["layers"] == "{{layers}}"
+        assert workflow["5"]["inputs"]["sampling"] == "flow"
+        assert workflow["15"]["class_type"] == "LatentCutToBatch"
+        assert workflow["17"]["class_type"] == "SaveImage"
+        assert "GetImageSize" in template["required_nodes"]
+        missing_input = c.post(
+            "/studio/api/templates/qwen_image_layered/submit", json={"params": {}}
+        )
+        assert missing_input.status_code == 422
+        assert "image_asset_id" in missing_input.json()["detail"]
+
+        created = c.post("/studio/api/projects", json={"name": "Qwen dimension fixture"})
+        assert created.status_code == 201, created.text
+        image_data = BytesIO()
+        Image.new("RGBA", (17, 19), (20, 40, 60, 255)).save(image_data, format="PNG")
+        uploaded = c.post(
+            f"/studio/api/projects/{created.json()['id']}/assets",
+            files={"file": ("odd-size.png", image_data.getvalue(), "image/png")},
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        rejected = c.post(
+            "/studio/api/templates/qwen_image_layered/submit",
+            json={
+                "project_id": created.json()["id"],
+                "params": {"image_asset_id": uploaded.json()["id"]},
+            },
+        )
+        assert rejected.status_code == 422, rejected.text
+        assert "múltiplos de 16" in rejected.json()["detail"]
+        assert stub_comfyui_state.uploads == {}
+
+        aligned_data = BytesIO()
+        Image.new("RGBA", (32, 48), (20, 40, 60, 255)).save(aligned_data, format="PNG")
+        aligned = c.post(
+            f"/studio/api/projects/{created.json()['id']}/assets",
+            files={"file": ("aligned.png", aligned_data.getvalue(), "image/png")},
+        )
+        assert aligned.status_code == 201, aligned.text
+        accepted = c.post(
+            "/studio/api/templates/qwen_image_layered/submit",
+            json={
+                "project_id": created.json()["id"],
+                "params": {"image_asset_id": aligned.json()["id"]},
+            },
+        )
+        assert accepted.status_code == 202, accepted.text
+        assert stub_comfyui_state.uploads
