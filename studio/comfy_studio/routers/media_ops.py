@@ -24,7 +24,11 @@ from comfy_studio.engines.editor import EditorEngine
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
 from comfy_studio.subtitles import render_subtitles, subtitle_filename
-from comfy_studio.temporal_restoration import TemporalRestoreError, restore_video
+from comfy_studio.temporal_restoration import (
+    MAX_OUTPUT_BYTES,
+    TemporalRestoreError,
+    restore_video,
+)
 from comfy_studio.webutil import (
     DiarizeRequest,
     EdlBuildRequest,
@@ -75,14 +79,16 @@ def register_routes(app: FastAPI) -> None:
             report = await run_in_threadpool(
                 restore_video, source_path, rendered, reference=reference_path
             )
+            if rendered.stat().st_size > MAX_OUTPUT_BYTES:
+                raise TemporalRestoreError(
+                    f"output file exceeds {MAX_OUTPUT_BYTES} byte CPU baseline limit"
+                )
             output = active_store.save_upload(
                 project_id,
                 filename=f"{Path(source['original_filename']).stem}-restored-4k.mp4",
                 content_type="video/mp4",
                 data=rendered.read_bytes(),
-                max_upload_bytes=max(
-                    request.app.state.config.max_upload_bytes, rendered.stat().st_size
-                ),
+                max_upload_bytes=MAX_OUTPUT_BYTES,
                 category="outputs",
                 metadata={
                     "temporal_restoration_v1": {

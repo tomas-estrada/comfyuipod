@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
+from comfy_studio import temporal_restoration
 from comfy_studio.media_bins import find_ffmpeg, find_ffprobe
-from comfy_studio.temporal_restoration import restore_video
+from comfy_studio.temporal_restoration import TemporalRestoreError, restore_video
 
 
 def _write_text_pattern(path: Path) -> None:
@@ -31,6 +32,79 @@ def _write_text_pattern(path: Path) -> None:
                             ) * 3
                             pixels[offset : offset + 3] = b"\xff\xff\xff"
     path.write_bytes(f"P6\n{width} {height}\n255\n".encode() + pixels)
+
+
+@pytest.mark.parametrize(
+    "rate,frames,duration",
+    [
+        ("nan", "12", "1"),
+        ("12/1", "12", "nan"),
+        ("1000000/1", "1000000", "1"),
+        ("30/1", "100000", "1"),
+    ],
+)
+def test_probe_rejects_nonfinite_or_unbounded_timeline(rate, frames, duration, monkeypatch) -> None:
+    class Result:
+        stdout = json.dumps(
+            {
+                "streams": [
+                    {
+                        "codec_type": "video",
+                        "width": 640,
+                        "height": 360,
+                        "duration": duration,
+                        "avg_frame_rate": rate,
+                        "r_frame_rate": rate,
+                        "nb_frames": frames,
+                    }
+                ],
+                "format": {},
+            }
+        )
+
+    monkeypatch.setattr(temporal_restoration, "_run", lambda *args, **kwargs: Result())
+    with pytest.raises(TemporalRestoreError):
+        temporal_restoration._probe(Path("fixture.mp4"), "ffprobe")
+
+
+def test_restore_rejects_source_over_byte_limit_before_probe(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "oversized.mp4"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(temporal_restoration, "MAX_SOURCE_BYTES", 0)
+    monkeypatch.setattr(
+        temporal_restoration,
+        "_probe",
+        lambda *args: pytest.fail("ffprobe must not run on oversized input"),
+    )
+    with pytest.raises(TemporalRestoreError, match="source file exceeds"):
+        restore_video(source, tmp_path / "output.mp4", ffmpeg_bin="ffmpeg", ffprobe_bin="ffprobe")
+
+
+def test_restore_rejects_and_cleans_oversized_output(tmp_path, monkeypatch) -> None:
+    source, output = tmp_path / "source.mp4", tmp_path / "output.mp4"
+    source.write_bytes(b"source")
+    monkeypatch.setattr(temporal_restoration, "MAX_OUTPUT_BYTES", 64)
+
+    def fake_probe(path, _ffprobe):
+        return {
+            "width": 640 if path == source else 3840,
+            "height": 360 if path == source else 2160,
+            "duration_s": 1.0,
+            "frame_rate": "12/1",
+            "frame_count": 12,
+            "time_base": "1/12",
+            "has_audio": False,
+        }
+
+    def fake_run(argv, *, timeout, label):
+        output.write_bytes(b"x" * 65)
+        return None
+
+    monkeypatch.setattr(temporal_restoration, "_probe", fake_probe)
+    monkeypatch.setattr(temporal_restoration, "_run", fake_run)
+    with pytest.raises(TemporalRestoreError, match="output file exceeds"):
+        restore_video(source, output, ffmpeg_bin="ffmpeg", ffprobe_bin="ffprobe")
+    assert not output.exists()
 
 
 @pytest.mark.skipif(not find_ffmpeg() or not find_ffprobe(), reason="requires FFmpeg/ffprobe")
