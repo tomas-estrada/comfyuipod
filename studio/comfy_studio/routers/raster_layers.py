@@ -26,10 +26,16 @@ from comfy_studio.video_matting import (
     ChromaKeyError,
     chroma_key_video,
 )
+from comfy_studio.video_restyle import (
+    DEFAULT_STRENGTH,
+    LutGradeError,
+    lut_grade,
+)
 
 _META_KEY = "ultra_raster_layer_set_v1"
 _OUTPUT_META_KEY = "ultra_raster_layer_output_v1"
 _CHROMA_OUTPUT_META_KEY = "ultra_chroma_key_output_v1"
+_LUT_OUTPUT_META_KEY = "ultra_lut_grade_output_v1"
 
 
 class RasterLayerRequest(BaseModel):
@@ -55,6 +61,57 @@ class ChromaKeyRequest(BaseModel):
     key_color: str | list[int]
     similarity: float = DEFAULT_SIMILARITY
     blend: float = DEFAULT_BLEND
+
+
+class LutGradeRequest(BaseModel):
+    """Gradación con LUT declarada: el usuario aporta el contenido ``.cube``."""
+
+    asset_id: str
+    lut_cube: str
+    strength: float = DEFAULT_STRENGTH
+    mask_asset_id: str | None = None
+
+
+def _mark_previous_lut_output_stale(
+    store: ProjectStore, project_id: str, current: dict[str, Any]
+) -> list[str]:
+    """Marca los assets de la ejecución previa de gradación LUT como obsoletos.
+
+    Sigue el patrón de ``_mark_previous_chroma_output_stale``: si la fuente
+    (asset o sha256), el LUT, la fuerza o la máscara cambian entre ejecuciones,
+    la salida y el frame previos dejan de ser frescos.
+    """
+    previous = store.get_meta(project_id, _LUT_OUTPUT_META_KEY)
+    if not isinstance(previous, dict) or not previous.get("asset_id"):
+        return []
+    tracked = (
+        "source_asset_id",
+        "source_sha256",
+        "lut_sha256",
+        "strength",
+        "mask_asset_id",
+        "mask_sha256",
+    )
+    changed = [field for field in tracked if previous.get(field) != current.get(field)]
+    stale_metadata = {
+        "stale": True,
+        "stale_reason": (
+            "lut_grade_input_changed" if changed else "lut_grade_rerun_superseded"
+        ),
+    }
+    if changed:
+        stale_metadata["lut_grade_changed_fields"] = sorted(changed)
+    invalidated: list[str] = []
+    for asset_id in (previous.get("asset_id"), previous.get("frame_asset_id")):
+        if not asset_id:
+            continue
+        updated = store.update_asset_metadata(
+            project_id, str(asset_id), metadata=stale_metadata
+        )
+        if updated is not None:
+            invalidated.append(str(asset_id))
+    store.set_meta(project_id, _LUT_OUTPUT_META_KEY, {**previous, "status": "stale"})
+    return invalidated
 
 
 def _mark_previous_output_stale(
@@ -351,6 +408,136 @@ def register_routes(app: FastAPI) -> None:
             "matting": evidence["matting"],
             "semantic_matting": evidence["semantic_matting"],
             "claim": "chroma-key de un color plano explícito; no matting semántico",
+        }
+
+    @app.post(
+        "/studio/api/projects/{project_id}/raster-layers/lut-grade", status_code=201
+    )
+    async def lut_grade_project_asset(
+        project_id: str, body: LutGradeRequest, request: Request
+    ) -> dict[str, Any]:
+        """Gradación con LUT 3D CPU real sobre un asset del proyecto (C22).
+
+        El usuario declara el contenido ``.cube`` del LUT y opcionalmente una
+        máscara (asset de imagen del proyecto). Produce un artefacto real (ffv1
+        bgr0 lossless para vídeo, PNG para imagen) y un frame de referencia,
+        con provenance (sha256 de fuente, LUT y máscara), probe de ffprobe y
+        métrica temporal de estabilidad medida sobre píxeles decodificados. NO
+        es transferencia de estilo neuronal: solo la transformación de color
+        declarada por el usuario.
+        """
+        store = _store(request)
+        _require_project(store, project_id)
+        config = request.app.state.config
+        try:
+            output_bytes, frame_png, evidence = await run_in_threadpool(
+                lut_grade,
+                store,
+                project_id,
+                body.asset_id,
+                body.lut_cube,
+                strength=body.strength,
+                mask_asset_id=body.mask_asset_id,
+                ffmpeg_timeout_s=config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=config.studio_ffprobe_timeout_s,
+            )
+        except LutGradeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MediaValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+        is_video = evidence["source"]["kind"] == "video"
+        output_sha256 = evidence["output"]["sha256"]
+        lut_meta = {
+            "artifact_kind": "lut_grade_output",
+            "renderer": evidence["renderer"],
+            "style": evidence["style"],
+            "neural_style_transfer": evidence["neural_style_transfer"],
+            "lut_grid": evidence["lut"]["grid"],
+            "lut_sha256": evidence["lut"]["sha256"],
+            "strength": evidence["strength"],
+            "source_asset_id": evidence["source"]["asset_id"],
+            "source_sha256": evidence["source"]["sha256"],
+            "output_sha256": output_sha256,
+        }
+        if "mask" in evidence:
+            lut_meta["mask_asset_id"] = evidence["mask"]["asset_id"]
+            lut_meta["mask_sha256"] = evidence["mask"]["sha256"]
+        renderer_meta = {"lut_grade": lut_meta, "pixel_render": evidence["renderer"]}
+        if is_video:
+            asset = store.save_upload(
+                project_id,
+                filename="lut-grade.mkv",
+                content_type="video/x-matroska",
+                data=output_bytes,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata=renderer_meta,
+            )
+            frame_asset = store.save_upload(
+                project_id,
+                filename="lut-grade-frame-0000.png",
+                content_type="image/png",
+                data=frame_png,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={
+                    **renderer_meta,
+                    "artifact_kind": "lut_grade_frame",
+                },
+            )
+        else:
+            asset = store.save_upload(
+                project_id,
+                filename="lut-grade.png",
+                content_type="image/png",
+                data=output_bytes,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata=renderer_meta,
+            )
+            frame_asset = store.save_upload(
+                project_id,
+                filename="lut-grade-frame.png",
+                content_type="image/png",
+                data=frame_png,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={
+                    **renderer_meta,
+                    "artifact_kind": "lut_grade_frame",
+                },
+            )
+        current_inputs = {
+            "source_asset_id": body.asset_id,
+            "source_sha256": evidence["source"]["sha256"],
+            "lut_sha256": evidence["lut"]["sha256"],
+            "strength": evidence["strength"],
+            "mask_asset_id": evidence.get("mask", {}).get("asset_id"),
+            "mask_sha256": evidence.get("mask", {}).get("sha256"),
+        }
+        invalidated_outputs = _mark_previous_lut_output_stale(
+            store, project_id, current_inputs
+        )
+        store.set_meta(
+            project_id,
+            _LUT_OUTPUT_META_KEY,
+            {
+                **current_inputs,
+                "asset_id": asset["id"],
+                "frame_asset_id": frame_asset["id"],
+                "status": "current",
+            },
+        )
+        return {
+            "asset": asset,
+            "frame_asset": frame_asset,
+            "evidence": evidence,
+            "invalidated_outputs": invalidated_outputs,
+            "style": evidence["style"],
+            "neural_style_transfer": evidence["neural_style_transfer"],
+            "claim": "gradación con LUT 3D declarada por el usuario; "
+            "no transferencia de estilo neuronal",
         }
 
 
