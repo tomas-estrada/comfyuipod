@@ -150,6 +150,7 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/reels/render",
     "POST /studio/api/projects/{project_id}/raster-layers/composite",
     "POST /studio/api/projects/{project_id}/raster-layers/chroma-key",
+    "POST /studio/api/projects/{project_id}/raster-layers/lut-grade",
     "POST /studio/api/projects/{project_id}/face/import",
     "POST /studio/api/projects/{project_id}/faces/index",
     "POST /studio/api/projects/{project_id}/identities",
