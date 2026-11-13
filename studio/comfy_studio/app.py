@@ -512,6 +512,7 @@ def create_app(
                 editor_engine=EditorEngine(backend="remotion"),
                 template_registry=app.state.template_registry,
                 atlas_service=app.state.atlas,
+                project_store=store,
                 comfyui_input_dir=os.environ.get("STUDIO_COMFYUI_INPUT_DIR")
                 or "/workspace/comfyui-data/input",
                 # Confinamiento de rutas de motor bajo el directorio de datos
