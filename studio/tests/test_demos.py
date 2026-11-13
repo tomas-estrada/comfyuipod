@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -409,4 +410,169 @@ def test_resume_rejects_changed_execution_fingerprint(
     assert resumed["resumed"] is False
     manifest = json.loads(Path(first["manifest"]).read_text(encoding="utf-8"))
     assert manifest["execution_fingerprint"] == current_fingerprint
+
+
+_D02_INVARIANTS = (
+    "actor_removed",
+    "shadow_removed",
+    "reflection_removed",
+    "intact_pixels_invariant",
+    "actor_sound_removed",
+    "ambient_sound_preserved",
+)
+
+
+def _d02_fixture_data() -> dict:
+    fixture = demos_module.FIXTURE_DIR / "d02_causal_layers.json"
+    return json.loads(fixture.read_text(encoding="utf-8"))
+
+
+def test_d02_checker_reports_each_causal_invariant_separately(tmp_path: Path) -> None:
+    result = run_demo("D02", tmp_path)
+    checks = result["checks"]
+    assert all(checks[invariant] is True for invariant in _D02_INVARIANTS)
+    assert checks["pixels_checked"] == 8
+    assert checks["sound_events_checked"] == 4
+    d02 = next(demo for demo in demo_catalog() if demo.demo_id == "D02")
+    assert list(d02.expected) == list(_D02_INVARIANTS)
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    assert all(name in manifest["checks"] for name in d02.expected)
+
+
+def _d02_mutations() -> dict[str, Callable[[dict], None]]:
+    """Each mutation breaks exactly one invariant of the valid fixture."""
+
+    def actor(data: dict) -> None:
+        data["after"][1] = data["background"][1] + 1
+
+    def shadow(data: dict) -> None:
+        data["after"][3] = data["background"][3] + 1
+
+    def reflection(data: dict) -> None:
+        data["after"][4] = data["background"][4] + 1
+
+    def intact(data: dict) -> None:
+        data["after"][0] = data["before"][0] + 7
+
+    def actor_sound(data: dict) -> None:
+        data["sound_events"][0]["present_after"] = True
+
+    def ambient_sound(data: dict) -> None:
+        data["sound_events"][2]["present_after"] = False
+
+    return {
+        "actor_removed": actor,
+        "shadow_removed": shadow,
+        "reflection_removed": reflection,
+        "intact_pixels_invariant": intact,
+        "actor_sound_removed": actor_sound,
+        "ambient_sound_preserved": ambient_sound,
+    }
+
+
+@pytest.mark.parametrize("invariant", list(_D02_INVARIANTS))
+def test_d02_mutation_reports_only_its_invariant_false(invariant: str) -> None:
+    data = _d02_fixture_data()
+    _d02_mutations()[invariant](data)
+    checks = demos_module._check_d02_causal_layers(data)
+    assert checks[invariant] is False
+    assert all(checks[name] is True for name in _D02_INVARIANTS if name != invariant)
+
+
+def test_d02_requires_at_least_one_actor_caused_sound_event() -> None:
+    data = _d02_fixture_data()
+    data["sound_events"] = [
+        event for event in data["sound_events"] if event["caused_by"] != "actor"
+    ]
+    checks = demos_module._check_d02_causal_layers(data)
+    assert checks["actor_sound_removed"] is False
+
+
+def _d02_malformations() -> dict[str, Callable[[dict], None]]:
+    """Each malformation must be rejected with DemoError, not silently checked."""
+
+    def missing_pixels(data: dict) -> None:
+        del data["pixels"]
+
+    def short_before(data: dict) -> None:
+        data["before"] = data["before"][:-1]
+
+    def bool_pixel(data: dict) -> None:
+        data["background"] = [True, *data["background"][1:]]
+
+    def out_of_range_pixel(data: dict) -> None:
+        data["after"][2] = 256
+
+    def integer_region(data: dict) -> None:
+        data["shadow_region"] = [int(value) for value in data["shadow_region"]]
+
+    def empty_region(data: dict) -> None:
+        data["reflection_region"] = [False] * data["pixels"]
+
+    def overlapping_regions(data: dict) -> None:
+        data["intact_region"][1] = True
+
+    def occludes_nothing(data: dict) -> None:
+        data["before"][3] = data["background"][3]
+
+    def integer_sound_presence(data: dict) -> None:
+        data["sound_events"][0]["present_before"] = 1
+
+    def unknown_cause(data: dict) -> None:
+        data["sound_events"][0]["caused_by"] = "prop"
+
+    def duplicate_sound_id(data: dict) -> None:
+        data["sound_events"].append(dict(data["sound_events"][0]))
+
+    def empty_sound_events(data: dict) -> None:
+        data["sound_events"] = []
+
+    def zero_length_sound(data: dict) -> None:
+        data["sound_events"][1]["end_s"] = data["sound_events"][1]["start_s"]
+
+    return {
+        "missing_pixels": missing_pixels,
+        "short_before": short_before,
+        "bool_pixel": bool_pixel,
+        "out_of_range_pixel": out_of_range_pixel,
+        "integer_region": integer_region,
+        "empty_region": empty_region,
+        "overlapping_regions": overlapping_regions,
+        "occludes_nothing": occludes_nothing,
+        "integer_sound_presence": integer_sound_presence,
+        "unknown_cause": unknown_cause,
+        "duplicate_sound_id": duplicate_sound_id,
+        "empty_sound_events": empty_sound_events,
+        "zero_length_sound": zero_length_sound,
+    }
+
+
+@pytest.mark.parametrize("malformation", sorted(_d02_malformations()))
+def test_d02_malformed_fixtures_raise_demo_error(malformation: str) -> None:
+    data = _d02_fixture_data()
+    _d02_malformations()[malformation](data)
+    with pytest.raises(DemoError, match="D02"):
+        demos_module._check_d02_causal_layers(data)
+
+
+def test_d02_runner_rejects_broken_invariant_and_malformed_buffer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = demos_module.FIXTURE_DIR / "d02_causal_layers.json"
+
+    broken = _d02_fixture_data()
+    broken["after"][1] = broken["background"][1] + 1  # el actor no se elimina
+    monkeypatch.setattr(
+        demos_module, "_load_fixture", lambda demo: (fixture, broken)
+    )
+    with pytest.raises(DemoError, match="failed fixture checks: .*actor_removed"):
+        run_demo("D02", tmp_path)
+
+    malformed = _d02_fixture_data()
+    malformed["before"] = malformed["before"][:-1]
+    monkeypatch.setattr(
+        demos_module, "_load_fixture", lambda demo: (fixture, malformed)
+    )
+    with pytest.raises(DemoError, match="buffer before malformado"):
+        run_demo("D02", tmp_path)
 
