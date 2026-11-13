@@ -424,6 +424,11 @@ class OpenAICompatibleLLMClient:
                     if isinstance(fallback_exc, LLMProviderError)
                     else "provider_error"
                 ),
+                retryable=(
+                    fallback_exc.retryable
+                    if isinstance(fallback_exc, LLMProviderError)
+                    else False
+                ),
                 status_code=(
                     fallback_exc.status_code
                     if isinstance(fallback_exc, LLMProviderError)
@@ -630,8 +635,11 @@ class OpenAICompatibleLLMClient:
                 )
             except httpx.HTTPError as exc:
                 safe_err = self._redactor.redact(str(exc))
+                is_timeout = isinstance(exc, httpx.TimeoutException)
                 raise LLMProviderError(
-                    f"Error de red/timeout hacia {endpoint}: {safe_err}"
+                    f"Error de red/timeout hacia {endpoint}: {safe_err}",
+                    kind="timeout" if is_timeout else "network_error",
+                    retryable=is_timeout,
                 ) from None
 
         if response.status_code >= 400:
@@ -836,8 +844,11 @@ class OpenAICompatibleLLMClient:
                         )
             except httpx.HTTPError as exc:
                 safe_err = self._redactor.redact(str(exc))
+                is_timeout = isinstance(exc, httpx.TimeoutException)
                 raise LLMProviderError(
-                    f"Error de red/timeout hacia {endpoint}: {safe_err}"
+                    f"Error de red/timeout hacia {endpoint}: {safe_err}",
+                    kind="timeout" if is_timeout else "network_error",
+                    retryable=is_timeout,
                 ) from None
 
         choices = data.get("choices") or []
@@ -991,6 +1002,11 @@ class OpenAICompatibleLLMClient:
                     fallback_exc.kind
                     if isinstance(fallback_exc, LLMProviderError)
                     else "provider_error"
+                ),
+                retryable=(
+                    fallback_exc.retryable
+                    if isinstance(fallback_exc, LLMProviderError)
+                    else False
                 ),
                 status_code=(
                     fallback_exc.status_code
