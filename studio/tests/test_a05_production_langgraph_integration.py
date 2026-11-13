@@ -34,12 +34,12 @@ class LocalLlmFixture:
                         "duration_s": 1.0,
                         "layers": [{
                             "kind": "gen",
-                            "engine": "qwen-image21",
+                            "engine": "comfyui",
                             "params": {
-                                "capability": "image.generate",
-                                "width": 512,
-                                "height": 512,
-                                "frames": 1,
+                                "capability": "video.text_to_video",
+                                "width": 832,
+                                "height": 480,
+                                "frames": 81,
                             },
                         }],
                     }],
@@ -85,12 +85,12 @@ def test_production_service_uses_langgraph_with_composed_collaborators_and_sqlit
     )
 
     llm = LocalLlmFixture()
-    generation = LocalMediaFixture(engine="qwen-image21", output=media, payload={})
+    generation = LocalMediaFixture(engine="comfyui", output=media, payload={})
     qa = LocalMediaFixture(engine="qa", output=media, payload={"passed": True})
     editor = LocalMediaFixture(engine="editor", output=media, payload={})
     collaborators = build_server_collaborators(
         llm_client=llm,
-        engines={"qwen-image21": generation},
+        engines={"comfyui": generation},
         qa_engine=qa,
         editor_engine=editor,
         data_root=tmp_path,
