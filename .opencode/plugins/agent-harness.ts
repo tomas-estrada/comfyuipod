@@ -105,10 +105,10 @@ export default {
 			const allowed = new Set(TOOL_ALLOWLIST);
 			if (event.agent !== 'build' && event.agent !== 'free-builder') allowed.delete('subagent');
 			if (run.record.usage.llm_calls >= run.record.spec.max_iterations) {
-				for (const name of Object.keys(event.tools)) delete event.tools[name];
+				delete event.tools;
 				event.system.push({type: 'text', text: 'ComfyUIPod per-agent turn limit reached. Return the current verified status and stop.'});
 			} else if (run.group.remaining_llm_calls <= 0 || Date.now() - run.started_ms >= run.record.spec.max_wall_seconds * 1000) {
-				for (const name of Object.keys(event.tools)) delete event.tools[name];
+				delete event.tools;
 				event.system.push({type: 'text', text: 'ComfyUIPod harness budget is exhausted. Return the current verified status and stop.'});
 			} else {
 				for (const name of Object.keys(event.tools)) if (!allowed.has(name)) delete event.tools[name];
