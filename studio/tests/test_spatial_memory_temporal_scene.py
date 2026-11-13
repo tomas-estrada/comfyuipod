@@ -443,9 +443,180 @@ def test_temporal_scene_reframe_and_retime_via_api(client: TestClient) -> None:
     assert bad_retime.status_code == 409
 
 
+# ---------------------------------------------------------------------------
+# Invariante CPU A19: round-trip medido para pose y cámara (no solo objetos)
+# ---------------------------------------------------------------------------
+
+
+def test_pose_round_trip_measures_drift_and_return() -> None:
+    scene = synthetic_round_trip_fixture()
+    report = scene.pose_round_trip("actor_1")
+    assert report["entity_id"] == "actor_1"
+    assert report["drift_deg"] == 0.0
+    assert report["returned"] is True
+    # Drift medido cuando la pose no vuelve exacta a su ancla.
+    scene.set_pose_key(
+        "actor_1", 2.5, {"hip": 0.4, "knee": 0.0},
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    report = scene.pose_round_trip("actor_1")
+    assert report["drift_deg"] == pytest.approx(0.4)
+    assert report["returned"] is False
+
+
+def test_pose_round_trip_fails_closed_when_bone_set_changes() -> None:
+    scene = synthetic_round_trip_fixture()
+    scene.set_pose_key(
+        "actor_1", 2.5, {"hip": 0.0, "knee": 0.0, "elbow": 1.0},
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    with pytest.raises(SpatialError, match="huesos"):
+        scene.pose_round_trip("actor_1")
+
+
+def test_camera_round_trip_measures_position_and_orientation_drift() -> None:
+    scene = synthetic_round_trip_fixture()
+    scene.set_camera_key(
+        "cam", 2.0, (1.0, 0.0, 2.0), (0.0, 0.0, 0.0), 50.0,
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    report = scene.camera_round_trip("cam")
+    assert report["entity_id"] == "cam"
+    assert report["drift_position"] == 0.0
+    assert report["drift_orientation_deg"] == 0.0
+    assert report["returned"] is True
+    # A→B→A en posición pero la orientación no vuelve: drift medido, honesto.
+    scene.set_camera_key(
+        "cam", 2.5, (1.0, 0.0, 2.0), (0.0, 0.0, 12.0), 50.0,
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    report = scene.camera_round_trip("cam")
+    assert report["drift_position"] == 0.0
+    assert report["drift_orientation_deg"] == pytest.approx(12.0)
+    assert report["returned"] is False
+
+
+def test_pose_and_camera_round_trip_require_three_keys() -> None:
+    scene = TemporalScene(timebase=Timebase(24), duration_s=3.0)
+    scene.set_pose_key("p", 0.0, {"hip": 0.0})
+    scene.set_pose_key("p", 1.0, {"hip": 1.0})
+    with pytest.raises(SpatialError, match="round-trip"):
+        scene.pose_round_trip("p")
+    scene.set_camera_key("c", 0.0, (0, 0, 5), (0, 0, 0))
+    scene.set_camera_key("c", 1.0, (0, 1, 5), (0, 0, 0))
+    with pytest.raises(SpatialError, match="round-trip"):
+        scene.camera_round_trip("c")
+
+
+# ---------------------------------------------------------------------------
+# Product-path CPU: ground truth analítico held-out + artefacto JSON + reframe
+# ---------------------------------------------------------------------------
+
+
+def test_held_out_samples_match_analytic_ground_truth() -> None:
+    """Tiempos NO muestreados contra ground truth analítico por trozos."""
+    scene = synthetic_round_trip_fixture()
+    # mesa: A(0,0,0)@0 → B(2,0,0)@1 → A@2, constante después (lineal por trozos).
+    for t, expected in [
+        (0.25, (0.5, 0.0, 0.0)),
+        (0.75, (1.5, 0.0, 0.0)),
+        (1.5, (1.0, 0.0, 0.0)),
+        (2.25, (0.0, 0.0, 0.0)),
+        (2.75, (0.0, 0.0, 0.0)),
+    ]:
+        assert scene.sample_object("mesa", t) == pytest.approx(expected), t
+    # actor_1: hip 0→5→0 y knee 0→10→0, rampas lineales.
+    for t, hip, knee in [(0.25, 1.25, 2.5), (0.75, 3.75, 7.5), (1.5, 2.5, 5.0), (2.25, 0.0, 0.0)]:
+        pose = scene.sample_pose("actor_1", t)
+        assert pose["hip"] == pytest.approx(hip), t
+        assert pose["knee"] == pytest.approx(knee), t
+    # cam: (1,0,2)@0 → (1,2,2)@1, después se mantiene el último valor.
+    for t, y in [(0.25, 0.5), (0.75, 1.5), (1.5, 2.0), (2.5, 2.0)]:
+        camera = scene.sample_camera("cam", t)
+        assert camera.position == pytest.approx((1.0, y, 2.0)), t
+        assert camera.orientation_deg == pytest.approx((0.0, 0.0, 0.0)), t
+        assert camera.fov_deg == pytest.approx(50.0), t
+
+
+def test_product_artifact_round_trip_preserves_edits_and_held_out_truth(
+    tmp_path,
+) -> None:
+    """Ruta de producto: ediciones → dumps() → artefacto JSON → recarga → muestreo."""
+    scene = synthetic_round_trip_fixture()
+    # Ediciones temporales de los tres kinds contra el fixture sintético.
+    scene.set_object_key(
+        "silla", 0.0, (0.0, 0.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_object_key(
+        "silla", 2.0, (0.0, 1.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_pose_key(
+        "actor_1", 2.5, {"hip": 0.0, "knee": 0.0},
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_camera_key(
+        "cam", 2.0, (1.0, 0.0, 2.0), (0.0, 0.0, 0.0), 35.0,
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    artifact = tmp_path / "temporal-scene.json"
+    artifact.write_text(scene.dumps(), encoding="utf-8")
+    restored = TemporalScene.from_dict(json.loads(artifact.read_text(encoding="utf-8")))
+    assert restored.dumps() == scene.dumps()
+    for t in (0.25, 0.75, 1.5, 2.25, 2.75):
+        assert restored.sample_object("mesa", t) == pytest.approx(
+            scene.sample_object("mesa", t)
+        )
+        assert restored.sample_object("silla", t) == pytest.approx(
+            scene.sample_object("silla", t)
+        )
+        assert restored.sample_pose("actor_1", t) == pytest.approx(
+            scene.sample_pose("actor_1", t)
+        )
+        before, after = scene.sample_camera("cam", t), restored.sample_camera("cam", t)
+        assert after.position == pytest.approx(before.position)
+        assert after.orientation_deg == pytest.approx(before.orientation_deg)
+        assert after.fov_deg == pytest.approx(before.fov_deg)
+    # Los tres kinds conservan su ancla A→B→A tras la ruta de artefacto.
+    assert restored.object_round_trip("mesa")["returned"] is True
+    assert restored.pose_round_trip("actor_1")["returned"] is True
+    camera_report = restored.camera_round_trip("cam")
+    assert camera_report["returned"] is False
+    assert camera_report["drift_fov_deg"] == pytest.approx(15.0)
+
+
+def test_reframe_held_out_camera_truth_matches_analytic_rotation() -> None:
+    """Tras el reframe el muestreo held-out sigue la verdad analítica; objetos intactos."""
+    scene = synthetic_round_trip_fixture()
+    scene.reframe("cam", offset=(0.0, 0.0, 1.0), rotate_deg=(0.0, 0.0, 90.0))
+    # Rz(90°)·(1, 2t, 2) = (−2t, 1, 2); luego + offset (0,0,1).
+    for t, x in [(0.25, -0.5), (0.75, -1.5), (1.5, -2.0)]:
+        camera = scene.sample_camera("cam", t)
+        assert camera.position == pytest.approx((x, 1.0, 3.0)), t
+        assert camera.orientation_deg == pytest.approx((0.0, 0.0, 90.0)), t
+        assert camera.fov_deg == pytest.approx(50.0), t
+    # El reframe de cámara no toca objetos ni poses.
+    assert scene.sample_object("mesa", 0.25) == pytest.approx((0.5, 0.0, 0.0))
+    assert scene.sample_pose("actor_1", 0.25)["hip"] == pytest.approx(1.25)
+
+
+# ---------------------------------------------------------------------------
+# Persistencia por proyecto vía API
+# ---------------------------------------------------------------------------
+
+
+def _make_project(client: TestClient, name: str) -> str:
+    return client.post("/studio/api/projects", json={"name": name}).json()["id"]
+
+
 def test_temporal_scene_round_trip_and_sample_endpoints(client: TestClient) -> None:
     project_id = _make_project(client, "Round-trip API")
     scene = synthetic_round_trip_fixture()
+    scene.set_camera_key(
+        "cam", 2.0, (1.0, 0.0, 2.0), (0.0, 0.0, 0.0), 50.0,
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
     assert client.put(
         f"/studio/api/projects/{project_id}/temporal-scene", json=scene.to_dict()
     ).status_code == 200
@@ -463,6 +634,35 @@ def test_temporal_scene_round_trip_and_sample_endpoints(client: TestClient) -> N
     )
     assert sample.status_code == 200, sample.text
     assert sample.json()["position"] == pytest.approx([1.0, 0.0, 0.0])
+
+    pose_report = client.get(
+        f"/studio/api/projects/{project_id}/temporal-scene/poses/actor_1/round-trip"
+    )
+    assert pose_report.status_code == 200, pose_report.text
+    assert pose_report.json()["drift_deg"] == 0.0
+    assert pose_report.json()["returned"] is True
+
+    pose_sample = client.get(
+        f"/studio/api/projects/{project_id}/temporal-scene/poses/actor_1/sample",
+        params={"time": 0.5},
+    )
+    assert pose_sample.status_code == 200, pose_sample.text
+    assert pose_sample.json()["angles"]["hip"] == pytest.approx(2.5)
+
+    camera_report = client.get(
+        f"/studio/api/projects/{project_id}/temporal-scene/cameras/cam/round-trip"
+    )
+    assert camera_report.status_code == 200, camera_report.text
+    assert camera_report.json()["drift_position"] == 0.0
+    assert camera_report.json()["drift_orientation_deg"] == 0.0
+    assert camera_report.json()["returned"] is True
+
+    camera_sample = client.get(
+        f"/studio/api/projects/{project_id}/temporal-scene/cameras/cam/sample",
+        params={"time": 0.5},
+    )
+    assert camera_sample.status_code == 200, camera_sample.text
+    assert camera_sample.json()["position"] == pytest.approx([1.0, 1.0, 2.0])
 
     missing = client.get(
         f"/studio/api/projects/{project_id}/temporal-scene/objects/fantasma/round-trip"
