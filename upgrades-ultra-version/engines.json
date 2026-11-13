@@ -1989,7 +1989,7 @@
         "LOCAL-LLM-01"
       ],
       "scope": "llama-server CPU (llama.cpp) fijado y compilado en la imagen; el adaptador OpenAI-compatible se conecta solo a 127.0.0.1. El proceso no se supervisa ni se inicia automáticamente; el usuario configura sus propios pesos .gguf en runtime.",
-      "terms_review": "llama.cpp v0.9.0 (commit cd959bae99ff4bed22bef2604f45241c09bbb8c8) está bajo MIT y el build desactiva CUDA, HTTPS y UI precompilada. El lock conserva los notices explícitos de componentes vendorizados; falta resolver la atribución de las tablas Unicode generadas antes de completar la revisión de redistribución. No se redistribuyen pesos.",
+      "terms_review": "llama.cpp v0.9.0 (commit cd959bae99ff4bed22bef2604f45241c09bbb8c8) está bajo MIT y el build desactiva CUDA, HTTPS y UI precompilada. El lock fija y verifica el aviso Unicode License V3 para las tablas de normalización Unicode 16.0.0; faltan avisos de atribución adicionales de cpp-httplib/nlohmann y revisar los avisos de las bibliotecas finales del sistema. No se redistribuyen pesos.",
       "hardware_notes": "CPU u offload GPU segun modelo; binario de decenas de MB; WARM sin residencia VRAM por defecto.",
       "build_selected": true,
       "runtime_installs_allowed": false,
@@ -2002,7 +2002,7 @@
       ],
       "code_revision": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
       "dependency_lock_hashes": {
-        "upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json": "4327a81b10ab6a89e3af9cbe38430cc50819c7506d203b340cb904f7f1966fce"
+        "upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json": "3a06a7621f689764e40a5258f408c5935b19f9c8a1f0638443f9f89d860174f1"
       },
       "redistribution_decision": "conditional",
       "notices_reviewed": false,

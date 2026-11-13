@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -97,13 +98,60 @@ def _run(command: list[str], *, cwd: Path | None = None) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
-def build(lock_path: Path, install_prefix: Path, work_root: Path | None = None) -> None:
+def validate_supplemental_notice(source: Path, expected_sha256: str) -> None:
+    if not source.is_file():
+        raise FileNotFoundError(f"aviso suplementario ausente: {source}")
+    actual_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    if actual_sha256 != expected_sha256:
+        raise ValueError(
+            f"SHA-256 de aviso suplementario no coincide: {actual_sha256} != "
+            f"{expected_sha256}"
+        )
+
+
+def install_supplemental_notice(
+    source: Path, expected_sha256: str, destination: Path
+) -> None:
+    validate_supplemental_notice(source, expected_sha256)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+
+
+def _validate_supplemental_destination(lock: dict, supplemental: dict) -> str:
+    destination = supplemental.get("destination")
+    if (
+        not isinstance(destination, str)
+        or not destination
+        or destination in {".", ".."}
+        or "\x00" in destination
+        or Path(destination).is_absolute()
+        or Path(destination).name != destination
+        or destination in lock["license_files"]
+    ):
+        raise ValueError(f"destination de aviso suplementario inválido: {destination!r}")
+    return destination
+
+
+def build(
+    lock_path: Path,
+    install_prefix: Path,
+    work_root: Path | None = None,
+    supplemental_license: Path | None = None,
+) -> None:
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     revision = lock["revision"]
     if len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
         raise ValueError("revision debe ser un SHA Git de 40 caracteres")
     if lock["architecture"] != "linux-amd64":
         raise ValueError("este lock solo declara linux-amd64")
+    supplemental = lock.get("supplemental_license")
+    if supplemental is not None:
+        _validate_supplemental_destination(lock, supplemental)
+        if supplemental_license is None:
+            raise ValueError("falta --supplemental-license requerido por el lock")
+        validate_supplemental_notice(supplemental_license, supplemental["sha256"])
+    elif supplemental_license is not None:
+        raise ValueError("--supplemental-license no está declarado en el lock")
 
     if work_root is None:
         temp = tempfile.TemporaryDirectory(prefix="llama-cpp-build-")
@@ -153,6 +201,13 @@ def build(lock_path: Path, install_prefix: Path, work_root: Path | None = None) 
             destination = notice_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_notice, destination)
+        if supplemental is not None:
+            assert supplemental_license is not None
+            install_supplemental_notice(
+                supplemental_license,
+                supplemental["sha256"],
+                notice_root / supplemental["destination"],
+            )
         _run([str(install_prefix / "llama-server"), "--version"])
     finally:
         if temp is not None:
@@ -163,8 +218,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--lock", type=Path, required=True)
     parser.add_argument("--install-prefix", type=Path, default=Path("/usr/local/bin"))
+    parser.add_argument("--supplemental-license", type=Path)
     args = parser.parse_args()
-    build(args.lock, args.install_prefix)
+    build(args.lock, args.install_prefix, supplemental_license=args.supplemental_license)
 
 
 if __name__ == "__main__":
