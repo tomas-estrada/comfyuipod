@@ -273,6 +273,38 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=status, detail=str(exc)) from exc
 
     @app.get(
+        "/studio/api/projects/{project_id}/temporal-scene/poses/{entity_id}/round-trip"
+    )
+    async def get_pose_round_trip(
+        project_id: str,
+        entity_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        try:
+            return _load_scene(store, project_id).pose_round_trip(entity_id)
+        except SpatialError as exc:
+            status = 404 if _scene_not_found(exc) else 409
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    @app.get(
+        "/studio/api/projects/{project_id}/temporal-scene/cameras/{entity_id}/round-trip"
+    )
+    async def get_camera_round_trip(
+        project_id: str,
+        entity_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        try:
+            return _load_scene(store, project_id).camera_round_trip(entity_id)
+        except SpatialError as exc:
+            status = 404 if _scene_not_found(exc) else 409
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    @app.get(
         "/studio/api/projects/{project_id}/temporal-scene/objects/{entity_id}/sample"
     )
     async def get_object_sample(
@@ -290,6 +322,48 @@ def register_routes(app: FastAPI) -> None:
                 "entity_id": entity_id,
                 "time": time,
                 "position": list(position),
+            }
+        except SpatialError as exc:
+            status = 404 if _scene_not_found(exc) else 409
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    @app.get(
+        "/studio/api/projects/{project_id}/temporal-scene/poses/{entity_id}/sample"
+    )
+    async def get_pose_sample(
+        project_id: str,
+        entity_id: str,
+        request: Request,
+        time: float = 0.0,
+    ) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        try:
+            angles = _load_scene(store, project_id).sample_pose(entity_id, time)
+            return {"entity_id": entity_id, "time": time, "angles": angles}
+        except SpatialError as exc:
+            status = 404 if _scene_not_found(exc) else 409
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    @app.get(
+        "/studio/api/projects/{project_id}/temporal-scene/cameras/{entity_id}/sample"
+    )
+    async def get_camera_sample(
+        project_id: str,
+        entity_id: str,
+        request: Request,
+        time: float = 0.0,
+    ) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        try:
+            camera = _load_scene(store, project_id).sample_camera(entity_id, time)
+            return {
+                "entity_id": entity_id,
+                "time": time,
+                "position": list(camera.position),
+                "orientation_deg": list(camera.orientation_deg),
+                "fov_deg": camera.fov_deg,
             }
         except SpatialError as exc:
             status = 404 if _scene_not_found(exc) else 409
