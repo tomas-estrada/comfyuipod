@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 
-from .motion import MotionClip, MotionError, Skeleton, retarget
+from .motion import MAX_CLIP_FRAMES, MAX_FRAME_BONES, MotionClip, MotionError, Skeleton, retarget
 
 
 def recover_motion(
@@ -27,6 +27,12 @@ def recover_motion(
     """
     if not frames or len(camera_track) != len(frames):
         raise MotionError("recovery requires one camera sample per observation frame")
+    if len(frames) > MAX_CLIP_FRAMES:
+        raise MotionError(f"recovery exceeds {MAX_CLIP_FRAMES} frames")
+    if any(not isinstance(frame, dict) for frame in frames):
+        raise MotionError("each recovery observation must be a JSON object")
+    if any(len(frame) > MAX_FRAME_BONES + 1 for frame in frames):
+        raise MotionError(f"a recovery frame exceeds {MAX_FRAME_BONES} bone keys")
     yaw_track = [0.0] * len(frames) if camera_yaw_radians is None else camera_yaw_radians
     if len(yaw_track) != len(frames) or any(not math.isfinite(yaw) for yaw in yaw_track):
         raise MotionError("recovery requires one finite camera yaw per observation frame")

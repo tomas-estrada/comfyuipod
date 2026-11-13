@@ -342,6 +342,154 @@ def test_choreography_and_acting_transfer_are_persisted_and_type_safe(client: Te
     assert rejected.status_code == 409
 
 
+def test_motion_endpoints_reject_oversized_json_before_persisting(client: TestClient) -> None:
+    project_id = _project(client, "Bounded motion")
+    oversized = b'{"padding":"' + b"x" * (1024 * 1024) + b'"}'
+    response = client.post(
+        f"/studio/api/projects/{project_id}/motion/recover",
+        content=oversized,
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 413
+    assert client.get(f"/studio/api/projects/{project_id}/motion/clips").json() == {"clips": {}}
+
+
+def test_all_new_motion_routes_bound_raw_request_bodies(client: TestClient) -> None:
+    project_id = _project(client, "Every body bounded")
+    assert client.put(_skeleton_url(project_id), json=SKELETON_A).status_code == 200
+    assert (
+        client.put(_clip_url(project_id), json={"skeleton_id": "rig_a", "clip": CLIP}).status_code
+        == 200
+    )
+    oversized = b'{"padding":"' + b"x" * (1024 * 1024) + b'"}'
+    cases = [
+        ("POST", f"{_skeleton_url(project_id)}/build", oversized),
+        ("POST", f"/studio/api/projects/{project_id}/motion/choreography", oversized),
+        ("POST", f"{_clip_url(project_id)}/transfer", oversized),
+    ]
+    for method, url, body in cases:
+        response = client.request(
+            method, url, content=body, headers={"content-type": "application/json"}
+        )
+        assert response.status_code == 413, (url, response.text)
+
+
+def test_oversized_blender_output_is_rejected_before_read_or_save(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    from comfy_studio import blender_motion
+
+    project_id = _project(client, "Large Blender output")
+    assert client.put(_skeleton_url(project_id), json=SKELETON_A).status_code == 200
+    output = tmp_path / "oversized.glb"
+    with output.open("wb") as stream:
+        stream.truncate(2 * 1024 * 1024 + 1)
+    from pathlib import Path
+
+    original_read_bytes = Path.read_bytes
+
+    def forbid_oversized_read(path: Path) -> bytes:
+        if path == output:
+            raise AssertionError("oversized Blender output must not be read into memory")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", forbid_oversized_read)
+
+    async def fake_blender_run(_spec):
+        return blender_motion.BlenderRigResult(
+            ok=True, glb_path=output, report={"reimport_bones": 3}
+        )
+
+    monkeypatch.setattr(blender_motion, "run_blender_rig", fake_blender_run)
+    response = client.post(
+        f"{_skeleton_url(project_id)}/build",
+        json={"clip": {"name": "small", "fps": 24, "frames": [{"spine": 0.0}]}},
+    )
+    assert response.status_code == 409
+    assert "upload limit" in response.json()["detail"]
+    assert client.get(f"/studio/api/projects/{project_id}/assets").json()["assets"] == []
+
+
+def test_motion_limits_reject_oversized_skeleton_clip_and_mapping(client: TestClient) -> None:
+    project_id = _project(client, "Motion bounds")
+    too_many_bones = {
+        "name": "large",
+        "root": "b0",
+        "bones": [
+            {"name": "b0", "parent": None},
+            *[{"name": f"b{i}", "parent": "b0"} for i in range(1, 257)],
+        ],
+    }
+    assert client.put(_skeleton_url(project_id), json=too_many_bones).status_code == 409
+    assert client.put(_skeleton_url(project_id), json=SKELETON_A).status_code == 200
+    recovery_response = client.post(
+        f"/studio/api/projects/{project_id}/motion/recover",
+        json={
+            "skeleton_id": "rig_a",
+            "clip_id": "too_long",
+            "name": "long",
+            "fps": 24,
+            "frames": [{"root": [0, 0, 0]}] * 601,
+            "camera_track": [[0, 0, 0]] * 601,
+            "subject_scale": 1.0,
+        },
+    )
+    assert recovery_response.status_code == 409
+    assert client.get(f"/studio/api/projects/{project_id}/motion/clips").json() == {"clips": {}}
+    too_many_frames = {**CLIP, "frames": [{"spine": 0.0}] * 601, "root_track": [[0, 0, 0]] * 601}
+    assert (
+        client.put(
+            _clip_url(project_id), json={"skeleton_id": "rig_a", "clip": too_many_frames}
+        ).status_code
+        == 409
+    )
+    too_many_keys = {
+        **CLIP,
+        "frames": [{f"bone-{i}": 0.0 for i in range(257)}],
+        "root_track": [[0, 0, 0]],
+    }
+    assert (
+        client.put(
+            _clip_url(project_id), json={"skeleton_id": "rig_a", "clip": too_many_keys}
+        ).status_code
+        == 409
+    )
+    _save_fixture(client, project_id)
+    response = client.post(
+        f"{_clip_url(project_id)}/retarget",
+        json={
+            "target_skeleton_id": "rig_b",
+            "mapping": {f"bone-{i}": "spine" for i in range(257)},
+            "clip_id": "too_mapped",
+        },
+    )
+    assert response.status_code == 409
+    long_mapping = client.post(
+        f"{_clip_url(project_id)}/retarget",
+        json={
+            "target_skeleton_id": "rig_b",
+            "mapping": {"x" * 129: "spine"},
+            "clip_id": "long_mapping",
+        },
+    )
+    assert long_mapping.status_code == 409
+
+
+def test_choreography_checks_exact_action_count_before_loading_clips(client: TestClient) -> None:
+    project_id = _project(client, "Beat count")
+    response = client.post(
+        f"/studio/api/projects/{project_id}/motion/choreography",
+        json={"clip_ids": ["missing"], "clip_id": "dance", "beat_frames": [0]},
+    )
+    assert response.status_code == 409
+    assert "exactly three" in response.json()["detail"]
+    long_identifier = client.post(
+        f"/studio/api/projects/{project_id}/motion/choreography",
+        json={"clip_ids": ["x" * 129, "b", "c"], "clip_id": "dance", "beat_frames": [0, 1, 2]},
+    )
+    assert long_identifier.status_code == 409
+
+
 def test_export_import_round_trip_is_reexecutable(client: TestClient) -> None:
     project_a = _project(client, "Origen")
     project_b = _project(client, "Destino")

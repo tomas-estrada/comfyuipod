@@ -34,6 +34,10 @@ class MotionError(ValueError):
 
 
 Vec3 = tuple[float, float, float]
+MAX_SKELETON_BONES = 256
+MAX_CLIP_FRAMES = 600
+MAX_FRAME_BONES = 256
+MAX_IDENTIFIER_LENGTH = 128
 
 
 @dataclass(slots=True)
@@ -74,6 +78,14 @@ class Skeleton:
 
     def validate(self) -> None:
         names = self.bone_names()
+        if len(self.bones) > MAX_SKELETON_BONES:
+            raise MotionError(f"skeleton exceeds {MAX_SKELETON_BONES} bones")
+        if any(not b.name or len(b.name) > MAX_IDENTIFIER_LENGTH for b in self.bones):
+            raise MotionError(f"bone names must be 1..{MAX_IDENTIFIER_LENGTH} characters")
+        if len(self.name) > MAX_IDENTIFIER_LENGTH or len(self.body_class) > 64:
+            raise MotionError("skeleton name or body_class exceeds its length limit")
+        if self.identity_id is not None and len(self.identity_id) > MAX_IDENTIFIER_LENGTH:
+            raise MotionError("skeleton identity_id exceeds its length limit")
         if len(names) != len(self.bones):
             raise MotionError("nombre de hueso duplicado")
         if self.root not in names:
@@ -138,6 +150,12 @@ class MotionClip:
         """Comprueba timebase, pistas y que cada canal pertenezca al esqueleto."""
         if self.fps <= 0:
             raise MotionError("fps debe ser > 0")
+        if not self.name or len(self.name) > MAX_IDENTIFIER_LENGTH:
+            raise MotionError(f"clip name must be 1..{MAX_IDENTIFIER_LENGTH} characters")
+        if len(self.frames) > MAX_CLIP_FRAMES:
+            raise MotionError(f"clip exceeds {MAX_CLIP_FRAMES} frames")
+        if any(len(frame) > MAX_FRAME_BONES for frame in self.frames):
+            raise MotionError(f"a frame exceeds {MAX_FRAME_BONES} bone keys")
         if self.root_track and len(self.root_track) != len(self.frames):
             raise MotionError("root_track debe tener un vector por frame")
         for index, frame in enumerate(self.frames):
@@ -318,6 +336,16 @@ def retarget(
     """
     source.validate()
     target.validate()
+    if len(mapping) > MAX_SKELETON_BONES:
+        raise MotionError(f"mapping exceeds {MAX_SKELETON_BONES} bone pairs")
+    if any(
+        not isinstance(src, str)
+        or not isinstance(dst, str)
+        or len(src) > MAX_IDENTIFIER_LENGTH
+        or len(dst) > MAX_IDENTIFIER_LENGTH
+        for src, dst in mapping.items()
+    ):
+        raise MotionError(f"mapping identifiers must be <= {MAX_IDENTIFIER_LENGTH} characters")
     if source.body_class != target.body_class:
         raise MotionError(
             f"incompatible body class: {source.body_class!r} to {target.body_class!r}"
