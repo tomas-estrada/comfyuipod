@@ -653,6 +653,54 @@ class TemporalScene:
             "returned": drift < 1e-6,
         }
 
+    def pose_round_trip(self, entity_id: str) -> dict[str, Any]:
+        """Mide si el conjunto de articulaciones vuelve a la pose inicial (A19)."""
+        entity = self._require(self.poses, entity_id)
+        if len(entity.keys) < 3:
+            raise SpatialError(
+                f"round-trip necesita >=3 claves (A->B->A) para {entity_id!r}"
+            )
+        bones = set(entity.keys[0].angles)
+        if any(set(key.angles) != bones for key in entity.keys):
+            raise SpatialError(
+                f"round-trip requiere el mismo conjunto de huesos para {entity_id!r}"
+            )
+        first, last = entity.keys[0].angles, entity.keys[-1].angles
+        drift = math.sqrt(sum((first[bone] - last[bone]) ** 2 for bone in bones))
+        return {
+            "entity_id": entity_id,
+            "times": [_r(key.t) for key in entity.keys],
+            "drift_deg": round(drift, 6),
+            "returned": drift < 1e-6,
+        }
+
+    def camera_round_trip(self, entity_id: str) -> dict[str, Any]:
+        """Mide drift de posición, orientación y FOV al volver al primer keyframe."""
+        entity = self._require(self.cameras, entity_id)
+        if len(entity.keys) < 3:
+            raise SpatialError(
+                f"round-trip necesita >=3 claves (A->B->A) para {entity_id!r}"
+            )
+        first, last = entity.keys[0], entity.keys[-1]
+        position_drift = math.sqrt(
+            sum((first.position[i] - last.position[i]) ** 2 for i in range(3))
+        )
+        orientation_drift = math.sqrt(
+            sum(
+                (first.orientation_deg[i] - last.orientation_deg[i]) ** 2
+                for i in range(3)
+            )
+        )
+        fov_drift = abs(first.fov_deg - last.fov_deg)
+        return {
+            "entity_id": entity_id,
+            "times": [_r(key.t) for key in entity.keys],
+            "drift_position": round(position_drift, 6),
+            "drift_orientation_deg": round(orientation_drift, 6),
+            "drift_fov_deg": round(fov_drift, 6),
+            "returned": max(position_drift, orientation_drift, fov_drift) < 1e-6,
+        }
+
     # --- reframe / retime ---------------------------------------------------
 
     def reframe(
