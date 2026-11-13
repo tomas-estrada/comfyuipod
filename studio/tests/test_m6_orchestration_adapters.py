@@ -184,6 +184,82 @@ def test_engine_runner_dispatches_async_engine():
     assert eng.runs == 1
 
 
+def test_engine_runner_resolves_project_image_asset_before_rendering(tmp_path):
+    from comfy_studio.projects import ProjectStore
+    from comfy_studio.templates.registry import TemplateRegistry
+
+    store = ProjectStore(tmp_path / "studio")
+    project = store.create_project("Referencia del proyecto")
+    asset = store.save_upload(
+        project["id"],
+        filename="perro.png",
+        content_type="image/png",
+        data=b"fake-png-image-bytes",
+        max_upload_bytes=1024,
+        metadata={"tags": ["perro", "parque"]},
+    )
+    input_dir = tmp_path / "comfyui-input"
+    engine = _GraphCapturingEngine()
+    runner = EngineRunnerAdapter(
+        {"comfyui": engine},
+        template_registry=TemplateRegistry(),
+        project_store=store,
+        comfyui_input_dir=str(input_dir),
+        data_root=tmp_path / "studio",
+    )
+
+    result = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "gen",
+            "project_id": project["id"],
+            "template_id": "wan_i2v",
+            "image_asset_id": asset["id"],
+            "prompt": "perro corriendo por el parque",
+        },
+    )
+
+    assert result["ok"] is True, result
+    assert engine.last_job is not None
+    reference = engine.last_job["project_reference"]
+    staged_image = input_dir / reference["filename"]
+    assert staged_image.read_bytes() == b"fake-png-image-bytes"
+    assert reference["asset_id"] == asset["id"]
+    assert len(reference["sha256"]) == 64
+    load_image = next(
+        node for node in engine.last_job["graph"].values()
+        if node["class_type"] == "LoadImage"
+    )
+    assert load_image["inputs"]["image"] == reference["filename"]
+
+
+def test_engine_runner_rejects_missing_project_image_asset(tmp_path):
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "studio")
+    project = store.create_project("Referencia ausente")
+    engine = _GraphCapturingEngine()
+    runner = EngineRunnerAdapter(
+        {"comfyui": engine},
+        project_store=store,
+        comfyui_input_dir=str(tmp_path / "comfyui-input"),
+        data_root=tmp_path / "studio",
+    )
+    result = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "gen",
+            "project_id": project["id"],
+            "template_id": "wan_i2v",
+            "image_asset_id": "missing-image",
+            "prompt": "perro corriendo",
+        },
+    )
+    assert result["ok"] is False
+    assert "no existe" in result["error"]
+    assert engine.last_job is None
+
+
 def test_engine_runner_unknown_engine_is_typed_failure():
     runner = EngineRunnerAdapter({"comfyui": _SyncEngine()})
     res = runner.run_layer("nope", {"kind": "gen"})
