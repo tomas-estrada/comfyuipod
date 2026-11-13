@@ -566,7 +566,7 @@ def test_verified_public_engines_have_code_revision() -> None:
     mod = _load_module()
     manifest = mod.load_json(mod.DEFAULT_MANIFEST)
     by_id = {e["id"]: e for e in manifest["engines"]}
-    assert by_id["ffmpeg"]["code_revision"] == "9609e5af68edfda32771d0415fb7620e29b15a2b"
+    assert by_id["ffmpeg"]["code_revision"] == "e38092ef9395d7049f871ef4d5411eb410e283e0"
     assert by_id["whisperx"]["code_revision"] == "v3.8.6"
 
 

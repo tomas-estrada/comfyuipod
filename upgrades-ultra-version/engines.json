@@ -46,7 +46,7 @@
         "C31",
         "C32"
       ],
-      "code_revision": "9609e5af68edfda32771d0415fb7620e29b15a2b",
+      "code_revision": "e38092ef9395d7049f871ef4d5411eb410e283e0",
       "dependency_lock_hashes": {
         "upgrades-ultra-version/locks/ffmpeg-ubuntu24.04-amd64.lock.json": "6d0452ce5e025f44bc3157fe655aff0e0b884b082523d284b24d2ad5032dccfb"
       },
