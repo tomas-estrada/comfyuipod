@@ -18,7 +18,7 @@ import json
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from comfy_studio.motion import (
     Bone,
@@ -63,6 +63,8 @@ class SkeletonRequest(BaseModel):
     name: str
     root: str
     scale: float = 1.0
+    #: bind pose declarada en grados por hueso; vacío ⇒ bind efectiva 0.0.
+    bind: dict[str, float] = Field(default_factory=dict)
     bones: list[BoneModel]
 
 
@@ -100,7 +102,7 @@ def _save_doc(store: ProjectStore, project_id: str, doc: dict[str, Any]) -> None
 
 
 def _skeleton_to_dict(skeleton: Skeleton) -> dict[str, Any]:
-    return {
+    result = {
         "name": skeleton.name,
         "root": skeleton.root,
         "scale": skeleton.scale,
@@ -114,6 +116,9 @@ def _skeleton_to_dict(skeleton: Skeleton) -> dict[str, Any]:
             for bone in skeleton.bones
         ],
     }
+    if skeleton.bind:
+        result["bind"] = dict(skeleton.bind)
+    return result
 
 
 def _skeleton_from_dict(data: dict[str, Any]) -> Skeleton:
@@ -121,6 +126,7 @@ def _skeleton_from_dict(data: dict[str, Any]) -> Skeleton:
         name=data["name"],
         root=data["root"],
         scale=float(data.get("scale", 1.0)),
+        bind={str(bone): float(degrees) for bone, degrees in data.get("bind", {}).items()},
         bones=[
             Bone(
                 name=bone["name"],
@@ -202,6 +208,7 @@ def register_routes(app: FastAPI) -> None:
                 name=body.name,
                 root=body.root,
                 scale=body.scale,
+                bind=dict(body.bind),
                 bones=[
                     Bone(
                         name=bone.name,
