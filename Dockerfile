@@ -553,12 +553,19 @@ RUN sed -i 's/\r$//' \
 
 COPY studio/ /opt/studio/
 COPY panel/ /etc/comfyui/panel/
+COPY upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json /tmp/llm-server.lock.json
+COPY scripts/build_llm_server.py /usr/local/bin/build_llm_server.py
 COPY scripts/smoke_blender_cpu.py /tmp/smoke_blender_cpu.py
 COPY scripts/smoke_blender_physics.py /tmp/smoke_blender_physics.py
 COPY scripts/smoke_mitsuba_cpu_fit.py /tmp/smoke_mitsuba_cpu_fit.py
 
 # Código de aplicación (studio/panel): capa separada para no rehacer el warmup.
-RUN find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json" \) -exec sed -i 's/\r$//' {} + && \
+RUN python3 /usr/local/bin/build_llm_server.py --lock /tmp/llm-server.lock.json && \
+    rm -f /usr/local/bin/build_llm_server.py /tmp/llm-server.lock.json && \
+    /usr/local/bin/llama-server --version && \
+    test -s /usr/share/licenses/llama.cpp/LICENSE && \
+    find /usr/share/licenses/llama.cpp -type f -print | sort && \
+    find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json" \) -exec sed -i 's/\r$//' {} + && \
     sed -i 's/\r$//' \
         /etc/comfyui/panel/index.html \
         /etc/comfyui/panel/style.css \

@@ -1328,7 +1328,7 @@
       "kind": "primary_source",
       "checked_at_utc": "2026-11-07",
       "verification": "official_repository_and_license_referenced_by_engines_json",
-      "limitation": "The repository and code license do not certify the project's llama-server build pin, model quality, hardware performance, or runtime integration.",
+      "limitation": "The code pin and build configuration are locally verified, but image CI, generated Unicode table attribution, model quality, hardware performance, and supervised runtime remain separate evidence gates.",
       "gpu_measured_here": false
     }
   ]

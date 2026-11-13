@@ -10,8 +10,7 @@ The repository has an outbound HTTP adapter for `llama-server`, but the
 container currently has no build/download/install step for that executable and
 does not start a local server process. The adapter's request to
 `127.0.0.1:8080` therefore has no in-repository producer unless an operator
-starts one separately. Existing preparedness text says the binary is baked,
-which overstates the current image behavior.
+starts one separately.
 
 The official `v0.9.0` release is source-only. Its sole release asset is a
 7-byte `nightly-tag.txt` pointer containing `b12110`; it is not a llama.cpp
@@ -49,6 +48,17 @@ An upstream source build is more reproducible than consuming the nightly
 binary. A CUDA build would require a CUDA development stage and a runtime
 compatibility check; the read-only audit did not build either configuration.
 No binary, model weights, or inference run were produced by this audit.
+
+## Implementation follow-up (2026-11-13)
+
+A follow-up branch adds a pinned, CPU-only source build for the image, records
+the source/CMake options and explicit upstream license-file inventory in a
+tracked lock, bounds compiler parallelism from cgroup/host resources, and
+updates the adapter's packaged-binary status. The process remains externally
+managed and model weights remain user-provided. The manifest keeps notice
+review conditional because generated Unicode table attribution still needs
+resolution. Image CI must build the candidate before packaging can be claimed
+as verified; this follow-up does not claim inference quality or GPU validation.
 
 ## Upstream records
 

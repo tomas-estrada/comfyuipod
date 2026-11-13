@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "engine_id": "llm-server",
+  "source": "https://github.com/ggml-org/llama.cpp.git",
+  "revision": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
+  "target": "llama-server",
+  "architecture": "linux-amd64",
+  "build_system": "cmake",
+  "cmake_options": {
+    "BUILD_SHARED_LIBS": "OFF",
+    "GGML_NATIVE": "OFF",
+    "GGML_CUDA": "OFF",
+    "LLAMA_BUILD_SERVER": "ON",
+    "LLAMA_BUILD_TESTS": "OFF",
+    "LLAMA_BUILD_EXAMPLES": "OFF",
+    "LLAMA_BUILD_TOOLS": "ON",
+    "LLAMA_BUILD_APP": "OFF",
+    "LLAMA_BUILD_UI": "OFF",
+    "LLAMA_USE_PREBUILT_UI": "OFF",
+    "LLAMA_CONNECT": "OFF",
+    "LLAMA_OPENSSL": "OFF"
+  },
+  "license_files": [
+    "LICENSE",
+    "cmake/license.cmake",
+    "gguf-py/LICENSE",
+    "licenses/LICENSE-jsonhpp",
+    "tools/ui/src/lib/vendors/big-integer/LICENSE",
+    "tools/ui/src/lib/vendors/nerdamer-prime/LICENSE",
+    "vendor/cpp-httplib/LICENSE",
+    "vendor/hash/rotate-bits/LICENSE.md",
+    "vendor/hash/sha256/LICENSE",
+    "vendor/hash/xxhash/LICENSE"
+  ],
+  "license_review": "The pinned source is MIT-licensed; all upstream license and notice files present in v0.9.0's source tree are copied into the image, including bundled/vendor notices. No model weights are included."
+}
