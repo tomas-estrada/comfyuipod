@@ -28,6 +28,7 @@ explícitamente; el default del servicio sigue siendo stubs.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -326,6 +327,7 @@ class EngineRunnerAdapter:
         template_registry: Any | None = None,
         default_comfy_template: str = _DEFAULT_COMFY_TEMPLATE,
         atlas_service: Any | None = None,
+        project_store: Any | None = None,
         comfyui_input_dir: str | None = None,
         data_root: Path | None = None,
     ) -> None:
@@ -333,6 +335,7 @@ class EngineRunnerAdapter:
         self._registry = template_registry
         self._default_template = default_comfy_template
         self._atlas = atlas_service
+        self._project_store = project_store
         self._comfyui_input_dir = comfyui_input_dir
         # Raíz de anclaje para rutas relativas y conjunto de raíces permitidas
         # para las absolutas. Por defecto el directorio de datos de Studio
@@ -419,6 +422,7 @@ class EngineRunnerAdapter:
             "background_image",
             "background_sha256",
             "atlas_resolved",
+            "project_reference",
             "recipe_id",
             "recipe_engine",
             "recipe_unresolved",
@@ -468,6 +472,84 @@ class EngineRunnerAdapter:
         resolved = dict(job)
         resolved["graph"] = graph
         resolved.setdefault("template_id", template_id)
+        return resolved
+
+    def _resolve_project_image(self, job: dict[str, Any]) -> dict[str, Any]:
+        """Copy a project-owned reference into ComfyUI's input folder safely."""
+        asset_id = str(job.get("image_asset_id") or "").strip()
+        if not asset_id:
+            return job
+        project_id = str(job.get("project_id") or "").strip()
+        if not project_id or self._project_store is None:
+            return {"_reference_error": "asset de referencia sin proyecto o ProjectStore"}
+        if job.get("background_image") or job.get("atlas"):
+            return {
+                "_reference_error": (
+                    "la capa combina una imagen del proyecto con un fondo Atlas; "
+                    "selecciona una sola fuente de imagen"
+                )
+            }
+        try:
+            asset = self._project_store.get_asset(project_id, asset_id)
+            source = self._project_store.get_asset_path(project_id, asset_id)
+        except Exception as exc:  # noqa: BLE001
+            return {"_reference_error": f"no se pudo resolver el asset de referencia: {exc}"}
+        if asset is None or asset.get("kind") != "image" or source is None:
+            return {
+                "_reference_error": (
+                    f"asset de referencia {asset_id!r} no existe, no es imagen "
+                    "o su archivo no está disponible en el proyecto"
+                )
+            }
+        if not self._comfyui_input_dir:
+            return {"_reference_error": "STUDIO_COMFYUI_INPUT_DIR no está configurado"}
+        suffix = Path(str(asset.get("filename") or "")).suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            message = f"formato de imagen no admitido: {suffix or '(sin extensión)'}"
+            return {"_reference_error": message}
+        input_root = Path(self._comfyui_input_dir).resolve()
+        filename = f"studio-ref-{hashlib.sha256(asset_id.encode()).hexdigest()[:24]}{suffix}"
+        destination = (input_root / filename).resolve()
+        if not destination.is_relative_to(input_root):
+            return {"_reference_error": "destino de referencia fuera del input de ComfyUI"}
+        try:
+            import shutil
+            import tempfile
+
+            input_root.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            current_digest = (
+                hashlib.sha256(destination.read_bytes()).hexdigest()
+                if destination.is_file()
+                else None
+            )
+            if current_digest != digest:
+                with tempfile.NamedTemporaryFile(
+                    dir=input_root, prefix=f".{filename}.", suffix=".tmp", delete=False
+                ) as staged:
+                    staged_path = Path(staged.name)
+                try:
+                    shutil.copyfile(source, staged_path)
+                    staged_digest = hashlib.sha256(staged_path.read_bytes()).hexdigest()
+                    if staged_digest != digest:
+                        return {
+                            "_reference_error": (
+                                "el asset de referencia cambió mientras se preparaba "
+                                "para ComfyUI"
+                            )
+                        }
+                    staged_path.replace(destination)
+                finally:
+                    staged_path.unlink(missing_ok=True)
+        except OSError as exc:
+            return {"_reference_error": f"no se pudo preparar la imagen para ComfyUI: {exc}"}
+        resolved = dict(job)
+        resolved["image_input"] = filename
+        resolved["project_reference"] = {
+            "asset_id": asset_id,
+            "filename": filename,
+            "sha256": digest,
+        }
         return resolved
 
     def run_layer(
@@ -539,6 +621,17 @@ class EngineRunnerAdapter:
         if isinstance(resolved_atlas, dict):
             job = resolved_atlas
         if engine in _GRAPH_ENGINES:
+            resolved_project_image = self._resolve_project_image(job)
+            if "_reference_error" in resolved_project_image:
+                return {
+                    "ok": False,
+                    "engine": engine,
+                    "error": (
+                        "referencia de proyecto: "
+                        f"{resolved_project_image['_reference_error']}"
+                    ),
+                }
+            job = resolved_project_image
             job = self._resolve_graph(job)
             if job.get("background_image") and job.get("atlas_template_has_image") is False:
                 return {
@@ -770,6 +863,7 @@ def build_server_collaborators(
     available_nodes: set[str] | None = None,
     template_registry: Any | None = None,
     atlas_service: Any | None = None,
+    project_store: Any | None = None,
     comfyui_input_dir: str | None = None,
     gpu_lease: GpuLease | None = None,
     unload_gpu: Any | None = None,
@@ -787,6 +881,7 @@ def build_server_collaborators(
             engines,
             template_registry=template_registry,
             atlas_service=atlas_service,
+            project_store=project_store,
             comfyui_input_dir=comfyui_input_dir,
             data_root=data_root,
         )
