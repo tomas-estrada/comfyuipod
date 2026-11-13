@@ -24,6 +24,7 @@
     "UNETLoader",
     "ModelSamplingAuraFlow",
     "LoadImage",
+    "GetImageSize",
     "VAEEncode",
     "ReferenceLatent",
     "EmptyQwenImageLayeredLatentImage",
@@ -49,8 +50,8 @@
     },
     "prompt": {
       "type": "string",
-      "required": true,
-      "min_length": 1,
+      "required": false,
+      "default": "",
       "description": "Contexto opcional de la composición para orientar la descomposición."
     },
     "negative_prompt": {
@@ -103,7 +104,7 @@
       "layers": 4,
       "steps": 50,
       "cfg": 4.0,
-      "resolution": "dimensiones de la fuente"
+      "resolution": "dimensiones de la fuente; ancho y alto deben ser múltiplos de 16"
     },
     "notas_rendimiento": "Modelo FP8 mixed bajo demanda (20,533,591,821 bytes), encoder FP8 (9,384,670,680 bytes) y VAE (253,816,616 bytes). El conjunto agrega 30,172,079,117 bytes al almacenamiento opt-in; no es parte del perfil por defecto. Ninguna métrica de calidad o VRAM se infiere desde esta ruta CPU. Licencia declarada: Apache-2.0 para los artefactos Comfy-Org/Qwen."
   },
@@ -112,7 +113,7 @@
     "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "type": "qwen_image", "device": "default"}, "_meta": {"title": "Encoder Qwen VL FP8"}},
     "3": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_layered_vae.safetensors"}, "_meta": {"title": "VAE Qwen Image Layered"}},
     "4": {"class_type": "UNETLoader", "inputs": {"unet_name": "qwen_image_layered_fp8mixed.safetensors", "weight_dtype": "default"}, "_meta": {"title": "Qwen Image Layered FP8"}},
-    "5": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["4", 0], "shift": 1.0}, "_meta": {"title": "Sampling AuraFlow"}},
+    "5": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["4", 0], "sampling": "flow", "shift": 1.0}, "_meta": {"title": "Sampling AuraFlow"}},
     "6": {"class_type": "VAEEncode", "inputs": {"pixels": ["1", 0], "vae": ["3", 0]}, "_meta": {"title": "Codificar imagen de referencia"}},
     "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{prompt}}", "clip": ["2", 0]}, "_meta": {"title": "Contexto positivo"}},
     "8": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{negative_prompt}}", "clip": ["2", 0]}, "_meta": {"title": "Contexto negativo"}},

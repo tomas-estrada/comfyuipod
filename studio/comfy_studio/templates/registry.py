@@ -556,6 +556,30 @@ class TemplateRegistry:
                     f"pero la plantilla {template_id!r} requiere {expected_kind!r}.",
                     errors=[{"field": asset_param, "reason": "value_error.asset_wrong_kind"}],
                 )
+            if template_id == "qwen_image_layered" and asset_param == "image_asset_id":
+                from PIL import Image
+
+                try:
+                    with Image.open(asset_path) as source_image:
+                        width, height = source_image.size
+                except (OSError, ValueError, Image.DecompressionBombError) as exc:
+                    raise TemplateParamError(
+                        "La imagen de entrada de Qwen-Image-Layered no se puede leer.",
+                        errors=[{
+                            "field": asset_param,
+                            "reason": "value_error.invalid_image",
+                        }],
+                    ) from exc
+                if width % 16 or height % 16:
+                    raise TemplateParamError(
+                        "Qwen-Image-Layered requiere que el ancho y alto de la imagen "
+                        f"sean múltiplos de 16; se recibió {width}×{height}. "
+                        "Redimensiona la imagen y vuelve a enviarla.",
+                        errors=[{
+                            "field": asset_param,
+                            "reason": "value_error.image_dimensions_multiple_of_16",
+                        }],
+                    )
             assets_to_upload.append((input_param, asset, asset_path))
 
         # Subir assets de entrada validados a ComfyUI

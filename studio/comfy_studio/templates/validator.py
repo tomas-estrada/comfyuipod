@@ -510,11 +510,9 @@ def _validate_parameter_declarations(
                         f"({default_val}) > max ({max_v})."
                     )
 
-    if require_prompt and (
-        "prompt" not in parameters or not parameters["prompt"].get("required")
-    ):
+    if require_prompt and "prompt" not in parameters:
         raise TemplateValidationError(
-            f"Plantilla {template_id!r}: debe declarar 'prompt' como parámetro obligatorio."
+            f"Plantilla {template_id!r}: debe declarar el parámetro 'prompt'."
         )
 
     return parameters
