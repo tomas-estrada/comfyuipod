@@ -5,8 +5,8 @@ Sirve completions de chat sin salir del pod: el binario `llama-server`
 adaptador lo envuelve con los cuatro verbos del contrato.
 
   - `list`   -> disponibilidad (binario, modelo, endpoint loopback) + stub.
-  - `install`-> siempre falla TIPADO: el binario no está incluido ni se instala
-                en runtime; el modelo es dependencia de tarea.
+  - `install`-> siempre falla TIPADO: el binario está horneado en la imagen y no
+                se instala en runtime; los pesos siguen siendo dependencia de tarea.
   - `verify` -> exige binario ejecutable (+ modelo si se pide uno concreto).
   - `run`    -> `POST {url}/v1/chat/completions` con timeout y endpoint
                 validado como loopback; sin binario/modelo falla TIPADO.
@@ -15,9 +15,9 @@ tier WARM. Stub-first (`STUDIO_STUB_LLM_SERVER=1`) para CI sin binario.
 Subproceso aislado solo para sondear versión; la inferencia va por HTTP
 stdlib a loopback. Todo stderr/error pasa por `SecretRedactor`.
 
-El adapter acepta una instalación explícita mediante `STUDIO_LLM_SERVER_BIN`
-o `PATH`; esta imagen no empaqueta ni supervisa `llama-server`.
-El adaptador tampoco fija pesos: el modelo .gguf llega en runtime.
+La imagen empaqueta el binario CPU fijado, pero no arranca ni supervisa el
+servidor. El adaptador acepta un binario alternativo mediante
+`STUDIO_LLM_SERVER_BIN`; los pesos .gguf llegan en runtime.
 """
 
 from __future__ import annotations
@@ -165,8 +165,9 @@ class LlmServerEngine:
             engine=self.name,
             verb="install",
             error=(
-                "el binario llama-server aún no está incluido ni supervisado en la imagen; "
-                f"la preparación para {submotor!r} sigue pendiente"
+                "el binario llama-server está incluido en la imagen, pero no se instala "
+                "ni supervisa en runtime; los pesos .gguf no se incluyen. "
+                f"La preparación para {submotor!r} requiere configurar esos pesos"
             ),
         )
 

@@ -38,3 +38,4 @@ docs/*
 docs/licenses/*
 !docs/licenses/blender.md
 !docs/licenses/mitsuba.md
+!docs/licenses/llama-cpp-unicode.md
