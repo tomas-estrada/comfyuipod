@@ -142,7 +142,9 @@ def demo_catalog() -> list[Demo]:
               _stage("relight", True), _stage("foley", False), _stage("finishing_4k", True)]),
         Demo("D02", "Eliminar una causa y sus consecuencias (omnimatte)",
              ["fixtures/d02_causal_layers.json"],
-             ["unaffected_region_unchanged", "removed_region_revealed"],
+             ["actor_removed", "shadow_removed", "reflection_removed",
+              "intact_pixels_invariant", "actor_sound_removed",
+              "ambient_sound_preserved"],
              ["actor_on_off"], 2,
              [_stage("matting", True), _stage("causal_delete", False)]),
         Demo("D03", "Producto articulado con cambio de material y varias cámaras",
@@ -483,6 +485,8 @@ def _expected_artifact_names(demo_id: str) -> set[str]:
 
 def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
     """Run small, explicit fixture integrity checks; these do not validate ML."""
+    if demo_id == "D02":
+        return _check_d02_causal_layers(data)
     if demo_id == "D01":
         cameras = data["cameras"]
         errors = []
@@ -499,14 +503,6 @@ def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
         return {"reprojection_rmse_px": rmse, "fixture_limit_px": limit,
                 "reprojection_rmse_below_fixture_limit": rmse <= limit,
                 "logo_mask_unchanged": logos_same}
-    if demo_id == "D02":
-        before, after, mask = data["before"], data["after"], data["causal_mask"]
-        if not (len(before) == len(after) == len(mask)):
-            raise DemoError("D02: buffers de capas con longitud diferente")
-        unaffected = all(before[i] == after[i] for i, m in enumerate(mask) if not m)
-        revealed = all(after[i] == data["background"][i] for i, m in enumerate(mask) if m)
-        return {"unaffected_region_unchanged": unaffected, "removed_region_revealed": revealed,
-                "pixels_checked": len(mask)}
     if demo_id == "D03":
         parts = {part["id"] for part in data["parts"]}
         joints = data["joints"]
@@ -535,6 +531,122 @@ def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
                     row.get("license") and row.get("source") for row in credits
                 ), "render": data["render"]}
     raise DemoError(f"demo desconocida: {demo_id}")
+
+_D02_REGIONS = ("actor_region", "shadow_region", "reflection_region", "intact_region")
+
+
+def _d02_buffer(buffer: Any, pixels: int, name: str) -> list[int]:
+    """Strict D02 layer buffer: exact length, 8-bit ints, no bool/int coercion."""
+    if (
+        not isinstance(buffer, list)
+        or len(buffer) != pixels
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= 255
+            for value in buffer
+        )
+    ):
+        raise DemoError(f"D02: buffer {name} malformado")
+    return buffer
+
+
+def _d02_region(data: dict[str, Any], pixels: int, name: str) -> list[bool]:
+    """Strict D02 region mask: exact length, real booleans, non-empty."""
+    region = data.get(name)
+    if (
+        not isinstance(region, list)
+        or len(region) != pixels
+        or not all(isinstance(value, bool) for value in region)
+        or not any(region)
+    ):
+        raise DemoError(f"D02: región {name} malformada")
+    return region
+
+
+def _check_d02_causal_layers(data: dict[str, Any]) -> dict[str, Any]:
+    """Run D02's six separate causal-layer invariants over the synthetic fixture.
+
+    Each invariant is an independent boolean: actor, shadow, and reflection
+    removal (the deleted cause reveals the background), intact pixel invariance
+    in the logo/prop region, actor-caused sound removal, and ambient sound
+    preservation. Malformed buffers, regions, or sound events raise DemoError.
+    These are CPU fixture-consistency checks; they are not omnimatte evidence.
+    """
+    pixels = data.get("pixels")
+    if not isinstance(pixels, int) or isinstance(pixels, bool) or pixels <= 0:
+        raise DemoError("D02: contador de píxeles inválido")
+    background = _d02_buffer(data.get("background"), pixels, "background")
+    before = _d02_buffer(data.get("before"), pixels, "before")
+    after = _d02_buffer(data.get("after"), pixels, "after")
+
+    regions = {name: _d02_region(data, pixels, name) for name in _D02_REGIONS}
+    for i in range(pixels):
+        if sum(region[i] for region in regions.values()) > 1:
+            raise DemoError(f"D02: regiones solapadas en el píxel {i}")
+    for name in ("actor_region", "shadow_region", "reflection_region"):
+        if all(before[i] == background[i] for i, flag in enumerate(regions[name]) if flag):
+            raise DemoError(f"D02: la región {name} no oculta nada en before")
+
+    raw_events = data.get("sound_events")
+    if not isinstance(raw_events, list) or not raw_events:
+        raise DemoError("D02: sound_events ausente o vacío")
+    parsed: list[tuple[str, str, bool, bool]] = []
+    seen_ids: set[str] = set()
+    for event in raw_events:
+        if not isinstance(event, dict):
+            raise DemoError("D02: evento de sonido malformado")
+        event_id = event.get("id")
+        cause = event.get("caused_by")
+        presence = (event.get("present_before"), event.get("present_after"))
+        start_s = event.get("start_s")
+        end_s = event.get("end_s")
+        timing_valid = not any(isinstance(t, bool) for t in (start_s, end_s)) and all(
+            isinstance(t, (int, float)) and math.isfinite(t) for t in (start_s, end_s)
+        )
+        if (
+            not isinstance(event_id, str)
+            or not event_id
+            or event_id in seen_ids
+            or cause not in ("actor", "ambient")
+            or not all(isinstance(value, bool) for value in presence)
+            or not timing_valid
+            or not 0 <= start_s < end_s  # type: ignore[operator]
+        ):
+            raise DemoError(f"D02: evento de sonido malformado: {event_id!r}")
+        seen_ids.add(event_id)
+        parsed.append((event_id, cause, presence[0], presence[1]))
+
+    def revealed(region: list[bool]) -> bool:
+        """The removed cause no longer occludes the background in `after`."""
+        return all(after[i] == background[i] for i, flag in enumerate(region) if flag)
+
+    intact_invariant = all(
+        before[i] == after[i] for i, flag in enumerate(regions["intact_region"]) if flag
+    )
+    actor_events = [event for event in parsed if event[1] == "actor"]
+    actor_sound_removed = bool(actor_events) and all(
+        present_before and not present_after
+        for _event_id, _cause, present_before, present_after in actor_events
+    )
+    ambient_preserved = any(
+        cause == "ambient" for _event_id, cause, _b, _a in parsed
+    ) and all(
+        present_before and present_after
+        for _event_id, cause, present_before, present_after in parsed
+        if cause == "ambient"
+    )
+    return {
+        "actor_removed": revealed(regions["actor_region"]),
+        "shadow_removed": revealed(regions["shadow_region"]),
+        "reflection_removed": revealed(regions["reflection_region"]),
+        "intact_pixels_invariant": intact_invariant,
+        "actor_sound_removed": actor_sound_removed,
+        "ambient_sound_preserved": ambient_preserved,
+        "pixels_checked": pixels,
+        "sound_events_checked": len(parsed),
+    }
+
 
 
 def _png_fixture(path: Path, seed: int) -> None:

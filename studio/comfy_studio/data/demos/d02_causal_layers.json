@@ -1,8 +1,22 @@
 {
-  "schema": "comfy_studio.demo_fixture.d02.v1",
-  "fixture_kind": "small explicit before/after layer buffer with causal mask",
-  "background": [10, 20, 30, 40, 50, 60],
-  "before": [10, 99, 98, 40, 97, 60],
-  "after": [10, 20, 30, 40, 50, 60],
-  "causal_mask": [false, true, true, false, true, false]
+  "schema": "comfy_studio.demo_fixture.d02.v2",
+  "fixture_kind": "explicit synthetic causal layers: actor, shadow, reflection, intact logo/prop region, and sound events",
+  "pixels": 8,
+  "background": [10, 20, 30, 40, 50, 60, 70, 80],
+  "before": [10, 99, 98, 25, 55, 60, 70, 80],
+  "after": [10, 20, 30, 40, 50, 60, 70, 80],
+  "actor_region": [false, true, true, false, false, false, false, false],
+  "shadow_region": [false, false, false, true, false, false, false, false],
+  "reflection_region": [false, false, false, false, true, false, false, false],
+  "intact_region": [true, false, false, false, false, true, true, false],
+  "sound_events": [
+    {"id": "actor_dialogue", "caused_by": "actor", "start_s": 0.0, "end_s": 1.0,
+     "present_before": true, "present_after": false},
+    {"id": "actor_footstep", "caused_by": "actor", "start_s": 1.5, "end_s": 2.0,
+     "present_before": true, "present_after": false},
+    {"id": "ambient_wind", "caused_by": "ambient", "start_s": 0.0, "end_s": 2.0,
+     "present_before": true, "present_after": true},
+    {"id": "ambient_hum", "caused_by": "ambient", "start_s": 0.5, "end_s": 1.5,
+     "present_before": true, "present_after": true}
+  ]
 }
