@@ -1205,17 +1205,26 @@
         "N17"
       ],
       "scope": "Desarrollo propio para cámara/luz/posición con restricciones y gradientes o búsqueda.",
-      "terms_review": "Unidad/frames/oclusiones y variable bounds explícitos; baseline + heldout.",
+      "terms_review": "Código del proyecto bajo MIT. El camino de preparación usa la distribución oficial Blender 5.2.4 GPL-3.0 y Mitsuba 3.9.1/Dr.Jit 1.5.0 BSD-3-Clause; locks de artefactos/dependencias fijados y notices de Blender/Mitsuba incluidos en la imagen. No redistribuye pesos ni assets del usuario. La evidencia CPU cubre composición y búsqueda heurística; diferenciabilidad, saliencia semántica y GPU siguen pendientes.",
       "hardware_notes": "CPU/Mitsuba CUDA bajo lease; optimización acotada.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C20"
       ],
-      "code_revision": "scene-opt-v1",
+      "code_revision": "b00f2c1f6ffdebfbd96a13bab3b054119106934a",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/blender-linux-x64-5.2.4.lock.json": "a12966eeb6e475ed8d254b21710421c230ff816411f7e7eafe5f382e11072f99",
+        "studio/locks/mitsuba-cp312-linux-amd64.lock": "1ef47e5e4d6ea31473f44b0b1208770031c7ea59133f3017338bdb31ee4222ca"
+      },
+      "redistribution_decision": "allowed",
+      "notices_reviewed": true,
+      "dependency_packages": ["Blender 5.2.4", "mitsuba==3.9.1", "drjit==1.5.0", "typing_extensions==4.16.0"],
+      "evidence_entrypoint": "studio/comfy_studio/engines/scene_optimizer.py",
+      "evidence_test": "studio/tests/test_engine_scene_optimizer.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -1681,7 +1690,7 @@
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
       "upstream_url": "https://github.com/mitsuba-renderer/mitsuba3",
-      "dependency_packages": ["mitsuba==3.9.1", "drjit==1.5.0", "typing_extensions==4.15.0"],
+      "dependency_packages": ["mitsuba==3.9.1", "drjit==1.5.0", "typing_extensions==4.16.0"],
       "evidence_entrypoint": "scripts/smoke_mitsuba_cpu_fit.py",
       "evidence_test": "scripts/smoke_mitsuba_cpu_fit.py",
       "lock_required_before_build": true,

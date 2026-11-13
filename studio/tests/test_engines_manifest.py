@@ -36,6 +36,21 @@ def test_real_manifest_is_coherent() -> None:
     assert len(blockers) > 0
 
 
+def test_scene_optimizer_has_complete_a07_manifest_evidence() -> None:
+    """The integrated CPU scene optimizer must satisfy its declared A07 evidence."""
+    mod = _load_module()
+    manifest = mod.load_json(mod.DEFAULT_MANIFEST)
+    cap_ids = mod._capability_ids(mod.DEFAULT_CAPS)
+    scene_optimizer = next(
+        engine for engine in manifest["engines"] if engine["id"] == "scene-optimizer"
+    )
+
+    problems, blockers = mod.validate({"engines": [scene_optimizer]}, cap_ids)
+
+    assert problems == []
+    assert blockers == []
+
+
 def test_counts_mismatch_is_a_problem() -> None:
     mod = _load_module()
     manifest = {"counts": {"engines": 99}, "engines": [{"id": "a", "disposition": "required"}]}
