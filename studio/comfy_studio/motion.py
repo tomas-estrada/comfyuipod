@@ -58,12 +58,14 @@ class Bone:
 
 @dataclass(slots=True)
 class Skeleton:
-    """Esqueleto: jerarquía de huesos + escala y raíz declaradas."""
+    """Esqueleto: jerarquía de huesos + escala, raíz y bind pose declaradas."""
 
     name: str
     bones: list[Bone]
     root: str
     scale: float = 1.0
+    #: bind pose en grados por hueso; sin declaración la bind efectiva es 0.0.
+    bind: dict[str, float] = field(default_factory=dict)
 
     def bone_names(self) -> set[str]:
         return {b.name for b in self.bones}
@@ -77,6 +79,22 @@ class Skeleton:
         if not math.isfinite(self.scale) or self.scale <= 0:
             raise MotionError("scale del esqueleto debe ser finito y > 0")
         bones = {bone.name: bone for bone in self.bones}
+        for bone, degrees in self.bind.items():
+            if bone not in names:
+                raise MotionError(
+                    f"bind pose: hueso inexistente {bone!r} (debe declarar "
+                    "huesos existentes)"
+                )
+            if not math.isfinite(degrees):
+                raise MotionError(
+                    f"bind pose: hueso {bone!r} con grados no finitos"
+                )
+            declared_bone = bones[bone]
+            if not declared_bone.min_deg <= degrees <= declared_bone.max_deg:
+                raise MotionError(
+                    f"bind pose: hueso {bone!r} con {degrees}° fuera de sus límites "
+                    f"[{declared_bone.min_deg}°, {declared_bone.max_deg}°]"
+                )
         if bones[self.root].parent is not None:
             raise MotionError("la raíz del esqueleto no puede tener padre")
         for b in self.bones:
@@ -291,8 +309,11 @@ def retarget(
     - `mapping`: {hueso_fuente: hueso_destino}. Debe cubrir los huesos usados.
     - conserva la trayectoria de la RAÍZ (escalada por target.scale/source.scale)
       y los TIEMPOS (mismo fps, mismos frames).
-    - aplica los límites de ángulo del DESTINO (clamp) — un retarget no viola el
-      rango físico del esqueleto destino.
+    - los ángulos se interpretan como OFFSET respecto a la bind pose del hueso
+      fuente (ángulo − bind), se suman a la bind pose del hueso destino y se
+      recortan a los límites del DESTINO — un clip en la bind del fuente
+      produce la bind del destino, y sin bind declarada (0.0 por hueso) el
+      resultado es el retarget absoluto previo.
     """
     source.validate()
     target.validate()
@@ -307,6 +328,8 @@ def retarget(
             raise MotionError(f"mapping: hueso destino inexistente {t!r}")
 
     tgt_limits = {b.name: (b.min_deg, b.max_deg) for b in target.bones}
+    src_bind = {bone: value for bone, value in source.bind.items()}
+    tgt_bind = {bone: value for bone, value in target.bind.items()}
     unmapped = sorted({bone for frame in clip.frames for bone in frame} - mapping.keys())
     if unmapped:
         raise MotionError(f"mapping incompleto; huesos usados sin destino: {', '.join(unmapped)}")
@@ -320,7 +343,12 @@ def retarget(
             if tgt_bone is None:  # defensive; completeness is checked above.
                 raise MotionError(f"mapping incompleto para hueso {src_bone!r}")
             lo, hi = tgt_limits[tgt_bone]
-            new_frame[tgt_bone] = max(lo, min(hi, angle))
+            # El ángulo es un OFFSET respecto a la bind del fuente: se resta la
+            # bind de origen, se suma la bind del destino y se recorta al rango
+            # físico del destino. Sin bind declarada (0.0) es el retarget
+            # absoluto previo.
+            offset = angle - src_bind.get(src_bone, 0.0)
+            new_frame[tgt_bone] = max(lo, min(hi, tgt_bind.get(tgt_bone, 0.0) + offset))
         out.frames.append(new_frame)
     # la raíz se conserva, escalada por la razón de escalas de los esqueletos.
     out.root_track = [

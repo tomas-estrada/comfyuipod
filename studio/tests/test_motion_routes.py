@@ -369,3 +369,76 @@ def test_project_ownership_fails_closed(client: TestClient) -> None:
     )
     assert imported.status_code == 200, imported.text
     assert imported.json()["provenance"]["source_project_id"] == project_id
+
+
+def test_skeleton_bind_round_trips_through_api(
+    client: TestClient,
+    studio_config,
+    stub_comfyui_transport,
+) -> None:
+    project_id = _project(client, "Bind pose")
+    bound = {**SKELETON_A, "bind": {"spine": 5.0, "arm_L": 10.0}}
+    response = client.put(_skeleton_url(project_id), json=bound)
+    assert response.status_code == 200, response.text
+    assert response.json()["bind"] == {"spine": 5.0, "arm_L": 10.0}
+    assert client.put(_skeleton_url(project_id), json=bound).status_code == 200
+
+    legacy = _project(client, "Legacy bind pose")
+    assert client.put(_skeleton_url(legacy), json=SKELETON_A).status_code == 200
+    assert client.put(_skeleton_url(legacy), json=SKELETON_A).status_code == 200
+
+    fetched = client.get(_skeleton_url(project_id)).json()
+    assert fetched["bind"] == {"spine": 5.0, "arm_L": 10.0}
+
+    saved = client.put(_clip_url(project_id), json={"skeleton_id": "rig_a", "clip": CLIP})
+    assert saved.status_code == 200, saved.text
+
+    exported_response = client.get(f"{_clip_url(project_id)}/export")
+    assert exported_response.status_code == 200, exported_response.text
+    exported = exported_response.json()
+    assert exported["skeleton"]["bind"] == {"spine": 5.0, "arm_L": 10.0}
+
+    # Bind pose ajena a los huesos declarados se rechaza (validación fail-closed).
+    unknown_bone = {**SKELETON_A, "bind": {"no_existe": 1.0}}
+    assert client.put(_skeleton_url(project_id, "rig_otro"), json=unknown_bone).status_code == 409
+
+    # Retarget vía API con bind en ambos esqueletos: se transfiere el OFFSET
+    # respecto a la bind del fuente y se recorta al rango del destino.
+    target = {**SKELETON_B, "bind": {"spine": 0.0, "arm_L": 5.0}}
+    assert client.put(_skeleton_url(project_id, "rig_b"), json=target).status_code == 200
+    retargeted = client.post(
+        f"{_clip_url(project_id)}/retarget",
+        json={"target_skeleton_id": "rig_b", "mapping": MAPPING, "clip_id": "walk_b"},
+    )
+    assert retargeted.status_code == 200, retargeted.text
+    frames = retargeted.json()["clip"]["frames"]
+    # spine: (10−5)+0=5 y (20−5)+0=15; arm_L: (30−10)+5=25, (200−10)+5→clamp 120
+    assert frames[0] == {"spine": 5.0, "arm_L": 25.0}
+    assert frames[1] == {"spine": 15.0, "arm_L": 120.0}
+    # El esqueleto destino persistido conserva la bind declarada.
+    assert client.get(_skeleton_url(project_id, "rig_b")).json()["bind"] == {
+        "spine": 0.0,
+        "arm_L": 5.0,
+    }
+
+    imported_project = _project(client, "Imported bind pose")
+    imported = client.post(
+        f"/studio/api/projects/{imported_project}/motion/import", json=exported
+    )
+    assert imported.status_code == 200, imported.text
+    assert client.get(_skeleton_url(imported_project)).json()["bind"] == {
+        "spine": 5.0,
+        "arm_L": 10.0,
+    }
+    assert client.get(_clip_url(imported_project)).json()["content_hash"] == exported[
+        "content_hash"
+    ]
+
+    # Reinicio: la bind persistida sobrevive al ProjectStore.
+    restarted = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
+    with TestClient(restarted) as resumed:
+        resumed.auth = ("admin", "changeme-test-pass-42")
+        assert resumed.get(_skeleton_url(project_id)).json()["bind"] == {
+            "spine": 5.0,
+        "arm_L": 10.0,
+        }
