@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from comfy_studio.agent.tools import (
+    ROLE_TOOL_SUBSETS,
     RenderTemplateParams,
     ToolContext,
     ToolExecutionError,
@@ -18,6 +19,7 @@ from comfy_studio.comfyui_client import ComfyUIClient
 from comfy_studio.config import StudioConfig
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
+from comfy_studio.spatial_memory import synthetic_round_trip_fixture
 from comfy_studio.stubs.comfyui import ComfyUIStubState
 
 
@@ -64,6 +66,52 @@ def test_tool_belt_v1_schemas_are_valid_openai_functions() -> None:
         params = fn["parameters"]
         assert params["type"] == "object"
         assert "properties" in params
+
+
+def test_temporal_scene_sampling_is_artist3d_only() -> None:
+    belt = create_default_tool_belt()
+    assert "sample_temporal_scene" in belt.restricted_to(
+        ROLE_TOOL_SUBSETS["artist3d"]
+    ).list_names()
+    assert "sample_temporal_scene" not in belt.restricted_to(
+        ROLE_TOOL_SUBSETS["director"]
+    ).list_names()
+    assert "sample_temporal_scene" not in belt.restricted_to(
+        ROLE_TOOL_SUBSETS["editor"]
+    ).list_names()
+
+
+@pytest.mark.anyio
+async def test_artist3d_temporal_scene_sample_preserves_synthetic_provenance(
+    tool_context: ToolContext,
+) -> None:
+    tool_context.store.set_meta(
+        tool_context.project_id,
+        "ultra_temporal_scene_v1",
+        synthetic_round_trip_fixture().to_dict(),
+    )
+    artist_belt = create_default_tool_belt().restricted_to(
+        ROLE_TOOL_SUBSETS["artist3d"]
+    )
+    result = await artist_belt.execute(
+        "sample_temporal_scene",
+        {"entity_id": "mesa", "entity_kind": "object", "time_s": 0.5},
+        tool_context,
+    )
+    assert result["sample"]["position"] == pytest.approx([1.0, 0.0, 0.0])
+    assert result["provenance"] == "synthetic"
+    assert result["source_kind"] == "synthetic"
+    assert result["evidence_claim"] is False
+
+    director_belt = create_default_tool_belt().restricted_to(
+        ROLE_TOOL_SUBSETS["director"]
+    )
+    with pytest.raises(ToolExecutionError, match="no registrada"):
+        await director_belt.execute(
+            "sample_temporal_scene",
+            {"entity_id": "mesa", "entity_kind": "object", "time_s": 0.5},
+            tool_context,
+        )
 
 
 @pytest.mark.anyio
