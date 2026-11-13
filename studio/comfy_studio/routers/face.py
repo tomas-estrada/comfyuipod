@@ -290,6 +290,7 @@ def register_routes(app: FastAPI) -> None:
         except FaceError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         prepared = []
+        digest_by_path: dict[Path, str] = {}
         for turn_model in body.turns:
             turn = turn_model.model_dump()
             asset_id = str(turn.get("audio_asset_id") or "")
@@ -303,7 +304,12 @@ def register_routes(app: FastAPI) -> None:
                 raise HTTPException(
                     status_code=413, detail="Audio de hablante supera el límite permitido"
                 )
-            prepared.append({**turn, "audio_sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+            resolved_path = path.resolve()
+            digest = digest_by_path.get(resolved_path)
+            if digest is None:
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                digest_by_path[resolved_path] = digest
+            prepared.append({**turn, "audio_sha256": digest})
         try:
             tracks = speaker_tracks(prepared)
         except FaceError as exc:

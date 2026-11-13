@@ -329,6 +329,37 @@ def test_audio_asset_size_limit_rejects_before_hash(client: TestClient, monkeypa
     assert response.status_code == 413
 
 
+def test_duplicate_audio_asset_is_hashed_once_per_request(client: TestClient, monkeypatch) -> None:
+    project_id = _project(client, "Audio compartido")
+    asset = client.app.state.store.save_upload(
+        project_id, filename="voice.wav", content_type="audio/wav",
+        data=b"fixture-audio", max_upload_bytes=1024,
+    )
+    path = client.app.state.store.get_asset_path(project_id, asset["id"])
+    assert path
+    reads = 0
+    original_read_bytes = Path.read_bytes
+
+    def count_asset_reads(candidate: Path) -> bytes:
+        nonlocal reads
+        if candidate == path:
+            reads += 1
+        return original_read_bytes(candidate)
+
+    monkeypatch.setattr(Path, "read_bytes", count_asset_reads)
+    turns = [
+        {"speaker_id": "ana", "audio_track_id": "stem_ana", "audio_asset_id": asset["id"],
+         "text": "Hola", "start": 0, "end": 1},
+        {"speaker_id": "ana", "audio_track_id": "stem_ana", "audio_asset_id": asset["id"],
+         "text": "Adiós", "start": 1, "end": 2},
+    ]
+    response = client.put(
+        f"/studio/api/projects/{project_id}/face/speaker-tracks", json={"turns": turns}
+    )
+    assert response.status_code == 200, response.text
+    assert reads == 1
+
+
 def test_curve_key_limit_rejects_before_curve_persistence(client: TestClient) -> None:
     project_id = _project(client, "Límite de curvas")
     oversized = {
