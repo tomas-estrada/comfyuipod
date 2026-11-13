@@ -29,6 +29,7 @@ from comfy_studio.motion import (
 from comfy_studio.motion import (
     retarget as motion_retarget,
 )
+from comfy_studio.motion_cpu import compose_actions, recover_motion, transfer_acting
 from comfy_studio.projects import ProjectStore
 
 _META_KEY = "ultra_motion_v1"
@@ -65,6 +66,8 @@ class SkeletonRequest(BaseModel):
     scale: float = 1.0
     #: bind pose declarada en grados por hueso; vacío ⇒ bind efectiva 0.0.
     bind: dict[str, float] = Field(default_factory=dict)
+    body_class: str = "humanoid"
+    identity_id: str | None = None
     bones: list[BoneModel]
 
 
@@ -106,6 +109,8 @@ def _skeleton_to_dict(skeleton: Skeleton) -> dict[str, Any]:
         "name": skeleton.name,
         "root": skeleton.root,
         "scale": skeleton.scale,
+        "body_class": skeleton.body_class,
+        "identity_id": skeleton.identity_id,
         "bones": [
             {
                 "name": bone.name,
@@ -127,6 +132,8 @@ def _skeleton_from_dict(data: dict[str, Any]) -> Skeleton:
         root=data["root"],
         scale=float(data.get("scale", 1.0)),
         bind={str(bone): float(degrees) for bone, degrees in data.get("bind", {}).items()},
+        body_class=str(data.get("body_class", "humanoid")),
+        identity_id=data.get("identity_id"),
         bones=[
             Bone(
                 name=bone["name"],
@@ -187,9 +194,7 @@ def _persist_clip(
     """Guarda idempotente: reintentos idénticos pasan; conflictos fallan (409)."""
     existing = doc["clips"].get(clip_id)
     if existing is not None and existing != record:
-        raise MotionError(
-            f"clip {clip_id!r} ya existe con contenido distinto; usa otro id"
-        )
+        raise MotionError(f"clip {clip_id!r} ya existe con contenido distinto; usa otro id")
     doc["clips"][clip_id] = record
     _save_doc(store, project_id, doc)
 
@@ -209,6 +214,8 @@ def register_routes(app: FastAPI) -> None:
                 root=body.root,
                 scale=body.scale,
                 bind=dict(body.bind),
+                body_class=body.body_class,
+                identity_id=body.identity_id,
                 bones=[
                     Bone(
                         name=bone.name,
@@ -225,8 +232,7 @@ def register_routes(app: FastAPI) -> None:
             existing = doc["skeletons"].get(skeleton_id)
             if existing is not None and existing != skeleton_dict:
                 raise MotionError(
-                    f"esqueleto {skeleton_id!r} ya existe con contenido distinto; "
-                    "usa otro id"
+                    f"esqueleto {skeleton_id!r} ya existe con contenido distinto; usa otro id"
                 )
             if existing is None:
                 doc["skeletons"][skeleton_id] = skeleton_dict
@@ -242,9 +248,7 @@ def register_routes(app: FastAPI) -> None:
         return {"skeletons": _load_doc(store, project_id)["skeletons"]}
 
     @app.get("/studio/api/projects/{project_id}/motion/skeletons/{skeleton_id}")
-    async def get_skeleton(
-        project_id: str, skeleton_id: str, request: Request
-    ) -> dict[str, Any]:
+    async def get_skeleton(project_id: str, skeleton_id: str, request: Request) -> dict[str, Any]:
         store = _store(request)
         _require_project(store, project_id)
         try:
@@ -281,16 +285,12 @@ def register_routes(app: FastAPI) -> None:
         return {"clips": _load_doc(store, project_id)["clips"]}
 
     @app.get("/studio/api/projects/{project_id}/motion/clips/{clip_id}")
-    async def get_clip(
-        project_id: str, clip_id: str, request: Request
-    ) -> dict[str, Any]:
+    async def get_clip(project_id: str, clip_id: str, request: Request) -> dict[str, Any]:
         store = _store(request)
         _require_project(store, project_id)
         record = _load_doc(store, project_id)["clips"].get(clip_id)
         if record is None:
-            raise HTTPException(
-                status_code=404, detail=f"Clip no encontrado: {clip_id}"
-            )
+            raise HTTPException(status_code=404, detail=f"Clip no encontrado: {clip_id}")
         return _clip_response(record)
 
     @app.post("/studio/api/projects/{project_id}/motion/clips/{clip_id}/retarget")
@@ -333,16 +333,12 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/studio/api/projects/{project_id}/motion/clips/{clip_id}/export")
-    async def export_clip(
-        project_id: str, clip_id: str, request: Request
-    ) -> dict[str, Any]:
+    async def export_clip(project_id: str, clip_id: str, request: Request) -> dict[str, Any]:
         store = _store(request)
         _require_project(store, project_id)
         record = _load_doc(store, project_id)["clips"].get(clip_id)
         if record is None:
-            raise HTTPException(
-                status_code=404, detail=f"Clip no encontrado: {clip_id}"
-            )
+            raise HTTPException(status_code=404, detail=f"Clip no encontrado: {clip_id}")
         return {
             "schema": _EXPORT_SCHEMA,
             "origin": {
@@ -358,17 +354,13 @@ def register_routes(app: FastAPI) -> None:
         }
 
     @app.post("/studio/api/projects/{project_id}/motion/import")
-    async def import_clip(
-        project_id: str, request: Request
-    ) -> dict[str, Any]:
+    async def import_clip(project_id: str, request: Request) -> dict[str, Any]:
         store = _store(request)
         _require_project(store, project_id)
         try:
             body = await request.json()
             if not isinstance(body, dict):
-                raise MotionError(
-                    "documento de importación: se esperaba un objeto JSON"
-                )
+                raise MotionError("documento de importación: se esperaba un objeto JSON")
             if body.get("schema") != _EXPORT_SCHEMA:
                 raise MotionError("documento de importación: schema desconocido")
             skeleton_dict = body.get("skeleton")
@@ -391,9 +383,7 @@ def register_routes(app: FastAPI) -> None:
             doc = _load_doc(store, project_id)
             existing = doc["skeletons"].get(skeleton_id)
             if existing is not None and existing != normalized_skeleton:
-                raise MotionError(
-                    f"esqueleto {skeleton_id!r} ya existe con contenido distinto"
-                )
+                raise MotionError(f"esqueleto {skeleton_id!r} ya existe con contenido distinto")
             doc["skeletons"][skeleton_id] = normalized_skeleton
             origin = body["origin"]
             provenance = {
@@ -422,3 +412,156 @@ def register_routes(app: FastAPI) -> None:
         store = _store(request)
         _require_project(store, project_id)
         return dict(_ENGINES_DECLARATION)
+
+    @app.post("/studio/api/projects/{project_id}/motion/skeletons/{skeleton_id}/build")
+    async def build_rig(project_id: str, skeleton_id: str, request: Request) -> dict[str, Any]:
+        """Create and save a real editable armature GLB using headless Blender CPU."""
+        import tempfile
+        from pathlib import Path
+
+        from comfy_studio.blender_motion import BlenderRigError, BlenderRigSpec, run_blender_rig
+
+        store = _store(request)
+        _require_project(store, project_id)
+        doc = _load_doc(store, project_id)
+        try:
+            skeleton = _get_skeleton(doc, skeleton_id)
+            body = await request.json()
+            if not isinstance(body, dict) or not isinstance(body.get("clip"), dict):
+                raise MotionError("build requiere clip JSON")
+            clip = MotionClip.from_dict(body["clip"])
+            clip.validate(skeleton)
+            config = request.app.state.config
+            with tempfile.TemporaryDirectory(prefix="comfy_motion_rig_") as temporary:
+                result = await run_blender_rig(
+                    BlenderRigSpec(skeleton=skeleton, clip=clip, output_dir=Path(temporary))
+                )
+                if not result.ok or result.glb_path is None:
+                    raise BlenderRigError(result.error or "Blender rig build failed")
+                saved = store.save_upload(
+                    project_id,
+                    filename=f"{skeleton_id}_{clip.name}_rig.glb",
+                    content_type="model/gltf-binary",
+                    data=result.glb_path.read_bytes(),
+                    max_upload_bytes=config.max_upload_bytes,
+                    category="outputs",
+                    metadata={
+                        "engine": "blender",
+                        "mode": "cpu_rig_deformation",
+                        "skeleton_id": skeleton_id,
+                        "clip_name": clip.name,
+                        "gpu_validation": "not_run",
+                        "rig_report": result.report,
+                    },
+                )
+            return {
+                "asset": saved,
+                "rig": result.report,
+                "engine": "blender_cpu",
+                "gpu_validation": "not_run",
+            }
+        except (KeyError, TypeError, ValueError, MotionError, BlenderRigError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/studio/api/projects/{project_id}/motion/recover")
+    async def recover_clip(project_id: str, request: Request) -> dict[str, Any]:
+        """Persist camera/scale compensated motion from authorized 3D observations."""
+        store = _store(request)
+        _require_project(store, project_id)
+        try:
+            body = await request.json()
+            doc = _load_doc(store, project_id)
+            skeleton_id = str(body["skeleton_id"])
+            skeleton = _get_skeleton(doc, skeleton_id)
+            clip = recover_motion(
+                name=str(body["name"]),
+                fps=int(body["fps"]),
+                frames=body["frames"],
+                camera_track=[tuple(point) for point in body["camera_track"]],
+                camera_yaw_radians=body.get("camera_yaw_radians"),
+                subject_scale=float(body["subject_scale"]),
+            )
+            clip.validate(skeleton)
+            record = _clip_record(
+                clip,
+                skeleton_id,
+                {
+                    "origin": "declared_3d_observations",
+                    "neural_generation": "not_used",
+                    "performance_capture": "not_performed",
+                    "camera_compensation": "translation_rotation_scale",
+                },
+                _skeleton_to_dict(skeleton),
+            )
+            _persist_clip(store, project_id, str(body["clip_id"]), record, doc)
+            return _clip_response(record)
+        except (KeyError, TypeError, ValueError, MotionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/studio/api/projects/{project_id}/motion/choreography")
+    async def compose_choreography(project_id: str, request: Request) -> dict[str, Any]:
+        """Persist exactly three compatible actions aligned to declared beat frames."""
+        store = _store(request)
+        _require_project(store, project_id)
+        try:
+            body = await request.json()
+            doc = _load_doc(store, project_id)
+            records = [doc["clips"][clip_id] for clip_id in body["clip_ids"]]
+            skeleton_ids = {record["skeleton_id"] for record in records}
+            if len(skeleton_ids) != 1:
+                raise MotionError("choreography actions must use the same skeleton")
+            skeleton_id = records[0]["skeleton_id"]
+            skeleton = _get_skeleton(doc, skeleton_id)
+            actions = [MotionClip.from_dict(record["clip"]) for record in records]
+            clip = compose_actions(actions, [int(frame) for frame in body["beat_frames"]])
+            clip.validate(skeleton)
+            result = _clip_record(
+                clip,
+                skeleton_id,
+                {
+                    "origin": "beat_aligned_action_composition",
+                    "source_clip_ids": list(body["clip_ids"]),
+                    "beat_frames": list(body["beat_frames"]),
+                    "neural_generation": "not_used",
+                },
+                _skeleton_to_dict(skeleton),
+            )
+            _persist_clip(store, project_id, str(body["clip_id"]), result, doc)
+            return _clip_response(result)
+        except (KeyError, TypeError, ValueError, MotionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/studio/api/projects/{project_id}/motion/clips/{clip_id}/transfer")
+    async def transfer_clip(project_id: str, clip_id: str, request: Request) -> dict[str, Any]:
+        """Identity/mask-safe acting transfer between compatible body classes."""
+        store = _store(request)
+        _require_project(store, project_id)
+        try:
+            body = await request.json()
+            doc = _load_doc(store, project_id)
+            source_record = doc["clips"].get(clip_id)
+            if source_record is None:
+                raise MotionError(f"clip inexistente {clip_id!r}")
+            source = _get_skeleton(doc, source_record["skeleton_id"])
+            target_id = str(body["target_skeleton_id"])
+            target = _get_skeleton(doc, target_id)
+            clip = transfer_acting(
+                MotionClip.from_dict(source_record["clip"]), source, target, body["mapping"]
+            )
+            output = _clip_record(
+                clip,
+                target_id,
+                {
+                    "origin": "identity_mask_safe_acting_transfer",
+                    "source_clip_id": clip_id,
+                    "source_skeleton_id": source_record["skeleton_id"],
+                    "target_skeleton_id": target_id,
+                    "mapping": dict(body["mapping"]),
+                    "neural_generation": "not_used",
+                },
+                _skeleton_to_dict(target),
+            )
+            _persist_clip(store, project_id, str(body["clip_id"]), output, doc)
+            return _clip_response(output)
+        except (KeyError, TypeError, ValueError, MotionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc

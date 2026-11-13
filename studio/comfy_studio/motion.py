@@ -66,6 +66,8 @@ class Skeleton:
     scale: float = 1.0
     #: bind pose en grados por hueso; sin declaración la bind efectiva es 0.0.
     bind: dict[str, float] = field(default_factory=dict)
+    body_class: str = "humanoid"
+    identity_id: str | None = None
 
     def bone_names(self) -> set[str]:
         return {b.name for b in self.bones}
@@ -78,17 +80,16 @@ class Skeleton:
             raise MotionError(f"raíz {self.root!r} no está entre los huesos")
         if not math.isfinite(self.scale) or self.scale <= 0:
             raise MotionError("scale del esqueleto debe ser finito y > 0")
+        if not self.body_class.strip():
+            raise MotionError("body_class del esqueleto no puede estar vacío")
         bones = {bone.name: bone for bone in self.bones}
         for bone, degrees in self.bind.items():
             if bone not in names:
                 raise MotionError(
-                    f"bind pose: hueso inexistente {bone!r} (debe declarar "
-                    "huesos existentes)"
+                    f"bind pose: hueso inexistente {bone!r} (debe declarar huesos existentes)"
                 )
             if not math.isfinite(degrees):
-                raise MotionError(
-                    f"bind pose: hueso {bone!r} con grados no finitos"
-                )
+                raise MotionError(f"bind pose: hueso {bone!r} con grados no finitos")
             declared_bone = bones[bone]
             if not declared_bone.min_deg <= degrees <= declared_bone.max_deg:
                 raise MotionError(
@@ -317,6 +318,10 @@ def retarget(
     """
     source.validate()
     target.validate()
+    if source.body_class != target.body_class:
+        raise MotionError(
+            f"incompatible body class: {source.body_class!r} to {target.body_class!r}"
+        )
     clip.validate(source)
     src_names = source.bone_names()
     tgt_names = target.bone_names()

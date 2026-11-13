@@ -73,9 +73,7 @@ def _import_url(project_id: str) -> str:
 
 
 def _assert_no_motion_meta_written(client: TestClient, project_id: str) -> None:
-    skeletons = client.get(
-        f"/studio/api/projects/{project_id}/motion/skeletons"
-    ).json()
+    skeletons = client.get(f"/studio/api/projects/{project_id}/motion/skeletons").json()
     clips = client.get(f"/studio/api/projects/{project_id}/motion/clips").json()
     assert skeletons == {"skeletons": {}}
     assert clips == {"clips": {}}
@@ -83,15 +81,8 @@ def _assert_no_motion_meta_written(client: TestClient, project_id: str) -> None:
 
 def _save_fixture(client: TestClient, project_id: str) -> None:
     assert client.put(_skeleton_url(project_id), json=SKELETON_A).status_code == 200
-    assert (
-        client.put(
-            _skeleton_url(project_id, "rig_b"), json=SKELETON_B
-        ).status_code
-        == 200
-    )
-    response = client.put(
-        _clip_url(project_id), json={"skeleton_id": "rig_a", "clip": CLIP}
-    )
+    assert client.put(_skeleton_url(project_id, "rig_b"), json=SKELETON_B).status_code == 200
+    response = client.put(_clip_url(project_id), json={"skeleton_id": "rig_a", "clip": CLIP})
     assert response.status_code == 200, response.text
 
 
@@ -107,9 +98,7 @@ def test_skeleton_and_clip_save_validate_and_persist(
     assert saved["name"] == "rig_a"
     assert saved["gpu_validation"] == "not_run"
 
-    clip_response = client.put(
-        _clip_url(project_id), json={"skeleton_id": "rig_a", "clip": CLIP}
-    )
+    clip_response = client.put(_clip_url(project_id), json={"skeleton_id": "rig_a", "clip": CLIP})
     assert clip_response.status_code == 200, clip_response.text
 
     before_restart = client.get(_clip_url(project_id)).json()
@@ -181,9 +170,7 @@ def test_rewrites_are_idempotent_but_conflicts_fail(client: TestClient) -> None:
     _save_fixture(client, project_id)
 
     assert client.put(_skeleton_url(project_id), json=SKELETON_A).status_code == 200
-    conflict = client.put(
-        _skeleton_url(project_id), json={**SKELETON_A, "scale": 3.0}
-    )
+    conflict = client.put(_skeleton_url(project_id), json={**SKELETON_A, "scale": 3.0})
     assert conflict.status_code == 409
     assert client.get(_skeleton_url(project_id)).json()["scale"] == 1.0
 
@@ -258,6 +245,101 @@ def test_engine_status_declares_missing_motion_engines(client: TestClient) -> No
     assert engines["retarget_engine"] == "cpu-deterministic-rules"
     assert engines["neural_generation"] == "not_used"
     assert engines["gpu_validation"] == "not_run"
+
+
+def test_rig_build_creates_project_owned_blender_artifact(client: TestClient) -> None:
+    import shutil
+
+    if not shutil.which("blender"):
+        return
+    project_id = _project(client, "Rig editable")
+    skeleton = {**SKELETON_A, "body_class": "humanoid", "identity_id": "actor-7"}
+    assert client.put(_skeleton_url(project_id), json=skeleton).status_code == 200
+    clip = {
+        "name": "extreme",
+        "fps": 12,
+        "frames": [{"spine": 0.0}, {"spine": 35.0}],
+        "root_track": [[0, 0, 0], [0, 0, 0]],
+    }
+    response = client.post(f"{_skeleton_url(project_id)}/build", json={"clip": clip})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["engine"] == "blender_cpu"
+    assert body["rig"]["reimport_bones"] == 3
+    assert body["rig"]["reimport_skinned_meshes"] == 1
+    asset = body["asset"]
+    assert asset["kind"] == "model3d"
+    assert client.get(f"/studio/api/projects/{project_id}/assets/{asset['id']}").status_code == 200
+
+
+def test_recovery_endpoint_persists_camera_compensated_track_and_contacts(
+    client: TestClient,
+) -> None:
+    project_id = _project(client, "Recovery")
+    skeleton = {**SKELETON_A, "identity_id": "actor-7"}
+    assert client.put(_skeleton_url(project_id), json=skeleton).status_code == 200
+    response = client.post(
+        f"/studio/api/projects/{project_id}/motion/recover",
+        json={
+            "skeleton_id": "rig_a",
+            "clip_id": "recovered",
+            "name": "walk",
+            "fps": 24,
+            "frames": [
+                {"root": [1, 0, 0], "foot_L": [1, 0, 0]},
+                {"root": [2, 0, 0], "foot_L": [2.01, 0, 0]},
+            ],
+            "camera_track": [[0, 0, 0], [1, 0, 0]],
+            "camera_yaw_radians": [0, 0],
+            "subject_scale": 1,
+        },
+    )
+    assert response.status_code == 200, response.text
+    saved = client.get(_clip_url(project_id, "recovered")).json()
+    assert saved["clip"]["root_track"] == [[1, 0, 0], [1, 0, 0]]
+    assert saved["clip"]["contacts"] == {"foot_L": [0, 1]}
+    assert saved["provenance"]["origin"] == "declared_3d_observations"
+
+
+def test_choreography_and_acting_transfer_are_persisted_and_type_safe(client: TestClient) -> None:
+    project_id = _project(client, "Choreography")
+    _save_fixture(client, project_id)
+    for clip_id, action in (("turn", "turn"), ("pose", "pose")):
+        clip = {
+            **CLIP,
+            "name": action,
+            "frames": [{"spine": 5.0}] * 2,
+            "root_track": [[0, 0, 0]] * 2,
+        }
+        assert (
+            client.put(
+                _clip_url(project_id, clip_id), json={"skeleton_id": "rig_a", "clip": clip}
+            ).status_code
+            == 200
+        )
+    response = client.post(
+        f"/studio/api/projects/{project_id}/motion/choreography",
+        json={"clip_ids": ["walk", "turn", "pose"], "clip_id": "dance", "beat_frames": [0, 2, 4]},
+    )
+    assert response.status_code == 200, response.text
+    dance = client.get(_clip_url(project_id, "dance")).json()["clip"]
+    assert dance["action_id"] == "walk+turn+pose"
+    assert dance["contacts"]["foot_L"] == [0, 2, 4]
+    transfer = client.post(
+        f"{_clip_url(project_id)}/transfer",
+        json={"target_skeleton_id": "rig_b", "mapping": MAPPING, "clip_id": "walk_b"},
+    )
+    assert transfer.status_code == 200, transfer.text
+    assert client.get(_clip_url(project_id, "walk_b")).json()["clip"]["mask_asset_id"] == "mask-1"
+    vehicle = {**SKELETON_B, "body_class": "vehicle"}
+    assert client.put(_skeleton_url(project_id, "vehicle"), json=vehicle).status_code == 200
+    persisted_vehicle = client.get(_skeleton_url(project_id, "vehicle")).json()
+    assert persisted_vehicle["body_class"] == "vehicle"
+    rejected = client.post(
+        f"{_clip_url(project_id)}/transfer",
+        json={"target_skeleton_id": "vehicle", "mapping": MAPPING, "clip_id": "walk_car"},
+    )
+    assert rejected.status_code == 409
 
 
 def test_export_import_round_trip_is_reexecutable(client: TestClient) -> None:
@@ -357,9 +439,7 @@ def test_project_ownership_fails_closed(client: TestClient) -> None:
         == 404
     )
 
-    other_clips = client.get(
-        f"/studio/api/projects/{other}/motion/clips"
-    ).json()["clips"]
+    other_clips = client.get(f"/studio/api/projects/{other}/motion/clips").json()["clips"]
     assert other_clips == {}
     assert client.get(_clip_url(other)).status_code == 404
 
@@ -422,17 +502,15 @@ def test_skeleton_bind_round_trips_through_api(
     }
 
     imported_project = _project(client, "Imported bind pose")
-    imported = client.post(
-        f"/studio/api/projects/{imported_project}/motion/import", json=exported
-    )
+    imported = client.post(f"/studio/api/projects/{imported_project}/motion/import", json=exported)
     assert imported.status_code == 200, imported.text
     assert client.get(_skeleton_url(imported_project)).json()["bind"] == {
         "spine": 5.0,
         "arm_L": 10.0,
     }
-    assert client.get(_clip_url(imported_project)).json()["content_hash"] == exported[
-        "content_hash"
-    ]
+    assert (
+        client.get(_clip_url(imported_project)).json()["content_hash"] == exported["content_hash"]
+    )
 
     # Reinicio: la bind persistida sobrevive al ProjectStore.
     restarted = create_app(config=studio_config, comfyui_transport=stub_comfyui_transport)
@@ -440,5 +518,5 @@ def test_skeleton_bind_round_trips_through_api(
         resumed.auth = ("admin", "changeme-test-pass-42")
         assert resumed.get(_skeleton_url(project_id)).json()["bind"] == {
             "spine": 5.0,
-        "arm_L": 10.0,
+            "arm_L": 10.0,
         }
