@@ -5,8 +5,8 @@ Sirve completions de chat sin salir del pod: el binario `llama-server`
 adaptador lo envuelve con los cuatro verbos del contrato.
 
   - `list`   -> disponibilidad (binario, modelo, endpoint loopback) + stub.
-  - `install`-> siempre falla TIPADO: el binario se hornea pinned, el modelo
-                es dependencia de tarea (runtime, no CI).
+  - `install`-> siempre falla TIPADO: el binario no está incluido ni se instala
+                en runtime; el modelo es dependencia de tarea.
   - `verify` -> exige binario ejecutable (+ modelo si se pide uno concreto).
   - `run`    -> `POST {url}/v1/chat/completions` con timeout y endpoint
                 validado como loopback; sin binario/modelo falla TIPADO.
@@ -15,9 +15,9 @@ tier WARM. Stub-first (`STUDIO_STUB_LLM_SERVER=1`) para CI sin binario.
 Subproceso aislado solo para sondear versión; la inferencia va por HTTP
 stdlib a loopback. Todo stderr/error pasa por `SecretRedactor`.
 
-Fuente de versión verificada: ggml-org/llama.cpp release `v0.9.0`
-(2026-11-04, https://github.com/ggml-org/llama.cpp/releases/tag/v0.9.0).
-El adaptador no fija pesos: el modelo .gguf llega en runtime.
+El adapter acepta una instalación explícita mediante `STUDIO_LLM_SERVER_BIN`
+o `PATH`; esta imagen no empaqueta ni supervisa `llama-server`.
+El adaptador tampoco fija pesos: el modelo .gguf llega en runtime.
 """
 
 from __future__ import annotations

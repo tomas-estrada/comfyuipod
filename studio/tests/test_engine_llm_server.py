@@ -125,6 +125,9 @@ def test_registrado_en_el_roster() -> None:
 
     reg = build_default_registry()
     assert "llm_server" in reg.names()
+    note = reg.get("llm_server").note
+    assert "no está incluido en la imagen" in note
+    assert "STUDIO_LLM_SERVER_BIN" in note
     assert "llm_server" in ENGINE_CLASSES
     cls = resolve_engine_class("llm_server")
     assert cls.name == "llm_server"
