@@ -5054,7 +5054,6 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=SampleTemporalSceneArgs,
             handler=_handle_sample_temporal_scene,
-            parallel_safe=True,
         )
     )
     belt.register(
