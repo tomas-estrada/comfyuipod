@@ -704,8 +704,15 @@ class TemporalScene:
             raise SpatialError(
                 f"duration_s debe estar en (0, {MAX_SCENE_DURATION_S}]"
             )
-        if self.max_entities <= 0 or self.max_keys_per_entity <= 0:
-            raise SpatialError("límites de escena deben ser > 0")
+        if not 1 <= self.max_entities <= MAX_SCENE_ENTITIES:
+            raise SpatialError(
+                f"max_entities debe estar entre 1 y {MAX_SCENE_ENTITIES}"
+            )
+        if not 1 <= self.max_keys_per_entity <= MAX_SCENE_KEYS_PER_ENTITY:
+            raise SpatialError(
+                "max_keys_per_entity debe estar entre 1 y "
+                f"{MAX_SCENE_KEYS_PER_ENTITY}"
+            )
         if len(self._entity_ids()) > self.max_entities:
             raise SpatialError(f"límite de entidades excedido ({self.max_entities})")
         if len(set(self.sources)) != len(self.sources):

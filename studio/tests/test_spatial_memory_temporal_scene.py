@@ -399,6 +399,19 @@ def test_temporal_scene_rejects_malformed_json_and_conflicting_fps(client: TestC
     assert saved["timebase"]["fps"] == 24
 
 
+@pytest.mark.parametrize(
+    ("limit", "value"),
+    [("max_entities", 17), ("max_keys_per_entity", 257)],
+)
+def test_temporal_scene_rejects_client_raised_resource_limits(
+    limit: str, value: int
+) -> None:
+    scene_data = synthetic_round_trip_fixture().to_dict()
+    scene_data["limits"][limit] = value
+    with pytest.raises(SpatialError, match=limit):
+        TemporalScene.from_dict(scene_data)
+
+
 def test_temporal_scene_reframe_and_retime_via_api(client: TestClient) -> None:
     project_id = _make_project(client, "Reframe API")
     scene = synthetic_round_trip_fixture()

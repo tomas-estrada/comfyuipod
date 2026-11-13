@@ -27,6 +27,7 @@ from ..ml import is_real_backend
 from ..progress import ProgressBroker
 from ..projects import MEASUREMENT_STATUS_OK, ProjectStore
 from ..review_pins import match_pin_to_cut, open_pin_summary
+from ..spatial_memory import SpatialError, TemporalScene
 from ..templates import (
     TemplateNotFoundError,
     TemplateParamError,
@@ -1581,6 +1582,16 @@ class ReviewOutputArgs(BaseModel):
     )
 
 
+class SampleTemporalSceneArgs(BaseModel):
+    """Consulta acotada de una entidad espacial del proyecto activo."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str = Field(..., min_length=1, max_length=128)
+    entity_kind: Literal["object", "camera"]
+    time_s: float = Field(..., ge=0.0, le=120.0, allow_inf_nan=False)
+
+
 RoleLiteral = Literal["director", "editor", "artist3d"]
 
 ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
@@ -1620,6 +1631,7 @@ ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
         "job_status",
         "index_media",
         "find_shots_text",
+        "sample_temporal_scene",
     ),
 }
 
@@ -1731,6 +1743,51 @@ def _record_template_use(template_id: str, context: ToolContext) -> None:
             record_use(models)
     except Exception:  # noqa: BLE001 - el ledger nunca rompe la herramienta
         return
+
+
+async def _handle_sample_temporal_scene(
+    args: SampleTemporalSceneArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    """Consulta una muestra sin mutar escena ni cambiar su clase de evidencia."""
+    if context.store.get_project(context.project_id) is None:
+        raise ToolExecutionError("Proyecto no encontrado")
+    raw = context.store.get_meta(context.project_id, "ultra_temporal_scene_v1")
+    if raw is None:
+        raise ToolExecutionError("No hay escena temporal registrada en este proyecto")
+    try:
+        scene = TemporalScene.from_dict(raw)
+        entities = scene.objects if args.entity_kind == "object" else scene.cameras
+        entity = entities.get(args.entity_id)
+        if entity is None:
+            raise ToolExecutionError(
+                f"Entidad {args.entity_id!r} no registrada como {args.entity_kind}"
+            )
+        if args.entity_kind == "object":
+            sample: dict[str, Any] = {
+                "position": list(scene.sample_object(args.entity_id, args.time_s))
+            }
+        else:
+            camera = scene.sample_camera(args.entity_id, args.time_s)
+            sample = {
+                "position": list(camera.position),
+                "orientation_deg": list(camera.orientation_deg),
+                "fov_deg": camera.fov_deg,
+            }
+        source = scene.sources.get(entity.source_id) if entity.source_id else None
+        return {
+            "project_id": context.project_id,
+            "entity_id": args.entity_id,
+            "entity_kind": args.entity_kind,
+            "time_s": args.time_s,
+            "sample": sample,
+            "provenance": entity.provenance.value,
+            "source_id": entity.source_id,
+            "source_kind": source.kind if source else None,
+            "evidence_claim": False,
+        }
+    except SpatialError as exc:
+        raise ToolExecutionError(f"Escena temporal inválida: {exc}") from exc
 
 
 async def _handle_enqueue_render(
@@ -4984,6 +5041,19 @@ def create_default_tool_belt() -> ToolBelt:
             args_model=SearchBlenderExtensionsArgs,
             handler=_handle_search_blender_extensions,
             parallel_safe=True,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="sample_temporal_scene",
+            description=(
+                "Consulta la posición interpolada de un objeto o cámara en un instante "
+                "de la escena temporal del proyecto activo. Solo lectura; devuelve la "
+                "procedencia original y nunca convierte datos sintéticos/inferidos en "
+                "evidencia observada. Disponible para artist3d."
+            ),
+            args_model=SampleTemporalSceneArgs,
+            handler=_handle_sample_temporal_scene,
         )
     )
     belt.register(
