@@ -49,15 +49,26 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # 1. Dependencias del sistema: ffmpeg completo (libx264 + nvenc), Nginx, ttyd, tini, git, openssl
 #    y build-essential + python3-dev conservados (ALTA-03) para que torch.compile (Triton)
 #    y la instalación en 1 clic de nodos con extensiones C/C++ desde ComfyUI-Manager funcionen en runtime.
+# A07 (ffmpeg): el paquete exacto va fijado por versión apt (7:6.1.1-3ubuntu5) y por
+# SHA-256 del .deb del pool y de su copyright
+# (lock: upgrades-ultra-version/locks/ffmpeg-ubuntu24.04-amd64.lock.json).
+# Un .deb, versión o copyright distinto rompe ESTE build.
+# Bootstrap: curl y ca-certificados primero, para poder descargar y verificar el .deb exacto.
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
+        -o /tmp/ffmpeg.deb \
+        https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/ffmpeg_6.1.1-3ubuntu5_amd64.deb \
+    && echo "1a23baace5f2688a47e28119aedae6993cd638e6279a7227dfc52d9a337a1c17  /tmp/ffmpeg.deb" | sha256sum --check --strict \
+    && rm -f /tmp/ffmpeg.deb
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
         git \
         unzip \
         tini \
         openssl \
         procps \
-        ffmpeg \
+        ffmpeg=7:6.1.1-3ubuntu5 \
         nginx \
         apache2-utils \
         ttyd \
@@ -94,6 +105,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libasound2t64 \
         libpango-1.0-0 \
         libcairo2 \
+    && test "$(dpkg-query -W ffmpeg | awk '{print $2}')" = "7:6.1.1-3ubuntu5" \
+    && mkdir -p /usr/share/licenses/comfyuipod/ffmpeg \
+    && cp /usr/share/doc/ffmpeg/copyright /usr/share/licenses/comfyuipod/ffmpeg/copyright \
+    && echo "2be0250f940dc7137c2fb48abdfa3aa09c5900c7e3614127306f0774309d182f  /usr/share/licenses/comfyuipod/ffmpeg/copyright" | sha256sum --check --strict \
     && ffmpeg -version \
     && ttyd --version \
     && rm -rf /var/lib/apt/lists/*

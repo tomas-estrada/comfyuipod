@@ -33,12 +33,12 @@
         "K21"
       ],
       "scope": "FFmpeg/ffprobe locales, proxies, transcode, frame hashes, stems, mezcla y encode final.",
-      "terms_review": "Formato/rotación/VFR a timebase del proyecto; salida real decodificable; font/codec/avisos del build.",
+      "terms_review": "El adaptador local ejecuta ffmpeg/ffprobe sin shell y con timeout. La distribución Ubuntu 24.04 amd64 fijada en el lock produce un binario GPL-2+ según su copyright instalado. Redistribución condicional a cumplir las obligaciones de la fuente correspondiente; este repo no afirma cumplir por sí solo esa oferta de fuente.",
       "hardware_notes": "CPU; encoder GPU participa en admisión si se utiliza.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C01",
@@ -46,7 +46,17 @@
         "C31",
         "C32"
       ],
-      "code_revision": "n9.0.2",
+      "code_revision": "9609e5af68edfda32771d0415fb7620e29b15a2b",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/ffmpeg-ubuntu24.04-amd64.lock.json": "82204f262d9515ac1710908fc08405585d6e6badb50b7ee83b58c66a014fef7f"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
+      "dependency_packages": [
+        "ffmpeg=7:6.1.1-3ubuntu5 (Ubuntu 24.04 noble amd64, universe)"
+      ],
+      "evidence_entrypoint": "studio/comfy_studio/engines/ffmpeg.py",
+      "evidence_test": "studio/tests/test_engine_contract_sweep.py",
       "lock_required_before_build": true,
       "release_gate": "source_and_lock_pinned; Unicode notice review and actual image build; no GPU validation claim"
     },

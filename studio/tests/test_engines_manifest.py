@@ -51,6 +51,29 @@ def test_scene_optimizer_has_complete_a07_manifest_evidence() -> None:
     assert blockers == []
 
 
+def test_ffmpeg_has_complete_a07_manifest_evidence() -> None:
+    """The installed Ubuntu FFmpeg package has auditable A07 evidence."""
+    mod = _load_module()
+    manifest = mod.load_json(mod.DEFAULT_MANIFEST)
+    cap_ids = mod._capability_ids(mod.DEFAULT_CAPS)
+    ffmpeg = next(engine for engine in manifest["engines"] if engine["id"] == "ffmpeg")
+    lock_name, lock_hash = next(iter(ffmpeg["dependency_lock_hashes"].items()))
+    lock_path = mod.REPO_ROOT / lock_name
+    lock = mod.load_json(lock_path)
+    dockerfile = (mod.REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    problems, blockers = mod.validate({"engines": [ffmpeg]}, cap_ids)
+
+    assert problems == []
+    assert blockers == []
+    assert hashlib.sha256(lock_path.read_bytes()).hexdigest() == lock_hash
+    assert lock["engine_id"] == "ffmpeg"
+    assert lock["package"]["version"] == "7:6.1.1-3ubuntu5"
+    assert lock["package"]["url"] in dockerfile
+    assert lock["package"]["sha256"] in dockerfile
+    assert "ffmpeg=7:6.1.1-3ubuntu5" in dockerfile
+    assert lock["copyright"]["sha256"] in dockerfile
+
+
 def test_counts_mismatch_is_a_problem() -> None:
     mod = _load_module()
     manifest = {"counts": {"engines": 99}, "engines": [{"id": "a", "disposition": "required"}]}
@@ -542,7 +565,7 @@ def test_verified_public_engines_have_code_revision() -> None:
     mod = _load_module()
     manifest = mod.load_json(mod.DEFAULT_MANIFEST)
     by_id = {e["id"]: e for e in manifest["engines"]}
-    assert by_id["ffmpeg"]["code_revision"] == "n9.0.2"
+    assert by_id["ffmpeg"]["code_revision"] == "9609e5af68edfda32771d0415fb7620e29b15a2b"
     assert by_id["whisperx"]["code_revision"] == "v3.8.6"
 
 
