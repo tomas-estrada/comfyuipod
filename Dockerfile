@@ -59,8 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
         -o /tmp/ffmpeg.deb \
         https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/ffmpeg_6.1.1-3ubuntu5_amd64.deb \
-    && echo "1a23baace5f2688a47e28119aedae6993cd638e6279a7227dfc52d9a337a1c17  /tmp/ffmpeg.deb" | sha256sum --check --strict \
-    && rm -f /tmp/ffmpeg.deb
+    && echo "1a23baace5f2688a47e28119aedae6993cd638e6279a7227dfc52d9a337a1c17  /tmp/ffmpeg.deb" | sha256sum --check --strict
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
@@ -68,7 +67,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tini \
         openssl \
         procps \
-        ffmpeg=7:6.1.1-3ubuntu5 \
+        /tmp/ffmpeg.deb \
         nginx \
         apache2-utils \
         ttyd \
@@ -111,6 +110,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "2be0250f940dc7137c2fb48abdfa3aa09c5900c7e3614127306f0774309d182f  /usr/share/licenses/comfyuipod/ffmpeg/copyright" | sha256sum --check --strict \
     && ffmpeg -version \
     && ttyd --version \
+    && rm -f /tmp/ffmpeg.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # 1b. Blender LTS headless renderer, pinned by the official release archive SHA-256.

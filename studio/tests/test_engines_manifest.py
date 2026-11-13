@@ -70,7 +70,8 @@ def test_ffmpeg_has_complete_a07_manifest_evidence() -> None:
     assert lock["package"]["version"] == "7:6.1.1-3ubuntu5"
     assert lock["package"]["url"] in dockerfile
     assert lock["package"]["sha256"] in dockerfile
-    assert "ffmpeg=7:6.1.1-3ubuntu5" in dockerfile
+    assert "/tmp/ffmpeg.deb \\" in dockerfile
+    assert "dpkg-query -W ffmpeg" in dockerfile
     assert lock["copyright"]["sha256"] in dockerfile
 
 

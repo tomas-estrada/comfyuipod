@@ -26,5 +26,5 @@
     "source_offer": "Whoever redistributes the image must fulfill the corresponding-source offer for the GPL-2+ binary; this repository does not claim to fulfill that source offer by itself."
   },
   "redistribution_review": "conditional",
-  "review_scope": "Exact Ubuntu 24.04 amd64 ffmpeg binary package only; no engine rows, weights, models or other artifacts are covered by this lock."
+  "review_scope": "The verified Ubuntu 24.04 amd64 ffmpeg .deb bytes are the package installed in the image. This lock does not pin transitive apt dependencies; they are resolved from the signed Ubuntu archive. No engine rows, weights, models or other artifacts are covered."
 }
