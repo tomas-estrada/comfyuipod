@@ -21,6 +21,10 @@ Verifica que la invalidación es selectiva y que los unknown son honestos.
 
 from __future__ import annotations
 
+import hashlib
+import math
+import struct
+import zlib
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -169,6 +173,127 @@ def assert_tasks_distinct(a: TaskKind, b: TaskKind) -> None:
 def preserved_fields(aovset: AOVSet, task: TaskKind) -> set[str]:
     """Campos que una intervención CONSERVA (no recomputa)."""
     return set(aovset.aovs) - invalidate_for_task(aovset, task)
+
+
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_MAX_DIMENSION = 4096
+_MAX_PIXELS = 4_000_000
+_MAX_INTENSITY = 4.0
+_MAX_AMBIENT = 1.0
+
+
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    """Chunk PNG con longitud y CRC válidos (zlib.crc32, stdlib)."""
+    return (
+        struct.pack(">I", len(payload))
+        + kind
+        + payload
+        + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+    )
+
+
+def _encode_png(width: int, height: int, bpp: int, raw: bytes) -> bytes:
+    """PNG RGBA/RGB determinista: filtro 0 por fila, IHDR/IDAT/IEND con CRC."""
+    color_type = 6 if bpp == 4 else 2
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)
+    stride = width * bpp
+    scanlines = b"".join(
+        b"\x00" + raw[row * stride : (row + 1) * stride] for row in range(height)
+    )
+    idat = zlib.compress(scanlines, 9)
+    return (
+        _PNG_SIGNATURE
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", idat)
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def _finite_in_range(value: object, name: str, maximum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RelightError(f"{name} debe ser numérico")
+    number = float(value)
+    if not math.isfinite(number):
+        raise RelightError(f"{name} debe ser finito, no {number}")
+    if number < 0.0 or number > maximum:
+        raise RelightError(f"{name} fuera de rango [0, {maximum}]: {number}")
+    return number
+
+
+def render_relight(
+    albedo: bytes,
+    shading: bytes,
+    width: int,
+    height: int,
+    intensity: float = 1,
+    ambient: float = 0,
+) -> dict[str, Any]:
+    """Composite CPU determinista: albedo × (shading/255·intensity + ambient).
+
+    Pure CPU (sin GPU): produce un PNG RGBA (albedo con alfa) o RGB (albedo
+    plano) con el shading re-escalado por `intensity` y un piso `ambient`.
+    El alfa del albedo queda intacto. Devuelve el PNG y su provenance
+    (sha256 del PNG, del albedo y del shading) para evidencia reproducible.
+    """
+    if isinstance(width, bool) or not isinstance(width, int):
+        raise RelightError("width debe ser un entero")
+    if isinstance(height, bool) or not isinstance(height, int):
+        raise RelightError("height debe ser un entero")
+    if not (1 <= width <= _MAX_DIMENSION and 1 <= height <= _MAX_DIMENSION):
+        raise RelightError(
+            f"dimensiones inválidas {width}x{height}: cada lado en [1, {_MAX_DIMENSION}]"
+        )
+    pixels = width * height
+    if pixels > _MAX_PIXELS:
+        raise RelightError(
+            f"{pixels} px supera el límite de {_MAX_PIXELS} px por render"
+        )
+    if not isinstance(albedo, (bytes, bytearray)) or not isinstance(
+        shading, (bytes, bytearray)
+    ):
+        raise RelightError("albedo y shading deben ser buffers de bytes")
+    albedo = bytes(albedo)
+    shading = bytes(shading)
+    if len(albedo) not in (pixels * 3, pixels * 4):
+        raise RelightError(
+            f"longitud de albedo {len(albedo)} no es {pixels * 3} (RGB) "
+            f"ni {pixels * 4} (RGBA) para {width}x{height}"
+        )
+    if len(shading) != pixels:
+        raise RelightError(
+            f"longitud de shading {len(shading)} != {pixels} píxeles de {width}x{height}"
+        )
+    intensity_v = _finite_in_range(intensity, "intensity", _MAX_INTENSITY)
+    ambient_v = _finite_in_range(ambient, "ambient", _MAX_AMBIENT)
+
+    has_alpha = len(albedo) == pixels * 4
+    bpp = 4 if has_alpha else 3
+    composited = bytearray(pixels * bpp)
+    for index in range(pixels):
+        scale = (shading[index] / 255.0) * intensity_v + ambient_v
+        src = index * bpp
+        dst = index * bpp
+        # Albedo saturado (clamp 0..255) × iluminación; el alfa NO se toca.
+        for channel in range(3):
+            value = round(albedo[src + channel] * scale)
+            composited[dst + channel] = 0 if value < 0 else (255 if value > 255 else value)
+        if has_alpha:
+            composited[dst + 3] = albedo[src + 3]
+
+    png = _encode_png(width, height, bpp, bytes(composited))
+    return {
+        "png": png,
+        "sha256": hashlib.sha256(png).hexdigest(),
+        "albedo_sha256": hashlib.sha256(albedo).hexdigest(),
+        "shading_sha256": hashlib.sha256(shading).hexdigest(),
+        "width": width,
+        "height": height,
+        "pixels": pixels,
+        "color_type": 6 if has_alpha else 2,
+        "intensity": intensity_v,
+        "ambient": ambient_v,
+        "renderer": "cpu_png_relight",
+    }
 
 
 __all__ = [

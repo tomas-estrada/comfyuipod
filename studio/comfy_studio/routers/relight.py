@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
-from comfy_studio.projects import ProjectStore
+from comfy_studio.projects import MediaValidationError, ProjectStore
 from comfy_studio.relight import (
     AOV,
     AOVSet,
@@ -15,6 +18,7 @@ from comfy_studio.relight import (
     RelightError,
     TaskKind,
     invalidate_for_task,
+    render_relight,
 )
 
 _META_KEY = "ultra_aov_set_v1"
@@ -31,6 +35,24 @@ class AOVSetRequest(BaseModel):
 
 class InvalidationRequest(BaseModel):
     task: TaskKind
+
+
+class RelightRenderRequest(BaseModel):
+    """Buffers base64 estrictos + dimensiones; el composite es CPU determinista."""
+
+    albedo: str
+    shading: str
+    width: int
+    height: int
+    intensity: float = 1.0
+    ambient: float = 0.0
+
+
+def _decode_b64(value: str, name: str) -> bytes:
+    try:
+        return base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise RelightError(f"{name} no es base64 válido: {exc}") from exc
 
 
 def _store(request: Request) -> ProjectStore:
@@ -111,3 +133,64 @@ def register_routes(app: FastAPI) -> None:
             aovset.aovs[name].content_hash = None
         store.set_meta(project_id, _META_KEY, aovset.to_dict())
         return {**_response(aovset), "task": body.task, "invalidated": invalidated}
+
+    @app.post("/studio/api/projects/{project_id}/aovs/relight/render")
+    async def render_project_relight(
+        project_id: str,
+        body: RelightRenderRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Reiluminación CPU determinista: albedo × shading → PNG en outputs.
+
+        Decodifica base64 estricto (validate=True), compone con `render_relight`
+        (pure CPU, sin GPU) y persiste el PNG como asset de categoría `outputs`.
+        La evidencia (sha256 del PNG, del albedo y del shading) acompaña la
+        respuesta sin el buffer de píxeles.
+        """
+        store = _store(request)
+        _require_project(store, project_id)  # 404 antes de tocar píxeles
+        try:
+            albedo = _decode_b64(body.albedo, "albedo")
+            shading = _decode_b64(body.shading, "shading")
+            rendered = await run_in_threadpool(
+                render_relight,
+                albedo,
+                shading,
+                body.width,
+                body.height,
+                body.intensity,
+                body.ambient,
+            )
+        except RelightError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        config = request.app.state.config
+        try:
+            asset = store.save_upload(
+                project_id,
+                filename="relight.png",
+                content_type="image/png",
+                data=rendered["png"],
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={
+                    "artifact_kind": "aov_relight",
+                    "renderer": rendered["renderer"],
+                    "width": rendered["width"],
+                    "height": rendered["height"],
+                    "color_type": rendered["color_type"],
+                    "intensity": rendered["intensity"],
+                    "ambient": rendered["ambient"],
+                    "sha256": rendered["sha256"],
+                    "albedo_sha256": rendered["albedo_sha256"],
+                    "shading_sha256": rendered["shading_sha256"],
+                },
+            )
+        except MediaValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        evidence = {key: value for key, value in rendered.items() if key != "png"}
+        return {"asset": asset, "evidence": evidence}
+
+
+__all__ = ["register_routes"]
