@@ -34,6 +34,8 @@ class SoundEventRequest(BaseModel):
     loudness_lufs: float = -23.0
     caused_by: str | None = None
     sample_asset_id: str | None = None
+    sample_license: str | None = Field(default=None, max_length=256)
+    sample_attribution: str | None = Field(default=None, max_length=512)
 
 
 class MixRequest(BaseModel):
@@ -70,6 +72,8 @@ def _from_request(body: MixRequest) -> Mix:
                         loudness_lufs=event.loudness_lufs,
                         caused_by=event.caused_by,
                         sample_asset_id=event.sample_asset_id,
+                        sample_license=event.sample_license,
+                        sample_attribution=event.sample_attribution,
                     )
                     for event in events
                 ],
@@ -126,12 +130,28 @@ def _mark_render_stale(
 
 
 def _response(mix: Mix) -> dict[str, Any]:
+    has_samples = any(event.sample_asset_id is not None for event in mix.all_events())
     return {
         **mix.to_dict(),
         "event_count": len(mix.all_events()),
         "audio_generation": "not_run",
         "separation_claim": "metadata_only",
+        "rights_state": (
+            "user_declared_not_independently_verified" if has_samples else "no_sample_assets"
+        ),
     }
+
+
+def _source_rights(mix: Mix, event_ids: list[str]) -> list[dict[str, str]]:
+    by_asset: dict[str, dict[str, str]] = {}
+    for event in mix.all_events():
+        if event.event_id in event_ids and event.sample_asset_id is not None:
+            by_asset[event.sample_asset_id] = {
+                "sample_asset_id": event.sample_asset_id,
+                "license": event.sample_license or "",
+                "attribution": event.sample_attribution or "",
+            }
+    return [by_asset[asset_id] for asset_id in sorted(by_asset)]
 
 
 def register_routes(app: FastAPI) -> None:
@@ -257,6 +277,8 @@ def register_routes(app: FastAPI) -> None:
                                         and event.event_id in result.event_ids
                                     }
                                 ),
+                                "source_rights": _source_rights(mix, result.event_ids),
+                                "rights_state": "user_declared_not_independently_verified",
                                 "sample_rate": result.sample_rate,
                                 "channels": result.channels,
                                 "integrated_loudness_lufs": result.integrated_loudness_lufs,
