@@ -2002,7 +2002,7 @@
       ],
       "code_revision": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
       "dependency_lock_hashes": {
-        "upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json": "9ed18f6e6cbd14887d53c91d0e5f033e6dd2ea3f0b39de2ac90555efb1f3be96"
+        "upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json": "4327a81b10ab6a89e3af9cbe38430cc50819c7506d203b340cb904f7f1966fce"
       },
       "redistribution_decision": "conditional",
       "notices_reviewed": false,

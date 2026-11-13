@@ -27,6 +27,7 @@ def test_build_parallelism_scales_with_memory_and_cpu() -> None:
 def test_llama_build_lock_is_pinned_cpu_only_and_preserves_notices() -> None:
     lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
     assert lock["revision"] == "cd959bae99ff4bed22bef2604f45241c09bbb8c8"
+    assert lock["cmake_options"]["BUILD_SHARED_LIBS"] == "OFF"
     assert lock["cmake_options"]["GGML_CUDA"] == "OFF"
     assert lock["cmake_options"]["LLAMA_BUILD_TOOLS"] == "ON"
     assert lock["cmake_options"]["LLAMA_BUILD_SERVER"] == "ON"

@@ -7,6 +7,7 @@
   "architecture": "linux-amd64",
   "build_system": "cmake",
   "cmake_options": {
+    "BUILD_SHARED_LIBS": "OFF",
     "GGML_NATIVE": "OFF",
     "GGML_CUDA": "OFF",
     "LLAMA_BUILD_SERVER": "ON",
