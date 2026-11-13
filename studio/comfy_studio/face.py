@@ -24,6 +24,8 @@ como evidencia CPU, no calidad neural).
 
 from __future__ import annotations
 
+import bisect
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -118,11 +120,136 @@ def assert_gated_available(identity: FaceIdentity) -> None:
         )
 
 
+@dataclass(slots=True)
+class SpeakerMorphCurve:
+    """Curva de morph por hablante, editable en el tiempo (W14 / A16).
+
+    Liga morfos a una pista de audio por `audio_track_id`: claves de tiempo
+    finitas, no negativas y ordenadas estrictamente; pesos finitos en [0,1].
+    Símbolica: no es evidencia de calidad neural.
+    """
+
+    curve_id: str
+    speaker_id: str
+    audio_track_id: str
+    #: claves de tiempo (s), finitas, >= 0, ordenadas estrictamente.
+    times: list[float] = field(default_factory=list)
+    #: weights[i][target] = peso 0..1 en times[i].
+    weights: list[dict[str, float]] = field(default_factory=list)
+
+    def validate(self) -> None:
+        if not self.times:
+            raise FaceError("curva sin claves de tiempo")
+        # El orden de claves se valida ANTES de la longitud: si las claves están
+        # desordenadas ese es el error dominante (diagnóstico por la causa raíz).
+        previous: float | None = None
+        for i, t in enumerate(self.times):
+            if not math.isfinite(t):
+                raise FaceError(f"clave de tiempo {i}: debe ser finito")
+            if t < 0.0:
+                raise FaceError(
+                    f"clave de tiempo {i}: valor negativo ({t}); debe ser >= 0"
+                )
+            if previous is not None and t <= previous:
+                raise FaceError(
+                    f"claves de tiempo deben estar ordenadas de forma estricta: "
+                    f"{previous} >= {t}"
+                )
+            previous = t
+        if len(self.times) != len(self.weights):
+            raise FaceError(
+                "times y weights deben tener la misma longitud: "
+                f"{len(self.times)} != {len(self.weights)}"
+            )
+        for i, w in enumerate(self.weights):
+            for target, weight in w.items():
+                if not math.isfinite(weight):
+                    raise FaceError(
+                        f"clave {i} morph {target}: peso debe ser finito"
+                    )
+                if not (0.0 <= weight <= 1.0):
+                    raise FaceError(
+                        f"clave {i} morph {target}: peso fuera de [0,1]"
+                    )
+
+    def sample(self, t: float) -> dict[str, float]:
+        """Muestreo determinista: interpolación lineal y clamp a los extremos.
+
+        Los objetivos son la unión de los morfos de todas las claves; una clave
+        que no declara un objetivo aporta 0.0. Exige claves ordenadas (no se
+        muestrea una curva corrupta sin validar).
+        """
+        previous: float | None = None
+        for _i, key in enumerate(self.times):
+            if previous is not None and key <= previous:
+                raise FaceError(
+                    f"claves de tiempo desordenadas: {previous} >= {key} "
+                    f"(llama a validate() antes de sample())"
+                )
+            previous = key
+        if not self.times:
+            raise FaceError("curva sin claves de tiempo")
+        times = self.times
+        if t <= times[0]:
+            i0 = i1 = 0
+            frac = 0.0
+        elif t >= times[-1]:
+            i0 = i1 = len(times) - 1
+            frac = 0.0
+        else:
+            i1 = bisect.bisect_right(times, t)
+            i0 = i1 - 1
+            frac = (t - times[i0]) / (times[i1] - times[i0])
+        targets = sorted({name for w in self.weights for name in w})
+        return {
+            target: self.weights[i0].get(target, 0.0)
+            + (self.weights[i1].get(target, 0.0) - self.weights[i0].get(target, 0.0))
+            * frac
+            for target in targets
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "curve_id": self.curve_id,
+            "speaker_id": self.speaker_id,
+            "audio_track_id": self.audio_track_id,
+            "times": list(self.times),
+            "weights": [dict(w) for w in self.weights],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SpeakerMorphCurve:
+        curve = cls(
+            curve_id=str(data["curve_id"]),
+            speaker_id=str(data["speaker_id"]),
+            audio_track_id=str(data["audio_track_id"]),
+            times=[float(t) for t in data["times"]],
+            weights=[
+                {str(k): float(v) for k, v in w.items()} for w in data["weights"]
+            ],
+        )
+        curve.validate()
+        return curve
+
+
+def assert_curve_matches_track(
+    curve: SpeakerMorphCurve, perf: FacePerformance
+) -> None:
+    """La curva y la actuación deben ligarse a la MISMA pista de audio (A16)."""
+    if curve.audio_track_id != perf.audio_track_id:
+        raise FaceError(
+            f"curva {curve.curve_id} ligada a otra pista de audio: "
+            f"{curve.audio_track_id} != {perf.audio_track_id}"
+        )
+
+
 __all__ = [
     "AssetAvailability",
     "FaceError",
     "FaceIdentity",
     "FacePerformance",
+    "SpeakerMorphCurve",
+    "assert_curve_matches_track",
     "assert_gated_available",
     "assert_identity_persists",
     "edit_performance",
