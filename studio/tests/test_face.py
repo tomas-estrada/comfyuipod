@@ -195,6 +195,16 @@ def test_two_speaker_fixture_metrics_are_explicitly_fixture_only() -> None:
     }
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_fixture_metrics_reject_nonfinite_values(bad: float) -> None:
+    with pytest.raises(FaceError, match="finito"):
+        measure_speaker_fixture(
+            predicted_speakers=["ana"], expected_speakers=["ana"],
+            predicted_boundaries=[bad], expected_boundaries=[0.0],
+            viseme_boundaries=[0.0], audio_boundaries=[0.0],
+        )
+
+
 def test_spanish_visemes_compile_to_declared_rig_morph_keys() -> None:
     curve = compile_spanish_curve(
         curve_id="hola",

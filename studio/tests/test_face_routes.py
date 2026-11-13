@@ -290,3 +290,85 @@ def test_render_route_saves_real_blender_glb_to_project(client: TestClient) -> N
     assert result["provenance"]["neural_tts"] == "not_run"
     saved_path = client.app.state.store.get_asset_path(project_id, result["asset"]["id"])
     assert saved_path and saved_path.read_bytes()[:4] == b"glTF"
+
+
+def test_speaker_turn_limit_rejects_before_asset_lookup(client: TestClient, monkeypatch) -> None:
+    project_id = _project(client, "Límite de turnos")
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("asset lookup must not happen for oversized request")
+    monkeypatch.setattr(client.app.state.store, "get_asset", forbidden)
+    turns = [{"audio_asset_id": "missing"}] * 129
+    response = client.put(
+        f"/studio/api/projects/{project_id}/face/speaker-tracks", json={"turns": turns}
+    )
+    assert response.status_code == 422
+
+
+def test_audio_asset_size_limit_rejects_before_hash(client: TestClient, monkeypatch) -> None:
+    import comfy_studio.routers.face as face_routes
+
+    project_id = _project(client, "Límite de audio")
+    asset = client.app.state.store.save_upload(
+        project_id, filename="voice.wav", content_type="audio/wav",
+        data=b"fixture", max_upload_bytes=1024,
+    )
+    path = client.app.state.store.get_asset_path(project_id, asset["id"])
+    assert path
+    with path.open("r+b") as handle:
+        handle.truncate(50 * 1024 * 1024 + 1)
+
+    def hash_must_not_run(*_args, **_kwargs):
+        raise AssertionError("large asset must be rejected before hashing")
+
+    monkeypatch.setattr(face_routes.hashlib, "sha256", hash_must_not_run)
+    response = client.put(
+        f"/studio/api/projects/{project_id}/face/speaker-tracks",
+        json={"turns": [{"speaker_id": "ana", "audio_track_id": "stem_ana",
+                          "audio_asset_id": asset["id"], "text": "Hola", "start": 0, "end": 1}]},
+    )
+    assert response.status_code == 413
+
+
+def test_curve_key_limit_rejects_before_curve_persistence(client: TestClient) -> None:
+    project_id = _project(client, "Límite de curvas")
+    oversized = {
+        **CURVE,
+        "times": [float(i) for i in range(4097)],
+        "weights": [{"jaw_open": 0.0} for _ in range(4097)],
+    }
+    response = client.put(_curve_url(project_id), json=oversized)
+    assert response.status_code == 422
+    _assert_no_face_meta_written(client, project_id)
+
+
+def test_actor_file_size_limit_rejects_before_blender(client: TestClient, monkeypatch) -> None:
+    import comfy_studio.routers.face as face_routes
+
+    project_id = _project(client, "Límite de actor")
+    actor = client.app.state.store.save_upload(
+        project_id, filename="actor.glb", content_type="model/gltf-binary",
+        data=b"glTF", max_upload_bytes=1024,
+    )
+    path = client.app.state.store.get_asset_path(project_id, actor["id"])
+    assert path
+    with path.open("r+b") as handle:
+        handle.truncate(128 * 1024 * 1024 + 1)
+    _save_fixture(client, project_id)
+    def blender_must_not_run(*_args, **_kwargs):
+        raise AssertionError("Blender invoked")
+
+    monkeypatch.setattr(face_routes, "render_morph_glb", blender_must_not_run)
+    response = client.post(
+        f"/studio/api/projects/{project_id}/face/actors/{actor['id']}/curves/curva_ana/render"
+    )
+    assert response.status_code == 413
+
+
+def test_import_body_limit_rejects_oversized_document(client: TestClient) -> None:
+    project_id = _project(client, "Límite de importación")
+    response = client.post(
+        f"/studio/api/projects/{project_id}/face/import",
+        content=b" " * (8 * 1024 * 1024 + 1),
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 413

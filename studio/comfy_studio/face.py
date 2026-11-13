@@ -41,6 +41,20 @@ class FaceError(ValueError):
     """Contrato facial inválido."""
 
 
+class FaceLimitError(FaceError):
+    """El artefacto o solicitud excede los límites finitos de procesamiento."""
+
+
+MAX_SPEAKER_TURNS = 128
+MAX_TURN_TEXT_CHARS = 4000
+MAX_AUDIO_ASSET_BYTES = 50 * 1024 * 1024
+MAX_CURVE_KEYS = 4096
+MAX_MORPH_TARGETS = 64
+MAX_CURVE_WEIGHTS = 50_000
+MAX_ACTOR_FILE_BYTES = 128 * 1024 * 1024
+MAX_OUTPUT_FILE_BYTES = 256 * 1024 * 1024
+
+
 _SPANISH_VISEMES = {
     "a": "open",
     "e": "wide",
@@ -105,6 +119,8 @@ def compile_spanish_curve(
 
 def speaker_tracks(turns: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """Validate and retain distinct project audio stems, hashes, and timed turns."""
+    if len(turns) > MAX_SPEAKER_TURNS:
+        raise FaceError(f"máximo {MAX_SPEAKER_TURNS} turnos por solicitud")
     result: dict[str, list[dict[str, Any]]] = {}
     previous_end = -1.0
     for row in turns:
@@ -120,6 +136,13 @@ def speaker_tracks(turns: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]
             raise FaceError("turno requiere hablante, pista, audio, hash, texto y tiempos") from exc
         if not speaker or not track or not asset or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise FaceError("proveniencia de pista de hablante inválida")
+        if (
+            len(speaker) > 64
+            or len(track) > 64
+            or len(asset) > 64
+            or len(text) > MAX_TURN_TEXT_CHARS
+        ):
+            raise FaceError("identificador o texto de turno supera el límite permitido")
         if (
             not math.isfinite(start)
             or not math.isfinite(end)
@@ -160,6 +183,9 @@ def measure_speaker_fixture(
         raise FaceError("métricas requieren pares de límites predichos y esperados")
     if len(predicted_speakers) != len(expected_speakers):
         raise FaceError("métricas requieren igual número de etiquetas de hablante")
+    values = [*predicted_boundaries, *expected_boundaries, *viseme_boundaries, *audio_boundaries]
+    if any(not math.isfinite(value) for value in values):
+        raise FaceError("métricas requieren valores finitos")
 
     def mae(a: list[float], b: list[float]) -> float:
         return sum(abs(x - y) for x, y in zip(a, b, strict=True)) / max(1, len(a))
@@ -184,6 +210,16 @@ def render_morph_glb(
         raise FaceError("Blender no está instalado; render de morphs no ejecutado")
     morph = SpeakerMorphCurve.from_dict(curve)
     morph.validate()
+    if len(morph.times) > MAX_CURVE_KEYS:
+        raise FaceLimitError(f"máximo {MAX_CURVE_KEYS} claves por curva")
+    targets = {name for row in morph.weights for name in row}
+    if len(targets) > MAX_MORPH_TARGETS or len(morph.times) * len(targets) > MAX_CURVE_WEIGHTS:
+        raise FaceLimitError("curva supera el límite de morph targets o pesos")
+    from pathlib import Path
+
+    source_path = Path(source)
+    if not source_path.is_file() or source_path.stat().st_size > MAX_ACTOR_FILE_BYTES:
+        raise FaceLimitError(f"actor ausente o supera {MAX_ACTOR_FILE_BYTES} bytes")
     payload = json.dumps({"source": source, "destination": destination, "curve": morph.to_dict()})
     script = r"""import bpy, json, sys
 p=json.loads(sys.argv[-1]); bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -223,6 +259,8 @@ bpy.ops.export_scene.gltf(filepath=p['destination'],export_format='GLB',export_a
         )
     if proc.returncode or not __import__("pathlib").Path(destination).is_file():
         raise FaceError("Blender no pudo exportar morphs: " + (proc.stderr or proc.stdout)[-1200:])
+    if __import__("pathlib").Path(destination).stat().st_size > MAX_OUTPUT_FILE_BYTES:
+        raise FaceLimitError(f"GLB de salida supera {MAX_OUTPUT_FILE_BYTES} bytes")
     return {
         "engine": "Blender",
         "cpu_artifact": True,
