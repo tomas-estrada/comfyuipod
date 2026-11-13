@@ -30,6 +30,7 @@
 #   - animate_opt_in    : +1 archivo  | +18,413,068,672 B (+18.41 GB / +17.15 GiB) | Apache-2.0 (STUDIO_INCLUDE_ANIMATE=1)
 #   - minimax_h3_opt_in : +6 archivos | +62,997,682,615 B (+63.00 GB / +58.67 GiB) | minimax-h3-community (STUDIO_INCLUDE_MINIMAX=1)
 #   - three_d_opt_in    : +1 archivo  | +7,365,943,290 B (+7.37 GB / +6.86 GiB) | Tencent Hunyuan Community License (STUDIO_INCLUDE_3D=1 o MODEL_PROFILE=unreal)
+#   - qwen_layered_opt_in: +3 archivos | +30,172,079,117 B (+30.17 GB / +28.10 GiB) | Apache-2.0 (STUDIO_INCLUDE_QWEN_LAYERED=1)
 #
 # Perfiles soportados vía variable de entorno MODEL_PROFILE (por defecto 'all'):
 #   - all       : Fase 1 (2.79 GiB) + Fase 2 (60.56 GiB) = 63.35 GiB total
@@ -56,6 +57,8 @@
 #   - STUDIO_INCLUDE_3D      : Si se define a "1", añade Hunyuan3D 2.1 (+7.37 GB). El
 #                              perfil 'unreal' lo activa implícitamente; definirlo a "0"
 #                              en 'unreal' renuncia explícitamente al grupo 3D (M3-D).
+#   - STUDIO_INCLUDE_QWEN_LAYERED: Si se define a "1", añade el modelo Qwen-Image-Layered
+#                              FP8, su encoder Qwen-VL y VAE (+30.17 GB), fuera del perfil base.
 #
 # Modos de ejecución:
 #   --bootstrap : lo que corre el pod al arrancar (timeout 600 en start.sh).
@@ -594,6 +597,7 @@ run_phase3() {
 
     local include_animate="${STUDIO_INCLUDE_ANIMATE:-0}"
     local include_minimax="${STUDIO_INCLUDE_MINIMAX:-0}"
+    local include_qwen_layered="${STUDIO_INCLUDE_QWEN_LAYERED:-0}"
     # M3-D: el perfil 'unreal' implica el grupo 3D (Hunyuan3D 2.1) salvo renuncia explícita
     local include_3d="${STUDIO_INCLUDE_3D:-0}"
     if [ "${MODEL_PROFILE}" = "unreal" ] && [ -z "${STUDIO_INCLUDE_3D:-}" ]; then
@@ -615,16 +619,20 @@ anim = (cats.get("animate_opt_in") or {}).get("bytes", 0)
 three_d = (cats.get("three_d_opt_in") or {}).get("bytes", 0)
 mmx = (cats.get("minimax_h3_opt_in") or {}).get("bytes", 0)
 mmx_n = (cats.get("minimax_h3_opt_in") or {}).get("entries", 0)
+qwen = (cats.get("qwen_layered_opt_in") or {}).get("bytes", 0)
+qwen_n = (cats.get("qwen_layered_opt_in") or {}).get("entries", 0)
 base_bytes = meta.get("default_bytes", 0)
 print(sum(1 for m in models if not m.get("opt_in")))
 print(mmx_n)
-print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in; +%.2f GB MiniMax-H3 opt-in" % (base_bytes / 1e9, anim / 1e9, three_d / 1e9, mmx / 1e9))
+print(qwen_n)
+print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in; +%.2f GB MiniMax-H3 opt-in; +%.2f GB Qwen-Layered opt-in" % (base_bytes / 1e9, anim / 1e9, three_d / 1e9, mmx / 1e9, qwen / 1e9))
 ' | tr -d '\r'
     )"
-    local phase3_base phase3_mmx_n phase3_sizes
+    local phase3_base phase3_mmx_n phase3_qwen_n phase3_sizes
     phase3_base="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '1p')"
     phase3_mmx_n="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '2p')"
-    phase3_sizes="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '3p')"
+    phase3_qwen_n="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '3p')"
+    phase3_sizes="$(printf '%s\n' "${phase3_plan_meta}" | sed -n '4p')"
     if ! [[ "${phase3_base}" =~ ^[0-9]+$ ]]; then
         log "ERROR: No se pudo derivar el plan de Fase 3 de ${STUDIO_MANIFEST}"
         return 1
@@ -639,10 +647,13 @@ print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in; +%.2f GB MiniM
     if [ "${include_minimax}" = "1" ]; then
         phase3_planned=$((phase3_planned + phase3_mmx_n))
     fi
+    if [ "${include_qwen_layered}" = "1" ]; then
+        phase3_planned=$((phase3_planned + phase3_qwen_n))
+    fi
 
     log "======================================================================"
     log "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: ${MODEL_PROFILE})"
-    log "PLAN FASE 3: ${phase3_planned} archivos (${MODEL_PROFILE}, STUDIO_INCLUDE_ANIMATE=${include_animate}, STUDIO_INCLUDE_3D=${include_3d}, STUDIO_INCLUDE_MINIMAX=${include_minimax})"
+    log "PLAN FASE 3: ${phase3_planned} archivos (${MODEL_PROFILE}, STUDIO_INCLUDE_ANIMATE=${include_animate}, STUDIO_INCLUDE_3D=${include_3d}, STUDIO_INCLUDE_MINIMAX=${include_minimax}, STUDIO_INCLUDE_QWEN_LAYERED=${include_qwen_layered})"
     log "Manifiesto: ${STUDIO_MANIFEST} (${phase3_sizes})."
     log "======================================================================"
 
@@ -672,13 +683,14 @@ print("%.2f GB base; +%.2f GB Animate opt-in; +%.2f GB 3D opt-in; +%.2f GB MiniM
 
         hf_fetch "${repo_id}" "${remote_path}" "${resolved_dir}" "${filename}" model "${_expected_bytes}" || true
     done < <(
-        STUDIO_MANIFEST_PATH="${STUDIO_MANIFEST}" STUDIO_INCLUDE_ANIMATE_FLAG="${include_animate}" STUDIO_INCLUDE_3D_FLAG="${include_3d}" STUDIO_INCLUDE_MINIMAX_FLAG="${include_minimax}" \
+        STUDIO_MANIFEST_PATH="${STUDIO_MANIFEST}" STUDIO_INCLUDE_ANIMATE_FLAG="${include_animate}" STUDIO_INCLUDE_3D_FLAG="${include_3d}" STUDIO_INCLUDE_MINIMAX_FLAG="${include_minimax}" STUDIO_INCLUDE_QWEN_LAYERED_FLAG="${include_qwen_layered}" \
         python3 -c '
 import json, os
 data = json.load(open(os.environ["STUDIO_MANIFEST_PATH"], encoding="utf-8"))
 inc_anim = os.environ.get("STUDIO_INCLUDE_ANIMATE_FLAG", "0") == "1"
 inc_3d = os.environ.get("STUDIO_INCLUDE_3D_FLAG", "0") == "1"
 inc_mmx = os.environ.get("STUDIO_INCLUDE_MINIMAX_FLAG", "0") == "1"
+inc_qwen = os.environ.get("STUDIO_INCLUDE_QWEN_LAYERED_FLAG", "0") == "1"
 for m in data["models"]:
     opt = m.get("opt_in")
     if opt == "STUDIO_INCLUDE_ANIMATE" and not inc_anim:
@@ -686,6 +698,8 @@ for m in data["models"]:
     if opt == "STUDIO_INCLUDE_3D" and not inc_3d:
         continue
     if opt == "STUDIO_INCLUDE_MINIMAX" and not inc_mmx:
+        continue
+    if opt == "STUDIO_INCLUDE_QWEN_LAYERED" and not inc_qwen:
         continue
     print("\t".join([m["repo_id"], m["remote_path"], m["target_dir"], m["filename"], str(m["bytes"])]))
 '

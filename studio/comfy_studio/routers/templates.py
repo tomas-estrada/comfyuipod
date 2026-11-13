@@ -45,6 +45,7 @@ def register_routes(app: FastAPI) -> None:
                 three_d_available=active_cfg.three_d_weights_available(),
                 animate_available=active_cfg.animate_weights_available(),
                 minimax_available=active_cfg.minimax_weights_available(),
+                qwen_layered_available=active_cfg.qwen_layered_weights_available(),
             )
         }
     @app.get("/studio/api/templates/{template_id}")
@@ -61,6 +62,7 @@ def register_routes(app: FastAPI) -> None:
                 three_d_available=active_cfg.three_d_weights_available(),
                 animate_available=active_cfg.animate_weights_available(),
                 minimax_available=active_cfg.minimax_weights_available(),
+                qwen_layered_available=active_cfg.qwen_layered_weights_available(),
             )
         except TemplateNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -111,6 +113,7 @@ def register_routes(app: FastAPI) -> None:
                 three_d_available=active_cfg.three_d_weights_available(),
                 animate_available=active_cfg.animate_weights_available(),
                 minimax_available=active_cfg.minimax_weights_available(),
+                qwen_layered_available=active_cfg.qwen_layered_weights_available(),
             )
         except TemplateNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

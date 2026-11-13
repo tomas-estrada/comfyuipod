@@ -59,6 +59,7 @@ VALID_OPT_IN_FLAGS = frozenset({
     "STUDIO_INCLUDE_ANIMATE",
     "STUDIO_INCLUDE_3D",
     "STUDIO_INCLUDE_MINIMAX",
+    "STUDIO_INCLUDE_QWEN_LAYERED",
 })
 
 # Manifiestos conocidos: `studio` (Fase 3, vídeo/voz) y `core` (Fases 1/2).

@@ -301,7 +301,7 @@ def test_catalogo_de_plantillas_sirve_tras_el_arranque(live_stack: SimpleNamespa
     )
     assert resp.status_code == 200
     templates = resp.json()["templates"]
-    assert len(templates) == 17
+    assert len(templates) == 18
     by_id = {t["id"]: t for t in templates}
     assert "wan_t2v" in by_id
     assert all(isinstance(t["available"], bool) for t in templates)

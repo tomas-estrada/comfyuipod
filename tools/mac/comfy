@@ -1091,6 +1091,7 @@ cmd_rent() {
             [ "${STUDIO_INCLUDE_ANIMATE:-0}" = "1" ] && opt_args+=(--opt-in STUDIO_INCLUDE_ANIMATE)
             [ "${STUDIO_INCLUDE_3D:-0}" = "1" ] && opt_args+=(--opt-in STUDIO_INCLUDE_3D)
             [ "${STUDIO_INCLUDE_MINIMAX:-0}" = "1" ] && opt_args+=(--opt-in STUDIO_INCLUDE_MINIMAX)
+            [ "${STUDIO_INCLUDE_QWEN_LAYERED:-0}" = "1" ] && opt_args+=(--opt-in STUDIO_INCLUDE_QWEN_LAYERED)
             derived_disk_gb="$(python3 "${req_script}" --profile studio "${opt_args[@]+"${opt_args[@]}"}" --json 2>/dev/null \
                 | python3 -c 'import json,sys; print(json.load(sys.stdin)["min_volume_gb"])' 2>/dev/null)" || derived_disk_gb=""
         fi
@@ -1275,6 +1276,10 @@ PYEOF
             check_secret_safe "${STUDIO_INCLUDE_ANIMATE}" "STUDIO_INCLUDE_ANIMATE"
             env_flags="${env_flags} -e STUDIO_INCLUDE_ANIMATE=\"${STUDIO_INCLUDE_ANIMATE}\""
         fi
+        if [ -n "${STUDIO_INCLUDE_QWEN_LAYERED:-}" ]; then
+            check_secret_safe "${STUDIO_INCLUDE_QWEN_LAYERED}" "STUDIO_INCLUDE_QWEN_LAYERED"
+            env_flags="${env_flags} -e STUDIO_INCLUDE_QWEN_LAYERED=\"${STUDIO_INCLUDE_QWEN_LAYERED}\""
+        fi
         if [ -n "${STUDIO_STUB_LLM:-}" ]; then
             check_secret_safe "${STUDIO_STUB_LLM}" "STUDIO_STUB_LLM"
             env_flags="${env_flags} -e STUDIO_STUB_LLM=\"${STUDIO_STUB_LLM}\""
@@ -1303,7 +1308,7 @@ PYEOF
         [ -z "${STUDIO_WEBHOOK_SECRET:-}" ] || webhook_secret_state="<definida>"
         echo "[DRY-RUN] Se alquilaría la oferta ID ${offer_id} con imagen ${COMFY_IMAGE} (perfil=${profile}, hardware=${HW_PROFILE_NAME} vram>=${min_vram_gb} GB ram>=${min_cpu_ram_gb} GB, disco=${disk_gb} GB, --args)."
         echo "[DRY-RUN] Filtros aplicados: ${query}"
-        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_FALLBACK_KEY=${llm_fallback_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_LLM_SUPPORTS_TOOLS='${STUDIO_LLM_SUPPORTS_TOOLS:-1}', STUDIO_LLM_SUPPORTS_STREAMING='${STUDIO_LLM_SUPPORTS_STREAMING:-1}', STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS='${STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS:-1}', STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING='${STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING:-1}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', STUDIO_RESUME_JOBS='${STUDIO_RESUME_JOBS:-1}', STUDIO_RESUME_DELAY_S='${STUDIO_RESUME_DELAY_S:-30}', STUDIO_WEBHOOK_URL=${webhook_url_state}, STUDIO_WEBHOOK_SECRET=${webhook_secret_state}, COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
+        echo "[DRY-RUN] Env reenviado: COMFY_PASS=${pass_state}, HF_TOKEN=${hf_state}, MODEL_PROFILE=${profile}, STUDIO_LLM_KEY=${llm_key_state}, STUDIO_LLM_FALLBACK_KEY=${llm_fallback_key_state}, STUDIO_LLM_MODEL='${STUDIO_LLM_MODEL:-}', STUDIO_LLM_SUPPORTS_TOOLS='${STUDIO_LLM_SUPPORTS_TOOLS:-1}', STUDIO_LLM_SUPPORTS_STREAMING='${STUDIO_LLM_SUPPORTS_STREAMING:-1}', STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS='${STUDIO_LLM_FALLBACK_SUPPORTS_TOOLS:-1}', STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING='${STUDIO_LLM_FALLBACK_SUPPORTS_STREAMING:-1}', STUDIO_INCLUDE_ANIMATE='${STUDIO_INCLUDE_ANIMATE:-0}', STUDIO_INCLUDE_QWEN_LAYERED='${STUDIO_INCLUDE_QWEN_LAYERED:-0}', STUDIO_RESUME_JOBS='${STUDIO_RESUME_JOBS:-1}', STUDIO_RESUME_DELAY_S='${STUDIO_RESUME_DELAY_S:-30}', STUDIO_WEBHOOK_URL=${webhook_url_state}, STUDIO_WEBHOOK_SECRET=${webhook_secret_state}, COMFYUI_EXTRA_ARGS='${COMFYUI_EXTRA_ARGS:-}', HF_HUB_DISABLE_XET='${HF_HUB_DISABLE_XET:-}', ENABLE_WEB_TERMINAL='${ENABLE_WEB_TERMINAL:-}'."
         return 0
     fi
 
