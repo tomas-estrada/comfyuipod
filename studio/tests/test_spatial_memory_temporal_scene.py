@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from comfy_studio.spatial_memory import (
+    Provenance,
     SourceRef,
     SpatialError,
     TemporalScene,
@@ -54,6 +55,9 @@ def test_fixture_round_trip_conserves_anchor_with_measured_drift() -> None:
     assert report["drift"] == 0.0
     assert report["returned"] is True
     assert [k.t for k in scene.objects["mesa"].keys] == [0.0, 1.0, 2.0, 2.5]
+    assert all(entity.provenance is Provenance.SYNTHETIC for entity in scene.objects.values())
+    assert all(entity.provenance is Provenance.SYNTHETIC for entity in scene.poses.values())
+    assert all(entity.provenance is Provenance.SYNTHETIC for entity in scene.cameras.values())
 
 
 def test_fixture_drift_is_measured_when_object_does_not_return() -> None:
@@ -207,6 +211,11 @@ def test_source_ids_must_exist_in_sources() -> None:
     with pytest.raises(SpatialError, match="procedencia inmutable"):
         scene.set_object_key("a", 1.0, (1, 0, 0), source_id="cap-2")
 
+    synthetic = TemporalScene(timebase=Timebase(24), duration_s=1.0)
+    synthetic.add_source("fixture", SourceRef(kind="synthetic"))
+    with pytest.raises(SpatialError, match="no coincide con fuente sintética"):
+        synthetic.set_object_key("obj", 0.0, (0, 0, 0), source_id="fixture")
+
 
 def test_invalid_query_time_and_camera_fov_fail_as_spatial_errors() -> None:
     scene = synthetic_round_trip_fixture()
@@ -243,17 +252,42 @@ def test_serialization_is_deterministic_regardless_of_insertion_order() -> None:
     # Misma escena, otra orden de inserción (cámara primero, claves en desorden).
     s2 = TemporalScene(timebase=Timebase(24), duration_s=3.0)
     s2.add_source("cap-synthetic", s1.sources["cap-synthetic"])
-    s2.set_camera_key("cam", 1.0, (1.0, 2.0, 2.0), (0.0, 0.0, 0.0), 50.0,
-                      source_id="cap-synthetic")
-    s2.set_camera_key("cam", 0.0, (1.0, 0.0, 2.0), (0.0, 0.0, 0.0), 50.0,
-                      source_id="cap-synthetic")
-    s2.set_object_key("mesa", 1.0, (2.0, 0.0, 0.0), source_id="cap-synthetic")
-    s2.set_object_key("mesa", 0.0, (0.0, 0.0, 0.0), source_id="cap-synthetic")
-    s2.set_object_key("mesa", 2.5, (0.0, 0.0, 0.0), source_id="cap-synthetic")
-    s2.set_object_key("mesa", 2.0, (0.0, 0.0, 0.0), source_id="cap-synthetic")
-    s2.set_pose_key("actor_1", 2.0, {"knee": 0.0, "hip": 0.0}, source_id="cap-synthetic")
-    s2.set_pose_key("actor_1", 0.0, {"hip": 0.0, "knee": 0.0}, source_id="cap-synthetic")
-    s2.set_pose_key("actor_1", 1.0, {"hip": 5.0, "knee": 10.0}, source_id="cap-synthetic")
+    s2.set_camera_key(
+        "cam", 1.0, (1.0, 2.0, 2.0), (0.0, 0.0, 0.0), 50.0,
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    s2.set_camera_key(
+        "cam", 0.0, (1.0, 0.0, 2.0), (0.0, 0.0, 0.0), 50.0,
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    s2.set_object_key(
+        "mesa", 1.0, (2.0, 0.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    s2.set_object_key(
+        "mesa", 0.0, (0.0, 0.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    s2.set_object_key(
+        "mesa", 2.5, (0.0, 0.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    s2.set_object_key(
+        "mesa", 2.0, (0.0, 0.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    s2.set_pose_key(
+        "actor_1", 2.0, {"knee": 0.0, "hip": 0.0},
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    s2.set_pose_key(
+        "actor_1", 0.0, {"hip": 0.0, "knee": 0.0},
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    s2.set_pose_key(
+        "actor_1", 1.0, {"hip": 5.0, "knee": 10.0},
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
 
     assert s1.dumps() == s2.dumps()
 
