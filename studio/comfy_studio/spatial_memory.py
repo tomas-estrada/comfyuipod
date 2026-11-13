@@ -190,13 +190,14 @@ class SpatialMemory:
 
 
 def assert_not_atlas_evidence(memory: SpatialMemory, anchor_id: str) -> None:
-    """Un ancla INFERIDA no se promociona a evidencia factual del atlas (A19)."""
+    """Solo anclas observadas pueden promocionarse a evidencia factual (A19)."""
     anchor = memory.anchors.get(anchor_id)
     if anchor is None:
         raise SpatialError(f"ancla inexistente: {anchor_id}")
-    if anchor.provenance is Provenance.INFERRED:
+    if anchor.provenance is not Provenance.OBSERVED:
         raise SpatialError(
-            f"ancla {anchor_id} INFERIDA (generada): no es evidencia del atlas"
+            f"ancla {anchor_id} {anchor.provenance.value.upper()} (no observada): "
+            "no es evidencia del atlas"
         )
 
 
@@ -438,6 +439,22 @@ class TemporalScene:
         if source_id not in self.sources:
             raise SpatialError(f"fuente no registrada: {source_id!r}")
 
+    def _check_source_provenance(
+        self, source_id: str | None, provenance: Provenance
+    ) -> None:
+        if not isinstance(provenance, Provenance):
+            raise SpatialError("procedencia inválida para entidad")
+        self._check_source(source_id)
+        if (
+            source_id is not None
+            and self.sources[source_id].kind == "synthetic"
+            and provenance is not Provenance.SYNTHETIC
+        ):
+            raise SpatialError(
+                f"procedencia {provenance.value!r} no coincide con fuente sintética "
+                f"{source_id!r}"
+            )
+
     @staticmethod
     def _insert_key(keys: list, key: Any, max_keys: int, entity_id: str) -> None:
         """Inserción idempotente; conflicto en la misma marca temporal falla."""
@@ -466,7 +483,7 @@ class TemporalScene:
     ) -> None:
         t = _checked_time(t, self.duration_s)
         position = _checked_vec3(position)
-        self._check_source(source_id)
+        self._check_source_provenance(source_id, provenance)
         entity = self.objects.get(entity_id)
         if entity is None:
             self._check_new_entity(entity_id, provenance)
@@ -506,7 +523,7 @@ class TemporalScene:
             ) or not math.isfinite(value):
                 raise SpatialError(f"ángulo no finito para hueso {bone!r}")
             clean[bone] = value
-        self._check_source(source_id)
+        self._check_source_provenance(source_id, provenance)
         entity = self.poses.get(entity_id)
         if entity is None:
             self._check_new_entity(entity_id, provenance)
@@ -548,7 +565,7 @@ class TemporalScene:
         )
         if invalid_fov:
             raise SpatialError("fov_deg debe estar entre 1 y 180")
-        self._check_source(source_id)
+        self._check_source_provenance(source_id, provenance)
         entity = self.cameras.get(entity_id)
         if entity is None:
             self._check_new_entity(entity_id, provenance)
@@ -701,7 +718,7 @@ class TemporalScene:
             for entity_id, entity in mapping.items():
                 if not isinstance(entity.provenance, Provenance):
                     raise SpatialError(f"procedencia inválida para {entity_id!r}")
-                self._check_source(entity.source_id)
+                self._check_source_provenance(entity.source_id, entity.provenance)
                 if not 0 < len(entity.keys) <= self.max_keys_per_entity:
                     raise SpatialError(
                         f"nº de claves inválido para {entity_id!r}"
@@ -846,17 +863,40 @@ def synthetic_round_trip_fixture() -> TemporalScene:
     source_digest = hashlib.sha256(b"synthetic:a-to-b-to-a:fixture").hexdigest()
     scene = TemporalScene(timebase=Timebase(fps=24), duration_s=3.0)
     scene.add_source("cap-synthetic", SourceRef(kind="synthetic", sha256=source_digest))
-    scene.set_object_key("mesa", 0.0, (0.0, 0.0, 0.0), source_id="cap-synthetic")
-    scene.set_object_key("mesa", 1.0, (2.0, 0.0, 0.0), source_id="cap-synthetic")
-    scene.set_object_key("mesa", 2.0, (0.0, 0.0, 0.0), source_id="cap-synthetic")
-    scene.set_object_key("mesa", 2.5, (0.0, 0.0, 0.0), source_id="cap-synthetic")
-    scene.set_pose_key("actor_1", 0.0, {"hip": 0.0, "knee": 0.0}, source_id="cap-synthetic")
-    scene.set_pose_key("actor_1", 1.0, {"hip": 5.0, "knee": 10.0}, source_id="cap-synthetic")
-    scene.set_pose_key("actor_1", 2.0, {"hip": 0.0, "knee": 0.0}, source_id="cap-synthetic")
-    scene.set_camera_key(
-        "cam", 0.0, (1.0, 0.0, 2.0), (0.0, 0.0, 0.0), 50.0, source_id="cap-synthetic"
+    scene.set_object_key(
+        "mesa", 0.0, (0.0, 0.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_object_key(
+        "mesa", 1.0, (2.0, 0.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_object_key(
+        "mesa", 2.0, (0.0, 0.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_object_key(
+        "mesa", 2.5, (0.0, 0.0, 0.0),
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_pose_key(
+        "actor_1", 0.0, {"hip": 0.0, "knee": 0.0},
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_pose_key(
+        "actor_1", 1.0, {"hip": 5.0, "knee": 10.0},
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_pose_key(
+        "actor_1", 2.0, {"hip": 0.0, "knee": 0.0},
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
     )
     scene.set_camera_key(
-        "cam", 1.0, (1.0, 2.0, 2.0), (0.0, 0.0, 0.0), 50.0, source_id="cap-synthetic"
+        "cam", 0.0, (1.0, 0.0, 2.0), (0.0, 0.0, 0.0), 50.0,
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
+    )
+    scene.set_camera_key(
+        "cam", 1.0, (1.0, 2.0, 2.0), (0.0, 0.0, 0.0), 50.0,
+        provenance=Provenance.SYNTHETIC, source_id="cap-synthetic",
     )
     return scene

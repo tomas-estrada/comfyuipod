@@ -75,6 +75,13 @@ def test_inferred_anchor_is_not_atlas_evidence() -> None:
         assert_not_atlas_evidence(m, "fachada_sintetica")
 
 
+def test_synthetic_anchor_is_not_atlas_evidence() -> None:
+    m = SpatialMemory()
+    m.register(Anchor("ancla_fixture", provenance=Provenance.SYNTHETIC))
+    with pytest.raises(SpatialError, match="no es evidencia del atlas"):
+        assert_not_atlas_evidence(m, "ancla_fixture")
+
+
 def test_observed_anchor_is_valid_atlas_evidence() -> None:
     m = SpatialMemory()
     m.register(Anchor("puente_real", provenance=Provenance.OBSERVED))
