@@ -291,8 +291,9 @@ def build_default_registry() -> EngineRegistry:
             EngineTier.WARM,
             wired=True,
             note=(
-                "LLM local OpenAI-compatible (llama-server v0.9.0); "
-                "binario horneado pinned, modelo .gguf en runtime"
+                "LLM local OpenAI-compatible; el binario llama-server no está "
+                "incluido en la imagen y debe estar en STUDIO_LLM_SERVER_BIN o PATH; "
+                "modelo .gguf en runtime"
             ),
         )
     )
