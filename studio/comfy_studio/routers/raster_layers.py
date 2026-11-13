@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from comfy_studio.projects import MediaValidationError, ProjectStore
 from comfy_studio.raster_layers import (
@@ -18,9 +20,16 @@ from comfy_studio.raster_layers import (
     parse_manifest,
     validate_asset_references,
 )
+from comfy_studio.video_matting import (
+    DEFAULT_BLEND,
+    DEFAULT_SIMILARITY,
+    ChromaKeyError,
+    chroma_key_video,
+)
 
 _META_KEY = "ultra_raster_layer_set_v1"
 _OUTPUT_META_KEY = "ultra_raster_layer_output_v1"
+_CHROMA_OUTPUT_META_KEY = "ultra_chroma_key_output_v1"
 
 
 class RasterLayerRequest(BaseModel):
@@ -37,6 +46,15 @@ class RasterLayerSetRequest(BaseModel):
 
 class RasterLayerEditRequest(BaseModel):
     asset_id: str
+
+
+class ChromaKeyRequest(BaseModel):
+    """Chroma-key declarado: UN color plano elegido explícitamente por el usuario."""
+
+    asset_id: str
+    key_color: str | list[int]
+    similarity: float = DEFAULT_SIMILARITY
+    blend: float = DEFAULT_BLEND
 
 
 def _mark_previous_output_stale(
@@ -59,6 +77,40 @@ def _mark_previous_output_stale(
         _OUTPUT_META_KEY,
         {**previous_output, "status": "stale"},
     )
+
+
+def _mark_previous_chroma_output_stale(
+    store: ProjectStore, project_id: str, current: dict[str, Any]
+) -> list[str]:
+    """Marca los assets de la ejecución previa de chroma-key como obsoletos.
+
+    Sigue el patrón de ``_mark_previous_output_stale``: si la fuente (asset o
+    sha256) o los parámetros declarados cambian entre ejecuciones, la salida y
+    el frame previos dejan de ser frescos. Devuelve los ids invalidados.
+    """
+    previous = store.get_meta(project_id, _CHROMA_OUTPUT_META_KEY)
+    if not isinstance(previous, dict) or not previous.get("asset_id"):
+        return []
+    tracked = ("source_asset_id", "source_sha256", "key_color", "similarity", "blend")
+    changed = [field for field in tracked if previous.get(field) != current.get(field)]
+    if not changed:
+        return []
+    stale_metadata = {
+        "stale": True,
+        "stale_reason": "chroma_key_input_changed",
+        "chroma_key_changed_fields": sorted(changed),
+    }
+    invalidated: list[str] = []
+    for asset_id in (previous.get("asset_id"), previous.get("frame_asset_id")):
+        if not asset_id:
+            continue
+        updated = store.update_asset_metadata(
+            project_id, str(asset_id), metadata=stale_metadata
+        )
+        if updated is not None:
+            invalidated.append(str(asset_id))
+    store.set_meta(project_id, _CHROMA_OUTPUT_META_KEY, {**previous, "status": "stale"})
+    return invalidated
 
 
 def _store(request: Request) -> ProjectStore:
@@ -165,7 +217,9 @@ def register_routes(app: FastAPI) -> None:
         _require_project(store, project_id)
         try:
             layers = parse_manifest(store.get_meta(project_id, _META_KEY))
-            png, evidence = composite_layers(store, project_id, layers)
+            png, evidence = await run_in_threadpool(
+                composite_layers, store, project_id, layers
+            )
             config = request.app.state.config
             asset = store.save_upload(
                 project_id,
@@ -199,6 +253,105 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
         except RasterLayerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post(
+        "/studio/api/projects/{project_id}/raster-layers/chroma-key", status_code=201
+    )
+    async def chroma_key_project_video(
+        project_id: str, body: ChromaKeyRequest, request: Request
+    ) -> dict[str, Any]:
+        """Chroma-key CPU real sobre un vídeo del proyecto (C29/A17).
+
+        Produce una secuencia portadora de alpha (ffv1 rgba/bgra lossless) y un
+        frame RGBA de referencia, con provenance (sha256 de la fuente), probe de
+        ffprobe y cobertura medida sobre frames decodificados. NO es matting
+        semántico ni general: solo el color plano explícito elegido se vuelve
+        transparente.
+        """
+        store = _store(request)
+        _require_project(store, project_id)
+        config = request.app.state.config
+        try:
+            video_bytes, frame_png, evidence = await run_in_threadpool(
+                chroma_key_video,
+                store,
+                project_id,
+                body.asset_id,
+                body.key_color,
+                similarity=body.similarity,
+                blend=body.blend,
+                ffmpeg_timeout_s=config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=config.studio_ffprobe_timeout_s,
+            )
+        except ChromaKeyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MediaValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+        output_sha256 = hashlib.sha256(video_bytes).hexdigest()
+        chroma_meta = {
+            "artifact_kind": "chroma_key_alpha_sequence",
+            "renderer": evidence["renderer"],
+            "matting": evidence["matting"],
+            "semantic_matting": evidence["semantic_matting"],
+            "key_color": evidence["key_color"],
+            "similarity": evidence["similarity"],
+            "blend": evidence["blend"],
+            "source_asset_id": evidence["source"]["asset_id"],
+            "source_sha256": evidence["source"]["sha256"],
+            "output_sha256": output_sha256,
+        }
+        asset = store.save_upload(
+            project_id,
+            filename="chroma-key-alpha.mkv",
+            content_type="video/x-matroska",
+            data=video_bytes,
+            max_upload_bytes=config.max_upload_bytes,
+            category="outputs",
+            metadata={"chroma_key": chroma_meta, "pixel_render": "ffmpeg-colorkey-cpu"},
+        )
+        frame_asset = store.save_upload(
+            project_id,
+            filename="chroma-key-frame-0000.png",
+            content_type="image/png",
+            data=frame_png,
+            max_upload_bytes=config.max_upload_bytes,
+            category="outputs",
+            metadata={
+                "chroma_key": chroma_meta,
+                "artifact_kind": "chroma_key_frame",
+                "pixel_render": "ffmpeg-colorkey-cpu",
+            },
+        )
+        current_chroma_inputs = {
+            "source_asset_id": body.asset_id,
+            "source_sha256": evidence["source"]["sha256"],
+            "key_color": evidence["key_color"],
+            "similarity": evidence["similarity"],
+            "blend": evidence["blend"],
+        }
+        invalidated_outputs = _mark_previous_chroma_output_stale(
+            store, project_id, current_chroma_inputs
+        )
+        store.set_meta(
+            project_id,
+            _CHROMA_OUTPUT_META_KEY,
+            {
+                **current_chroma_inputs,
+                "asset_id": asset["id"],
+                "frame_asset_id": frame_asset["id"],
+                "status": "current",
+            },
+        )
+        return {
+            "asset": asset,
+            "frame_asset": frame_asset,
+            "evidence": evidence,
+            "invalidated_outputs": invalidated_outputs,
+            "matting": evidence["matting"],
+            "semantic_matting": evidence["semantic_matting"],
+            "claim": "chroma-key de un color plano explícito; no matting semántico",
+        }
 
 
 __all__ = ["register_routes"]
