@@ -7,7 +7,12 @@ propiedad por proyecto. Sin generación neural: la procedencia lo declara.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -113,9 +118,7 @@ def test_rewrites_are_idempotent_but_conflicts_fail(client: TestClient) -> None:
     _save_fixture(client, project_id)
     assert client.put(_curve_url(project_id), json=CURVE).status_code == 200
 
-    conflict = client.put(
-        _curve_url(project_id), json={**CURVE, "times": [0.0, 1.0, 3.0]}
-    )
+    conflict = client.put(_curve_url(project_id), json={**CURVE, "times": [0.0, 1.0, 3.0]})
     assert conflict.status_code == 409
     assert client.get(_curve_url(project_id)).json()["curve"]["times"] == [0.0, 1.0, 2.0]
 
@@ -171,3 +174,119 @@ def test_import_rejects_malformed_json_bytes(client: TestClient) -> None:
     )
     assert response.status_code == 409, response.text
     _assert_no_face_meta_written(client, project_id)
+
+
+def test_speaker_tracks_hash_and_preserve_project_audio_provenance(client: TestClient) -> None:
+    project_id = _project(client, "Pistas de actores")
+    other_project = _project(client, "Audio ajeno")
+    store = client.app.state.store
+    audio_a = store.save_upload(
+        project_id,
+        filename="ana.wav",
+        content_type="audio/wav",
+        data=b"fixture-audio-ana",
+        max_upload_bytes=1024,
+    )
+    audio_b = store.save_upload(
+        project_id,
+        filename="luis.wav",
+        content_type="audio/wav",
+        data=b"fixture-audio-luis",
+        max_upload_bytes=1024,
+    )
+    foreign = store.save_upload(
+        other_project,
+        filename="foreign.wav",
+        content_type="audio/wav",
+        data=b"foreign",
+        max_upload_bytes=1024,
+    )
+    url = f"/studio/api/projects/{project_id}/face/speaker-tracks"
+    turns = [
+        {
+            "speaker_id": "ana",
+            "audio_track_id": "stem_ana",
+            "audio_asset_id": audio_a["id"],
+            "text": "Hola Medellín",
+            "start": 0,
+            "end": 1,
+        },
+        {
+            "speaker_id": "luis",
+            "audio_track_id": "stem_luis",
+            "audio_asset_id": audio_b["id"],
+            "text": "Qué tal",
+            "start": 1,
+            "end": 2,
+        },
+    ]
+    response = client.put(url, json={"turns": turns})
+    assert response.status_code == 200, response.text
+    tracks = response.json()["tracks"]
+    assert list(tracks) == ["ana", "luis"]
+    assert tracks["ana"][0]["audio_sha256"] == hashlib.sha256(b"fixture-audio-ana").hexdigest()
+    compiled = client.post(
+        f"/studio/api/projects/{project_id}/face/speakers/ana/curves/hola/compile-spanish",
+        json={
+            "audio_track_id": "stem_ana",
+            "rig_mapping": {
+                "closed": "mouth_closed",
+                "round": "mouth_round",
+                "open": "jaw_open",
+                "wide": "mouth_wide",
+                "teeth": "mouth_teeth",
+            },
+        },
+    )
+    assert compiled.status_code == 200, compiled.text
+    assert compiled.json()["provenance"]["audio_asset_id"] == audio_a["id"]
+    assert compiled.json()["provenance"]["lip_quality"] == "fixture_only"
+    rejected = client.put(url, json={"turns": [{**turns[0], "audio_asset_id": foreign["id"]}]})
+    assert rejected.status_code == 422
+
+
+def test_render_route_saves_real_blender_glb_to_project(client: TestClient) -> None:
+    blender = shutil.which("blender")
+    if not blender:
+        import pytest
+
+        pytest.skip("Blender not installed")
+    project_id = _project(client, "Render de hablante")
+    with tempfile.TemporaryDirectory() as tmp:
+        actor_path = Path(tmp) / "actor.glb"
+        expr = (
+            "import bpy; bpy.ops.mesh.primitive_cube_add(); o=bpy.context.object; "
+            "o.shape_key_add(name='Basis'); o.shape_key_add(name='jaw_open'); "
+            f"bpy.ops.export_scene.gltf(filepath={str(actor_path)!r},"
+            "export_format='GLB',export_morph=True)"
+        )
+        subprocess.run(
+            [blender, "--background", "--python-expr", expr],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        source = client.app.state.store.save_upload(
+            project_id,
+            filename="actor.glb",
+            content_type="model/gltf-binary",
+            data=actor_path.read_bytes(),
+            max_upload_bytes=1024 * 1024,
+        )
+    curve_url = _curve_url(project_id, "hola")
+    assert (
+        client.put(
+            curve_url,
+            json={**CURVE, "weights": [{"jaw_open": 0.0}, {"jaw_open": 0.8}, {"jaw_open": 0.1}]},
+        ).status_code
+        == 200
+    )
+    response = client.post(
+        f"/studio/api/projects/{project_id}/face/actors/{source['id']}/curves/hola/render"
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["provenance"]["cpu_artifact"] is True
+    assert result["provenance"]["neural_tts"] == "not_run"
+    saved_path = client.app.state.store.get_asset_path(project_id, result["asset"]["id"])
+    assert saved_path and saved_path.read_bytes()[:4] == b"glTF"
