@@ -32,5 +32,10 @@
     "vendor/hash/sha256/LICENSE",
     "vendor/hash/xxhash/LICENSE"
   ],
-  "license_review": "The pinned source is MIT-licensed; all upstream license and notice files present in v0.9.0's source tree are copied into the image, including bundled/vendor notices. No model weights are included."
+  "license_review": "The pinned source is MIT-licensed; the listed upstream license and notice files are copied into the image. Unicode License V3 attribution for the generated Unicode 16.0.0 normalization tables is included as a hash-verified supplemental notice. Additional cpp-httplib/nlohmann header attributions and final linked system-library notice coverage remain under review. No model weights are included.",
+  "supplemental_license": {
+    "source": "docs/licenses/llama-cpp-unicode.md",
+    "destination": "Unicode-LICENSE.md",
+    "sha256": "6aecea039b5c87a5247f5af396242d4d993c62b7f15198835443b9577134677e"
+  }
 }
