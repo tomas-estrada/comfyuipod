@@ -1347,6 +1347,7 @@ jobs:
           # sin sus pesos se declaran unavailable con reason, el resto disponibles.
           assert unavailable == {
             "hunyuan3d_image_to_3d",
+            "qwen_image_layered",
             "wan_animate",
             "wan_animate_cont",
             "minimax_r2v",
