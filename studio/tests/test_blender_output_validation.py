@@ -26,6 +26,7 @@ from comfy_studio.blender import (
     _STUB_EXR,
     _STUB_GLB_HEADER,
     _STUB_PNG,
+    BlenderCameraKeyframe,
     BlenderCameraView,
     BlenderExportSpec,
     BlenderRenderSpec,
@@ -198,6 +199,87 @@ def test_camera_view_render_rejects_duplicate_or_unbounded_views(tmp_path: Path)
         BlenderCameraView(f"view-{index}", (0, -4, index), (0, 0, 0)) for index in range(9)
     )
     with pytest.raises(ValueError, match="no puede superar 8"):
+        spec.validate()
+
+
+def _camera_trajectory_spec(tmp_path: Path) -> BlenderRenderSpec:
+    spec = _render_spec(tmp_path)
+    spec.engine = "cycles"
+    spec.device = "cpu"
+    spec.frames = 2
+    spec.camera_trajectory = (
+        BlenderCameraKeyframe(1, (0, -4, 0), (0, 0, 0), 50),
+        BlenderCameraKeyframe(2, (2, -3, 1), (0, 0, 0), 55),
+    )
+    return spec
+
+
+def test_camera_trajectory_render_spec_generates_sampled_animation(tmp_path: Path) -> None:
+    spec = _camera_trajectory_spec(tmp_path)
+    spec.validate()
+
+    script = build_render_script(spec)
+    compile(script, "generated_blender_camera_trajectory.py", "exec")
+    assert "camera_trajectory =" in script
+    assert 'keyframe_insert(data_path="location"' in script
+    assert 'keyframe_insert(data_path="rotation_euler"' in script
+    assert 'keyframe_insert(data_path="lens"' in script
+    assert 'scene.frame_set(keyframe["frame"])' in script
+    assert "bpy.ops.render.render(animation=True, write_still=True)" in script
+
+
+def test_camera_trajectory_requires_ordered_in_range_frames(tmp_path: Path) -> None:
+    spec = _camera_trajectory_spec(tmp_path)
+    spec.camera_trajectory = (
+        BlenderCameraKeyframe(8, (0, -4, 0), (0, 0, 0), 50),
+        BlenderCameraKeyframe(4, (2, -3, 1), (0, 0, 0), 55),
+    )
+    with pytest.raises(ValueError, match="strictly increasing"):
+        spec.validate()
+
+    spec.camera_trajectory = (
+        BlenderCameraKeyframe(1, (0, -4, 0), (0, 0, 0), 50),
+        BlenderCameraKeyframe(13, (2, -3, 1), (0, 0, 0), 55),
+    )
+    with pytest.raises(ValueError, match="camera_trajectory frame"):
+        spec.validate()
+
+    spec = _camera_trajectory_spec(tmp_path)
+    spec.camera_trajectory = (BlenderCameraKeyframe(1, (0, -4, 0), (0, 0, 0), 50),)
+    with pytest.raises(ValueError, match="one camera pose for every render frame"):
+        spec.validate()
+
+
+def test_camera_trajectory_rejects_nonfinite_or_coincident_camera(tmp_path: Path) -> None:
+    spec = _camera_trajectory_spec(tmp_path)
+    spec.camera_trajectory = (
+        BlenderCameraKeyframe(1, (float("nan"), -4, 0), (0, 0, 0), 50),
+        BlenderCameraKeyframe(12, (2, -3, 1), (0, 0, 0), 55),
+    )
+    with pytest.raises(ValueError, match="camera trajectory.*finite"):
+        spec.validate()
+
+    spec.camera_trajectory = (
+        BlenderCameraKeyframe(1, (0, 0, 0), (0, 0, 0), 50),
+        BlenderCameraKeyframe(12, (2, -3, 1), (0, 0, 0), 55),
+    )
+    with pytest.raises(ValueError, match="position and target cannot coincide"):
+        spec.validate()
+
+
+def test_camera_trajectory_requires_multiframe_cpu_cycles_png(tmp_path: Path) -> None:
+    spec = _camera_trajectory_spec(tmp_path)
+    spec.device = "gpu"
+    with pytest.raises(
+        ValueError, match="camera_trajectory requires animation PNG with Cycles CPU"
+    ):
+        spec.validate()
+
+    spec = _camera_trajectory_spec(tmp_path)
+    spec.output_format = "exr"
+    with pytest.raises(
+        ValueError, match="camera_trajectory requires animation PNG with Cycles CPU"
+    ):
         spec.validate()
 
 

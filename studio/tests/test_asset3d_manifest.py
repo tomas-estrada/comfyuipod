@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from comfy_studio.agent.tools import (
     ROLE_TOOL_SUBSETS,
     ToolContext,
+    ToolExecutionError,
     create_default_tool_belt,
 )
 from comfy_studio.asset3d_manifest import get_asset3d_manifest, save_asset3d_manifest
@@ -569,6 +570,103 @@ async def test_artist3d_renders_and_persists_manifest_camera_previews(
         "rear",
     ]
     assert all(preview["metadata"]["source_sha256"] for preview in result["previews"])
+
+
+@pytest.mark.anyio
+async def test_artist3d_renders_camera_animatic_from_owned_manifest_glb(
+    studio_data_dir: Path,
+    studio_config,
+    stub_comfyui_transport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import Image
+
+    from comfy_studio.comfyui_client import ComfyUIClient
+    from comfy_studio.engines import EngineResult
+    from comfy_studio.engines.blender import BlenderEngine
+    from comfy_studio.progress import ProgressBroker
+
+    store = ProjectStore(studio_data_dir)
+    project_id = store.create_project("Animatic GLB")["id"]
+    asset = _save_glb(store, project_id)
+    save_asset3d_manifest(store, project_id, asset["id"], _manifest(asset["id"]))
+    broker = ProgressBroker()
+    comfyui_client = ComfyUIClient(
+        base_url=studio_config.studio_comfyui_url,
+        transport=stub_comfyui_transport,
+        store=store,
+        broker=broker,
+        redactor=studio_config.redactor(),
+    )
+    allowed = frozenset(ROLE_TOOL_SUBSETS["artist3d"])
+    context = ToolContext(
+        project_id=project_id,
+        store=store,
+        comfyui_client=comfyui_client,
+        broker=broker,
+        config=studio_config,
+        allowed_tools=allowed,
+    )
+    jobs: list[dict[str, Any]] = []
+    belt = create_default_tool_belt().restricted_to(allowed)
+    args = {
+        "shot_id": "shot-01",
+        "keyframes": [
+            {"t": 0, "position": [0, -4, 0], "target": [0, 0, 0]},
+            {"t": 1, "position": [0, -3, 0.5], "target": [0, 0, 0]},
+        ],
+        "duration_s": 1, "fps": 2, "width": 320, "height": 180,
+    }
+    foreign_project_id = store.create_project("Otro proyecto")["id"]
+    foreign_id = _save_glb(store, foreign_project_id)["id"]
+    with pytest.raises(ToolExecutionError, match="GLB 3D del proyecto actual"):
+        await belt.execute("render_camera_animatic", {**args, "asset_id": foreign_id}, context)
+    unregistered = _save_glb(store, project_id)["id"]
+    with pytest.raises(ToolExecutionError, match="manifiesto 3D"):
+        await belt.execute("render_camera_animatic", {**args, "asset_id": unregistered}, context)
+    assert not jobs
+
+    async def fake_render(self, spec):
+        del self
+        jobs.append(spec.job)
+        output_dir = Path(spec.job["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        outputs = []
+        for index in range(spec.job["frames"]):
+            path = output_dir / f"render_{index + 1:04d}.png"
+            Image.new("RGB", (320, 180), (35, 75, 115)).save(path)
+            outputs.append(str(path))
+        return EngineResult(
+            ok=True, engine="blender", verb="run", payload={"outputs": outputs}
+        )
+
+    def fake_encode(frames, output_path, *, fps, width, height):
+        Path(output_path).write_bytes(b"fake-mp4")
+        return {
+            "output": str(output_path), "probe_ok": True, "frame_count": len(frames),
+            "duration_s": len(frames) / fps, "fps": fps, "width": width,
+            "height": height,
+        }
+
+    monkeypatch.setattr(BlenderEngine, "run", fake_render)
+    monkeypatch.setattr(
+        "comfy_studio.animatic.encode_camera_trajectory_frames", fake_encode
+    )
+    result = await belt.execute(
+        "render_camera_animatic", {**args, "asset_id": asset["id"]}, context
+    )
+    assert result["status"] == "generated"
+    assert jobs[0]["engine"] == "cycles" and jobs[0]["device"] == "cpu"
+    assert jobs[0]["camera_trajectory"][0]["frame"] == 1
+    assert len(jobs[0]["camera_trajectory"]) == 2
+    output = result["output_asset"]
+    assert output["metadata"]["synthetic"] is False
+    assert output["metadata"]["source_asset_id"] == asset["id"]
+    assert output["metadata"]["source_asset_sha256"] == get_asset3d_manifest(
+        store, project_id, asset["id"]
+    )["model_sha256"]
+    assert output["metadata"]["manifest_sha256"]
+    assert output["metadata"]["quality_claim"] is False
 
 
 @pytest.mark.anyio

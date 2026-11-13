@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import struct
 import threading
@@ -769,11 +770,15 @@ class AnimaticKeyframeArgs(BaseModel):
 
 
 class RenderAnimaticArgs(BaseModel):
-    """Argumentos de preview sintético de trayectoria de cámara."""
+    """Argumentos para preview esquemático o render animado de un GLB."""
 
     model_config = ConfigDict(extra="forbid")
 
     shot_id: str = Field(..., min_length=1, max_length=100)
+    asset_id: str | None = Field(
+        default=None,
+        description="GLB propio del proyecto con manifiesto 3D; activa render real Blender CPU.",
+    )
     keyframes: list[AnimaticKeyframeArgs] = Field(..., min_length=1, max_length=120)
     duration_s: float = Field(default=5.0, gt=0.0, le=120.0)
     focal_mm: float = Field(default=35.0, gt=0.0, le=1000.0)
@@ -1609,6 +1614,7 @@ ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
         "search_assets",
         "tag_asset",
         "register_3d_manifest",
+        "render_camera_animatic",
         "render_asset3d_views",
         "optimize_asset3d_staging",
         "job_status",
@@ -2437,11 +2443,17 @@ async def _handle_render_animatic(
     args: RenderAnimaticArgs,
     context: ToolContext,
 ) -> dict[str, Any]:
-    from ..animatic import AnimaticError, render_animatic
+    from ..animatic import (
+        AnimaticError,
+        encode_camera_trajectory_frames,
+        render_animatic,
+        sample_camera_path,
+    )
     from ..cinematography import CameraKeyframe, CameraPlan
     from ..projects import sanitize_filename
 
     def _do_render() -> dict[str, Any]:
+        import asyncio
         import tempfile
 
         plan = CameraPlan(
@@ -2460,15 +2472,126 @@ async def _handle_render_animatic(
         try:
             with tempfile.TemporaryDirectory(prefix="comfy_animatic_tool_") as tmp:
                 output_path = Path(tmp) / filename
-                result = render_animatic(
-                    plan,
-                    output_path,
-                    fps=args.fps,
-                    width=args.width,
-                    height=args.height,
-                    duration_s=args.duration_s,
-                    title=args.title,
-                )
+                source_asset_id = args.asset_id
+                if source_asset_id:
+                    from ..asset3d_manifest import get_asset3d_manifest
+                    from ..assets3d import Asset3D
+                    from ..engines import EngineRunSpec
+                    from ..engines.blender import BlenderEngine
+                    from ..engines.preparedness import note_engine_run
+
+                    asset = context.store.get_asset(context.project_id, source_asset_id)
+                    scene_path = context.store.get_asset_path(context.project_id, source_asset_id)
+                    if asset is None or asset.get("kind") != "model3d" or scene_path is None:
+                        raise ToolExecutionError("asset_id debe ser un GLB 3D del proyecto actual.")
+                    if scene_path.suffix.lower() != ".glb":
+                        raise ToolExecutionError(
+                            "render_camera_animatic requiere un GLB del proyecto."
+                        )
+                    try:
+                        record = get_asset3d_manifest(
+                            context.store, context.project_id, source_asset_id
+                        )
+                    except (LookupError, ValueError) as exc:
+                        raise ToolExecutionError(
+                            f"Manifiesto 3D inválido: {exc}"
+                        ) from exc
+                    if record is None:
+                        raise ToolExecutionError("Registra primero el manifiesto 3D del GLB.")
+                    try:
+                        manifest = Asset3D.from_dict(record.get("manifest") or {})
+                    except ValueError as exc:
+                        raise ToolExecutionError(
+                            f"Manifiesto 3D inválido: {exc}"
+                        ) from exc
+                    manifest_sha256 = hashlib.sha256(
+                        json.dumps(
+                            manifest.to_dict(),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            allow_nan=False,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest()
+                    fps = float(args.fps)
+                    frame_count = max(2, int(round(args.duration_s * fps)))
+                    if (
+                        frame_count > 900
+                        or frame_count * args.width * args.height > 250_000_000
+                    ):
+                        raise ToolExecutionError(
+                            "El render excede el presupuesto de frames/píxeles del animatic."
+                        )
+                    samples = sample_camera_path(
+                        plan, frame_count=frame_count, duration_s=args.duration_s
+                    )
+                    camera_trajectory = [
+                        {
+                            "frame": index,
+                            "position": sample["position"],
+                            "target": sample["target"],
+                            "fov_deg": plan.fov_deg(),
+                        }
+                        for index, sample in enumerate(samples, start=1)
+                    ]
+                    output_dir = Path(tmp) / "blender_frames"
+                    engine = BlenderEngine(
+                        log_dir=context.config.studio_data_dir / "logs" / "blender"
+                    )
+                    engine_result = asyncio.run(
+                        engine.run(
+                            EngineRunSpec(
+                                job={
+                                    "mode": "render",
+                                    "scene_path": str(scene_path),
+                                    "output_dir": str(output_dir),
+                                    "engine": "cycles",
+                                    "device": "cpu",
+                                    "samples": 16,
+                                    "width": args.width,
+                                    "height": args.height,
+                                    "frames": frame_count,
+                                    "camera_trajectory": camera_trajectory,
+                                    "asset_transform": [
+                                        list(row) for row in manifest.transform
+                                    ],
+                                    "up_axis": str(manifest.up_axis),
+                                },
+                                timeout_s=min(1800.0, max(180.0, frame_count * 10.0)),
+                            )
+                        )
+                    )
+                    note_engine_run("blender", engine_result.ok and not engine_result.simulated)
+                    if not engine_result.ok or engine_result.simulated:
+                        raise ToolExecutionError(
+                            "Render de cámara Blender no disponible: "
+                            f"{engine_result.error or 'se requiere Blender real'}"
+                        )
+                    frame_paths = sorted(output_dir.glob("render_*.png"))
+                    if len(frame_paths) != frame_count:
+                        raise ToolExecutionError(
+                            f"Blender produjo {len(frame_paths)} de {frame_count} frames esperados."
+                        )
+                    result = encode_camera_trajectory_frames(
+                        frame_paths, output_path, fps=fps, width=args.width, height=args.height
+                    )
+                    result.update({
+                        "synthetic": False, "quality_claim": False,
+                        "source_asset_id": source_asset_id,
+                        "source_asset_sha256": record.get("model_sha256"),
+                        "manifest_sha256": manifest_sha256,
+                        "camera_path": camera_trajectory,
+                    })
+                else:
+                    result = render_animatic(
+                        plan,
+                        output_path,
+                        fps=args.fps,
+                        width=args.width,
+                        height=args.height,
+                        duration_s=args.duration_s,
+                        title=args.title,
+                    )
                 max_bytes = 128 * 1024 * 1024
                 if output_path.stat().st_size > max_bytes:
                     raise ToolExecutionError("El animatic supera el límite de 128 MiB.")
@@ -2480,9 +2603,17 @@ async def _handle_render_animatic(
                     max_upload_bytes=max_bytes,
                     category="outputs",
                     metadata={
-                        "engine": "cpu_camera_path_animatic",
+                        "engine": (
+                            "blender_cycles_cpu_camera_animatic"
+                            if source_asset_id
+                            else "cpu_camera_path_animatic"
+                        ),
+                        "source_asset_id": source_asset_id,
+                        "source_asset_sha256": result.get("source_asset_sha256"),
+                        "manifest_sha256": result.get("manifest_sha256"),
+                        "camera_path": result.get("camera_path"),
                         "shot_id": args.shot_id,
-                        "synthetic": True,
+                        "synthetic": bool(result.get("synthetic", True)),
                         "quality_claim": False,
                         "fps": result["fps"],
                         "duration_s": result["duration_s"],
@@ -5335,10 +5466,10 @@ def create_default_tool_belt() -> ToolBelt:
         ToolSpec(
             name="render_camera_animatic",
             description=(
-                "Genera un MP4 sintético CPU con una vista esquemática superior de una "
-                "trayectoria de cámara interpolada. Lo guarda como asset del proyecto y "
-                "verifica el MP4 con ffprobe. Es una previsualización de trayectoria; "
-                "no renderiza una escena 3D ni demuestra calidad o exactitud factual."
+                "Genera un MP4 de trayectoria interpolada. Sin asset_id crea un esquema superior "
+                "sintético; con un GLB propio del proyecto y manifiesto 3D renderiza la escena "
+                "con Blender Cycles CPU. Guarda el resultado y verifica el MP4 con ffprobe. "
+                "El render no demuestra calidad final ni exactitud factual."
             ),
             args_model=RenderAnimaticArgs,
             handler=_handle_render_animatic,
