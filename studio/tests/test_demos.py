@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -276,6 +277,52 @@ def test_d05_runner_encodes_and_probes_exact_4k_fixture(tmp_path: Path) -> None:
     assert len(measured_video_durations) >= 10
     resumed = run_demo("D05", tmp_path, resume=True)
     assert resumed["resumed"] is True
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="real FFmpeg/ffprobe binaries required",
+)
+def test_d05_accepts_project_owned_source_video_and_user_evidence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    assert ffmpeg is not None
+    source = tmp_path / "mi-video.mp4"
+    completed = subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+         "testsrc2=size=96x64:rate=8:duration=1", "-an", "-c:v", "libx264",
+         "-pix_fmt", "yuv420p", str(source)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    source_sha = demos_module._sha256(source)
+
+    assert demos_module.main([
+        "--demo", "D05", "--output-root", str(tmp_path / "runs"),
+        "--source-video", str(source), "--brief", "amanecer en el bosque",
+        "--transcript", "amanecer en el bosque", "--transcript-start", "0",
+        "--transcript-end", "1", "--source-license", "CC BY 4.0, footage by test author",
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["result"] == "cpu_real_input_flow_completed"
+    assert result["checks"]["asset_inventory"]["source_sha256"] == source_sha
+    assert result["checks"]["ffmpeg_encode"]["real_project_source"] is True
+    assert result["checks"]["brief_to_edl"]["evidence_mode"] == "user-provided transcript"
+    assert result["checks"]["editable_roundtrip"]["credits_verified"] is True
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    source_input = next(row for row in manifest["inputs"] if row["kind"] == "project_source_video")
+    assert source_input["sha256"] == source_sha
+    inventory = json.loads(
+        Path(result["manifest"]).parent.joinpath("D05_asset_inventory.json").read_text()
+    )
+    assert inventory["mode"] == "user_project_source"
+    assert inventory["source"]["license"] == "CC BY 4.0, footage by test author"
+    project = json.loads(
+        Path(result["manifest"]).parent.joinpath("editable_project.json").read_text()
+    )
+    assert project["clips"][0]["license"] == "CC BY 4.0, footage by test author"
+    assert project["clips"][0]["source_asset_id"]
 
 
 def test_runner_rejects_unknown_demo(tmp_path: Path) -> None:

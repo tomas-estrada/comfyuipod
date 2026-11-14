@@ -796,7 +796,17 @@ def _make_d05_inventory(root: Path, ffmpeg: str) -> dict[str, Any]:
     }
 
 
-def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, Any]]:
+def _render_d05(
+    data: dict[str, Any],
+    out_dir: Path,
+    *,
+    source_video: Path | None = None,
+    brief: str | None = None,
+    transcript: str | None = None,
+    transcript_start: float = 0.0,
+    transcript_end: float | None = None,
+    source_license: str | None = None,
+) -> tuple[Path, dict[str, Any]]:
     ffmpeg = find_ffmpeg()
     ffprobe = find_ffprobe()
     if not ffmpeg or not ffprobe:
@@ -818,72 +828,136 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
     checkpoints: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="d05-workspace-", dir=out_dir) as workspace:
         root = Path(workspace)
-        source = root / "source.mp4"
-        command = [
-            ffmpeg,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc2=size=320x180:rate=12:duration=2",
-            "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            str(source),
-        ]
-        try:
-            made = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise DemoError(f"D05 source fixture generation failed: {exc}") from exc
-        if made.returncode or not source.is_file():
-            raise DemoError(f"D05 source fixture generation failed: {made.stderr[-1200:]}")
-        inventory = _make_d05_inventory(root, ffmpeg)
+        real_source = source_video is not None
+        if real_source:
+            try:
+                source = source_video.expanduser().resolve(strict=True)
+            except OSError as exc:
+                raise DemoError(f"D05 source video is unavailable: {exc}") from exc
+            if not source.is_file() or source.stat().st_size > 512 * 1024 * 1024:
+                raise DemoError("D05 source must be a regular video file no larger than 512 MiB")
+            active_brief = (brief or "").strip()
+            active_transcript = (transcript or "").strip()
+            if len(active_brief) < 3 or not active_transcript:
+                raise DemoError("D05 real-source mode requires --brief and --transcript")
+            if (
+                not math.isfinite(transcript_start)
+                or transcript_start < 0
+                or transcript_end is None
+                or not math.isfinite(transcript_end)
+                or transcript_end <= transcript_start
+            ):
+                raise DemoError("D05 real-source mode requires a valid transcript time range")
+            if not (source_license or "").strip():
+                raise DemoError("D05 real-source mode requires a source license or rights label")
+            inventory = {
+                "input_count": 1,
+                "real_project_source": True,
+                "source_filename": source.name,
+                "source_sha256": _sha256(source),
+                "source_bytes": source.stat().st_size,
+            }
+            effective_brief = active_brief
+            effective_transcript = active_transcript
+            effective_license = source_license.strip()
+            (out_dir / "D05_asset_inventory.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "comfy_studio.d05_asset_inventory.v1",
+                        "mode": "user_project_source",
+                        "source": {
+                            "filename": source.name,
+                            "sha256": inventory["source_sha256"],
+                            "bytes": inventory["source_bytes"],
+                            "license": effective_license,
+                        },
+                        "brief": active_brief,
+                        "transcript_sha256": hashlib.sha256(
+                            active_transcript.encode("utf-8")
+                        ).hexdigest(),
+                        "transcript_time_range_sec": [transcript_start, transcript_end],
+                        "weights_available": False,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                ) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            source = root / "source.mp4"
+            command = [
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                "-i", "testsrc2=size=320x180:rate=12:duration=2", "-an", "-c:v", "libx264",
+                "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(source),
+            ]
+            try:
+                made = subprocess.run(
+                    command, capture_output=True, text=True, timeout=60, check=False
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise DemoError(f"D05 source fixture generation failed: {exc}") from exc
+            if made.returncode or not source.is_file():
+                raise DemoError(f"D05 source fixture generation failed: {made.stderr[-1200:]}")
+            inventory = _make_d05_inventory(root, ffmpeg)
+            effective_brief = "bosque amanecer"
+            effective_transcript = "bosque amanecer paisaje de prueba"
+            effective_license = "CC0-1.0"
         checkpoints.append(
             {
-                "stage": "100_asset_ingest",
+                "stage": "project_source_ingest" if real_source else "100_asset_ingest",
                 "status": "done",
-                "failed_items_isolated": inventory["corrupt"] + inventory["unsupported"],
+                "failed_items_isolated": (
+                    inventory.get("corrupt", 0) + inventory.get("unsupported", 0)
+                ),
             }
         )
 
         store = ProjectStore(root / "studio-data")
         project = store.create_project(
-            data["project_name"], description="Synthetic CPU acceptance fixture"
+            data["project_name"],
+            description=(
+                "User-provided CPU input" if real_source else "Synthetic CPU acceptance fixture"
+            ),
         )
+        source_mime = {
+            ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm",
+            ".mov": "video/quicktime", ".qt": "video/quicktime", ".mkv": "video/x-matroska",
+        }.get(source.suffix.lower())
+        if source_mime is None:
+            raise DemoError(
+                "D05 source must use a supported video extension: mp4, m4v, webm, mov, qt, mkv"
+            )
         uploaded = store.save_upload(
             project["id"],
-            filename="source.mp4",
-            content_type="video/mp4",
+            filename=source.name,
+            content_type=source_mime,
             data=source.read_bytes(),
-            max_upload_bytes=8 * 1024 * 1024,
+            max_upload_bytes=512 * 1024 * 1024,
             category="uploads",
-            metadata={"license": "CC0-1.0"},
+            metadata={"license": effective_license},
         )
+        stored_source_path = store.get_asset_path(project["id"], uploaded["id"])
+        if stored_source_path is None or _sha256(stored_source_path) != _sha256(source):
+            raise DemoError("D05 project ingest did not preserve the source video bytes")
         store.save_transcription(
             project["id"],
             asset_id=uploaded["id"],
             language="es",
-            backend="fixture",
+            backend="user_provided" if real_source else "fixture",
             segments=[
                 {
                     "id": "seg-001",
-                    "start": 0.0,
-                    "end": 1.5,
-                    "text": "bosque amanecer paisaje de prueba",
+                    "end": transcript_end if real_source else 1.5,
+                    "start": transcript_start,
+                    "text": effective_transcript,
                 }
             ],
         )
         plan = plan_montage_from_brief(
             store,
             project["id"],
-            brief="bosque amanecer",
+            brief=effective_brief,
             target_duration_sec=1.0,
             max_cuts=2,
             min_segment_sec=0.2,
@@ -949,6 +1023,18 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         if source_path is None:
             raise DemoError("D05 source asset was not retained")
         selected = plan["cuts"][0]
+        source_probe = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height", "-of", "json", str(source_path)],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if source_probe.returncode:
+            raise DemoError(f"D05 could not inspect source video: {source_probe.stderr[-1200:]}")
+        source_streams = json.loads(source_probe.stdout).get("streams", [])
+        if not source_streams:
+            raise DemoError("D05 source has no video stream")
+        source_width = int(source_streams[0]["width"])
+        source_height = int(source_streams[0]["height"])
         timeline = TimelineSpec(
             name=data["project_name"],
             aspect="16:9",
@@ -959,11 +1045,14 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
                     str(source_path),
                     selected["in_sec"],
                     selected["out_sec"],
-                    license="CC0-1.0",
-                    src_width=320,
-                    src_height=180,
+                    license=effective_license,
+                    src_width=source_width,
+                    src_height=source_height,
                     source_asset_id=uploaded["id"],
-                    reason="brief evidence: bosque/amanecer",
+                    reason=(
+                        f"user brief evidence: {effective_brief}"
+                        if real_source else "fixture evidence: bosque/amanecer"
+                    ),
                 )
             ],
             titles=[Title(data["titles"][0]["id"], data["titles"][0]["text"], 0.0, 1.0)],
@@ -981,7 +1070,7 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
                     "metadata": {
                         "aspect": aspect,
                         "dimensions": list(dimensions[aspect]),
-                        "synthetic_cpu_fixture": True,
+                        "synthetic_cpu_fixture": not real_source,
                     },
                 }
                 for aspect, path in masters.items()
@@ -990,7 +1079,7 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         reopened = load_editable_package(package)
         delivery_manifest = json.loads((package / "delivery-manifest.json").read_text())
         credits_verified = bool(delivery_manifest.get("credits")) and all(
-            credit.get("license") == "CC0-1.0"
+            credit.get("license") == effective_license
             and credit.get("source_asset_id") == uploaded["id"]
             for credit in delivery_manifest["credits"]
         )
@@ -1025,7 +1114,9 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         "brief_to_edl": {
             "cuts": len(plan["cuts"]),
             "simulated_ml": plan["simulated"],
-            "evidence_mode": "CPU fixture transcript",
+            "evidence_mode": (
+                "user-provided transcript" if real_source else "CPU fixture transcript"
+            ),
         },
         "ffmpeg_encode": {
             "dimensions_verified": {aspect: True for aspect in dimensions},
@@ -1042,7 +1133,8 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
                 aspect: detail["probed_color_range"] == "tv"
                 for aspect, detail in delivery_verifications.items()
             },
-            "synthetic_fixture": True,
+            "synthetic_fixture": not real_source,
+            "real_project_source": real_source,
             "quality_claim": False,
         },
         "editable_roundtrip": {
@@ -1052,7 +1144,9 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         },
         "recovery": {
             "partial_failures_isolated": True,
-            "successful_inputs_retained": inventory["valid_assets_survived_partial_failures"],
+            "successful_inputs_retained": inventory.get(
+                "valid_assets_survived_partial_failures", real_source
+            ),
         },
         "duration_s": round(time.monotonic() - started, 3),
         "checkpoints": checkpoints + [{"stage": "delivery_package", "status": "done"}],
@@ -1065,7 +1159,18 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
     }
 
 
-def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[str, Any]:
+def run_demo(
+    demo_id: str,
+    output_root: Path,
+    *,
+    resume: bool = False,
+    source_video: Path | None = None,
+    brief: str | None = None,
+    transcript: str | None = None,
+    transcript_start: float = 0.0,
+    transcript_end: float | None = None,
+    source_license: str | None = None,
+) -> dict[str, Any]:
     demos = {demo.demo_id: demo for demo in demo_catalog()}
     if demo_id not in demos:
         raise DemoError(f"demo desconocida: {demo_id}; disponibles: {', '.join(demos)}")
@@ -1079,6 +1184,41 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
         "path": f"fixtures/{fixture.name}",
         "sha256": input_hash,
     }]
+    if source_video is not None:
+        if demo_id != "D05":
+            raise DemoError("--source-video is supported only for D05")
+        try:
+            source_path = source_video.expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise DemoError(f"D05 source video is unavailable: {exc}") from exc
+        if not source_path.is_file() or source_path.stat().st_size > 512 * 1024 * 1024:
+            raise DemoError("D05 source must be a regular video file no larger than 512 MiB")
+        if source_path.suffix.lower() not in {
+            ".mp4", ".m4v", ".webm", ".mov", ".qt", ".mkv"
+        }:
+            raise DemoError("D05 source must use a supported video extension")
+        if (
+            not math.isfinite(transcript_start)
+            or transcript_start < 0
+            or transcript_end is None
+            or not math.isfinite(transcript_end)
+            or transcript_end <= transcript_start
+        ):
+            raise DemoError(
+                "D05 real-source mode requires --transcript-start and --transcript-end "
+                "with start < end"
+            )
+        inputs.append({
+            "kind": "project_source_video",
+            "path": str(source_path),
+            "sha256": _sha256(source_path),
+            "bytes": source_path.stat().st_size,
+            "brief": (brief or "").strip(),
+            "transcript_sha256": hashlib.sha256((transcript or "").encode("utf-8")).hexdigest(),
+            "transcript_start_s": transcript_start,
+            "transcript_end_s": transcript_end,
+            "license": source_license,
+        })
     if demo_id == "D01":
         atlas_evidence, atlas_inputs = _check_d01_atlas_references(fixture_data)
         checks["atlas_reference_evidence"] = atlas_evidence
@@ -1102,7 +1242,10 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
             prior = json.loads(manifest_path.read_text(encoding="utf-8"))
             valid = (
                 prior.get("schema") == "comfy_studio.demo_run.v3"
-                and prior.get("result") == "cpu_fixture_checks_passed"
+                and prior.get("result") == (
+                    "cpu_real_input_flow_completed" if source_video is not None
+                    else "cpu_fixture_checks_passed"
+                )
                 and prior.get("inputs") == inputs
                 and prior.get("execution_fingerprint") == execution_fingerprint
                 and isinstance(prior.get("artifacts"), list)
@@ -1127,7 +1270,14 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
     artifact: Path | None = None
     project_artifact: Path | None = None
     if demo_id == "D05":
-        artifact, render_checks = _render_d05(fixture_data, out_dir)
+        if source_video is None:
+            artifact, render_checks = _render_d05(fixture_data, out_dir)
+        else:
+            artifact, render_checks = _render_d05(
+                fixture_data, out_dir, source_video=source_video, brief=brief,
+                transcript=transcript, transcript_start=transcript_start,
+                transcript_end=transcript_end, source_license=source_license,
+            )
         checks.update(render_checks)
         project_artifact = out_dir / "editable_project.json"
     failed = [name for name, value in checks.items() if isinstance(value, bool) and not value]
@@ -1136,12 +1286,19 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
     manifest: dict[str, Any] = {
         "schema": "comfy_studio.demo_run.v3",
         "demo": demo.to_dict(),
-        "result": "cpu_fixture_checks_passed",
+        "result": "cpu_real_input_flow_completed" if source_video is not None
+        else "cpu_fixture_checks_passed",
         "claim_scope": (
             "fixture consistency/toolchain and Atlas source integrity only; no real camera "
             "calibration, scene coverage, model quality, or capability proof"
             if demo_id == "D01"
-            else "fixture consistency/toolchain only; no model quality or capability proof"
+            else (
+                "user-provided source and transcript processed through project ingest, montage, "
+                "FFmpeg delivery and editable package; CPU/toolchain evidence only, no model "
+                "quality or capability proof"
+                if source_video is not None
+                else "fixture consistency/toolchain only; no model quality or capability proof"
+            )
         ),
         "inputs": inputs,
         "execution_fingerprint": execution_fingerprint,
@@ -1156,7 +1313,8 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
                 "level": str(s.level),
                 "neural": s.neural,
                 "pending_reason": s.pending_reason,
-                "evidence": "CPU fixture check only"
+                "evidence": "CPU real-input flow only" if source_video is not None
+                else "CPU fixture check only"
                 if s.status is StageStatus.READY_CPU
                 else None,
             }
@@ -1189,6 +1347,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-root", type=Path, default=Path("./demo-runs"))
     parser.add_argument("--resume", action="store_true", help="reuse verified prior artifacts")
     parser.add_argument("--clean", action="store_true", help="remove only the selected demo output")
+    parser.add_argument(
+        "--source-video", type=Path,
+        help="D05: ingest a project-owned video instead of generating a fixture",
+    )
+    parser.add_argument("--brief", help="D05 real-source mode: montage brief")
+    parser.add_argument(
+        "--transcript", help="D05 real-source mode: transcript text for the selected source range"
+    )
+    parser.add_argument("--transcript-start", type=float, default=0.0)
+    parser.add_argument("--transcript-end", type=float)
+    parser.add_argument(
+        "--source-license", help="D05 real-source mode: credit/license or rights label"
+    )
     args = parser.parse_args(argv)
     if args.list:
         print(json.dumps([d.to_dict() for d in demo_catalog()], ensure_ascii=False, indent=2))
@@ -1200,7 +1371,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"removed": clean_demo_output(args.demo, args.output_root)}))
             return 0
         print(json.dumps(
-            run_demo(args.demo, args.output_root, resume=args.resume),
+            run_demo(
+                args.demo, args.output_root, resume=args.resume,
+                source_video=args.source_video, brief=args.brief, transcript=args.transcript,
+                transcript_start=args.transcript_start, transcript_end=args.transcript_end,
+                source_license=args.source_license,
+            ),
             ensure_ascii=False,
             indent=2,
         ))
