@@ -132,6 +132,7 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/aovs/invalidate",
     "POST /studio/api/projects/{project_id}/aovs/relight/render",
     "POST /studio/api/projects/{project_id}/assets",
+    "POST /studio/api/projects/{project_id}/assets/{asset_id}/restore-temporal",
     "POST /studio/api/projects/{project_id}/assets/{asset_id}/inspiration/analyze",
     "POST /studio/api/projects/{project_id}/brief",
     "POST /studio/api/projects/{project_id}/brief/feedback",
