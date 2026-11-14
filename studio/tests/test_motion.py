@@ -102,6 +102,14 @@ def test_retarget_rejects_unmapped_bones_used_in_clip() -> None:
         retarget(_clip(), src, tgt, {"spine": "spine"})
 
 
+def test_retarget_rejects_human_rig_to_nonhuman_rig() -> None:
+    human = _skeleton("human")
+    vehicle = _skeleton("car")
+    vehicle.body_class = "vehicle"
+    with pytest.raises(MotionError, match="body class"):
+        retarget(_clip(), human, vehicle, {"spine": "spine", "arm_L": "arm_L"})
+
+
 def test_contacts_must_fall_in_existing_frames() -> None:
     clip = _clip()
     clip.contacts = {"foot_L": [99]}  # frame inexistente
