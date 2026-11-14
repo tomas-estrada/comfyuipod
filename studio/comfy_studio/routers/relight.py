@@ -1,13 +1,16 @@
-"""Persistencia de AOV por proyecto e invalidación selectiva (W16/A18)."""
+"""Persistencia de AOV e intervención de iluminación CPU por proyecto (W16/A18)."""
 
 from __future__ import annotations
 
 import base64
 import binascii
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictFloat, StrictInt
 from starlette.concurrency import run_in_threadpool
 
 from comfy_studio.projects import MediaValidationError, ProjectStore
@@ -18,6 +21,7 @@ from comfy_studio.relight import (
     RelightError,
     TaskKind,
     invalidate_for_task,
+    relight_video_temporal,
     render_relight,
 )
 
@@ -48,6 +52,15 @@ class RelightRenderRequest(BaseModel):
     ambient: float = 0.0
 
 
+class TemporalLightKeyframe(BaseModel):
+    frame: StrictInt
+    gain: StrictFloat
+
+
+class TemporalRelightRequest(BaseModel):
+    keyframes: list[TemporalLightKeyframe] = Field(min_length=2, max_length=64)
+
+
 def _decode_b64(value: str, name: str) -> bytes:
     try:
         return base64.b64decode(value, validate=True)
@@ -75,6 +88,59 @@ def _response(aovset: AOVSet) -> dict[str, Any]:
 
 def register_routes(app: FastAPI) -> None:
     """Guarda estado de pases y persiste invalidación antes de recomputación."""
+
+    @app.post(
+        "/studio/api/projects/{project_id}/assets/{asset_id}/relight-temporal",
+        status_code=201,
+    )
+    async def relight_project_video_temporal(
+        project_id: str, asset_id: str, body: TemporalRelightRequest, request: Request
+    ) -> dict[str, Any]:
+        """Apply a bounded CPU light-gain curve to a video asset owned by this project."""
+        store = _store(request)
+        if store.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="Proyecto no encontrado")
+        source = store.get_asset(project_id, asset_id)
+        source_path = store.get_asset_path(project_id, asset_id)
+        if source is None or source.get("kind") != "video" or source_path is None:
+            raise HTTPException(status_code=404, detail="Video del proyecto no encontrado")
+        tmpdir = Path(tempfile.mkdtemp(prefix="studio-temporal-relight-"))
+        rendered = tmpdir / "relighted.mp4"
+        try:
+            report = await run_in_threadpool(
+                relight_video_temporal,
+                source_path,
+                rendered,
+                [point.model_dump() for point in body.keyframes],
+            )
+            max_bytes = min(request.app.state.config.max_upload_bytes, 256 * 1024 * 1024)
+            output = store.save_upload(
+                project_id,
+                filename=f"{Path(source['original_filename']).stem}-relighted.mp4",
+                content_type="video/mp4",
+                data=rendered.read_bytes(),
+                max_upload_bytes=max_bytes,
+                category="outputs",
+                metadata={
+                    "temporal_relight_v1": {
+                        "source_asset_id": asset_id,
+                        **report,
+                    }
+                },
+            )
+            return {
+                "status": "rendered",
+                "project_id": project_id,
+                "source_asset_id": asset_id,
+                "asset": output,
+                "relighting": report,
+            }
+        except (RelightError, MediaValidationError, OSError, ValueError) as exc:
+            status = exc.status_code if isinstance(exc, MediaValidationError) else 422
+            detail = exc.message if isinstance(exc, MediaValidationError) else str(exc)
+            raise HTTPException(status_code=status, detail=detail) from exc
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     @app.get("/studio/api/projects/{project_id}/aovs")
     async def get_project_aovs(project_id: str, request: Request) -> dict[str, Any]:

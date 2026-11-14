@@ -146,9 +146,7 @@ def test_render_relight_composites_shading_and_preserves_alpha() -> None:
     width, height, color_type, pixels = _decode_relight_png(first["png"])
     assert (width, height, color_type) == (2, 2, 6)
     # lit = albedo × shading/255; el alfa del albedo queda intacto.
-    assert pixels == bytes(
-        (255, 0, 0, 200, 0, 128, 0, 255, 0, 0, 64, 255, 0, 0, 0, 128)
-    )
+    assert pixels == bytes((255, 0, 0, 200, 0, 128, 0, 255, 0, 0, 64, 255, 0, 0, 0, 128))
 
 
 def test_render_relight_rejects_out_of_bounds_inputs() -> None:
@@ -176,3 +174,22 @@ def test_render_relight_rejects_out_of_bounds_inputs() -> None:
         render_relight(albedo, shading, 2, 2, intensity=math.nan)
     with pytest.raises(RelightError):
         render_relight(albedo, shading, 2, 2, ambient=math.inf)
+
+
+def test_temporal_relight_curve_requires_ordered_bounded_frame_points() -> None:
+    import math
+
+    from comfy_studio.relight import _curve_values, _validate_light_curve
+
+    points = _validate_light_curve([{"frame": 0, "gain": 0.5}, {"frame": 2, "gain": 1.5}], 4)
+    assert _curve_values(points, 4) == [0.5, 1.0, 1.5, 1.5]
+    for invalid in (
+        [{"frame": 1, "gain": 1}, {"frame": 3, "gain": 2}],
+        [{"frame": 0, "gain": 1}, {"frame": 0, "gain": 2}],
+        [{"frame": 0, "gain": 1}, {"frame": 4, "gain": 2}],
+        [{"frame": 0, "gain": 1}, {"frame": 3, "gain": 1}],
+        [{"frame": 0, "gain": 1}, {"frame": 3, "gain": math.inf}],
+        [{"frame": False, "gain": 1}, {"frame": 3, "gain": 2}],
+    ):
+        with pytest.raises(RelightError):
+            _validate_light_curve(invalid, 4)
