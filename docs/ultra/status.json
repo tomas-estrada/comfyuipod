@@ -2,11 +2,11 @@
   "schema": "ultra-status/1",
   "goal_revision": "upgrades-ultra-version @ PR#64 (merged)",
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
-  "main_sha": "fd444c7706a0455b5bd3af1c801b26341661741c",
+  "main_sha": "3d5b93e38c3a838e1e71c35cfe1a716d1768ff73",
   "stage": "gpu_partial_L3",
   "overall": "GPU_L3_PARTIAL",
-  "overall_note": "El workflow de main 43271938341 paso validacion del repositorio, 2840 pruebas Python, Rust, build candidato, smoke full-stack, Atlas, perfil Studio y promocion de imagen en fd444c7. Esto prueba el software y la imagen, no una ejecucion GPU en el digest actual. W26 sigue siendo una sola ejecucion L3 de SDXL en un digest anterior. Las capacidades y A00-A29 conservan brechas no GPU abiertas: 14 capacidades en L0, otras parciales, A07 con 280 bloqueos de manifiesto en 56 de 58 engines seleccionados, y criterios D01-D05/baselines/holdouts pendientes. No declarar Ultra validada hasta cerrar esos criterios y repetir mediciones GPU.",
-  "updated_utc": "2026-11-12T18:02:26Z",
+  "overall_note": "Main workflow 43587693820 passed on 3d5b93e3: 3,126 Python tests, 3 skips, Rust/repository checks, candidate build, full-stack, Atlas and Studio-profile smoke tests, requirements-lock artifact upload, and image promotion. Candidate digest is sha256:02d198ca858e162362d51669ec19910d5c6ce0bfe370665f75ad714bd2d7de3c; promoted latest digest is sha256:c8e76463125ef210258b5ec5fd4e20b8188b83e29b97dd650d8449e2e8f7994f. These are software/image results, not target-GPU measurements. The engine manifest still has 266 release blockers across 54 of 58 selected engines, so release_ready is false. Partial CPU paths now exist for several capabilities, but their model-quality, holdout, semantic and full acceptance criteria remain open.",
+  "updated_utc": "2026-11-14T15:26:49Z",
   "merged": {
     "W00": "done",
     "W01": "#65",
@@ -36,15 +36,27 @@
     "W25": "#100",
     "capabilities_doc": "#94,#98"
   },
-  "capability_coverage": "En CAPABILITY_EVIDENCE.md (snapshot main 9a3238d0): 14 capacidades estan en L0, 14 en L1 parcial y 6 en L2 parcial; ninguna tiene aceptacion integral. El estado mas alto es W26 GPU L3 parcial solo para SDXL en su digest historico. Los bloqueos de CPU, integracion y evidencia se mantienen abiertos hasta demostrar cierre.",
+  "capability_coverage": "CAPABILITY_EVIDENCE.md snapshot main 3d5b93e3: 5 capabilities at L0, 21 at L1 partial, and 8 at L2 partial; none has full acceptance. Bounded CPU paths are recorded for C11-C14, C16, C22, C25, C29, and C30. W26 remains historical L3 partial for one SDXL recipe only. A07 release_ready is false; target-GPU and held-out evidence remain pending.",
   "pending_capabilities": [
-    "C01-C34: completar la aceptacion integral por capability sin elevar el nivel por evidencia parcial",
-    "C06,C11-C14,C16-C17,C21-C22,C25-C26,C28-C30: implementar y conectar las rutas actualmente L0",
-    "A07: resolver 280 bloqueos de release en 56 de 58 engines seleccionados con evidencia real por componente",
-    "A05/A06/A08-A26: completar las brechas de persistencia, proveedores, adapters, datasets y rutas de producto registradas en CAPABILITY_EVIDENCE.md",
-    "D01-D05: completar los escenarios de produccion, artefactos verificables, baselines y holdouts; la evidencia GPU queda para su campaña autorizada"
+    "C01-C34: complete each capability acceptance without elevating levels from partial evidence",
+    "C06,C17,C21,C26,C28: implement and connect the remaining capability paths currently at L0",
+    "C11-C14,C16,C22,C25,C29,C30: complete model-quality, semantic, holdout, and broader product acceptance beyond the documented CPU paths",
+    "A07: resolve 266 release blockers across 54 of 58 selected engines with per-component pin, dependency, license/notice, and implemented-entrypoint evidence",
+    "A05/A06/A08-A26: complete remaining persistence, provider, adapter, dataset, and product-path acceptance in CAPABILITY_EVIDENCE.md",
+    "D01-D05: complete production scenarios, verifiable artifacts, baselines, and holdouts before target-GPU validation"
   ],
   "candidate_image_current": {
+    "main_sha": "3d5b93e38c3a838e1e71c35cfe1a716d1768ff73",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-3d5b93e",
+    "candidate_manifest_digest": "sha256:02d198ca858e162362d51669ec19910d5c6ce0bfe370665f75ad714bd2d7de3c",
+    "latest_manifest_digest": "sha256:c8e76463125ef210258b5ec5fd4e20b8188b83e29b97dd650d8449e2e8f7994f",
+    "promoted_to_latest": true,
+    "build_run": "43587693820",
+    "smoke": "passed: 3,126 Python tests, 3 skipped, Rust and repository validation, candidate build, full-stack E2E, Atlas validation, MODEL_PROFILE=studio E2E, requirements-lock artifact upload, and image promotion",
+    "contains": "main 3d5b93e3 with merged PRs #358, #369, #371, #376, #377, and #378; CAPABILITY_EVIDENCE.md records partial CPU paths and A07 remains blocked",
+    "note": "Candidate and latest digests verified from workflow 43587693820. No target-GPU validation was run. W26 evidence remains tied to its historical image/recipe."
+  },
+  "candidate_image_previous": {
     "main_sha": "fd444c7706a0455b5bd3af1c801b26341661741c",
     "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-fd444c7",
     "candidate_manifest_digest": "sha256:c3a54db9b23d6bc277a3027132b745e17f22fb80eede0a81a7848515a1cc34f5",
@@ -55,22 +67,12 @@
     "contains": "main fd444c7 including PR #338 staging optimizer, #340 repair-frame provenance, #341 D01 Atlas source evidence, #343 bounded C02 camera-motion estimator, and #344 GitHub integration research; CAPABILITY_EVIDENCE.md remains partial and A07 release_ready=false",
     "note": "Candidate and latest manifest digests are verified from GHCR. No target-GPU measurement was run on this image; W26 evidence remains tied to its previous image digest."
   },
-  "candidate_image_previous": {
-    "main_sha": "71822b7",
-    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-71822b7",
-    "latest_manifest_digest": "sha256:ee60b4e67c594fa713b58988b3b95ac2b74bac1351399c02ab609ff71cfaa6bd",
-    "promoted_to_latest": true,
-    "build_run": "41999904964",
-    "smoke": "unit + full-stack E2E + MODEL_PROFILE=studio E2E verde (16m28s)",
-    "contains": "W00-W20 (infra + ruta esencial de capacidades + atlas offline + cara + 4D) a nivel contrato L1",
-    "note": "Imagen candidata previa con digest real verificable."
-  },
   "sub_items_pending": [
-    "A07: 280 engine release blockers across 56 of 58 selected routes; verify pins, locks, licenses/notices and implemented entrypoints per engine",
+    "A07: 266 engine release blockers across 54 of 58 selected entries; verify immutable pins, dependency locks, redistribution/notices, and implemented entrypoints per engine",
     "Production planner/executor must select and run real av_recipes through the configured LangGraph path",
-    "Close the non-GPU capability gaps and D01-D05 product acceptance listed in CAPABILITY_EVIDENCE.md and acceptance.md",
+    "Complete the non-GPU capability gaps and D01-D05 product acceptance listed in CAPABILITY_EVIDENCE.md and acceptance.md",
     "A06 provider contract profiles exist, but configured provider connectivity and model behavior remain unverified",
-    "Only after these non-GPU blockers are closed: target-GPU recipe execution, baselines/holdouts and current-main revalidation"
+    "Only after these non-GPU blockers are closed: target-GPU recipe execution, baselines/holdouts, and current-main revalidation"
   ],
   "gpu_campaign_W26": {
     "status": "demo_acotada_ejecutada_L3",
@@ -100,5 +102,5 @@
     "Los 7 fallos son sensibles al entorno POSIX: 3x test_mac_helper (fixture limpia os.environ -> sin SYSTEMROOT en Windows), 2x test_m5_capture3d (setenv PATH='' rompe el lanzamiento de subprocess en Windows), 2x test_atlas_* (lanzan scripts/storage_requirement.py como subprocess bajo entorno despojado). storage_requirement.py --profile studio --json ejecutado directo produce JSON valido.",
     "test_gpu_lease multiproceso y tests POSIX son sensibles a Windows; verificados en CI Linux."
   ],
-  "notes": "Este estado se verifico en main 9a3238d0 y run 43246478902. W26 conserva evidencia L3 parcial para una sola receta SDXL en un digest anterior. No usar ese resultado para declarar validada la imagen actual ni otras recetas. El trabajo vigente cierra primero las brechas no GPU documentadas; la campana target-GPU queda como fase separada y requiere autorizacion especifica de presupuesto conforme A29."
+  "notes": "Snapshot verified on main 3d5b93e38c3a838e1e71c35cfe1a716d1768ff73, workflow 43587693820. Candidate sha-3d5b93e digest: sha256:02d198ca858e162362d51669ec19910d5c6ce0bfe370665f75ad714bd2d7de3c; promoted latest manifest digest: sha256:c8e76463125ef210258b5ec5fd4e20b8188b83e29b97dd650d8449e2e8f7994f. Main software, image and smoke checks passed, but no target-GPU measurement was run. check_engines_manifest.py still reports 266 blockers across 54 selected engines. W26 remains one historical L3 SDXL run and does not validate other recipes or GPU quality for this snapshot."
 }
