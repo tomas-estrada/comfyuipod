@@ -7,7 +7,7 @@ import io
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,13 @@ from comfy_studio.projects import ProjectStore
 
 class RasterLayerError(ValueError):
     """A raster layer set cannot be safely composed."""
+
+
+class RasterLayerStaleError(RasterLayerError):
+    """A project asset no longer matches the source bytes pinned by its layer."""
+
+
+MAX_RASTER_LAYERS = 32
 
 
 def _sha256_file(path: Path) -> str:
@@ -98,6 +105,7 @@ class RasterLayer:
     caused_by: str | None = None
     region: str = "full"
     order: int = 0
+    source_sha256: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -106,10 +114,35 @@ class RasterLayer:
             "caused_by": self.caused_by,
             "region": self.region,
             "order": self.order,
+            "source_sha256": self.source_sha256,
         }
 
 
 def validate_layers(layers: list[RasterLayer]) -> list[RasterLayer]:
+    if len(layers) > MAX_RASTER_LAYERS:
+        raise RasterLayerError(f"máximo {MAX_RASTER_LAYERS} capas por conjunto")
+    for layer in layers:
+        if not isinstance(layer.layer_id, str) or not 1 <= len(layer.layer_id) <= 64:
+            raise RasterLayerError("layer_id debe tener entre 1 y 64 caracteres")
+        if not isinstance(layer.asset_id, str) or not 1 <= len(layer.asset_id) <= 64:
+            raise RasterLayerError("asset_id debe tener entre 1 y 64 caracteres")
+        if not isinstance(layer.region, str) or not 1 <= len(layer.region) <= 128:
+            raise RasterLayerError("region debe tener entre 1 y 128 caracteres")
+        if layer.caused_by is not None and (
+            not isinstance(layer.caused_by, str) or len(layer.caused_by) > 64
+        ):
+            raise RasterLayerError("caused_by inválido")
+        if (
+            isinstance(layer.order, bool)
+            or not isinstance(layer.order, int)
+            or not 0 <= layer.order < MAX_RASTER_LAYERS
+        ):
+            raise RasterLayerError(f"order debe estar entre 0 y {MAX_RASTER_LAYERS - 1}")
+        if layer.source_sha256 is not None and (
+            not isinstance(layer.source_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", layer.source_sha256)
+        ):
+            raise RasterLayerError("source_sha256 inválido")
     ids = [layer.layer_id for layer in layers]
     if len(ids) != len(set(ids)):
         raise RasterLayerError("layer_id duplicado")
@@ -160,6 +193,7 @@ def _open_rgba(
     asset_id: str,
     *,
     max_pixels: int,
+    expected_sha256: str | None = None,
 ) -> tuple[Image.Image, str]:
     asset = store.get_asset(project_id, asset_id)
     path = store.get_asset_path(project_id, asset_id)
@@ -176,7 +210,12 @@ def _open_rgba(
                     f"{asset_id}: imagen excede el presupuesto dinámico de memoria"
                 )
             source.load()
-            return source.convert("RGBA"), _sha256_file(path)
+            digest = _sha256_file(path)
+            if expected_sha256 is not None and digest != expected_sha256:
+                raise RasterLayerStaleError(
+                    f"{asset_id}: la fuente cambió desde que se guardó la capa"
+                )
+            return source.convert("RGBA"), digest
     except (
         OSError,
         UnidentifiedImageError,
@@ -198,6 +237,35 @@ def validate_asset_references(
             )
         if asset.get("kind") != "image" or path.suffix.lower() != ".png":
             raise RasterLayerError(f"{layer.asset_id}: se requiere un PNG del proyecto")
+
+
+def pin_asset_sources(
+    store: ProjectStore, project_id: str, layers: list[RasterLayer]
+) -> list[RasterLayer]:
+    """Return layers pinned to the current bytes of their project-owned PNGs."""
+    ordered = validate_layers(layers)
+    validate_asset_references(store, project_id, ordered)
+    pinned: list[RasterLayer] = []
+    for layer in ordered:
+        path = store.get_asset_path(project_id, layer.asset_id)
+        if path is None:
+            raise RasterLayerError(f"asset inexistente en este proyecto: {layer.asset_id}")
+        pinned.append(replace(layer, source_sha256=_sha256_file(path)))
+    return pinned
+
+
+def stale_layer_ids(
+    store: ProjectStore, project_id: str, layers: list[RasterLayer]
+) -> list[str]:
+    """List layers whose project asset no longer matches its pinned source hash."""
+    stale: list[str] = []
+    for layer in validate_layers(layers):
+        if layer.source_sha256 is None:
+            continue  # Legacy manifests predate source-byte pinning.
+        path = store.get_asset_path(project_id, layer.asset_id)
+        if path is None or _sha256_file(path) != layer.source_sha256:
+            stale.append(layer.layer_id)
+    return stale
 
 
 def composite_layers(
@@ -222,7 +290,11 @@ def composite_layers(
     try:
         for layer in ordered:
             image, digest = _open_rgba(
-                store, project_id, layer.asset_id, max_pixels=max_pixels
+                store,
+                project_id,
+                layer.asset_id,
+                max_pixels=max_pixels,
+                expected_sha256=layer.source_sha256,
             )
             try:
                 if canvas is None:

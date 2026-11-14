@@ -97,6 +97,66 @@ def test_project_raster_layers_persist_and_composite_real_pixels(
     assert previous_asset["metadata"]["stale"] is True
 
 
+def test_raster_layer_source_hash_detects_changed_project_bytes(client: TestClient) -> None:
+    project_id = client.post("/studio/api/projects", json={"name": "Provenance"}).json()[
+        "id"
+    ]
+    original_bytes = _png([(12, 34, 56, 255)])
+    upload = client.post(
+        f"/studio/api/projects/{project_id}/uploads",
+        files={"file": ("layer.png", original_bytes, "image/png")},
+    )
+    asset_id = upload.json()["id"]
+    url = f"/studio/api/projects/{project_id}/raster-layers"
+    body = {"layers": [{"layer_id": "plate", "asset_id": asset_id, "order": 0}]}
+    saved = client.put(url, json=body)
+    assert saved.status_code == 200, saved.text
+    pinned_hash = saved.json()["layers"][0]["source_sha256"]
+    assert len(pinned_hash) == 64
+
+    rendered = client.post(f"{url}/composite")
+    assert rendered.status_code == 201, rendered.text
+    path = client.app.state.store.get_asset_path(project_id, asset_id)
+    assert path is not None
+    path.write_bytes(_png([(90, 80, 70, 255)]))
+
+    current = client.get(url)
+    assert current.status_code == 200
+    assert current.json()["stale_layer_ids"] == ["plate"]
+    prior_output_url = rendered.json()["asset"]["preview_url"].replace("/file", "")
+    prior_output = client.get(prior_output_url)
+    assert prior_output.json()["metadata"]["stale"] is True
+    rejected = client.post(f"{url}/composite")
+    assert rejected.status_code == 409
+    assert "fuente cambió" in rejected.json()["detail"]
+
+    rebound = client.put(url, json=body)
+    assert rebound.status_code == 200, rebound.text
+    assert rebound.json()["layers"][0]["source_sha256"] != pinned_hash
+    assert client.get(url).json()["stale_layer_ids"] == []
+
+
+def test_raster_layer_set_has_a_fixed_layer_count_limit(client: TestClient) -> None:
+    project_id = client.post("/studio/api/projects", json={"name": "Bounded"}).json()[
+        "id"
+    ]
+    upload = client.post(
+        f"/studio/api/projects/{project_id}/uploads",
+        files={"file": ("layer.png", _png([(0, 0, 0, 255)]), "image/png")},
+    )
+    url = f"/studio/api/projects/{project_id}/raster-layers"
+    response = client.put(
+        url,
+        json={
+            "layers": [
+                {"layer_id": f"layer-{index}", "asset_id": upload.json()["id"], "order": index % 32}
+                for index in range(33)
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_raster_layers_reject_cycles_and_cross_project_assets(client: TestClient) -> None:
     first_id = client.post("/studio/api/projects", json={"name": "A"}).json()["id"]
     second_id = client.post("/studio/api/projects", json={"name": "B"}).json()["id"]
