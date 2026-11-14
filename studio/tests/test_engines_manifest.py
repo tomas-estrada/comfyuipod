@@ -92,6 +92,46 @@ def test_reference_local_records_its_tracked_implemented_entrypoint() -> None:
     assert not any("evidence_entrypoint" in blocker for blocker in blockers)
     assert any("SHA inmutable de 40 hex" in blocker for blocker in blockers)
     assert any("hashes SHA-256" in blocker for blocker in blockers)
+def test_remotion_records_only_tracked_project_and_adapter_evidence() -> None:
+    """Remotion lock/entrypoint evidence is tied to checked-in source files."""
+    mod = _load_module()
+    manifest = mod.load_json(mod.DEFAULT_MANIFEST)
+    cap_ids = mod._capability_ids(mod.DEFAULT_CAPS)
+    remotion = next(engine for engine in manifest["engines"] if engine["id"] == "remotion")
+    lock_name, lock_hash = next(iter(remotion["dependency_lock_hashes"].items()))
+    lock_path = mod.REPO_ROOT / lock_name
+    lock = mod.load_json(lock_path)
+    package = mod.load_json(mod.REPO_ROOT / "studio/remotion/package.json")
+    dockerfile = (mod.REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    config = (mod.REPO_ROOT / "studio/remotion/remotion.config.ts").read_text(encoding="utf-8")
+    project_entry = (mod.REPO_ROOT / "studio/remotion/src/index.ts").read_text(encoding="utf-8")
+    adapter = (mod.REPO_ROOT / "studio/comfy_studio/engines/editor.py").read_text(
+        encoding="utf-8"
+    )
+    problems, blockers = mod.validate({"engines": [remotion]}, cap_ids)
+
+    assert problems == []
+    assert hashlib.sha256(lock_path.read_bytes()).hexdigest() == lock_hash
+    assert package["license"] == "UNLICENSED"
+    assert package["dependencies"]["remotion"] == "4.0.541"
+    assert package["dependencies"]["@remotion/cli"] == "4.0.541"
+    assert lock["packages"]["node_modules/remotion"]["version"] == "4.0.541"
+    assert lock["packages"]["node_modules/remotion"]["integrity"].startswith("sha512-")
+    assert lock["packages"]["node_modules/remotion"]["license"] == "SEE LICENSE IN LICENSE.md"
+    assert 'Config.setEntryPoint("./src/index.ts")' in config
+    assert 'registerRoot(RemotionRoot)' in project_entry
+    assert package["scripts"]["render"] == "remotion render Reel"
+    assert "npm ci --no-audit --no-fund" in dockerfile
+    assert '"render",\n                    _REMOTION_COMPOSITION' in adapter
+    assert "timeline.validate()" in adapter
+    assert "res.returncode != 0 or not out.exists()" in adapter
+    assert remotion["evidence_entrypoint"] == "studio/comfy_studio/engines/editor.py"
+    assert remotion["evidence_test"] == "studio/tests/test_m4_editor_engine.py"
+    assert any("code_revision" in blocker for blocker in blockers)
+    assert any("redistribución" in blocker for blocker in blockers)
+    assert any("notices" in blocker for blocker in blockers)
+    assert not any("hashes SHA-256" in blocker for blocker in blockers)
+    assert not any("entrypoint real" in blocker for blocker in blockers)
 
 
 def test_counts_mismatch_is_a_problem() -> None:
