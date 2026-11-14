@@ -75,6 +75,25 @@ def test_ffmpeg_has_complete_a07_manifest_evidence() -> None:
     assert lock["copyright"]["sha256"] in dockerfile
 
 
+def test_reference_local_records_its_tracked_implemented_entrypoint() -> None:
+    """Implemented first-party code is evidenced without clearing unrelated A07 gates."""
+    mod = _load_module()
+    manifest = mod.load_json(mod.DEFAULT_MANIFEST)
+    cap_ids = mod._capability_ids(mod.DEFAULT_CAPS)
+    engine = next(item for item in manifest["engines"] if item["id"] == "reference-local")
+
+    problems, blockers = mod.validate({"engines": [engine]}, cap_ids)
+
+    assert problems == []
+    assert engine["implementation_status"] == "implemented"
+    assert engine["evidence_entrypoint"] == "studio/comfy_studio/engines/reference_local.py"
+    assert engine["evidence_test"] == "studio/tests/test_engine_reference_local.py"
+    assert not any("entrypoint real" in blocker for blocker in blockers)
+    assert not any("evidence_entrypoint" in blocker for blocker in blockers)
+    assert any("SHA inmutable de 40 hex" in blocker for blocker in blockers)
+    assert any("hashes SHA-256" in blocker for blocker in blockers)
+
+
 def test_counts_mismatch_is_a_problem() -> None:
     mod = _load_module()
     manifest = {"counts": {"engines": 99}, "engines": [{"id": "a", "disposition": "required"}]}
