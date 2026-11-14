@@ -152,6 +152,11 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/raster-layers/chroma-key",
     "POST /studio/api/projects/{project_id}/raster-layers/lut-grade",
     "POST /studio/api/projects/{project_id}/face/import",
+    (
+        "POST /studio/api/projects/{project_id}/face/speakers/{speaker_id}/curves/"
+        "{curve_id}/compile-spanish"
+    ),
+    "POST /studio/api/projects/{project_id}/face/actors/{asset_id}/curves/{curve_id}/render",
     "POST /studio/api/projects/{project_id}/faces/index",
     "POST /studio/api/projects/{project_id}/identities",
     "POST /studio/api/projects/{project_id}/keyframes/extract",
@@ -176,6 +181,7 @@ EXPECTED_ROUTES: list[str] = [
     "PUT /studio/api/projects/{project_id}",
     "PUT /studio/api/projects/{project_id}/assets/{asset_id}/3d-manifest",
     "PUT /studio/api/projects/{project_id}/face/curves/{curve_id}",
+    "PUT /studio/api/projects/{project_id}/face/speaker-tracks",
     "PUT /studio/api/projects/{project_id}/motion/clips/{clip_id}",
     "PUT /studio/api/projects/{project_id}/motion/skeletons/{skeleton_id}",
     "PUT /studio/api/projects/{project_id}/music/arrangement",
