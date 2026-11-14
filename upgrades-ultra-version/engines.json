@@ -341,19 +341,23 @@
         "R02"
       ],
       "scope": "Catálogo + medios + licencias + geometría cuando exista + selector de cobertura dentro de la imagen.",
-      "terms_review": "OSM no es fachada; cada archivo con origen/autor/licencia/hash; strict_exact no acepta datos de cámara desconocidos.",
+      "terms_review": "Bloqueado para este snapshot: el inventario contiene 612 archivos con 612 avisos individuales, pero 4 referencias CC BY 4.0 tienen autor desconocido y 1 registro de dominio público carece de license_url. Falta resolver la atribución antes de autorizar redistribución. La fuente geográfica declara ODbL 1.0 y el bundle conserva la atribución; strict_exact no acepta datos de cámara desconocidos.",
       "hardware_notes": "CPU; adquisición baseline en desarrollo/build; expansión validada y versionada por PR.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C07"
       ],
-      "code_revision": "packaging-v1",
+      "code_revision": "414050a6b72b31127d85e16a1b8603c05d8011b2",
       "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+      "redistribution_decision": "blocked",
+      "notices_reviewed": false,
+      "evidence_entrypoint": "studio/comfy_studio/engines/atlas_offline.py",
+      "evidence_test": "studio/tests/test_engine_atlas_offline.py",
+      "release_gate": "tracked Studio runtime dependency lock absent (studio/pyproject.toml dependencies are installed without a repository-resolved hash lock); notices not cleared because 4 CC BY 4.0 records lack author names and 1 public-domain record lacks license_url; no GPU validation claim"
     },
     {
       "id": "depth-anything3",

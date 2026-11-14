@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -132,6 +133,63 @@ def test_remotion_records_only_tracked_project_and_adapter_evidence() -> None:
     assert any("notices" in blocker for blocker in blockers)
     assert not any("hashes SHA-256" in blocker for blocker in blockers)
     assert not any("entrypoint real" in blocker for blocker in blockers)
+def test_atlas_offline_a07_evidence_keeps_unresolved_release_gates_visible() -> None:
+    """Pin Atlas code while preserving data-attribution and runtime-lock blockers."""
+    mod = _load_module()
+    manifest = mod.load_json(mod.DEFAULT_MANIFEST)
+    cap_ids = mod._capability_ids(mod.DEFAULT_CAPS)
+    atlas_engine = next(
+        engine for engine in manifest["engines"] if engine["id"] == "atlas-offline"
+    )
+    atlas_root = REPO_ROOT / "atlas"
+    bundle_manifest = json.loads((atlas_root / "manifest.json").read_text(encoding="utf-8"))
+    attribution = atlas_root / "ATTRIBUTION.md"
+    sources = atlas_root / "sources.json"
+
+    # Every shipped photo and per-reference notice exists in the tracked bundle.
+    assert len(bundle_manifest["files"]) == 612
+    assert attribution.is_file()
+    assert sources.is_file()
+    assert len(list((atlas_root / "licenses").glob("*.txt"))) == 612
+    assert all((atlas_root / entry["path"]).is_file() for entry in bundle_manifest["files"])
+    assert all(
+        (
+            atlas_root
+            / "licenses"
+            / f"{Path(entry['path']).name.removesuffix('.jpg')}.txt"
+        ).is_file()
+        for entry in bundle_manifest["files"]
+    )
+
+    # Read the catalog read-only: the release-evidence test must not rewrite the bundle.
+    catalog_uri = f"file:{atlas_root / 'catalog.db'}?mode=ro"
+    with sqlite3.connect(catalog_uri, uri=True) as catalog:
+        unknown_authors = catalog.execute(
+            "SELECT COUNT(*) FROM atlas_refs WHERE usable=1 AND (author IS NULL OR author='')"
+        ).fetchone()[0]
+        missing_license_urls = catalog.execute(
+            "SELECT COUNT(*) FROM atlas_refs WHERE usable=1 "
+            "AND (license_url IS NULL OR license_url='')"
+        ).fetchone()[0]
+
+    assert unknown_authors == 4
+    assert missing_license_urls == 1
+    assert atlas_engine["code_revision"] == "414050a6b72b31127d85e16a1b8603c05d8011b2"
+    assert atlas_engine["implementation_status"] == "implemented"
+    assert atlas_engine["evidence_entrypoint"] == "studio/comfy_studio/engines/atlas_offline.py"
+    assert atlas_engine["evidence_test"] == "studio/tests/test_engine_atlas_offline.py"
+    assert (REPO_ROOT / atlas_engine["evidence_entrypoint"]).is_file()
+    assert (REPO_ROOT / atlas_engine["evidence_test"]).is_file()
+    assert atlas_engine["redistribution_decision"] == "blocked"
+    assert atlas_engine["notices_reviewed"] is False
+    assert "dependency_lock_hashes" not in atlas_engine
+
+    problems, blockers = mod.validate({"engines": [atlas_engine]}, cap_ids)
+
+    assert problems == []
+    assert len(blockers) == 2
+    assert any("dependency locks" in blocker for blocker in blockers)
+    assert any("revisión explícita de notices" in blocker for blocker in blockers)
 
 
 def test_counts_mismatch_is_a_problem() -> None:
