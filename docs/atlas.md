@@ -15,6 +15,10 @@ Mapillary, GeoMedellín ni terceros.
 - Datos: `atlas/` en el repo → `COPY atlas/ /opt/studio-atlas/` en el Dockerfile
   (capa tardía; `ENV STUDIO_ATLAS_DIR=/opt/studio-atlas`). `.dockerignore` incluye
   licencias y avisos (`!atlas/**`).
+- Checkout local: `atlas/` puede quedar fuera si se usa `git sparse-checkout`.
+  Añádelo al worktree antes de ejecutar sus pruebas o el CLI con
+  `git sparse-checkout add atlas`; en macOS usa `--root atlas`, porque
+  `/opt/studio-atlas` solo existe dentro de la imagen Linux.
 - Verificación: `python -m comfy_studio.atlas verify-bundle --root atlas` en CI
   (checkout) y dentro de la imagen candidata (`/opt/studio-atlas`) antes de
   promover; un archivo ausente/corrupto/sin licencia bloquea la promoción.
