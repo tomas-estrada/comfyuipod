@@ -36,7 +36,7 @@
 - Modify: opt-in flag registry, acquisition selection, and storage accounting files discovered in `studio/comfy_studio/model_assets.py`, `scripts/storage_requirement.py`, `scripts/download-models.sh`, and `scripts/check_models_manifest.py`
 - Test: add a focused manifest/resource test without editing the template or agent-tool tests
 
-**Interface:** Add one optional AIO checkpoint for `Comfy-Org/ace_step_1.5_ComfyUI_files`, immutable revision `371bb1680f8c88d8c1083f6ffb6330d3d55bff76`, path `checkpoints/ace_step_1.5_turbo_aio.safetensors`, size `10025478736`, SHA-256 `67b0f43aa5c51c840bd0228e6a935d8ff416ec87e5df2fc0637da17a561252bc`, Apache-2.0, enabled only by `STUDIO_INCLUDE_MUSIC=1`.
+**Interface:** Add one optional AIO checkpoint for `Comfy-Org/ACE-Step-1.5`, immutable revision `371bb1680f8c88d8c1083f6ffb6330d3d55bff76`, path `checkpoints/ace_step_1.5_turbo_aio.safetensors`, size `10025478736`, SHA-256 `67b0f43aa5c51c840bd0228e6a935d8ff416ec87e5df2fc0637da17a561252bc`, Apache-2.0, enabled only by `STUDIO_INCLUDE_MUSIC=1`.
 
 - [x] Added manifest/resource contracts for opt-in-only selection and the exact immutable pin.
 - [x] Added the manifest entry and wired opt-in through selectors, storage accounting, CLI helper, and CI dry-run.

@@ -24,10 +24,10 @@ def test_ace_step_aio_is_a_pinned_optional_music_asset() -> None:
     entry = rows[0]
     assert entry == {
         "category": "music_opt_in",
-        "repo_id": "Comfy-Org/ace_step_1.5_ComfyUI_files",
+        "repo_id": "Comfy-Org/ACE-Step-1.5",
         "remote_path": "checkpoints/ace_step_1.5_turbo_aio.safetensors",
         "url": (
-            "https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/"
+            "https://huggingface.co/Comfy-Org/ACE-Step-1.5/resolve/"
             "371bb1680f8c88d8c1083f6ffb6330d3d55bff76/"
             "checkpoints/ace_step_1.5_turbo_aio.safetensors"
         ),
