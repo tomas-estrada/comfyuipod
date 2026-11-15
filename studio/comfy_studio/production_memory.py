@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from threading import RLock
+from threading import Lock, RLock
 from typing import Any
 
 from comfy_studio.config import SecretRedactor
@@ -87,6 +87,8 @@ class MemoryLimits:
 
 
 DEFAULT_LIMITS = MemoryLimits()
+_STORE_LOCKS: dict[str, RLock] = {}
+_STORE_LOCKS_GUARD = Lock()
 
 
 def _canonical_json(value: Any) -> str:
@@ -121,6 +123,13 @@ class ProductionMemory:
     store: ProjectStore
     limits: MemoryLimits = DEFAULT_LIMITS
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Tool handlers create short-lived service objects. Share the lock by DB
+        # path so concurrent requests cannot overwrite each other's read/modify/write.
+        lock_key = str(self.store.db_path.resolve())
+        with _STORE_LOCKS_GUARD:
+            self._lock = _STORE_LOCKS.setdefault(lock_key, RLock())
 
     def _require_project(self, project_id: str) -> str:
         if self.store.get_project(project_id) is None:

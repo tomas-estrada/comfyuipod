@@ -224,3 +224,10 @@ def test_unknown_memory_id_is_typed(tmp_path) -> None:
 
     with pytest.raises(MemoryNotFoundError, match="not found"):
         memory.get_history(project_id, "missing")
+
+
+def test_service_instances_for_the_same_project_store_share_write_lock(tmp_path) -> None:
+    store, _, _ = _memory(tmp_path)
+
+    assert ProductionMemory(store)._lock is ProductionMemory(store)._lock
+    assert ProductionMemory(store)._lock is ProductionMemory(ProjectStore(store.data_dir))._lock
