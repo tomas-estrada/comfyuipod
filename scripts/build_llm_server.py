@@ -143,8 +143,52 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
     dependencies = parse_ldd_dependencies(ldd_output)
     notice_dir = license_root / "system-libraries"
     notice_dir.mkdir(parents=True, exist_ok=True)
-    package_notices: dict[str, tuple[str, str]] = {}
+    package_notices: dict[str, tuple[str, str, str, str]] = {}
     records: list[dict[str, str]] = []
+    apt_indexes_ready = False
+
+    def archive_notice(package: str, package_version: str, architecture: str) -> Path:
+        package_name = package.partition(":")[0]
+        with tempfile.TemporaryDirectory(prefix="llm-system-notice-") as temporary:
+            package_root = Path(temporary)
+            package_spec = f"{package_name}:{architecture}={package_version}"
+            subprocess.run(["apt-get", "download", package_spec], cwd=package_root, check=True)
+            archives = sorted(package_root.glob("*.deb"))
+            if len(archives) != 1:
+                raise RuntimeError(
+                    f"apt no devolvió un único archivo para paquete {package_spec}"
+                )
+            archive = archives[0]
+            fields = subprocess.check_output(
+                ["dpkg-deb", "--field", str(archive), "Package", "Version", "Architecture"],
+                text=True,
+            )
+            metadata = {
+                key: value.strip()
+                for line in fields.splitlines()
+                if ":" in line
+                for key, value in [line.split(":", 1)]
+            }
+            if (
+                metadata.get("Package") != package_name
+                or metadata.get("Version") != package_version
+                or metadata.get("Architecture") not in {architecture, "all"}
+            ):
+                raise RuntimeError(
+                    f"paquete descargado no coincide con el instalado: {package_spec}"
+                )
+            extracted = package_root / "extracted"
+            subprocess.run(
+                ["dpkg-deb", "--extract", str(archive), str(extracted)], check=True
+            )
+            source = extracted / "usr" / "share" / "doc" / package_name / "copyright"
+            if not source.is_file():
+                raise RuntimeError(
+                    f"el paquete exacto {package_spec} no contiene archivo copyright"
+                )
+            destination = notice_dir / f"{re.sub(r'[^A-Za-z0-9_.+-]', '_', package)}.copyright"
+            shutil.copy2(source, destination)
+            return destination
 
     for raw_path in dependencies:
         library_path = Path(raw_path).resolve(strict=True)
@@ -160,6 +204,14 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
             raise RuntimeError(f"sin paquete Debian propietario para biblioteca {library_path}")
         for package in sorted(packages):
             if package not in package_notices:
+                package_version = subprocess.check_output(
+                    ["dpkg-query", "-W", "-f=${Version}", package], text=True
+                ).strip()
+                architecture = subprocess.check_output(
+                    ["dpkg-query", "-W", "-f=${Architecture}", package], text=True
+                ).strip()
+                if not package_version or not architecture:
+                    raise RuntimeError(f"versión/arquitectura ausente para paquete {package}")
                 files = subprocess.check_output(
                     ["dpkg-query", "-L", package], text=True
                 ).splitlines()
@@ -169,20 +221,28 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
                 ]
                 source_notice = next((item for item in candidates if item.is_file()), None)
                 if source_notice is None:
-                    raise RuntimeError(
-                        f"sin archivo copyright instalado para paquete {package}"
-                    )
-                safe_name = re.sub(r"[^A-Za-z0-9_.+-]", "_", package)
-                destination = notice_dir / f"{safe_name}.copyright"
-                shutil.copy2(source_notice, destination)
+                    if not apt_indexes_ready:
+                        subprocess.run(["apt-get", "update"], check=True)
+                        apt_indexes_ready = True
+                    destination = archive_notice(package, package_version, architecture)
+                    source_kind = "exact-package-archive"
+                else:
+                    safe_name = re.sub(r"[^A-Za-z0-9_.+-]", "_", package)
+                    destination = notice_dir / f"{safe_name}.copyright"
+                    shutil.copy2(source_notice, destination)
+                    source_kind = "installed-package"
                 digest = hashlib.sha256(destination.read_bytes()).hexdigest()
-                package_notices[package] = (str(destination.relative_to(license_root)), digest)
-            notice_path, digest = package_notices[package]
+                package_notices[package] = (
+                    str(destination.relative_to(license_root)), digest, package_version, source_kind
+                )
+            notice_path, digest, package_version, source_kind = package_notices[package]
             records.append({
                 "library": str(library_path),
                 "package": package,
+                "package_version": package_version,
                 "notice": notice_path,
                 "sha256": digest,
+                "notice_source": source_kind,
             })
 
     manifest = notice_dir / "manifest.json"

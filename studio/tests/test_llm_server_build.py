@@ -53,6 +53,9 @@ def test_llama_build_lock_is_pinned_cpu_only_and_preserves_notices() -> None:
     assert "--supplemental-license /tmp/llama-cpp-notices.md" in dockerfile
     assert "test -s /usr/share/licenses/llama.cpp/Third-Party-LICENSES.md" in dockerfile
     assert "test -s /usr/share/licenses/llama.cpp/system-libraries/manifest.json" in dockerfile
+    build_run = dockerfile.split("RUN python3 /usr/local/bin/build_llm_server.py", 1)[1]
+    llm_build_run = build_run.split("\n\n", 1)[0]
+    assert "rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*" in llm_build_run
     assert "!docs/licenses/llama-cpp-notices.md" in dockerignore
 
 
@@ -86,6 +89,11 @@ def test_system_library_notices_follow_the_final_elf_dependency_closure(
             return f"libexample1:amd64: {library}\n"
         if command[0:2] == ["dpkg-query", "-L"]:
             return f"{copyright_file}\n"
+        if command[0:2] == ["dpkg-query", "-W"]:
+            if "${Version}" in command[2]:
+                return "1.0-1\n"
+            if "${Architecture}" in command[2]:
+                return "amd64\n"
         raise AssertionError(f"unexpected command: {command}")
 
     monkeypatch.setattr(build_module.subprocess, "check_output", fake_check_output)
@@ -95,13 +103,68 @@ def test_system_library_notices_follow_the_final_elf_dependency_closure(
     assert records == [{
         "library": str(library.resolve()),
         "package": "libexample1:amd64",
+        "package_version": "1.0-1",
         "notice": "system-libraries/libexample1_amd64.copyright",
         "sha256": hashlib.sha256(copyright_file.read_bytes()).hexdigest(),
+        "notice_source": "installed-package",
     }]
     notice = license_root / records[0]["notice"]
     assert notice.read_text(encoding="utf-8") == "Example system library license\n"
     inventory = json.loads((license_root / "system-libraries" / "manifest.json").read_text())
     assert inventory["libraries"] == records
+
+
+def test_system_library_notice_recovers_copyright_from_exact_installed_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = tmp_path / "lib" / "libexample.so.1"
+    library.parent.mkdir()
+    library.write_bytes(b"ELF fixture")
+    archived_copyright = "Copyright (c) example package 1.2.3\n"
+    commands: list[list[str]] = []
+
+    def fake_check_output(command: list[str], *, text: bool) -> str:
+        if command[0] == "ldd":
+            return f"libexample.so.1 => {library} (0x0001)\n"
+        if command[0:2] == ["dpkg-query", "-S"]:
+            return f"libexample1:amd64: {library}\n"
+        if command[0:2] == ["dpkg-query", "-L"]:
+            return f"{library}\n"
+        if command[0:2] == ["dpkg-query", "-W"]:
+            if "${Version}" in command[2]:
+                return "1.2.3-1\n"
+            if "${Architecture}" in command[2]:
+                return "amd64\n"
+        if command[:2] == ["dpkg-deb", "--field"]:
+            return "Package: libexample1\nVersion: 1.2.3-1\nArchitecture: amd64\n"
+        raise AssertionError(f"unexpected command: {command}")
+
+    def fake_run(command: list[str], *, check: bool, cwd: Path | None = None) -> None:
+        commands.append(command)
+        if command[:2] == ["apt-get", "download"]:
+            assert cwd is not None
+            (cwd / "libexample1_1.2.3-1_amd64.deb").write_bytes(b"verified apt package fixture")
+        elif command[:2] == ["dpkg-deb", "--extract"]:
+            extract_root = Path(command[3])
+            notice = extract_root / "usr" / "share" / "doc" / "libexample1" / "copyright"
+            notice.parent.mkdir(parents=True)
+            notice.write_text(archived_copyright, encoding="utf-8")
+        else:
+            assert command == ["apt-get", "update"]
+
+    monkeypatch.setattr(build_module.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(build_module.subprocess, "run", fake_run)
+
+    license_root = tmp_path / "licenses" / "llama.cpp"
+    records = build_module.install_system_library_notices(library, license_root)
+
+    assert records[0]["package_version"] == "1.2.3-1"
+    assert records[0]["notice_source"] == "exact-package-archive"
+    assert records[0]["sha256"] == hashlib.sha256(archived_copyright.encode()).hexdigest()
+    assert (license_root / records[0]["notice"]).read_text(encoding="utf-8") == archived_copyright
+    assert [command for command in commands if command[:2] == ["apt-get", "download"]] == [
+        ["apt-get", "download", "libexample1:amd64=1.2.3-1"]
+    ]
 
 
 def test_parse_ldd_rejects_missing_or_empty_dependency_lists() -> None:

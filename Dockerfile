@@ -577,6 +577,7 @@ COPY scripts/smoke_mitsuba_cpu_fit.py /tmp/smoke_mitsuba_cpu_fit.py
 
 # Código de aplicación (studio/panel): capa separada para no rehacer el warmup.
 RUN python3 /usr/local/bin/build_llm_server.py --lock /tmp/llm-server.lock.json --supplemental-license /tmp/llama-cpp-notices.md && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* && \
     rm -f /usr/local/bin/build_llm_server.py /tmp/llm-server.lock.json /tmp/llama-cpp-notices.md && \
     /usr/local/bin/llama-server --version && \
     test -s /usr/share/licenses/llama.cpp/LICENSE && \
