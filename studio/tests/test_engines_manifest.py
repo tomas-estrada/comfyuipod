@@ -651,3 +651,5 @@ def test_lock_remotion_tiene_lock_fijado() -> None:
     remotion_copy = dockerfile.index("COPY studio/remotion/ /opt/remotion/")
     remotion_build = dockerfile.index("RUN npm ci --no-audit --no-fund", remotion_copy)
     assert remotion_build > remotion_copy
+    dockerignore = (REPO_ROOT / ".dockerignore").read_text()
+    assert "!docs/licenses/remotion.md" in dockerignore
