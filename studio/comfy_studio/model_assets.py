@@ -125,9 +125,7 @@ def _require_destination_within(
             allowed_root.resolve(strict=False) for allowed_root in (root, *additional_roots)
         )
     except (OSError, RuntimeError) as exc:
-        raise ValueError(
-            f"manifest destination escapes allowed root: {manifest_dest!r}"
-        ) from exc
+        raise ValueError(f"manifest destination escapes allowed root: {manifest_dest!r}") from exc
     if not any(resolved_destination.is_relative_to(allowed) for allowed in resolved_roots):
         raise ValueError(f"manifest destination escapes allowed root: {manifest_dest!r}")
 
@@ -152,13 +150,13 @@ def resolve_dest(dest: str, env: dict[str, str] | None = None) -> Path:
     for prefix in data_prefixes:
         if declared.startswith(prefix):
             root = Path(comfy_data)
-            candidate = root / _expand(declared[len(prefix):], environment)
+            candidate = root / _expand(declared[len(prefix) :], environment)
             _require_destination_within(root, candidate, declared)
             return candidate
     for prefix in app_prefixes:
         if declared.startswith(prefix):
             root = Path(comfy_app)
-            candidate = root / _expand(declared[len(prefix):], environment)
+            candidate = root / _expand(declared[len(prefix) :], environment)
             _require_destination_within(
                 root, candidate, declared, additional_roots=(Path(comfy_data),)
             )
@@ -180,9 +178,7 @@ def resolve_dest(dest: str, env: dict[str, str] | None = None) -> Path:
     if raw == "custom_nodes" or raw.startswith("custom_nodes/"):
         root = Path(comfy_app)
         candidate = root / raw
-        _require_destination_within(
-            root, candidate, declared, additional_roots=(Path(comfy_data),)
-        )
+        _require_destination_within(root, candidate, declared, additional_roots=(Path(comfy_data),))
         return candidate
     root = Path(comfy_data)
     candidate = root / raw
@@ -330,9 +326,23 @@ def inventory(env: dict[str, str] | None = None) -> list[dict[str, Any]]:
             continue
         path = resolve_dest(str(dest), environment)
         try:
-            present = path.is_file() and path.stat().st_size > 0
+            stat = path.stat()
+        except FileNotFoundError:
+            present = False
+            bytes_on_disk = None
+            integrity_state = (
+                "staging" if _asset_is_staging(entry, path, environment) else "missing"
+            )
         except OSError:  # permisos o ruta rota: sin medición, no se inventa
             present = False
+            bytes_on_disk = None
+            integrity_state = "unavailable"
+        else:
+            present = path.is_file() and stat.st_size > 0
+            bytes_on_disk = stat.st_size if present else None
+            integrity_state = _asset_integrity_state(
+                entry, path, stat.st_size, stat.st_mtime_ns, present
+            )
         out.append(
             {
                 "name": path.name,
@@ -340,10 +350,102 @@ def inventory(env: dict[str, str] | None = None) -> list[dict[str, Any]]:
                 "class": entry_class(entry),
                 "group": entry.get("opt_in") or "",
                 "present": present,
-                "bytes_on_disk": path.stat().st_size if present else None,
+                "bytes_on_disk": bytes_on_disk,
+                "integrity_state": integrity_state,
             }
         )
     return out
+
+
+def _asset_integrity_state(
+    entry: dict[str, Any], path: Path, size: int, mtime_ns: int, present: bool
+) -> str:
+    """Report cached integrity evidence without hashing large model files.
+
+    A matching sidecar means this exact `(mtime, size)` was verified against
+    the current manifest digest. Without a digest, the declared size is the
+    available integrity contract. A file that cannot be proven corrupt from
+    those cheap facts remains explicitly unverified.
+    """
+    if not present:
+        return "corrupt"
+    algorithm = "sha256" if entry.get("sha256") else "sha1" if entry.get("sha1") else None
+    expected = entry.get("sha256") or entry.get("sha1")
+    if algorithm and isinstance(expected, str):
+        try:
+            from comfy_studio.asset_acquire import (
+                INTEGRITY_SUFFIX,
+                _integrity_cache_matches,
+                _read_sidecar,
+                _sidecar,
+            )
+
+            cache = _read_sidecar(_sidecar(path, INTEGRITY_SUFFIX))
+            if _integrity_cache_matches(cache, path, expected.lower(), algorithm, size):
+                return "verified"
+            if (
+                isinstance(cache, dict)
+                and cache.get("algorithm") == algorithm
+                and cache.get("digest") != expected.lower()
+                and cache.get("mtime_ns") == mtime_ns
+                and cache.get("size") == size
+            ):
+                return "corrupt"
+        except (OSError, ValueError):
+            pass
+        return "present_unverified"
+    declared_size = _safe_declared_bytes(entry.get("bytes"))
+    if declared_size:
+        return "verified" if size == declared_size else "corrupt"
+    return "present_unverified"
+
+
+def _safe_declared_bytes(value: Any) -> int:
+    try:
+        if isinstance(value, bool):
+            return 0
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _asset_is_staging(
+    entry: dict[str, Any], destination: Path, environment: dict[str, str]
+) -> bool:
+    """Find a matching partial install or per-job HF stage without broad scans."""
+    try:
+        if next(destination.parent.glob(destination.name + ".partial-*"), None) is not None:
+            return True
+    except OSError:
+        pass
+
+    remote_path = entry.get("remote_path") or entry.get("filename")
+    if not isinstance(remote_path, str) or not remote_path:
+        return False
+    relative = Path(remote_path)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        return False
+    try:
+        from comfy_studio.asset_acquire import default_stage_dir
+
+        stage_root = default_stage_dir(environment).resolve(strict=False)
+        if not stage_root.is_dir():
+            return False
+        for job_root in stage_root.glob("job-*"):
+            candidate = job_root / relative
+            try:
+                if not candidate.resolve(strict=False).is_relative_to(
+                    job_root.resolve(strict=False)
+                ):
+                    continue
+                incomplete = candidate.with_name(candidate.name + ".incomplete")
+                if candidate.is_file() or incomplete.is_file():
+                    return True
+            except OSError:
+                continue
+    except (OSError, ValueError):
+        return False
+    return False
 
 
 def summary(env: dict[str, str] | None = None) -> dict[str, Any]:
