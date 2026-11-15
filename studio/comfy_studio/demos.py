@@ -224,6 +224,8 @@ def _prepare_demo_output(demo_id: str, output_root: Path) -> tuple[Path, Path]:
 
     manifest = out_dir / "run_manifest.json"
     generated = [manifest, out_dir / "editable_project.json"]
+    if demo_id == "D02":
+        generated.append(out_dir / _D02_MEASUREMENT_ARTIFACT)
     if demo_id == "D05":
         generated.extend(out_dir / name for name in (
             "D05_delivery_package.zip", "D05_master_16x9.mp4", "D05_master_9x16.mp4"))
@@ -271,6 +273,8 @@ def _execution_fingerprint(demo_id: str) -> dict[str, Any]:
 
 
 def _expected_artifact_names(demo_id: str) -> set[str]:
+    if demo_id == "D02":
+        return {_D02_MEASUREMENT_ARTIFACT}
     if demo_id == "D05":
         return {
             "D05_delivery_package.zip",
@@ -363,15 +367,20 @@ def _d02_region(data: dict[str, Any], pixels: int, name: str) -> list[bool]:
     return region
 
 
-def _check_d02_causal_layers(data: dict[str, Any]) -> dict[str, Any]:
-    """Run D02's six separate causal-layer invariants over the synthetic fixture.
+@dataclass(slots=True)
+class _D02Scene:
+    """Parsed D02 scene: strict buffers, disjoint regions, typed sound events."""
 
-    Each invariant is an independent boolean: actor, shadow, and reflection
-    removal (the deleted cause reveals the background), intact pixel invariance
-    in the logo/prop region, actor-caused sound removal, and ambient sound
-    preservation. Malformed buffers, regions, or sound events raise DemoError.
-    These are CPU fixture-consistency checks; they are not omnimatte evidence.
-    """
+    pixels: int
+    background: list[int]
+    before: list[int]
+    after: list[int]
+    regions: dict[str, list[bool]]
+    events: list[tuple[str, str, bool, bool]]
+
+
+def _d02_parse_scene(data: dict[str, Any]) -> _D02Scene:
+    """Validate the strict D02 scene structure; malformed input raises DemoError."""
     pixels = data.get("pixels")
     if not isinstance(pixels, int) or isinstance(pixels, bool) or pixels <= 0:
         raise DemoError("D02: contador de píxeles inválido")
@@ -416,35 +425,228 @@ def _check_d02_causal_layers(data: dict[str, Any]) -> dict[str, Any]:
         seen_ids.add(event_id)
         parsed.append((event_id, cause, presence[0], presence[1]))
 
-    def revealed(region: list[bool]) -> bool:
-        """The removed cause no longer occludes the background in `after`."""
-        return all(after[i] == background[i] for i, flag in enumerate(region) if flag)
+    return _D02Scene(
+        pixels=pixels,
+        background=background,
+        before=before,
+        after=after,
+        regions=regions,
+        events=parsed,
+    )
 
-    intact_invariant = all(
-        before[i] == after[i] for i, flag in enumerate(regions["intact_region"]) if flag
-    )
-    actor_events = [event for event in parsed if event[1] == "actor"]
-    actor_sound_removed = bool(actor_events) and all(
-        present_before and not present_after
-        for _event_id, _cause, present_before, present_after in actor_events
-    )
-    ambient_preserved = any(
-        cause == "ambient" for _event_id, cause, _b, _a in parsed
-    ) and all(
-        present_before and present_after
-        for _event_id, cause, present_before, present_after in parsed
-        if cause == "ambient"
-    )
+
+def _d02_measure_scene(scene: _D02Scene) -> dict[str, Any]:
+    """Per-invariant error counts and totals over an already-parsed scene.
+
+    Removal errors count removed-cause pixels whose `after` value deviates from
+    the background; the intact deviation counts changed pixels in the intact
+    region; sound errors count events that violate their expected presence.
+    """
+    background, before, after = scene.background, scene.before, scene.after
+    regions = scene.regions
+    removal_errors: dict[str, int] = {}
+    for name in ("actor_region", "shadow_region", "reflection_region"):
+        region = regions[name]
+        removal_errors[name] = sum(
+            1 for i, flag in enumerate(region) if flag and after[i] != background[i]
+        )
+    intact_region = regions["intact_region"]
+    actor_events = [event for event in scene.events if event[1] == "actor"]
+    ambient_events = [event for event in scene.events if event[1] == "ambient"]
     return {
-        "actor_removed": revealed(regions["actor_region"]),
-        "shadow_removed": revealed(regions["shadow_region"]),
-        "reflection_removed": revealed(regions["reflection_region"]),
-        "intact_pixels_invariant": intact_invariant,
-        "actor_sound_removed": actor_sound_removed,
-        "ambient_sound_preserved": ambient_preserved,
-        "pixels_checked": pixels,
-        "sound_events_checked": len(parsed),
+        "removal_errors_by_region": removal_errors,
+        "intact_deviation_errors": sum(
+            1 for i, flag in enumerate(intact_region) if flag and before[i] != after[i]
+        ),
+        "actor_sound_errors": sum(
+            1 for event in actor_events if not (event[2] and not event[3])
+        ),
+        "actor_sound_total": len(actor_events),
+        "ambient_sound_errors": sum(
+            1 for event in ambient_events if not (event[2] and event[3])
+        ),
+        "ambient_sound_total": len(ambient_events),
     }
+
+
+def _d02_invariants(measurement: dict[str, Any]) -> dict[str, bool]:
+    """Derive the six D02 booleans from structured per-check error counts."""
+    removal = measurement["removal_errors_by_region"]
+    return {
+        "actor_removed": removal["actor_region"] == 0,
+        "shadow_removed": removal["shadow_region"] == 0,
+        "reflection_removed": removal["reflection_region"] == 0,
+        "intact_pixels_invariant": measurement["intact_deviation_errors"] == 0,
+        "actor_sound_removed": (
+            measurement["actor_sound_total"] > 0 and measurement["actor_sound_errors"] == 0
+        ),
+        "ambient_sound_preserved": (
+            measurement["ambient_sound_total"] > 0
+            and measurement["ambient_sound_errors"] == 0
+        ),
+    }
+
+
+def _d02_scene_measurement(data: dict[str, Any]) -> dict[str, Any]:
+    """Structured measurement of one D02 scene: invariants, counts and errors."""
+    scene = _d02_parse_scene(data)
+    measurement = _d02_measure_scene(scene)
+    return {
+        "pixels_checked": scene.pixels,
+        "sound_events_checked": len(scene.events),
+        "invariants": _d02_invariants(measurement),
+        "errors": measurement,
+    }
+
+
+def _check_d02_causal_layers(data: dict[str, Any]) -> dict[str, Any]:
+    """Run D02's six separate causal-layer invariants over the synthetic fixture.
+
+    Each invariant is an independent boolean: actor, shadow, and reflection
+    removal (the deleted cause reveals the background), intact pixel invariance
+    in the logo/prop region, actor-caused sound removal, and ambient sound
+    preservation. Malformed buffers, regions, or sound events raise DemoError.
+    The same strict validation also measures the deterministic held-out scene
+    written to the D02 measurement report. All evidence is synthetic CPU
+    fixture consistency; it is not omnimatte or model-quality evidence.
+    """
+    checks = _d02_scene_measurement(data)
+    result: dict[str, Any] = dict(checks["invariants"])
+    result["pixels_checked"] = checks["pixels_checked"]
+    result["sound_events_checked"] = checks["sound_events_checked"]
+    return result
+
+
+_D02_MEASUREMENT_ARTIFACT = "D02_causal_layer_measurement.json"
+_D02_HELDOUT_SEED = 0x00D02CA1  # fixed in code: reproducible held-out scene
+_D02_HELDOUT_PIXELS = 32
+
+
+def _d02_heldout_data() -> dict[str, Any]:
+    """Deterministic held-out synthetic scene: 32 values per buffer, CPU only.
+
+    The seed drives an integer LCG so the scene is byte-identical on every
+    run without depending on stdlib RNG stability. Disjoint actor/shadow/
+    reflection/intact spans cover all 32 values; removed-cause pixels reveal
+    the background in `after`, and intact pixels stay invariant. Four sound
+    events: two actor-caused (removed) and two ambient (retained).
+    """
+    pixels = _D02_HELDOUT_PIXELS
+    spans = {
+        "actor_region": (0, 8),
+        "shadow_region": (8, 16),
+        "reflection_region": (16, 24),
+        "intact_region": (24, pixels),
+    }
+    state = _D02_HELDOUT_SEED & 0xFFFFFFFFFFFFFFFF
+
+    def noise(modulus: int) -> int:
+        nonlocal state
+        state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
+        return (state >> 33) % modulus
+
+    background = [noise(256) for _ in range(pixels)]
+    occlusion = {
+        name: 17 + noise(64)
+        for name, (_start, _end) in spans.items()
+        if name != "intact_region"
+    }
+
+    def cause_region(index: int) -> str | None:
+        for name, (start, end) in spans.items():
+            if name != "intact_region" and start <= index < end:
+                return name
+        return None
+
+    before: list[int] = []
+    after: list[int] = []
+    for index in range(pixels):
+        cause = cause_region(index)
+        if cause is None:
+            before.append(background[index])
+            after.append(background[index])
+        else:
+            before.append((background[index] + occlusion[cause]) % 256)
+            after.append(background[index])
+    sound_events = [
+        {"id": "heldout-actor-step", "caused_by": "actor",
+         "present_before": True, "present_after": False,
+         "start_s": 0.0, "end_s": 0.5},
+        {"id": "heldout-actor-vocal", "caused_by": "actor",
+         "present_before": True, "present_after": False,
+         "start_s": 0.5, "end_s": 1.0},
+        {"id": "heldout-ambient-wind", "caused_by": "ambient",
+         "present_before": True, "present_after": True,
+         "start_s": 0.0, "end_s": 1.0},
+        {"id": "heldout-ambient-birds", "caused_by": "ambient",
+         "present_before": True, "present_after": True,
+         "start_s": 0.25, "end_s": 0.75},
+    ]
+    return {
+        "pixels": pixels,
+        "background": background,
+        "before": before,
+        "after": after,
+        **{name: [start <= i < end for i in range(pixels)]
+           for name, (start, end) in spans.items()},
+        "sound_events": sound_events,
+    }
+
+
+def _d02_heldout_measurement() -> dict[str, Any]:
+    """Measure the held-out scene with the same strict rules as the fixture."""
+    scene = _d02_parse_scene(_d02_heldout_data())
+    measurement = _d02_measure_scene(scene)
+    return {
+        "seed": _D02_HELDOUT_SEED,
+        "pixels_checked": scene.pixels,
+        "sound_events_checked": len(scene.events),
+        "invariants": _d02_invariants(measurement),
+        "errors": measurement,
+        "metrics": {
+            "removal_error_pixels": sum(measurement["removal_errors_by_region"].values()),
+            "intact_deviation_pixels": measurement["intact_deviation_errors"],
+            "ambient_sound_retained": (
+                measurement["ambient_sound_total"] - measurement["ambient_sound_errors"]
+            ),
+            "ambient_sound_total": measurement["ambient_sound_total"],
+            "actor_sound_removed": (
+                measurement["actor_sound_total"] - measurement["actor_sound_errors"]
+            ),
+            "actor_sound_total": measurement["actor_sound_total"],
+        },
+    }
+
+
+def _write_d02_measurement_report(
+    fixture: Path, data: dict[str, Any], out_dir: Path
+) -> Path:
+    """Write the compact D02 measurement report (synthetic CPU evidence only).
+
+    Contents: source fixture SHA-256, fixed held-out seed, per-check counts
+    and errors for both the fixture and the deterministic held-out scene, and
+    ``gpu_used: false``. No PNG/image rendering and no GPU/model claims.
+    """
+    report = {
+        "schema": "comfy_studio.d02_measurement.v1",
+        "scope": (
+            "synthetic CPU evidence only: fixture consistency and a deterministic "
+            "held-out scene; no GPU, no omnimatte or model-quality claim"
+        ),
+        "gpu_used": False,
+        "fixture_sha256": _sha256(fixture),
+        "seed": _D02_HELDOUT_SEED,
+        "checks": {
+            "fixture": _d02_scene_measurement(data),
+            "heldout": _d02_heldout_measurement(),
+        },
+    }
+    path = out_dir / _D02_MEASUREMENT_ARTIFACT
+    path.write_text(
+        json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 
@@ -1076,7 +1278,10 @@ def run_demo(
                     "resumed": True}
     artifact: Path | None = None
     project_artifact: Path | None = None
-    if demo_id == "D05":
+    measurement_report: Path | None = None
+    if demo_id == "D02":
+        measurement_report = _write_d02_measurement_report(fixture, fixture_data, out_dir)
+    elif demo_id == "D05":
         if source_video is None:
             artifact, render_checks = _render_d05(fixture_data, out_dir)
         else:
@@ -1130,6 +1335,8 @@ def run_demo(
         "artifacts": [],
     }
     generated_artifacts = [artifact] if artifact else []
+    if measurement_report is not None:
+        generated_artifacts.append(measurement_report)
     if demo_id == "D05":
         generated_artifacts.extend(out_dir / name for name in (
             "D05_master_16x9.mp4", "D05_master_9x16.mp4", "D05_asset_inventory.json"))
