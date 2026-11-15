@@ -5488,7 +5488,6 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=RetrieveProductionMemoryArgs,
             handler=_handle_retrieve_production_memory,
-            parallel_safe=True,
         )
     )
     belt.register(
@@ -5500,7 +5499,6 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=ListProductionMemoryArgs,
             handler=_handle_list_production_memory,
-            parallel_safe=True,
         )
     )
     belt.register(
