@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Satisfy every documented pre-GPU blocker for all mandatory capabilities and all 58 selected engines, leaving only real-GPU measurements and held-out GPU evaluation.
+**Goal:** Satisfy every documented pre-GPU blocker for all mandatory capabilities and all 57 currently selected engines, leaving only real-GPU measurements and held-out GPU evaluation.
 
 **Architecture:** Close each engine and product scenario against the existing typed engine, asset, provenance, orchestration, and delivery contracts. Preserve exact upstream/component provenance and require CPU-verifiable entrypoints and image wiring before a capability can advance. Keep GPU-only evidence separate and pending.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Keep all 58 currently selected engines selected and all 33 active capabilities mandatory.
+- Keep all 57 selected engines currently declared on `main` and all 33 active capabilities mandatory.
 - Never promote a stub, proxy, mock, or unverified claim to a real implementation.
 - A07 fields require per-component source, tracked lock bytes, terms/notices, real entrypoint, and build/runtime evidence.
 - A CPU-only check never establishes GPU quality, CUDA compatibility, VRAM, performance, L3, or L4.
@@ -37,7 +37,7 @@
 - [ ] Record current main SHA and required workflow/image digest from authoritative GitHub state.
 - [ ] Recompute A07 blockers and per-capability levels from the current files; label stale snapshot claims as historical.
 - [ ] Map every still-open acceptance item A00–A29, the 33 active capabilities, and D01–D05 to its current evidence and next action.
-- [ ] Confirm all 58 selected IDs are present exactly once and remain in scope.
+- [ ] Confirm all 57 selected IDs are present exactly once and remain in scope.
 
 ### Task 2: Close the core/platform A07 engine partition
 
