@@ -167,6 +167,101 @@ def test_system_library_notice_recovers_copyright_from_exact_installed_package(
     ]
 
 
+def test_system_library_notice_recovers_from_exact_source_when_binary_omits_copyright(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = tmp_path / "lib" / "libgcc_s.so.1"
+    library.parent.mkdir()
+    library.write_bytes(b"ELF fixture")
+    source_copyright = "GCC source package copyright and license terms\n"
+    commands: list[list[str]] = []
+
+    def fake_check_output(command: list[str], *, text: bool) -> str:
+        if command[0] == "ldd":
+            return f"{library} (0x0001)\n"
+        if command[0:2] == ["dpkg-query", "-S"]:
+            return f"libgcc-s1:amd64: {library}\n"
+        if command[0:2] == ["dpkg-query", "-L"]:
+            return f"{library}\n"
+        if command[0:2] == ["dpkg-query", "-W"]:
+            if "${Version}" in command[2]:
+                return "14.2.0-4ubuntu2~24.04.1\n"
+            if "${Architecture}" in command[2]:
+                return "amd64\n"
+            if "${source:Package}" in command[2]:
+                return "gcc-14\t14.2.0-4ubuntu2~24.04.1\n"
+        if command[:2] == ["dpkg-deb", "--field"]:
+            return (
+                "Package: libgcc-s1\nVersion: 14.2.0-4ubuntu2~24.04.1\n"
+                "Architecture: amd64\n"
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+    def fake_run(
+        command: list[str], *, check: bool, cwd: Path | None = None
+    ) -> None:
+        commands.append(command)
+        if command[:2] == ["apt-get", "download"]:
+            assert cwd is not None
+            (cwd / "libgcc-s1_14.2.0-4ubuntu2_amd64.deb").write_bytes(b"package")
+        elif command[:2] == ["dpkg-deb", "--extract"]:
+            Path(command[3]).mkdir(parents=True)
+        elif command[-2] == "source":
+            assert cwd is not None
+            copyright_file = cwd / "gcc-14-14.2.0" / "debian" / "copyright"
+            copyright_file.parent.mkdir(parents=True)
+            copyright_file.write_text(source_copyright, encoding="utf-8")
+        else:
+            assert command[0] == "apt-get" and command[-1] == "update"
+
+    monkeypatch.setattr(build_module.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(build_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(build_module, "_ubuntu_source_options", lambda _temporary: [])
+
+    license_root = tmp_path / "licenses" / "llama.cpp"
+    records = build_module.install_system_library_notices(library, license_root)
+
+    assert records[0]["notice_source"] == "exact-source-package"
+    assert records[0]["source_package"] == "gcc-14"
+    assert records[0]["source_version"] == "14.2.0-4ubuntu2~24.04.1"
+    assert records[0]["sha256"] == hashlib.sha256(source_copyright.encode()).hexdigest()
+    assert (license_root / records[0]["notice"]).read_text(encoding="utf-8") == source_copyright
+    assert [command[-2:] for command in commands if command[-2] == "source"] == [
+        ["source", "gcc-14=14.2.0-4ubuntu2~24.04.1"]
+    ]
+
+
+def test_ubuntu_source_options_use_only_configured_ubuntu_mirrors(tmp_path: Path) -> None:
+    source_directory = tmp_path / "apt" / "sources.list.d"
+    source_directory.mkdir(parents=True)
+    sources_file = source_directory / "ubuntu.sources"
+    sources_file.write_text(
+        "Types: deb\n"
+        "URIs: http://archive.ubuntu.com/ubuntu\n"
+        "Suites: noble noble-updates\n"
+        "Components: main universe\n"
+        "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n"
+        "Types: deb\n"
+        "URIs: https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64\n"
+        "Suites: /\n"
+        "Signed-By: /usr/share/keyrings/cuda-archive-keyring.gpg\n",
+        encoding="utf-8",
+    )
+
+    options = build_module._ubuntu_source_options(
+        tmp_path / "apt-config",
+        sources_directory=source_directory,
+        legacy_source_list=tmp_path / "apt" / "sources.list",
+    )
+
+    configured = Path(options[3].split("=", 1)[1]) / "ubuntu-src.sources"
+    source_text = configured.read_text(encoding="utf-8")
+    assert "Types: deb-src" in source_text
+    assert "archive.ubuntu.com/ubuntu" in source_text
+    assert "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg" in source_text
+    assert "developer.download.nvidia.com" not in source_text
+
+
 def test_parse_ldd_rejects_missing_or_empty_dependency_lists() -> None:
     with pytest.raises(RuntimeError, match="ausente"):
         build_module.parse_ldd_dependencies("libbad.so => not found\n")

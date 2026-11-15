@@ -132,6 +132,99 @@ def parse_ldd_dependencies(output: str) -> list[str]:
     return sorted(paths)
 
 
+def _ubuntu_source_options(
+    temporary: Path,
+    *,
+    sources_directory: Path = Path("/etc/apt/sources.list.d"),
+    legacy_source_list: Path = Path("/etc/apt/sources.list"),
+) -> list[str]:
+    """Build isolated apt source settings from the image's Ubuntu mirrors."""
+    source_parts = temporary / "sources.list.d"
+    source_parts.mkdir(parents=True, exist_ok=True)
+    source_list = temporary / "sources.list"
+    source_list.touch()
+    stanzas: list[str] = []
+
+    for source_file in sorted(sources_directory.glob("*.sources")):
+        contents = source_file.read_text(encoding="utf-8")
+        for stanza in re.split(r"\n\s*\n", contents.strip()):
+            uri_line = next(
+                (line.partition(":")[2].strip() for line in stanza.splitlines()
+                 if line.startswith("URIs:")),
+                "",
+            )
+            types_line = next(
+                (line.partition(":")[2].split() for line in stanza.splitlines()
+                 if line.startswith("Types:")),
+                [],
+            )
+            if (
+                not {"deb", "deb-src"}.intersection(types_line)
+                or not any("ubuntu.com" in uri for uri in uri_line.split())
+            ):
+                continue
+            stanzas.append(
+                re.sub(r"(?m)^Types:.*$", "Types: deb-src", stanza, count=1)
+                if "deb" in types_line
+                else stanza
+            )
+
+    for source_file in [legacy_source_list, *sorted(sources_directory.glob("*.list"))]:
+        if not source_file.is_file():
+            continue
+        for line in source_file.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if "ubuntu.com" not in stripped:
+                continue
+            if stripped.startswith("deb-src "):
+                stanzas.append(stripped)
+            elif stripped.startswith("deb "):
+                stanzas.append("deb-src " + stripped[4:])
+
+    if not stanzas:
+        raise RuntimeError("no se encontraron mirrors Ubuntu para descargar el paquete fuente")
+    (source_parts / "ubuntu-src.sources").write_text(
+        "\n\n".join(stanzas) + "\n", encoding="utf-8"
+    )
+    return [
+        "-o", f"Dir::Etc::sourcelist={source_list}",
+        "-o", f"Dir::Etc::sourceparts={source_parts}",
+    ]
+
+
+def source_package_copyright(
+    package: str, package_version: str, temporary: Path
+) -> tuple[Path, str, str]:
+    """Fetch the exact source package's Debian copyright file with apt verification."""
+    package_name = package.partition(":")[0]
+    source_fields = subprocess.check_output(
+        ["dpkg-query", "-W", "-f=${source:Package}\t${source:Version}", package],
+        text=True,
+    ).strip().split("\t", 1)
+    source_package = source_fields[0] if source_fields and source_fields[0] else package_name
+    source_version = (
+        source_fields[1]
+        if len(source_fields) > 1 and source_fields[1]
+        else package_version
+    )
+    apt_options = _ubuntu_source_options(temporary / "apt")
+    subprocess.run(["apt-get", *apt_options, "update"], check=True)
+    source_root = temporary / "source"
+    source_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["apt-get", *apt_options, "source", f"{source_package}={source_version}"],
+        cwd=source_root,
+        check=True,
+    )
+    candidates = list(source_root.glob("*/debian/copyright"))
+    if len(candidates) != 1 or not candidates[0].is_file():
+        raise RuntimeError(
+            f"no se encontró debian/copyright para el paquete fuente exacto "
+            f"{source_package}={source_version} ({package}={package_version})"
+        )
+    return candidates[0], source_package, source_version
+
+
 def install_system_library_notices(binary: Path, license_root: Path) -> list[dict[str, str]]:
     """Copy copyright files for every package owning a linked ELF dependency.
 
@@ -143,11 +236,13 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
     dependencies = parse_ldd_dependencies(ldd_output)
     notice_dir = license_root / "system-libraries"
     notice_dir.mkdir(parents=True, exist_ok=True)
-    package_notices: dict[str, tuple[str, str, str, str]] = {}
+    package_notices: dict[str, tuple[str, str, str, str, str, str]] = {}
     records: list[dict[str, str]] = []
     apt_indexes_ready = False
 
-    def archive_notice(package: str, package_version: str, architecture: str) -> Path:
+    def archive_notice(
+        package: str, package_version: str, architecture: str
+    ) -> tuple[Path, str, str, str]:
         package_name = package.partition(":")[0]
         with tempfile.TemporaryDirectory(prefix="llm-system-notice-") as temporary:
             package_root = Path(temporary)
@@ -182,13 +277,17 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
                 ["dpkg-deb", "--extract", str(archive), str(extracted)], check=True
             )
             source = extracted / "usr" / "share" / "doc" / package_name / "copyright"
+            notice_source = "exact-package-archive"
+            source_package = ""
+            source_version = ""
             if not source.is_file():
-                raise RuntimeError(
-                    f"el paquete exacto {package_spec} no contiene archivo copyright"
+                source, source_package, source_version = source_package_copyright(
+                    package, package_version, package_root
                 )
+                notice_source = "exact-source-package"
             destination = notice_dir / f"{re.sub(r'[^A-Za-z0-9_.+-]', '_', package)}.copyright"
             shutil.copy2(source, destination)
-            return destination
+            return destination, notice_source, source_package, source_version
 
     for raw_path in dependencies:
         library_path = Path(raw_path).resolve(strict=True)
@@ -224,26 +323,37 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
                     if not apt_indexes_ready:
                         subprocess.run(["apt-get", "update"], check=True)
                         apt_indexes_ready = True
-                    destination = archive_notice(package, package_version, architecture)
-                    source_kind = "exact-package-archive"
+                    destination, source_kind, source_package, source_version = archive_notice(
+                        package, package_version, architecture
+                    )
                 else:
                     safe_name = re.sub(r"[^A-Za-z0-9_.+-]", "_", package)
                     destination = notice_dir / f"{safe_name}.copyright"
                     shutil.copy2(source_notice, destination)
                     source_kind = "installed-package"
+                    source_package = ""
+                    source_version = ""
                 digest = hashlib.sha256(destination.read_bytes()).hexdigest()
                 package_notices[package] = (
-                    str(destination.relative_to(license_root)), digest, package_version, source_kind
+                    str(destination.relative_to(license_root)), digest, package_version,
+                    source_kind, source_package, source_version
                 )
-            notice_path, digest, package_version, source_kind = package_notices[package]
-            records.append({
+            (
+                notice_path, digest, package_version, source_kind,
+                source_package, source_version,
+            ) = package_notices[package]
+            record = {
                 "library": str(library_path),
                 "package": package,
                 "package_version": package_version,
                 "notice": notice_path,
                 "sha256": digest,
                 "notice_source": source_kind,
-            })
+            }
+            if source_package:
+                record["source_package"] = source_package
+                record["source_version"] = source_version
+            records.append(record)
 
     manifest = notice_dir / "manifest.json"
     manifest.write_text(
