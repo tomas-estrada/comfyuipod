@@ -764,7 +764,7 @@ def test_verified_public_engines_have_code_revision() -> None:
     manifest = mod.load_json(mod.DEFAULT_MANIFEST)
     by_id = {e["id"]: e for e in manifest["engines"]}
     assert by_id["ffmpeg"]["code_revision"] == "e38092ef9395d7049f871ef4d5411eb410e283e0"
-    assert by_id["whisperx"]["code_revision"] == "v3.8.6"
+    assert by_id["whisperx"]["code_revision"] == "3ccc17b8de34f305300f8a3fd3c9f76ba820c0d0"
 
 
 def test_lock_opentimelineio_tiene_lock_fijado() -> None:
