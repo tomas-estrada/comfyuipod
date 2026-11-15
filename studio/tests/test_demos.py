@@ -414,6 +414,32 @@ def test_d02_checker_reports_each_causal_invariant_separately(tmp_path: Path) ->
     assert all(name in manifest["checks"] for name in d02.expected)
 
 
+def test_d02_writes_measurement_report_artifact(tmp_path: Path) -> None:
+    result = run_demo("D02", tmp_path)
+    artifacts = {artifact["path"]: artifact for artifact in result["artifacts"]}
+    report_name = demos_module._D02_MEASUREMENT_ARTIFACT
+    assert report_name in artifacts
+    report_path = Path(result["manifest"]).parent / report_name
+    assert report_path.is_file()
+    assert artifacts[report_name]["bytes"] == report_path.stat().st_size
+    assert artifacts[report_name]["sha256"] == demos_module._sha256(report_path)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["schema"] == "comfy_studio.d02_measurement.v1"
+    assert report["gpu_used"] is False
+    assert report["fixture_sha256"] == demos_module._sha256(
+        demos_module.FIXTURE_DIR / "d02_causal_layers.json"
+    )
+    assert report["seed"] == report["checks"]["heldout"]["seed"]
+    assert report["checks"]["fixture"]["pixels_checked"] == 8
+    assert report["checks"]["fixture"]["sound_events_checked"] == 4
+    assert report["checks"]["heldout"]["pixels_checked"] == 32
+    assert report["checks"]["heldout"]["sound_events_checked"] == 4
+    for section in ("fixture", "heldout"):
+        invariants = report["checks"][section]["invariants"]
+        assert invariants
+        assert all(value is True for value in invariants.values())
+
+
 def _d02_mutations() -> dict[str, Callable[[dict], None]]:
     """Each mutation breaks exactly one invariant of the valid fixture."""
 
