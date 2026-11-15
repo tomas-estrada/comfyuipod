@@ -4,9 +4,10 @@
 
 Bring every mandatory capability and every selected engine in the Ultra ledger
 to its documented pre-GPU acceptance level. The only allowed remaining work is
-the real target-GPU campaign defined by A29. This design preserves all 58
-`build_selected` engines, all 33 active capabilities, and demonstrations
-D01–D05.
+the real target-GPU campaign defined by A29. The current closure scope preserves
+all 57 `build_selected` engines, all 33 active capabilities, and demonstrations
+D01–D05. The selected-engine inventory is anchored to the current `main`
+manifest; capability requirements remain unchanged.
 
 ## Goals
 
@@ -22,8 +23,8 @@ D01–D05.
 
 - Do not use Modal, paid model inference, or another billable service for this
   phase.
-- Do not narrow the selected engine set, remove mandatory capabilities, or
-  reinterpret partial L1/L2 evidence as full acceptance.
+- Do not narrow the 57 currently selected engines, remove mandatory
+  capabilities, or reinterpret partial L1/L2 evidence as full acceptance.
 - Do not fabricate source revisions, lock hashes, license decisions, notices,
   generated media, or GPU measurements.
 
