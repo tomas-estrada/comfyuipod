@@ -114,6 +114,50 @@ def test_system_library_notices_follow_the_final_elf_dependency_closure(
     assert inventory["libraries"] == records
 
 
+def test_system_library_notice_handles_wheel_vendored_soname(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vendored = tmp_path / "python" / "torch" / "lib" / "libgomp.so.1"
+    vendored.parent.mkdir(parents=True)
+    vendored.write_bytes(b"wheel-vendored runtime")
+    system_copy = tmp_path / "usr" / "lib" / "libgomp.so.1"
+    system_copy.parent.mkdir(parents=True)
+    system_copy.write_bytes(b"system runtime with the same SONAME")
+    copyright_file = tmp_path / "usr" / "share" / "doc" / "libgomp1" / "copyright"
+    copyright_file.parent.mkdir(parents=True)
+    copyright_file.write_text("GCC Runtime Library Exception\n", encoding="utf-8")
+
+    def fake_check_output(command: list[str], *, text: bool) -> str:
+        if command[0] == "ldd":
+            return f"libgomp.so.1 => {vendored} (0x0001)\n"
+        if command[:2] == ["dpkg-query", "-S"]:
+            if Path(command[2]) == vendored.resolve():
+                raise build_module.subprocess.CalledProcessError(1, command)
+            if Path(command[2]) == system_copy.resolve():
+                return f"libgomp1:amd64: {system_copy}\n"
+        if command == ["ldconfig", "-p"]:
+            return f"libgomp.so.1 (libc6,x86-64) => {system_copy}\n"
+        if command[:2] == ["dpkg-query", "-L"]:
+            return f"{copyright_file}\n"
+        if command[:2] == ["dpkg-query", "-W"]:
+            if "${Version}" in command[2]:
+                return "14.2.0-4ubuntu2\n"
+            if "${Architecture}" in command[2]:
+                return "amd64\n"
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(build_module.subprocess, "check_output", fake_check_output)
+    license_root = tmp_path / "licenses" / "llama.cpp"
+    records = build_module.install_system_library_notices(vendored, license_root)
+
+    assert records[0]["library"] == str(vendored.resolve())
+    assert records[0]["package"] == "libgomp1:amd64"
+    assert records[0]["notice_owner_resolution"] == "same-soname-system-package"
+    assert records[0]["notice_owner_library"] == str(system_copy.resolve())
+    assert records[0]["notice_source"] == "installed-package"
+    assert (license_root / records[0]["notice"]).read_text() == "GCC Runtime Library Exception\n"
+
+
 def test_system_library_notice_recovers_copyright_from_exact_installed_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

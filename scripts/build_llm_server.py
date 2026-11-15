@@ -132,6 +132,66 @@ def parse_ldd_dependencies(output: str) -> list[str]:
     return sorted(paths)
 
 
+def _parse_dpkg_owners(output: str) -> set[str]:
+    return {
+        line.partition(": ")[0]
+        for line in output.splitlines()
+        if ": " in line
+    }
+
+
+def package_owners_for_library(library_path: Path) -> tuple[set[str], Path]:
+    """Resolve a linked library to its Debian package or a packaged same-SONAME copy.
+
+    CUDA-enabled Python wheels can vendor runtime libraries such as libgomp in
+    site-packages. Those files are not owned by dpkg, even though Ubuntu ships
+    the same ELF SONAME as a normal system package. Use that package's notice
+    only when the exact vendored path has no dpkg owner and ldconfig exposes a
+    package-owned copy with the identical SONAME; otherwise fail closed.
+    """
+    try:
+        owners = _parse_dpkg_owners(
+            subprocess.check_output(
+                ["dpkg-query", "-S", str(library_path)], text=True
+            )
+        )
+    except subprocess.CalledProcessError:
+        owners = set()
+    if owners:
+        return owners, library_path
+
+    cache = subprocess.check_output(["ldconfig", "-p"], text=True)
+    soname = library_path.name
+    matches: list[tuple[str, Path]] = []
+    for line in cache.splitlines():
+        name, separator, raw_path = line.partition("=>")
+        if not separator or name.split("(", 1)[0].strip() != soname:
+            continue
+        candidate = Path(raw_path.strip())
+        try:
+            candidate = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        if candidate == library_path:
+            continue
+        try:
+            candidate_owners = _parse_dpkg_owners(
+                subprocess.check_output(
+                    ["dpkg-query", "-S", str(candidate)], text=True
+                )
+            )
+        except subprocess.CalledProcessError:
+            continue
+        matches.extend((owner, candidate) for owner in candidate_owners)
+
+    if not matches:
+        raise RuntimeError(
+            f"sin paquete Debian propietario ni copia de sistema con SONAME "
+            f"{soname} para biblioteca {library_path}"
+        )
+    return {owner for owner, _ in matches}, matches[0][1]
+
+
 def _ubuntu_source_options(
     temporary: Path,
     *,
@@ -302,14 +362,7 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
 
     for raw_path in dependencies:
         library_path = Path(raw_path).resolve(strict=True)
-        owners = subprocess.check_output(
-            ["dpkg-query", "-S", str(library_path)], text=True
-        )
-        packages = {
-            line.partition(": ")[0]
-            for line in owners.splitlines()
-            if ": " in line
-        }
+        packages, notice_owner_path = package_owners_for_library(library_path)
         if not packages:
             raise RuntimeError(f"sin paquete Debian propietario para biblioteca {library_path}")
         for package in sorted(packages):
@@ -361,6 +414,9 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
                 "sha256": digest,
                 "notice_source": source_kind,
             }
+            if notice_owner_path != library_path:
+                record["notice_owner_resolution"] = "same-soname-system-package"
+                record["notice_owner_library"] = str(notice_owner_path)
             if source_package:
                 record["source_package"] = source_package
                 record["source_version"] = source_version
