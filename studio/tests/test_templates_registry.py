@@ -32,18 +32,18 @@ MODELS_STUDIO_MANIFEST = REPO_ROOT / "config" / "models-studio.json"
 def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defaults(
     client: TestClient,
 ) -> None:
-    """GET /studio/api/templates lista las 13 plantillas del registro con schemas y docs.
+    """GET /studio/api/templates lista las plantillas del registro con schemas y docs.
 
     Hunyuan3D figura con `available: false` cuando faltan sus pesos (perfil `studio`
     sin `STUDIO_INCLUDE_3D`): el panel no la ofrece (VAL-UNREAL-004), pero el
-    registro HTTP sigue teniendo 7 entradas.
+    registro HTTP sigue incluyendo entradas no disponibles.
     """
     resp = client.get("/studio/api/templates")
     assert resp.status_code == 200
     body = resp.json()
     assert "templates" in body
     templates = body["templates"]
-    assert len(templates) == 18
+    assert len(templates) == 19
 
     by_id = {tpl["id"]: tpl for tpl in templates}
     assert set(by_id.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
@@ -60,6 +60,8 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
     assert "STUDIO_INCLUDE_MINIMAX" in by_id["minimax_r2v"]["unavailable_reason"]
     assert by_id["qwen_image_layered"]["available"] is False
     assert "STUDIO_INCLUDE_QWEN_LAYERED" in by_id["qwen_image_layered"]["unavailable_reason"]
+    assert by_id["ace_step_music"]["available"] is False
+    assert "STUDIO_INCLUDE_MUSIC" in by_id["ace_step_music"]["unavailable_reason"]
     for tpl_id, tpl in by_id.items():
         if tpl_id not in (
             "hunyuan3d_image_to_3d",
@@ -67,6 +69,7 @@ def test_list_templates_endpoint_returns_six_m2_templates_with_schemas_and_defau
             "wan_animate_cont",
             "minimax_r2v",
             "qwen_image_layered",
+            "ace_step_music",
         ):
             assert tpl["available"] is True
             assert tpl["unavailable_reason"] is None
@@ -140,7 +143,7 @@ def test_structural_validator_passes_all_builtin_templates() -> None:
     """Todas las plantillas en comfy_studio/templates/data/ pasan el validador estructural."""
     registry = get_default_registry()
     results = validate_all_templates(registry.data_dir)
-    assert len(results) == 18
+    assert len(results) == 19
     assert set(results.keys()) == set(EXPECTED_M2_TEMPLATE_IDS)
 
     # Verificar que todos los modelos referenciados existen en el catálogo del pod
@@ -802,7 +805,7 @@ def test_hunyuan3d_is_offered_when_three_d_weights_opt_in(
         c.auth = ("admin", "changeme-test-pass-42")
 
         templates = c.get("/studio/api/templates").json()["templates"]
-        assert len(templates) == 18
+        assert len(templates) == 19
         by_id = {tpl["id"]: tpl for tpl in templates}
         assert by_id["hunyuan3d_image_to_3d"]["available"] is True
 

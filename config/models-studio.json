@@ -4,8 +4,8 @@
  "meta": {
   "default_entries": 79,
   "default_bytes": 163706792041,
-  "opt_in_entries": 11,
-  "opt_in_bytes": 118948773694,
+  "opt_in_entries": 12,
+  "opt_in_bytes": 128974252430,
   "classes": {
    "bootstrap": {
     "entries": 0,
@@ -16,8 +16,8 @@
     "bytes": 163706792041
    },
    "optional": {
-    "entries": 11,
-    "bytes": 118948773694
+    "entries": 12,
+    "bytes": 128974252430
    }
   },
   "phase2_sdxl_checkpoint": {
@@ -45,7 +45,7 @@
    "latentsync": {
     "entries": 12,
     "bytes": 9970426719,
-    "license": "openrail++ / MIT"
+    "license": "MIT"
    },
    "liveportrait": {
     "entries": 6,
@@ -94,21 +94,27 @@
    },
    "minimax_h3_opt_in": {
     "entries": 6,
-    "bytes": 62997682615
+    "bytes": 62997682615,
+    "license": "apache-2.0"
    },
    "qwen_layered_opt_in": {
     "entries": 3,
     "bytes": 30172079117,
+    "license": "Apache-2.0"
+   },
+   "music_opt_in": {
+    "entries": 1,
+    "bytes": 10025478736,
     "license": "Apache-2.0"
    }
   },
   "integrity": {
    "algorithm": "sha256 (LFS) / sha1 (git blob) según publique HuggingFace",
    "source": "HuggingFace X-Linked-Etag",
-   "pinned_entries": 90,
-   "total_entries": 90,
+   "pinned_entries": 91,
+   "total_entries": 91,
    "by_algorithm": {
-    "sha256": 61,
+    "sha256": 62,
     "sha1": 29,
     "none": 0
    }
@@ -1464,6 +1470,21 @@
    "opt_in": "STUDIO_INCLUDE_QWEN_LAYERED",
    "revision": "1f12b17be14c89b026c51a91d67c32f84bb047bc",
    "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4"
+  },
+  {
+   "category": "music_opt_in",
+   "repo_id": "Comfy-Org/ACE-Step-1.5",
+   "remote_path": "checkpoints/ace_step_1.5_turbo_aio.safetensors",
+   "url": "https://huggingface.co/Comfy-Org/ACE-Step-1.5/resolve/371bb1680f8c88d8c1083f6ffb6330d3d55bff76/checkpoints/ace_step_1.5_turbo_aio.safetensors",
+   "bytes": 10025478736,
+   "target_dir": "models/checkpoints",
+   "filename": "ace_step_1.5_turbo_aio.safetensors",
+   "dest_path": "models/checkpoints/ace_step_1.5_turbo_aio.safetensors",
+   "license": "Apache-2.0",
+   "class": "optional",
+   "opt_in": "STUDIO_INCLUDE_MUSIC",
+   "revision": "371bb1680f8c88d8c1083f6ffb6330d3d55bff76",
+   "sha256": "67b0f43aa5c51c840bd0228e6a935d8ff416ec87e5df2fc0637da17a561252bc"
   }
  ]
 }

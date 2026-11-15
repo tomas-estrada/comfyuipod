@@ -25,6 +25,10 @@ Tabla maestra de los **20 motores** registrados en `comfy_studio/engines/registr
 | **scene-optimizer** | **warm** | **sí** | **CPU puro** | **cinematography.py** | **`STUDIO_STUB_SCENE_OPTIMIZER=1`** |
 | **chrono** | **warm** | **sí** | **proxy CPU** | **physics.py** | **`STUDIO_STUB_CHRONO=1`** |
 
+`generate_music` usa el flujo nativo de ComfyUI `ace_step_music`, descrito en
+[`ace-step.md`](ace-step.md). El motor del registro `music_gen` es una vía
+separada; no representa la implementación activa de esa herramienta.
+
 ## Política de invarianza
 
 1. **Ningún método lanza**: toda falla se tipifica en `EngineResult(ok=False, ...)`.

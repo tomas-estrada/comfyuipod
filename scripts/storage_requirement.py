@@ -126,6 +126,7 @@ OPT_IN_FLAGS = {
     "STUDIO_INCLUDE_3D": "three_d",
     "STUDIO_INCLUDE_MINIMAX": "minimax",
     "STUDIO_INCLUDE_QWEN_LAYERED": "qwen_layered",
+    "STUDIO_INCLUDE_MUSIC": "music",
 }
 
 

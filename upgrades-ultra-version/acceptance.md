@@ -190,6 +190,7 @@ Pruebas obligatorias con fixture pequeño, sin descargar modelos reales:
 - Cambio causal de actor elimina su sonido sin perder voz/ambiente.
 - Sample rate, clipping, loudness y true peak se miden en salida.
 - Beat map y estructura de música editables; stems solo si existen en la ruta.
+- Para `generate_music`, reportar el BPM solicitado como una cuadrícula; afirmar alineación al audio solo con medición de onsets, y no atribuir stems separados al workflow ACE-Step.
 - El resultado conjunto de Foley-Omni no se anuncia como edición arbitraria de stems ni duración ilimitada.
 
 ### A21. Español y pronunciación
