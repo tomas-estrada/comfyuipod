@@ -144,18 +144,27 @@
         "S43"
       ],
       "scope": "Memoria de escenas/recetas/preferencias, separada de los checkpoints y los hechos observados.",
-      "terms_review": "Ámbito por proyecto, revisión/corrección, retención y exportación sin secretos.",
+      "terms_review": "Código propio del repositorio bajo MIT (LICENSE). No añade dependencias externas, pesos ni servicios. Los secretos se eliminan antes de persistir/devolver texto del agente; el registro privado y las correcciones quedan por proyecto.",
       "hardware_notes": "CPU/SQLite existente; no servicio externo obligatorio.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C04",
         "C06"
       ],
-      "code_revision": null,
+      "code_revision": "8de272798924116b383e6802868dc0dfeab5b4ff",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/production-memory.lock.json": "b4a6ba1342795bee2ac18331bcbe6589cfc4f84c5f1b3aa931a6b32cc9fa54ed"
+      },
+      "redistribution_decision": "allowed",
+      "notices_reviewed": true,
+      "evidence_entrypoint": "studio/comfy_studio/agent/tools.py",
+      "evidence_test": "studio/tests/agent/test_tools.py",
+      "upstream_url": "https://github.com/tomas-estrada/comfyuipod",
+      "license_source_url": "https://github.com/tomas-estrada/comfyuipod/blob/main/LICENSE",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },

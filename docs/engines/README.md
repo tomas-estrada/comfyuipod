@@ -33,6 +33,10 @@ La compilación CPU de briefs aprobados a planes DAG está descrita en
 [`mission-compiler.md`](mission-compiler.md). Es parte de la orquestación de
 producciones y no es un motor de render del registro anterior.
 
+La memoria durable de decisiones y recetas del agente vive en ProjectStore y no
+es un proceso de engine separado; su alcance, límites y lock están en
+[`production-memory.md`](production-memory.md).
+
 ## Política de invarianza
 
 1. **Ningún método lanza**: toda falla se tipifica en `EngineResult(ok=False, ...)`.
