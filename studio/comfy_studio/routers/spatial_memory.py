@@ -220,6 +220,21 @@ def register_routes(app: FastAPI) -> None:
             )
         except VideoSceneError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            incoming = TemporalScene.from_dict(observation["temporal_scene"])
+            raw_scene = store.get_meta(project_id, _SCENE_META_KEY)
+            if raw_scene is None:
+                scene = incoming
+            else:
+                scene = TemporalScene.from_dict(raw_scene)
+                # Scene key times are seconds; preserve the canonical project's
+                # frame-rate metadata while merging the sampled observations.
+                incoming.set_timebase(scene.timebase.fps)
+                scene = _merge_scene(scene, incoming)
+        except (KeyError, SpatialError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        observation["temporal_scene"] = scene.to_dict()
+        store.set_meta(project_id, _SCENE_META_KEY, scene.to_dict())
         store.set_meta(project_id, _VIDEO_OBSERVATION_META_KEY, observation)
         return observation
 

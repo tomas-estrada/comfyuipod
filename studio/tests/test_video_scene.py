@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
 
 from comfy_studio.media_bins import find_ffmpeg, find_ffprobe
-from comfy_studio.spatial_memory import TemporalScene
+from comfy_studio.spatial_memory import TemporalScene, Timebase
 from comfy_studio.video_scene import analyze_grayscale_frames
 
 
@@ -91,6 +91,11 @@ def test_project_video_entrypoint_decodes_and_persists_observation(
         data=video_path.read_bytes(),
         max_upload_bytes=1024 * 1024,
     )
+    existing_scene = TemporalScene(timebase=Timebase(24), duration_s=1.0)
+    existing_scene.set_object_key("existing_object", 0.0, (0.1, 0.2, 0.0))
+    client.app.state.store.set_meta(
+        project_id, "ultra_temporal_scene_v1", existing_scene.to_dict()
+    )
 
     response = client.post(
         f"/studio/api/projects/{project_id}/temporal-scene/from-video",
@@ -108,6 +113,16 @@ def test_project_video_entrypoint_decodes_and_persists_observation(
     )
     assert persisted.status_code == 200
     assert persisted.json() == observation
+    canonical = client.get(f"/studio/api/projects/{project_id}/temporal-scene")
+    assert canonical.status_code == 200
+    assert canonical.json()["timebase"]["fps"] == 24
+    assert "existing_object" in canonical.json()["objects"]
+    assert "frame_change_1" in canonical.json()["objects"]
+    assert observation["temporal_scene"] == {
+        key: value
+        for key, value in canonical.json().items()
+        if key not in {"neural_4d_reconstruction", "gpu_validation"}
+    }
 
     other_project = client.post(
         "/studio/api/projects", json={"name": "other-video-scene"}
