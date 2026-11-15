@@ -5177,7 +5177,7 @@ def create_default_tool_belt() -> ToolBelt:
             ),
             args_model=RecallSpatialAnchorArgs,
             handler=_handle_recall_spatial_anchor,
-            parallel_safe=True,
+            parallel_safe=False,
         )
     )
     belt.register(
