@@ -80,3 +80,16 @@ not claim inference quality or GPU validation.
 The upstream files and metadata are evidence for pin and license observations;
 they do not substitute for a repository build, notice bundle, or runtime
 acceptance test.
+
+## Follow-up: complete notice inventory
+
+The pinned server target links `llama-common` and `mtmd`; the pinned CMake
+definitions link `sheredom/subprocess.h`, `miniaudio`, and `stb_image` into those
+targets. Their upstream license text is now included with the Unicode notice in
+the hash-verified `Third-Party-LICENSES.md`. The image build runs `ldd` against
+the built server, resolves every linked ELF library to its Debian package, and
+copies that package's installed copyright file into the same notice tree with
+a SHA-256 inventory. Missing libraries, missing package ownership, or missing
+copyright files fail the build. Focused tests cover the lock, notice hashes,
+and dynamic-library notice collection. The source review is complete; the image
+CI build remains the verification gate for the actual runtime inventory.
