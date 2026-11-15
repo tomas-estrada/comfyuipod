@@ -168,6 +168,7 @@ EXPECTED_ROUTES: list[str] = [
     "POST /studio/api/projects/{project_id}/templates/{template_id}/submit",
     "POST /studio/api/projects/{project_id}/transcribe",
     "POST /studio/api/projects/{project_id}/voice/lexicons/{locale}/validate",
+    "POST /studio/api/projects/{project_id}/voice/lexicons/{locale}/normalize",
     "POST /studio/api/projects/{project_id}/uploads",
     "POST /studio/api/templates/{template_id}/submit",
     "PUT /studio/api/projects/{project_id}",
