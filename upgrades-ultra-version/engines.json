@@ -114,20 +114,27 @@
         "S43"
       ],
       "scope": "Desarrollo propio en la orquestación existente: brief→hipótesis→constraints→DAG.",
-      "terms_review": "Esquemas versionados, evidencia, presupuestos, idempotencia y errores tipados; no otra autoridad de estado.",
+      "terms_review": "Original project code is covered by the repository MIT License. No third-party code, models, assets, or new external package are redistributed by this compiler; it uses the existing pinned Studio runtime dependencies recorded in studio/pyproject.toml.",
       "hardware_notes": "CPU; LangGraph fijado y probado en la imagen de producción.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C03",
         "C08"
       ],
-      "code_revision": null,
+      "code_revision": "cdda33fd344666534c2bd2d2a5ae27fe8a937aba",
       "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/mission-compiler.lock.json": "7e75f51048050399e87168b10c23877fc33ff00e893258f0fd4d0c9066afc492"
+      },
+      "redistribution_decision": "allowed",
+      "notices_reviewed": true,
+      "evidence_entrypoint": "studio/comfy_studio/mission_compiler.py",
+      "evidence_test": "studio/tests/test_mission_compiler.py"
     },
     {
       "id": "production-memory",
@@ -1232,7 +1239,12 @@
       },
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
-      "dependency_packages": ["Blender 5.2.4", "mitsuba==3.9.1", "drjit==1.5.0", "typing_extensions==4.16.0"],
+      "dependency_packages": [
+        "Blender 5.2.4",
+        "mitsuba==3.9.1",
+        "drjit==1.5.0",
+        "typing_extensions==4.16.0"
+      ],
       "evidence_entrypoint": "studio/comfy_studio/engines/scene_optimizer.py",
       "evidence_test": "studio/tests/test_engine_scene_optimizer.py",
       "lock_required_before_build": true,
@@ -1698,7 +1710,11 @@
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
       "upstream_url": "https://github.com/mitsuba-renderer/mitsuba3",
-      "dependency_packages": ["mitsuba==3.9.1", "drjit==1.5.0", "typing_extensions==4.16.0"],
+      "dependency_packages": [
+        "mitsuba==3.9.1",
+        "drjit==1.5.0",
+        "typing_extensions==4.16.0"
+      ],
       "evidence_entrypoint": "scripts/smoke_mitsuba_cpu_fit.py",
       "evidence_test": "scripts/smoke_mitsuba_cpu_fit.py",
       "lock_required_before_build": true,

@@ -29,6 +29,10 @@ Tabla maestra de los **20 motores** registrados en `comfy_studio/engines/registr
 [`ace-step.md`](ace-step.md). El motor del registro `music_gen` es una vía
 separada; no representa la implementación activa de esa herramienta.
 
+La compilación CPU de briefs aprobados a planes DAG está descrita en
+[`mission-compiler.md`](mission-compiler.md). Es parte de la orquestación de
+producciones y no es un motor de render del registro anterior.
+
 La memoria durable de decisiones y recetas del agente vive en ProjectStore y no
 es un proceso de engine separado; su alcance, límites y lock están en
 [`production-memory.md`](production-memory.md).
