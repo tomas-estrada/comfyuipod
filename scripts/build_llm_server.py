@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -117,6 +118,82 @@ def install_supplemental_notice(
     shutil.copy2(source, destination)
 
 
+def parse_ldd_dependencies(output: str) -> list[str]:
+    """Return absolute ELF dependency paths, rejecting unresolved libraries."""
+    paths: set[str] = set()
+    for line in output.splitlines():
+        if " => not found" in line:
+            raise RuntimeError(f"llama-server tiene una biblioteca dinámica ausente: {line}")
+        match = re.search(r"(?:=>\s+)?(/\S+)", line)
+        if match:
+            paths.add(match.group(1))
+    if not paths:
+        raise RuntimeError("ldd no reportó bibliotecas dinámicas para llama-server")
+    return sorted(paths)
+
+
+def install_system_library_notices(binary: Path, license_root: Path) -> list[dict[str, str]]:
+    """Copy copyright files for every package owning a linked ELF dependency.
+
+    The Ubuntu base image and compiler packages can change independently of the
+    pinned llama.cpp source. Resolve notices from the exact runtime ELF closure
+    during the image build and retain a hash-indexed inventory alongside them.
+    """
+    ldd_output = subprocess.check_output(["ldd", str(binary)], text=True)
+    dependencies = parse_ldd_dependencies(ldd_output)
+    notice_dir = license_root / "system-libraries"
+    notice_dir.mkdir(parents=True, exist_ok=True)
+    package_notices: dict[str, tuple[str, str]] = {}
+    records: list[dict[str, str]] = []
+
+    for raw_path in dependencies:
+        library_path = Path(raw_path).resolve(strict=True)
+        owners = subprocess.check_output(
+            ["dpkg-query", "-S", str(library_path)], text=True
+        )
+        packages = {
+            line.partition(": ")[0]
+            for line in owners.splitlines()
+            if ": " in line
+        }
+        if not packages:
+            raise RuntimeError(f"sin paquete Debian propietario para biblioteca {library_path}")
+        for package in sorted(packages):
+            if package not in package_notices:
+                files = subprocess.check_output(
+                    ["dpkg-query", "-L", package], text=True
+                ).splitlines()
+                candidates = [
+                    Path(item) for item in files
+                    if item.startswith("/") and Path(item).name == "copyright"
+                ]
+                source_notice = next((item for item in candidates if item.is_file()), None)
+                if source_notice is None:
+                    raise RuntimeError(
+                        f"sin archivo copyright instalado para paquete {package}"
+                    )
+                safe_name = re.sub(r"[^A-Za-z0-9_.+-]", "_", package)
+                destination = notice_dir / f"{safe_name}.copyright"
+                shutil.copy2(source_notice, destination)
+                digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+                package_notices[package] = (str(destination.relative_to(license_root)), digest)
+            notice_path, digest = package_notices[package]
+            records.append({
+                "library": str(library_path),
+                "package": package,
+                "notice": notice_path,
+                "sha256": digest,
+            })
+
+    manifest = notice_dir / "manifest.json"
+    manifest.write_text(
+        json.dumps({"schema": "llama-server-system-notices/1", "libraries": records}, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    return records
+
+
 def _validate_supplemental_destination(lock: dict, supplemental: dict) -> str:
     destination = supplemental.get("destination")
     if (
@@ -208,6 +285,7 @@ def build(
                 supplemental["sha256"],
                 notice_root / supplemental["destination"],
             )
+        install_system_library_notices(install_prefix / "llama-server", notice_root)
         _run([str(install_prefix / "llama-server"), "--version"])
     finally:
         if temp is not None:
