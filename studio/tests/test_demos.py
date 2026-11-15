@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
@@ -236,7 +237,7 @@ def test_d05_runner_encodes_and_probes_exact_4k_fixture(tmp_path: Path) -> None:
     assert result["checks"]["budget"]["within_budget"] is True
     assert result["checks"]["brief_to_edl"]["cuts"] >= 1
     assert result["checks"]["editable_roundtrip"]["title_edit_preserved_clips"] is True
-    assert result["checks"]["editable_roundtrip"]["credits_verified"] is True
+    assert result["checks"]["editable_roundtrip"]["credit_metadata_retained"] is True
     assert result["checks"]["ffmpeg_encode"]["dimensions_verified"] == {
         "16:9": True,
         "9:16": True,
@@ -309,15 +310,28 @@ def test_d05_accepts_project_owned_source_video_and_user_evidence(
     assert result["checks"]["asset_inventory"]["source_sha256"] == source_sha
     assert result["checks"]["ffmpeg_encode"]["real_project_source"] is True
     assert result["checks"]["brief_to_edl"]["evidence_mode"] == "user-provided transcript"
-    assert result["checks"]["editable_roundtrip"]["credits_verified"] is True
+    assert result["checks"]["editable_roundtrip"]["credit_metadata_retained"] is True
+    assert result["checks"]["editable_roundtrip"]["rights_verified"] is False
     manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
     source_input = next(row for row in manifest["inputs"] if row["kind"] == "project_source_video")
     assert source_input["sha256"] == source_sha
+    assert source_input["path"] == source.name
+    assert not Path(source_input["path"]).is_absolute()
     inventory = json.loads(
         Path(result["manifest"]).parent.joinpath("D05_asset_inventory.json").read_text()
     )
     assert inventory["mode"] == "user_project_source"
-    assert inventory["source"]["license"] == "CC BY 4.0, footage by test author"
+    assert (
+        inventory["source"]["caller_asserted_rights_label"]
+        == "CC BY 4.0, footage by test author"
+    )
+    assert inventory["source"]["rights_verified"] is False
+    with ZipFile(Path(result["manifest"]).parent / "D05_delivery_package.zip") as archive:
+        delivery = json.loads(archive.read("delivery-manifest.json"))
+    assert delivery["rights_assertion"] == {
+        "caller_asserted_label": "CC BY 4.0, footage by test author",
+        "rights_verified": False,
+    }
     project = json.loads(
         Path(result["manifest"]).parent.joinpath("editable_project.json").read_text()
     )

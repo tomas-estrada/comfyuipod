@@ -14,10 +14,12 @@ from comfy_studio.projects import MediaValidationError, ProjectStore
 from comfy_studio.raster_layers import (
     RasterLayer,
     RasterLayerError,
+    RasterLayerIntegrityUnknownError,
     RasterLayerStaleError,
     affected_by,
     canonical_manifest,
     composite_layers,
+    integrity_unknown_layer_ids,
     parse_manifest,
     pin_asset_sources,
     stale_layer_ids,
@@ -138,6 +140,29 @@ def _mark_previous_output_stale(
     )
 
 
+def _mark_previous_output_integrity_unknown(
+    store: ProjectStore, project_id: str, unknown: set[str]
+) -> None:
+    previous_output = store.get_meta(project_id, _OUTPUT_META_KEY)
+    if not isinstance(previous_output, dict) or not previous_output.get("asset_id"):
+        return
+    store.update_asset_metadata(
+        project_id,
+        str(previous_output["asset_id"]),
+        metadata={
+            "stale": True,
+            "stale_reason": "raster_layer_source_hash_missing",
+            "integrity_status": "unknown",
+            "integrity_unknown_layer_ids": sorted(unknown),
+        },
+    )
+    store.set_meta(
+        project_id,
+        _OUTPUT_META_KEY,
+        {**previous_output, "status": "integrity_unknown"},
+    )
+
+
 def _mark_previous_chroma_output_stale(
     store: ProjectStore, project_id: str, current: dict[str, Any]
 ) -> list[str]:
@@ -231,12 +256,16 @@ def register_routes(app: FastAPI) -> None:
         except RasterLayerError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         stale = stale_layer_ids(store, project_id, parse_manifest(raw))
+        unknown = integrity_unknown_layer_ids(parse_manifest(raw))
         if stale:
             _mark_previous_output_stale(store, project_id, set(stale))
+        if unknown:
+            _mark_previous_output_integrity_unknown(store, project_id, set(unknown))
         return {
             **manifest,
             "render_validation": "not_run",
             "stale_layer_ids": stale,
+            "integrity_unknown_layer_ids": unknown,
         }
 
     @app.patch("/studio/api/projects/{project_id}/raster-layers/{layer_id}")
@@ -287,10 +316,17 @@ def register_routes(app: FastAPI) -> None:
         try:
             layers = parse_manifest(store.get_meta(project_id, _META_KEY))
             stale = stale_layer_ids(store, project_id, layers)
+            unknown = integrity_unknown_layer_ids(layers)
             if stale:
                 _mark_previous_output_stale(store, project_id, set(stale))
                 raise RasterLayerStaleError(
                     "fuente cambió desde que se guardó la capa: " + ", ".join(stale)
+                )
+            if unknown:
+                _mark_previous_output_integrity_unknown(store, project_id, set(unknown))
+                raise RasterLayerIntegrityUnknownError(
+                    "integrity unknown for layers without a pinned source hash: "
+                    + ", ".join(unknown)
                 )
             png, evidence = await run_in_threadpool(
                 composite_layers, store, project_id, layers
@@ -331,6 +367,8 @@ def register_routes(app: FastAPI) -> None:
             stale = stale_layer_ids(store, project_id, current_layers)
             if stale:
                 _mark_previous_output_stale(store, project_id, set(stale))
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RasterLayerIntegrityUnknownError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RasterLayerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -24,6 +24,10 @@ class RasterLayerStaleError(RasterLayerError):
     """A project asset no longer matches the source bytes pinned by its layer."""
 
 
+class RasterLayerIntegrityUnknownError(RasterLayerError):
+    """A legacy layer has no pinned source hash, so its integrity is unknown."""
+
+
 MAX_RASTER_LAYERS = 32
 
 
@@ -268,6 +272,11 @@ def stale_layer_ids(
     return stale
 
 
+def integrity_unknown_layer_ids(layers: list[RasterLayer]) -> list[str]:
+    """List legacy layers with no source hash; their current bytes are unverified."""
+    return [layer.layer_id for layer in validate_layers(layers) if layer.source_sha256 is None]
+
+
 def composite_layers(
     store: ProjectStore, project_id: str, layers: list[RasterLayer]
 ) -> tuple[bytes, dict[str, Any]]:
@@ -275,6 +284,11 @@ def composite_layers(
     ordered = validate_layers(layers)
     if not ordered:
         raise RasterLayerError("se requiere al menos una capa")
+    unknown = integrity_unknown_layer_ids(ordered)
+    if unknown:
+        raise RasterLayerIntegrityUnknownError(
+            "integrity unknown for layers without a pinned source hash: " + ", ".join(unknown)
+        )
     available_memory = _available_memory_bytes()
     if available_memory is None or available_memory <= 0:
         raise RasterLayerError("memoria disponible desconocida; composición rechazada")
@@ -353,9 +367,11 @@ def parse_manifest(raw: Any) -> list[RasterLayer]:
 __all__ = [
     "RasterLayer",
     "RasterLayerError",
+    "RasterLayerIntegrityUnknownError",
     "affected_by",
     "canonical_manifest",
     "composite_layers",
+    "integrity_unknown_layer_ids",
     "parse_manifest",
     "validate_asset_references",
     "validate_layers",

@@ -869,7 +869,8 @@ def _render_d05(
                             "filename": source.name,
                             "sha256": inventory["source_sha256"],
                             "bytes": inventory["source_bytes"],
-                            "license": effective_license,
+                            "caller_asserted_rights_label": effective_license,
+                            "rights_verified": False,
                         },
                         "brief": active_brief,
                         "transcript_sha256": hashlib.sha256(
@@ -1077,8 +1078,17 @@ def _render_d05(
             ],
         )
         reopened = load_editable_package(package)
-        delivery_manifest = json.loads((package / "delivery-manifest.json").read_text())
-        credits_verified = bool(delivery_manifest.get("credits")) and all(
+        delivery_manifest_path = package / "delivery-manifest.json"
+        delivery_manifest = json.loads(delivery_manifest_path.read_text())
+        delivery_manifest["rights_assertion"] = {
+            "caller_asserted_label": effective_license,
+            "rights_verified": False,
+        }
+        delivery_manifest_path.write_text(
+            json.dumps(delivery_manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        credit_metadata_retained = bool(delivery_manifest.get("credits")) and all(
             credit.get("license") == effective_license
             and credit.get("source_asset_id") == uploaded["id"]
             for credit in delivery_manifest["credits"]
@@ -1097,8 +1107,8 @@ def _render_d05(
         )
         if not editable_ok:
             raise DemoError("D05 editable project changed approved clip data during title edit")
-        if not credits_verified:
-            raise DemoError("D05 delivery package did not retain source credit and license")
+        if not credit_metadata_retained:
+            raise DemoError("D05 delivery package did not retain caller-provided credit metadata")
         archive = out_dir / "D05_delivery_package.zip"
         from zipfile import ZIP_STORED, ZipFile
 
@@ -1140,7 +1150,8 @@ def _render_d05(
         "editable_roundtrip": {
             "reopened": True,
             "title_edit_preserved_clips": editable_ok,
-            "credits_verified": credits_verified,
+            "credit_metadata_retained": credit_metadata_retained,
+            "rights_verified": False,
         },
         "recovery": {
             "partial_failures_isolated": True,
@@ -1210,14 +1221,15 @@ def run_demo(
             )
         inputs.append({
             "kind": "project_source_video",
-            "path": str(source_path),
+            "path": source_path.name,
             "sha256": _sha256(source_path),
             "bytes": source_path.stat().st_size,
             "brief": (brief or "").strip(),
             "transcript_sha256": hashlib.sha256((transcript or "").encode("utf-8")).hexdigest(),
             "transcript_start_s": transcript_start,
             "transcript_end_s": transcript_end,
-            "license": source_license,
+            "caller_asserted_rights_label": source_license,
+            "rights_verified": False,
         })
     if demo_id == "D01":
         atlas_evidence, atlas_inputs = _check_d01_atlas_references(fixture_data)
@@ -1358,7 +1370,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--transcript-start", type=float, default=0.0)
     parser.add_argument("--transcript-end", type=float)
     parser.add_argument(
-        "--source-license", help="D05 real-source mode: credit/license or rights label"
+        "--source-license",
+        help=(
+            "D05: caller-asserted rights/credit label to retain as metadata; "
+            "not independently verified"
+        ),
     )
     args = parser.parse_args(argv)
     if args.list:

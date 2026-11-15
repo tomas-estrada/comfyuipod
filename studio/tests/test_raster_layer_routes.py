@@ -136,6 +136,45 @@ def test_raster_layer_source_hash_detects_changed_project_bytes(client: TestClie
     assert client.get(url).json()["stale_layer_ids"] == []
 
 
+def test_legacy_raster_layer_without_hash_is_unknown_and_cannot_render(client: TestClient) -> None:
+    project_id = client.post("/studio/api/projects", json={"name": "Legacy integrity"}).json()["id"]
+    upload = client.post(
+        f"/studio/api/projects/{project_id}/uploads",
+        files={"file": ("layer.png", _png([(12, 34, 56, 255)]), "image/png")},
+    )
+    asset_id = upload.json()["id"]
+    url = f"/studio/api/projects/{project_id}/raster-layers"
+    saved = client.put(
+        url,
+        json={"layers": [{"layer_id": "plate", "asset_id": asset_id, "order": 0}]},
+    )
+    assert saved.status_code == 200
+    rendered = client.post(f"{url}/composite")
+    assert rendered.status_code == 201
+
+    # Simulate a persisted pre-hash manifest, then mutate the project-owned bytes.
+    legacy = {
+        "schema": saved.json()["schema"],
+        "layers": [{key: value for key, value in saved.json()["layers"][0].items()
+                    if key != "source_sha256"}],
+    }
+    client.app.state.store.set_meta(project_id, "ultra_raster_layer_set_v1", legacy)
+    path = client.app.state.store.get_asset_path(project_id, asset_id)
+    assert path is not None
+    path.write_bytes(_png([(90, 80, 70, 255)]))
+
+    current = client.get(url).json()
+    assert current["stale_layer_ids"] == []
+    assert current["integrity_unknown_layer_ids"] == ["plate"]
+    prior_url = rendered.json()["asset"]["preview_url"].replace("/file", "")
+    prior_output = client.get(prior_url).json()
+    assert prior_output["metadata"]["stale"] is True
+    assert prior_output["metadata"]["stale_reason"] == "raster_layer_source_hash_missing"
+    rejected = client.post(f"{url}/composite")
+    assert rejected.status_code == 409
+    assert "integrity unknown" in rejected.json()["detail"]
+
+
 def test_raster_layer_set_has_a_fixed_layer_count_limit(client: TestClient) -> None:
     project_id = client.post("/studio/api/projects", json={"name": "Bounded"}).json()[
         "id"
