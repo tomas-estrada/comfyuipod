@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -73,6 +74,99 @@ def test_inventario_publica_presentes_con_bytes_reales_y_faltantes_sin_bytes(
     assert ausente["present"] is False
     # Sin medición no se inventa un tamaño: es «no disponible».
     assert ausente["bytes_on_disk"] is None
+
+
+def test_inventario_distingue_integridad_y_stage_para_agente_y_health(
+    client: TestClient, data_root, tmp_path, monkeypatch
+) -> None:
+    """La presencia en disco no demuestra que el modelo sea íntegro."""
+    verified_size = data_root / "checkpoints" / "size-verified.bin"
+    verified_size.write_bytes(b"four")
+    verified_hash = data_root / "checkpoints" / "hash-verified.bin"
+    verified_hash.write_bytes(b"hash fixture")
+    expected_hash = hashlib.sha256(verified_hash.read_bytes()).hexdigest()
+    from comfy_studio.asset_acquire import _record_integrity
+
+    _record_integrity(verified_hash, expected_hash, "sha256")
+    verified_wrong_digest = data_root / "checkpoints" / "wrong-digest.bin"
+    verified_wrong_digest.write_bytes(b"wrong but verified")
+    actual_wrong_digest = hashlib.sha256(verified_wrong_digest.read_bytes()).hexdigest()
+    _record_integrity(verified_wrong_digest, actual_wrong_digest, "sha256")
+    unverified = data_root / "checkpoints" / "unverified.bin"
+    unverified.write_bytes(b"different payload")
+    corrupt = data_root / "checkpoints" / "wrong-size.bin"
+    corrupt.write_bytes(b"bad")
+
+    stage_root = data_root / "models" / ".hf_stage_capability" / "job-123"
+    partial = stage_root / "checkpoints" / "staged.bin.incomplete"
+    partial.parent.mkdir(parents=True)
+    partial.write_bytes(b"partial")
+    manifest = {
+        "version": 1,
+        "models": [
+            {
+                "filename": verified_size.name,
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/size-verified.bin",
+                "bytes": 4,
+            },
+            {
+                "filename": verified_hash.name,
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/hash-verified.bin",
+                "sha256": expected_hash,
+            },
+            {
+                "filename": verified_wrong_digest.name,
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/wrong-digest.bin",
+                "sha256": "0" * 64,
+            },
+            {
+                "filename": unverified.name,
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/unverified.bin",
+                "sha256": "0" * 64,
+            },
+            {
+                "filename": corrupt.name,
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/wrong-size.bin",
+                "bytes": 8,
+            },
+            {
+                "filename": "staged.bin",
+                "remote_path": "checkpoints/staged.bin",
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/staged.bin",
+                "bytes": 7,
+            },
+            {
+                "filename": "missing.bin",
+                "dest_path": "{COMFY_DATA_DIR}/checkpoints/missing.bin",
+                "bytes": 7,
+            },
+        ],
+    }
+    path = tmp_path / "integrity-fixture.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("STUDIO_MANIFEST", str(path))
+
+    status = client.get("/studio/api/status")
+    assert status.status_code == 200, status.text
+    inventory = {row["name"]: row for row in status.json()["model_assets"]["inventory"]}
+    assert inventory[verified_size.name]["integrity_state"] == "verified"
+    assert inventory[verified_hash.name]["integrity_state"] == "verified"
+    assert inventory[verified_wrong_digest.name]["integrity_state"] == "corrupt"
+    assert inventory[unverified.name]["integrity_state"] == "present_unverified"
+    assert inventory[corrupt.name]["integrity_state"] == "corrupt"
+    assert inventory["staged.bin"]["integrity_state"] == "staging"
+    assert inventory["missing.bin"]["integrity_state"] == "missing"
+
+    health = client.get("/studio/api/health")
+    assert health.status_code == 200, health.text
+    assert health.json()["asset_integrity"] == {
+        "verified": 2,
+        "present_unverified": 1,
+        "corrupt": 2,
+        "staging": 1,
+        "missing": 1,
+        "unavailable": 0,
+    }
 
 
 def test_health_publica_el_estado_de_pesos_requeridos(client: TestClient, manifest_fixture) -> None:
