@@ -1,0 +1,40 @@
+{
+  "schema": "ultra.mission-compiler-source-lock/1",
+  "engine_id": "mission-compiler",
+  "source_revision": "2290328d991127c8816220a0f2bdaf209dab8754",
+  "runtime": {
+    "python_requires": ">=3.11",
+    "additional_external_distributions": [],
+    "host_application_dependencies": {
+      "manifest": "studio/pyproject.toml",
+      "direct_pins": {
+        "fastapi": "0.162.0",
+        "pydantic": "2.14.2",
+        "langgraph": "1.2.20"
+      }
+    },
+    "standard_library": [
+      "collections",
+      "dataclasses",
+      "hashlib",
+      "json",
+      "math",
+      "typing"
+    ]
+  },
+  "internal_source_sha256": {
+    "studio/comfy_studio/mission_compiler.py": "637bc5d1c3e6ac996cb93f01363e094d099c4ccce18f7d51897963c1c9d20cd4",
+    "studio/comfy_studio/creative/brief.py": "4da543668209612cc1cedbf0c9a95adf2b0f2a44f4656ed5cc34a785daa5d4cd",
+    "studio/comfy_studio/orchestration/service.py": "47c04f3016f30e024d3549d3c52de8b892c2a5485a28e7d4ef6ccdff3f3e9cc2",
+    "studio/comfy_studio/orchestration/state.py": "8a18431f342f4059e2776859ab4de54ca8aa46a41a8b0de09a121b1976bd112d",
+    "studio/comfy_studio/routers/productions.py": "641712f592d3d3fa75a57fedae2ad889d64a4855bd040e44b833a5f8fd765be9",
+    "studio/comfy_studio/webutil.py": "5b5adab0aba236dfdbdc816a0d5e4cafbbdcfcffd960766646adc8b8526c3d3f",
+    "studio/pyproject.toml": "0131d62134e151bfa53c348977d7b1593f652bd9fda2c9153b1c7ce285eb1ead",
+    "studio/tests/test_mission_compiler.py": "1d3b77cade03f15bb1d7fe839b309d22a4c01cf232e2da9413722506b1d3671b"
+  },
+  "persistence": {
+    "backend": "existing ProductionState and SQLite production checkpointer",
+    "external_services": []
+  },
+  "notice": "Original repository code covered by the root MIT license; this engine adds no third-party package, model, or asset. Existing host application dependencies remain governed by studio/pyproject.toml and the image build lock."
+}

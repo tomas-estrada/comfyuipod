@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
@@ -160,3 +163,21 @@ def test_production_service_uses_compiled_dag_and_deduplicates_retries(tmp_path)
     assert "audience.hypothesis" in layer["params"]["source_refs"]
     assert "user_constraints[0]" in layer["params"]["source_refs"]
     assert first_plan["metadata"]["mission_compilation"]["constraints"][0]["key"] == "music"
+
+
+def test_mission_compiler_engine_evidence_matches_locked_sources() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    manifest = json.loads(
+        (repo_root / "upgrades-ultra-version/engines.json").read_text(encoding="utf-8")
+    )
+    engine = next(item for item in manifest["engines"] if item["id"] == "mission-compiler")
+    assert engine["implementation_status"] == "implemented"
+    assert engine["evidence_entrypoint"] == "studio/comfy_studio/mission_compiler.py"
+    assert engine["evidence_test"] == "studio/tests/test_mission_compiler.py"
+    lock_name, expected_lock_hash = next(iter(engine["dependency_lock_hashes"].items()))
+    lock_path = repo_root / lock_name
+    assert hashlib.sha256(lock_path.read_bytes()).hexdigest() == expected_lock_hash
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    assert lock["source_revision"] == engine["code_revision"]
+    for source_name, expected_hash in lock["internal_source_sha256"].items():
+        assert hashlib.sha256((repo_root / source_name).read_bytes()).hexdigest() == expected_hash
