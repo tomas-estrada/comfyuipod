@@ -55,6 +55,145 @@ def test_source_lock_hashes_are_rederived_from_the_pinned_revision() -> None:
     assert "no coincide con source_revision" in blockers[0]
 
 
+def test_source_lock_verifies_internal_sources_at_the_pinned_revision() -> None:
+    """internal_source_sha256 is verified, not ignored like before this fix."""
+    mod = _load_module()
+    blockers = mod._source_lock_blockers(
+        "production-memory",
+        {
+            "source_revision": "8de272798924116b383e6802868dc0dfeab5b4ff",
+            "internal_source_sha256": {
+                "studio/comfy_studio/production_memory.py": "0" * 64,
+            },
+        },
+        repo_root=REPO_ROOT,
+    )
+
+    assert len(blockers) == 1
+    assert "production_memory.py" in blockers[0]
+    assert "no coincide con source_revision" in blockers[0]
+
+
+def test_source_lock_rejects_source_missing_from_pinned_revision() -> None:
+    """git show failure blocks: a worktree file absent from the revision must not pass."""
+    mod = _load_module()
+    blockers = mod._source_lock_blockers(
+        "mission-compiler",
+        {
+            "source_revision": "8de272798924116b383e6802868dc0dfeab5b4ff",
+            "pinned_source_sha256": {
+                "studio/comfy_studio/mission_compiler.py": "c" * 64,
+            },
+        },
+        repo_root=REPO_ROOT,
+    )
+
+    assert len(blockers) == 1
+    assert "mission_compiler.py" in blockers[0]
+    assert "no existe en source_revision 8de272798924116b383e6802868dc0dfeab5b4ff" in blockers[0]
+
+
+def test_source_lock_internal_sources_validated_paths_and_hashes() -> None:
+    mod = _load_module()
+    blockers = mod._source_lock_blockers(
+        "production-memory",
+        {
+            "source_revision": "8de272798924116b383e6802868dc0dfeab5b4ff",
+            "internal_source_sha256": {
+                "/etc/passwd": "a" * 64,
+                "../escape.py": "b" * 64,
+                "studio/comfy_studio/config.py": "not-a-hash",
+            },
+        },
+        repo_root=REPO_ROOT,
+    )
+
+    assert len(blockers) == 3
+    assert any("ruta inválida /etc/passwd" in b for b in blockers)
+    assert any("ruta inválida ../escape.py" in b for b in blockers)
+    assert any("SHA-256 inválido para studio/comfy_studio/config.py" in b for b in blockers)
+
+
+def test_source_lock_requires_immutable_revision_for_internal_sources() -> None:
+    mod = _load_module()
+    blockers = mod._source_lock_blockers(
+        "production-memory",
+        {
+            "source_revision": "v1.2.3",
+            "internal_source_sha256": {
+                "studio/comfy_studio/config.py": "a" * 64,
+            },
+        },
+        repo_root=REPO_ROOT,
+    )
+
+    assert any("requiere source_revision SHA inmutable" in b for b in blockers)
+
+
+def test_source_lock_requires_revision_when_pinned_sources_present() -> None:
+    """Absent source_revision with pinned sources is a blocker, not a skip."""
+    mod = _load_module()
+    blockers = mod._source_lock_blockers(
+        "production-memory",
+        {
+            "internal_source_sha256": {
+                "studio/comfy_studio/config.py": "a" * 64,
+            },
+        },
+        repo_root=REPO_ROOT,
+    )
+
+    assert len(blockers) == 1
+    assert "requiere source_revision SHA inmutable" in blockers[0]
+
+
+def test_source_lock_internal_sources_must_be_a_mapping() -> None:
+    mod = _load_module()
+    blockers = mod._source_lock_blockers(
+        "production-memory",
+        {
+            "source_revision": "8de272798924116b383e6802868dc0dfeab5b4ff",
+            "internal_source_sha256": ["studio/comfy_studio/config.py"],
+        },
+        repo_root=REPO_ROOT,
+    )
+
+    assert any("internal_source_sha256 debe ser un objeto" in b for b in blockers)
+
+
+def test_source_lock_pinned_sources_must_be_a_mapping() -> None:
+    mod = _load_module()
+    blockers = mod._source_lock_blockers(
+        "mission-compiler",
+        {
+            "source_revision": "8de272798924116b383e6802868dc0dfeab5b4ff",
+            "pinned_source_sha256": "studio/comfy_studio/mission_compiler.py",
+        },
+        repo_root=REPO_ROOT,
+    )
+
+    assert any("pinned_source_sha256 debe ser un objeto" in b for b in blockers)
+
+
+def test_production_memory_internal_sources_verified_through_the_validator() -> None:
+    """The real lock passes strict verification, and any tampering is caught."""
+    mod = _load_module()
+    lock = mod.load_json(
+        mod.REPO_ROOT / "upgrades-ultra-version" / "locks" / "production-memory.lock.json"
+    )
+
+    assert mod._source_lock_blockers("production-memory", lock, repo_root=REPO_ROOT) == []
+
+    tampered = dict(lock)
+    tampered["internal_source_sha256"] = dict(lock["internal_source_sha256"])
+    tampered["internal_source_sha256"]["studio/pyproject.toml"] = "f" * 64
+    blockers = mod._source_lock_blockers("production-memory", tampered, repo_root=REPO_ROOT)
+
+    assert len(blockers) == 1
+    assert "studio/pyproject.toml" in blockers[0]
+    assert "no coincide con source_revision" in blockers[0]
+
+
 def test_scene_optimizer_has_complete_a07_manifest_evidence() -> None:
     """The integrated CPU scene optimizer must satisfy its declared A07 evidence."""
     mod = _load_module()
