@@ -653,3 +653,35 @@ def test_lock_remotion_tiene_lock_fijado() -> None:
     assert remotion_build > remotion_copy
     dockerignore = (REPO_ROOT / ".dockerignore").read_text()
     assert "!docs/licenses/remotion.md" in dockerignore
+
+
+def test_production_memory_engine_has_locked_cpu_entrypoint_and_test() -> None:
+    """The project-memory engine pins its internal source dependencies and tests."""
+    manifest = json.loads(
+        (REPO_ROOT / "upgrades-ultra-version" / "engines.json").read_text()
+    )
+    engine = next(item for item in manifest["engines"] if item["id"] == "production-memory")
+    capabilities = json.loads(
+        (REPO_ROOT / "upgrades-ultra-version" / "capabilities.json").read_text()
+    )
+    c04 = next(item for item in capabilities["capabilities"] if item["id"] == "C04")
+
+    assert engine["implementation_status"] == "implemented"
+    assert c04["status"] == "implemented_pre_gpu; gpu_validation_pending"
+    assert engine["code_revision"] == "8de272798924116b383e6802868dc0dfeab5b4ff"
+    assert engine["redistribution_decision"] == "allowed"
+    assert engine["notices_reviewed"] is True
+    assert engine["evidence_entrypoint"] == "studio/comfy_studio/agent/tools.py"
+    assert engine["evidence_test"] == "studio/tests/agent/test_tools.py"
+
+    lock_path = "upgrades-ultra-version/locks/production-memory.lock.json"
+    lock = json.loads((REPO_ROOT / lock_path).read_text())
+    assert lock["engine_id"] == "production-memory"
+    assert lock["source_revision"] == engine["code_revision"]
+    assert lock["runtime"]["additional_external_distributions"] == []
+    expected_lock_hash = hashlib.sha256((REPO_ROOT / lock_path).read_bytes()).hexdigest()
+    assert engine["dependency_lock_hashes"] == {lock_path: expected_lock_hash}
+
+    for source_path, expected_hash in lock["internal_source_sha256"].items():
+        actual_hash = hashlib.sha256((REPO_ROOT / source_path).read_bytes()).hexdigest()
+        assert actual_hash == expected_hash, source_path
