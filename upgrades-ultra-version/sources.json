@@ -1288,9 +1288,9 @@
         "https://github.com/m-bain/whisperX"
       ],
       "kind": "primary_source",
-      "checked_at_utc": "2026-11-05",
-      "verification": "read_official_readme",
-      "limitation": "Diarization can require separate gated model terms; no hidden runtime code install.",
+      "checked_at_utc": "2026-11-15",
+      "verification": "official_v3.8.6_release_commit_pyproject_and_license_reviewed",
+      "limitation": "The v3.8.6 source commit and BSD-2-Clause code license are verified; transitive dependency and model rights are separate, and this does not prove the optional ASR extra is installed in the production image.",
       "gpu_measured_here": false
     },
     {
