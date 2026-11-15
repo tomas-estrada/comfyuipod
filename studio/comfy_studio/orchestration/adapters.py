@@ -326,7 +326,6 @@ class EngineRunnerAdapter:
         *,
         template_registry: Any | None = None,
         default_comfy_template: str = _DEFAULT_COMFY_TEMPLATE,
-        atlas_service: Any | None = None,
         project_store: Any | None = None,
         comfyui_input_dir: str | None = None,
         data_root: Path | None = None,
@@ -334,7 +333,6 @@ class EngineRunnerAdapter:
         self._engines = dict(engines)
         self._registry = template_registry
         self._default_template = default_comfy_template
-        self._atlas = atlas_service
         self._project_store = project_store
         self._comfyui_input_dir = comfyui_input_dir
         # Raíz de anclaje para rutas relativas y conjunto de raíces permitidas
@@ -344,61 +342,6 @@ class EngineRunnerAdapter:
         # motor.
         self._data_root = _resolve_data_root(data_root)
         self._allowed_roots = _allowed_roots(self._data_root, comfyui_input_dir)
-
-    def _resolve_atlas_background(self, job: dict[str, Any]) -> dict[str, Any]:
-        """Resuelve el fondo del atlas referenced en `job['atlas']` a un archivo local real.
-
-        Valida que el ref exista en el catálogo, que la ruta quede dentro de
-        files/ (sin path traversal) y que el archivo exista; inyecta
-        `background_image` con la ruta absoluta para la plantilla. Si algo falla
-        devuelve ok=False tipado (nunca un placeholder).
-        """
-        atlas_ctx = job.get("atlas")
-        if not isinstance(atlas_ctx, dict) or self._atlas is None:
-            return job
-        try:
-            available = self._atlas.available()
-        except Exception:  # noqa: BLE001
-            available = False
-        if not available:
-            return {
-                "_atlas_error": "atlas no disponible en el pod (sin catálogo en STUDIO_ATLAS_DIR)"
-            }
-        ref_id = atlas_ctx.get("ref_id") or ""
-        ref = self._atlas.store.get_reference(ref_id) if ref_id else None
-        if ref is None:
-            return {"_atlas_error": f"referencia de atlas desconocida: {ref_id!r}"}
-        files_root = (self._atlas.root / "files").resolve()
-        path = (files_root / ref.file_path).resolve()
-        try:
-            path.relative_to(files_root)
-        except ValueError:
-            return {"_atlas_error": "file_path del atlas escapa de files/ (path traversal)"}
-        if not path.is_file():
-            return {"_atlas_error": f"archivo del atlas ausente en disco: {ref.file_path}"}
-        # integridad al (re)ejecutar: el hash debe corresponder al contenido elegido
-        from comfy_studio.atlas.store import sha256_file
-
-        if sha256_file(path) != ref.sha256:
-            return {
-                "_atlas_error": (
-                    f"hash del fondo del atlas no coincide con el catálogo "
-                    f"({ref.ref_id}); posible corrupción o cambio silencioso"
-                )
-            }
-        resolved = dict(job)
-        resolved["background_image"] = str(path)
-        resolved["background_sha256"] = ref.sha256
-        resolved["atlas_resolved"] = {
-            "ref_id": ref.ref_id,
-            "place_id": atlas_ctx.get("place_id"),
-            "view_id": atlas_ctx.get("view_id"),
-            "sha256": ref.sha256,
-            "license": ref.license,
-            "attribution": ref.attribution,
-            "capture_date": ref.capture_date,
-        }
-        return resolved
 
     def _resolve_graph(self, job: dict[str, Any]) -> dict[str, Any]:
         """Devuelve `job` con `graph` resuelto desde una plantilla si falta.
@@ -430,31 +373,6 @@ class EngineRunnerAdapter:
             "lease_ram_mb",
         }
         params = {k: v for k, v in job.items() if k not in control_keys}
-        # el fondo del atlas entra al grafo por la entrada de imagen declarada
-        # (p. ej. wan_i2v -> image_input -> LoadImage). Si la plantilla no declara
-        # entrada de imagen, el fondo NO llegaría: se marca para fallar en claro.
-        if job.get("atlas_resolved") or job.get("background_image"):
-            try:
-                specs = self._registry.get_raw_definition(template_id)["parameters"]
-            except Exception:  # noqa: BLE001
-                specs = {}
-            if "image_input" in specs:
-                fname = Path(str(job["background_image"])).name
-                params["image_input"] = fname
-                if self._comfyui_input_dir:
-                    import shutil as _shutil
-
-                    dest_dir = Path(self._comfyui_input_dir)
-                    dest_dir.mkdir(parents=True, exist_ok=True)
-                    dest = dest_dir / fname
-                    if not dest.is_file():
-                        _shutil.copy2(str(job["background_image"]), dest)
-                job = dict(job)
-                job["atlas_image_input"] = fname
-                job["atlas_template_has_image"] = True
-            else:
-                job = dict(job)
-                job["atlas_template_has_image"] = False
         try:
             graph = self._registry.render_workflow(
                 template_id,
@@ -482,13 +400,6 @@ class EngineRunnerAdapter:
         project_id = str(job.get("project_id") or "").strip()
         if not project_id or self._project_store is None:
             return {"_reference_error": "asset de referencia sin proyecto o ProjectStore"}
-        if job.get("background_image") or job.get("atlas"):
-            return {
-                "_reference_error": (
-                    "la capa combina una imagen del proyecto con un fondo Atlas; "
-                    "selecciona una sola fuente de imagen"
-                )
-            }
         try:
             asset = self._project_store.get_asset(project_id, asset_id)
             source = self._project_store.get_asset_path(project_id, asset_id)
@@ -611,15 +522,6 @@ class EngineRunnerAdapter:
         # Confinar las rutas ANTES de toar ningún motor: el planner puede emitir
         # params arbitrarios y los motores hacen `Path(job[...])` sin comprobar.
         job = _confine_job_paths(job, self._allowed_roots, self._data_root)
-        resolved_atlas = self._resolve_atlas_background(job)
-        if isinstance(resolved_atlas, dict) and "_atlas_error" in resolved_atlas:
-            return {
-                "ok": False,
-                "engine": engine,
-                "error": f"atlas: {resolved_atlas['_atlas_error']}",
-            }
-        if isinstance(resolved_atlas, dict):
-            job = resolved_atlas
         if engine in _GRAPH_ENGINES:
             resolved_project_image = self._resolve_project_image(job)
             if "_reference_error" in resolved_project_image:
@@ -633,15 +535,6 @@ class EngineRunnerAdapter:
                 }
             job = resolved_project_image
             job = self._resolve_graph(job)
-            if job.get("background_image") and job.get("atlas_template_has_image") is False:
-                return {
-                    "ok": False,
-                    "engine": engine,
-                    "error": (
-                        "atlas: la plantilla seleccionada no declara entrada de imagen; "
-                        "el fondo no llegaría al grafo (usar p. ej. wan_i2v)"
-                    ),
-                }
         spec = EngineRunSpec(job=job, cost_cap=cost_cap, cancel_event=cancel_event)
         try:
             raw = _run_engine_sync(impl, spec)
@@ -862,7 +755,6 @@ def build_server_collaborators(
     compositor_engine: Any | None = None,
     available_nodes: set[str] | None = None,
     template_registry: Any | None = None,
-    atlas_service: Any | None = None,
     project_store: Any | None = None,
     comfyui_input_dir: str | None = None,
     gpu_lease: GpuLease | None = None,
@@ -880,7 +772,6 @@ def build_server_collaborators(
         EngineRunnerAdapter(
             engines,
             template_registry=template_registry,
-            atlas_service=atlas_service,
             project_store=project_store,
             comfyui_input_dir=comfyui_input_dir,
             data_root=data_root,

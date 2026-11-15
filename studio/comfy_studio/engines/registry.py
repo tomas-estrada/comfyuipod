@@ -254,17 +254,6 @@ def build_default_registry() -> EngineRegistry:
     )
     reg.register(
         EngineEntry(
-            "atlas-offline",
-            EngineTier.WARM,
-            wired=True,
-            note=(
-                "Bundle del atlas del Aburrá: catálogo + archivos + licencias + OSM "
-                "(atlas/packaging.py; CPU)"
-            ),
-        )
-    )
-    reg.register(
-        EngineEntry(
             "scene-optimizer",
             EngineTier.WARM,
             wired=True,
@@ -306,7 +295,6 @@ def build_default_registry() -> EngineRegistry:
 #: La resolución es perezosa (import bajo demanda, sin efectos laterales).
 ENGINE_CLASSES: dict[str, str] = {
     "ad_studio": "comfy_studio.engines.ad_studio:AdStudioEngine",
-    "atlas-offline": "comfy_studio.engines.atlas_offline:AtlasOfflineEngine",
     "audio": "comfy_studio.engines.audio:AudioEngine",
     "blender": "comfy_studio.engines.blender:BlenderEngine",
     "capture3d": "comfy_studio.engines.capture3d:Capture3dEngine",

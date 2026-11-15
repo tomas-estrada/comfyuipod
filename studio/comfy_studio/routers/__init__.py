@@ -8,7 +8,6 @@ from . import (
     ads,
     assets,
     assets3d,
-    atlas,
     audio,
     brief,
     chat,
@@ -32,7 +31,6 @@ from . import (
 
 _MODULES = (
     core,
-    atlas,
     projects,
     productions,
     assets,

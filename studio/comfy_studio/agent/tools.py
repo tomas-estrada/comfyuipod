@@ -5815,7 +5815,4 @@ def create_default_tool_belt() -> ToolBelt:
             parallel_safe=False,
         )
     )
-    from comfy_studio.atlas.agent_tools import register_atlas_tools
-
-    register_atlas_tools(belt)
     return belt
