@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from comfy_studio.projects import ProjectStore
 from comfy_studio.spatial_memory import (
@@ -16,9 +16,11 @@ from comfy_studio.spatial_memory import (
     SpatialMemory,
     TemporalScene,
 )
+from comfy_studio.video_scene import VideoSceneError, observe_video
 
 _META_KEY = "ultra_spatial_memory_v1"
 _SCENE_META_KEY = "ultra_temporal_scene_v1"
+_VIDEO_OBSERVATION_META_KEY = "ultra_video_temporal_observation_v1"
 
 
 class AnchorRequest(BaseModel):
@@ -39,6 +41,11 @@ class ReframeRequest(BaseModel):
 class RetimeRequest(BaseModel):
     scale: float
     new_fps: int | None = None
+
+
+class VideoObservationRequest(BaseModel):
+    asset_id: str = Field(..., min_length=1, max_length=64)
+    sample_fps: int = Field(default=2, ge=1, le=10)
 
 
 def _store(request: Request) -> ProjectStore:
@@ -184,6 +191,46 @@ def register_routes(app: FastAPI) -> None:
             "neural_4d_reconstruction": "not_claimed",
             "gpu_validation": "not_run",
         }
+
+    @app.post("/studio/api/projects/{project_id}/temporal-scene/from-video")
+    async def observe_project_video(
+        project_id: str,
+        body: VideoObservationRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Create a bounded image-plane observation from a project video asset."""
+        store = _store(request)
+        _require_project(store, project_id)
+        asset = store.get_asset(project_id, body.asset_id)
+        if asset is None:
+            raise HTTPException(status_code=404, detail="Video no encontrado en el proyecto")
+        if asset.get("kind") != "video":
+            raise HTTPException(status_code=409, detail="El asset del proyecto no es un video")
+        path = store.get_asset_path(project_id, body.asset_id)
+        if path is None:
+            raise HTTPException(
+                status_code=409,
+                detail="El archivo del video del proyecto no está disponible",
+            )
+        try:
+            observation = observe_video(
+                path,
+                source_asset_id=body.asset_id,
+                sample_fps=body.sample_fps,
+            )
+        except VideoSceneError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        store.set_meta(project_id, _VIDEO_OBSERVATION_META_KEY, observation)
+        return observation
+
+    @app.get("/studio/api/projects/{project_id}/temporal-scene/video-observation")
+    async def get_video_observation(project_id: str, request: Request) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        observation = store.get_meta(project_id, _VIDEO_OBSERVATION_META_KEY)
+        if observation is None:
+            raise HTTPException(status_code=404, detail="Observación de video no registrada")
+        return observation
 
     @app.get("/studio/api/projects/{project_id}/temporal-scene")
     async def get_temporal_scene(project_id: str, request: Request) -> dict[str, Any]:
