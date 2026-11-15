@@ -230,17 +230,26 @@
         "S40"
       ],
       "scope": "Mantener/ampliar engine y proyectos editables propios, sin usar packs comerciales como requisito.",
-      "terms_review": "Licencia propia: uso individual elegible no significa permiso genérico de redistribución/relicencia; conservar términos y revisar bundle.",
+      "terms_review": "Remotion License v4.0.541: uso gratis limitado a personas, organizaciones con hasta 3 empleados, entidades sin ánimo de lucro o evaluación; uso comercial para crear vídeos/imágenes permitido dentro de esos grupos. Otros usos requieren Company License. No hay permiso genérico para sublicenciar un derivado de Remotion. Se conserva el texto de licencia y los avisos de kiwi-schema; la redistribución de la imagen queda condicionada a elegibilidad/licencia y revisión del destinatario.",
       "hardware_notes": "Node/browser en build; rendering CPU y/o ruta GPU bajo scheduler.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C31"
       ],
-      "code_revision": "v4.0.541",
+      "code_revision": "e6df941441f3a2c8b4677a3dc5f1326746ac9db3",
+      "dependency_lock_hashes": {
+        "studio/remotion/package-lock.json": "f96f2bb0c79e7891960f2c2911502dcdada1b6a1e9c16e00fa510ceace17e930"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
+      "evidence_entrypoint": "studio/comfy_studio/engines/editor.py",
+      "evidence_test": "studio/tests/test_m4_editor_engine.py",
+      "upstream_url": "https://github.com/remotion-dev/remotion",
+      "license_source_url": "https://github.com/remotion-dev/remotion/blob/v4.0.541/LICENSE.md",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },

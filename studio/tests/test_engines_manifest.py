@@ -645,16 +645,17 @@ def test_lock_opencolorio_tiene_lock_fijado() -> None:
 
 
 def test_lock_remotion_tiene_lock_fijado() -> None:
-    """El engine, el manifest, npm lockfile y el build usan el mismo pin."""
+    """El engine pinneado, versión npm, lockfile y build permanecen coherentes."""
     mod = _load_module()
     manifest = mod.load_json(mod.DEFAULT_MANIFEST)
     by_id = {e["id"]: e for e in manifest["engines"]}
     revision = by_id["remotion"]["code_revision"]
-    assert revision == "v4.0.541"
+    assert revision == "e6df941441f3a2c8b4677a3dc5f1326746ac9db3"
 
     package = json.loads((REPO_ROOT / "studio" / "remotion" / "package.json").read_text())
-    assert package["dependencies"]["remotion"] == revision.removeprefix("v")
-    assert package["dependencies"]["@remotion/cli"] == revision.removeprefix("v")
+    version = package["dependencies"]["remotion"]
+    assert version == "4.0.541"
+    assert package["dependencies"]["@remotion/cli"] == version
 
     lock = json.loads(
         (REPO_ROOT / "studio" / "remotion" / "package-lock.json").read_text()
@@ -669,6 +670,8 @@ def test_lock_remotion_tiene_lock_fijado() -> None:
     remotion_copy = dockerfile.index("COPY studio/remotion/ /opt/remotion/")
     remotion_build = dockerfile.index("RUN npm ci --no-audit --no-fund", remotion_copy)
     assert remotion_build > remotion_copy
+    dockerignore = (REPO_ROOT / ".dockerignore").read_text()
+    assert "!docs/licenses/remotion.md" in dockerignore
 
 
 def test_production_memory_engine_has_locked_cpu_entrypoint_and_test() -> None:

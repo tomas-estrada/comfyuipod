@@ -292,6 +292,7 @@ COPY studio/remotion/ /opt/remotion/
 WORKDIR /opt/remotion
 RUN npm ci --no-audit --no-fund --loglevel=error \
     && npx remotion browser ensure \
+    && install -D -m 0644 node_modules/remotion/LICENSE.md /usr/share/doc/remotion/LICENSE.md \
     && npm cache clean --force
 # Restaurar el WORKDIR a /opt/ComfyUI: el warm-up posterior ejecuta `python3 main.py`
 # relativo a ese directorio (no a /). (fix: el build V-editor dejó CWD en / y el
@@ -520,6 +521,7 @@ COPY config/models-core.json /etc/comfyui/models-core.json
 COPY upgrades-ultra-version/engines.json /etc/comfyui/engines.json
 COPY docs/licenses/blender.md /usr/share/doc/blender/
 COPY docs/licenses/mitsuba.md /usr/share/doc/mitsuba/copyright
+COPY docs/licenses/remotion.md /usr/share/doc/remotion/THIRD-PARTY-NOTICES.md
 COPY scripts/storage_requirement.py /usr/local/bin/storage_requirement.py
 COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
