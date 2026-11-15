@@ -186,6 +186,33 @@ def test_same_brief_can_be_replanned_after_preapproval_cancellation(tmp_path) ->
     assert service.approve_plan(second["production_id"])["phase"] == "simulated"
 
 
+def test_explicit_zero_cost_cap_overrides_brief_budget(tmp_path) -> None:
+    service = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "missions.sqlite3"),
+        collaborators=Collaborators(),
+    )
+    brief = _brief()
+
+    planned = service.plan_production(brief["prompt"], brief=brief, cost_cap_usd=0.0)
+
+    assert planned["plan"]["cost_cap_usd"] == 0.0
+    assert planned["plan"]["metadata"]["mission_compilation"]["budget"]["cost_cap_usd"] == 0.0
+
+
+def test_compiled_prompt_budget_matches_rendered_constraint_prompt(tmp_path) -> None:
+    service = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "missions.sqlite3"),
+        collaborators=Collaborators(),
+    )
+    brief = _brief()
+    brief["user_constraints"][0]["value"] = {f"key-{index}": "value" for index in range(220)}
+
+    planned = service.plan_production(brief["prompt"], brief=brief)
+    prompt = planned["plan"]["sequences"][0]["shots"][0]["layers"][0]["params"]["prompt"]
+
+    assert len(prompt) <= compile_mission(brief).limits.max_prompt_chars
+
+
 def test_mission_compiler_engine_evidence_matches_locked_sources() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     manifest = json.loads(

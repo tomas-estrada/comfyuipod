@@ -83,6 +83,16 @@ def _plan_response(state: ProductionState) -> dict[str, Any]:
     return response
 
 
+def _mission_constraint_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
 def _apply_mission_compilation(
     state: ProductionState,
     compilation: MissionCompilation,
@@ -94,7 +104,7 @@ def _apply_mission_compilation(
         prompt = task.description
         if constraints:
             rendered_constraints = "; ".join(
-                f"{item['key']}={json.dumps(item['value'], ensure_ascii=False, sort_keys=True)}"
+                f"{item['key']}={_mission_constraint_json(item['value'])}"
                 for item in constraints
             )
             prompt = f"{prompt}\nRestricciones explícitas: {rendered_constraints}"
@@ -192,7 +202,7 @@ class ProductionService:
         self,
         idea: str,
         *,
-        cost_cap_usd: float | None = 0.0,
+        cost_cap_usd: float | None = None,
         project_id: str | None = None,
         brief: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -201,7 +211,7 @@ class ProductionService:
         if brief is not None:
             compilation = compile_mission(
                 brief,
-                cost_cap_usd=cost_cap_usd if cost_cap_usd not in (None, 0.0) else None,
+                cost_cap_usd=cost_cap_usd,
             )
             brief_project_id = brief.get("project_id")
             if project_id and brief_project_id and brief_project_id != project_id:

@@ -32,7 +32,7 @@
   },
   "integration_source_sha256": {
     "studio/comfy_studio/creative/brief.py": "4da543668209612cc1cedbf0c9a95adf2b0f2a44f4656ed5cc34a785daa5d4cd",
-    "studio/comfy_studio/orchestration/service.py": "4490eadef0a375120c2b485f365c736af96ddca76811b02037e4bf368b9cf019",
+    "studio/comfy_studio/orchestration/service.py": "c8ce3c2eb7caf6a1c59d0868468bc680fbfda9357472d7e1494393fd6cd9395a",
     "studio/comfy_studio/orchestration/state.py": "8a18431f342f4059e2776859ab4de54ca8aa46a41a8b0de09a121b1976bd112d",
     "studio/comfy_studio/routers/productions.py": "641712f592d3d3fa75a57fedae2ad889d64a4855bd040e44b833a5f8fd765be9",
     "studio/comfy_studio/webutil.py": "5b5adab0aba236dfdbdc816a0d5e4cafbbdcfcffd960766646adc8b8526c3d3f",
@@ -40,6 +40,6 @@
   },
   "verification_test": {
     "path": "studio/tests/test_mission_compiler.py",
-    "sha256": "295af1c2c2560bb09fc1693a8534f85d28138067749e8daea22c19d454c5af76"
+    "sha256": "975ae82f85d610d1a70edcc4bdef98b71ee17f38e55dcf2df9f8d1de02d49dc4"
   }
 }
