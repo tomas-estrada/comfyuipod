@@ -140,6 +140,7 @@ returned by any public endpoint** — they appear only as `<definida>` / `<no de
 | `STUDIO_INCLUDE_ANIMATE` | `false` (opt-in Wan 2.2 Animate 14B int8, +18.41 GB, needs ≥ 250 GB disk) | pod env → Phase 3 manifest | Not a secret |
 | `STUDIO_INCLUDE_3D` | `true` iff `MODEL_PROFILE=unreal`, else `false` | pod env → Phase 3 manifest | Not a secret |
 | `STUDIO_INCLUDE_MINIMAX` | `false` | pod env → Phase 3 manifest | Not a secret |
+| `STUDIO_INCLUDE_MUSIC` | `false` (optional ACE-Step 1.5 checkpoint) | pod env → Phase 3 manifest; availability also requires checkpoint on disk | Not a secret |
 | `STUDIO_STUB_LLM` | `false` | pod env → deterministic LLM stub (tests) | Not a secret |
 | `STUDIO_REQUIRE_AUTH` | `false`, but effective if `COMFY_PASS` set (`config.py:492-493`) | pod env → studio edge auth (defense-in-depth behind nginx) | Not a secret |
 | `STUDIO_SERVER_HOST` / `STUDIO_SERVER_PORT` | `127.0.0.1` / `18190` (host sanitized to loopback) | pod env → studio bind | Not a secret |

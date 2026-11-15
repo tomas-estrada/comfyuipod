@@ -108,19 +108,16 @@ async def test_plan_long_render_rejects_invalid(pipeline_tool_context: ToolConte
 
 
 @pytest.mark.anyio
-async def test_generate_music_registers_audio_asset(
+async def test_generate_music_requires_explicit_ace_step_opt_in(
     pipeline_tool_context: ToolContext,
 ) -> None:
     belt = create_default_tool_belt()
-    result = await belt.execute(
-        "generate_music",
-        {"prompt": "música épica de persecución con sintetizadores", "duration_s": 12.0},
-        pipeline_tool_context,
-    )
-    assert result["status"] == "generated"
-    asset = result["output_asset"]
-    assert asset["kind"] == "audio"
-    assert (asset.get("metadata") or {}).get("engine") == "music_gen"
+    with pytest.raises(ToolExecutionError, match="ACE-Step 1.5 no está disponible"):
+        await belt.execute(
+            "generate_music",
+            {"prompt": "música épica de persecución con sintetizadores"},
+            pipeline_tool_context,
+        )
 
 
 @pytest.mark.anyio

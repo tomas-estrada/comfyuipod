@@ -1,10 +1,9 @@
-"""Arreglos musicales (C26): contrato metadata-only sobre stems existentes.
+"""Arreglos musicales (C26): metadata para stems existentes y beat maps.
 
-C26 pide arreglar la música del reel sin generarla: un grid temporal
-(BPM + timebase), secciones `hit`/`loop` ancladas a stems YA almacenados en el
-mix causal del proyecto (routers/audio.py) y variantes nombradas. Nada aquí
-sintetiza audio ni reclama haberlo hecho: `Arrangement` describe qué stem del
-proyecto suena en cada sección del reel (máx 20 s).
+La generación dirigida se ejecuta por la plantilla ComfyUI `ace_step_music`
+desde la herramienta `generate_music`; este módulo conserva contratos de
+arreglo sobre stems ya presentes en el proyecto. Sus beat maps son cuadrículas
+solicitadas por BPM, no alineación medida a partir del audio.
 
 - `TempoGrid`: inmutable; su beat map es determinista (misma entrada → misma
   lista de tiempos, redondeada a 6 decimales).

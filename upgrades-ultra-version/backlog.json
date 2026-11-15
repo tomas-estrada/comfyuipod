@@ -664,7 +664,8 @@
         "A21"
       ],
       "invariant": "No inferir acento paisa por idioma español ni stems por generación conjunta.",
-      "status": "specified_not_started",
+      "status": "in_progress",
+      "implementation_note": "C26 pre-GPU implementation is in progress separately; W19 remains open for C16/C27, dataset and voice acceptance, plus GPU evidence.",
       "scope": "current_pre_gpu",
       "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
       "work_budget": {
