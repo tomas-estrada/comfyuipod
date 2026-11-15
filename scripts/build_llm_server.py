@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -117,6 +118,324 @@ def install_supplemental_notice(
     shutil.copy2(source, destination)
 
 
+def parse_ldd_dependencies(output: str) -> list[str]:
+    """Return absolute ELF dependency paths, rejecting unresolved libraries."""
+    paths: set[str] = set()
+    for line in output.splitlines():
+        if " => not found" in line:
+            raise RuntimeError(f"llama-server tiene una biblioteca dinámica ausente: {line}")
+        match = re.search(r"(?:=>\s+)?(/\S+)", line)
+        if match:
+            paths.add(match.group(1))
+    if not paths:
+        raise RuntimeError("ldd no reportó bibliotecas dinámicas para llama-server")
+    return sorted(paths)
+
+
+def _parse_dpkg_owners(output: str) -> set[str]:
+    return {
+        line.partition(": ")[0]
+        for line in output.splitlines()
+        if ": " in line
+    }
+
+
+def package_owners_for_library(
+    library_path: Path, *, soname: str | None = None
+) -> tuple[set[str], Path]:
+    """Resolve a linked library to its Debian package or a packaged same-SONAME copy.
+
+    CUDA-enabled Python wheels can vendor runtime libraries such as libgomp in
+    site-packages. Those files are not owned by dpkg, even though Ubuntu ships
+    the same ELF SONAME as a normal system package. Use that package's notice
+    only when the exact vendored path has no dpkg owner and ldconfig exposes a
+    package-owned copy with the identical SONAME; otherwise fail closed.
+    """
+    try:
+        owners = _parse_dpkg_owners(
+            subprocess.check_output(
+                ["dpkg-query", "-S", str(library_path)], text=True
+            )
+        )
+    except subprocess.CalledProcessError:
+        owners = set()
+    if owners:
+        return owners, library_path
+
+    cache = subprocess.check_output(["ldconfig", "-p"], text=True)
+    soname = soname or library_path.name
+    matches: list[tuple[str, Path]] = []
+    for line in cache.splitlines():
+        name, separator, raw_path = line.partition("=>")
+        if not separator or name.split("(", 1)[0].strip() != soname:
+            continue
+        candidate = Path(raw_path.strip())
+        try:
+            candidate = candidate.resolve(strict=True)
+        except OSError:
+            continue
+        if candidate == library_path:
+            continue
+        try:
+            candidate_owners = _parse_dpkg_owners(
+                subprocess.check_output(
+                    ["dpkg-query", "-S", str(candidate)], text=True
+                )
+            )
+        except subprocess.CalledProcessError:
+            continue
+        matches.extend((owner, candidate) for owner in candidate_owners)
+
+    if not matches:
+        raise RuntimeError(
+            f"sin paquete Debian propietario ni copia de sistema con SONAME "
+            f"{soname} para biblioteca {library_path}"
+        )
+    return {owner for owner, _ in matches}, matches[0][1]
+
+
+def _ubuntu_source_options(
+    temporary: Path,
+    *,
+    sources_directory: Path = Path("/etc/apt/sources.list.d"),
+    legacy_source_list: Path = Path("/etc/apt/sources.list"),
+) -> list[str]:
+    """Build isolated apt source settings from the image's Ubuntu mirrors."""
+    source_parts = temporary / "sources.list.d"
+    source_parts.mkdir(parents=True, exist_ok=True)
+    source_list = temporary / "sources.list"
+    source_list.touch()
+    stanzas: list[str] = []
+
+    for source_file in sorted(sources_directory.glob("*.sources")):
+        contents = source_file.read_text(encoding="utf-8")
+        for stanza in re.split(r"\n\s*\n", contents.strip()):
+            uri_line = next(
+                (line.partition(":")[2].strip() for line in stanza.splitlines()
+                 if line.startswith("URIs:")),
+                "",
+            )
+            types_line = next(
+                (line.partition(":")[2].split() for line in stanza.splitlines()
+                 if line.startswith("Types:")),
+                [],
+            )
+            if (
+                not {"deb", "deb-src"}.intersection(types_line)
+                or not any("ubuntu.com" in uri for uri in uri_line.split())
+            ):
+                continue
+            stanzas.append(
+                re.sub(r"(?m)^Types:.*$", "Types: deb-src", stanza, count=1)
+                if "deb" in types_line
+                else stanza
+            )
+
+    for source_file in [legacy_source_list, *sorted(sources_directory.glob("*.list"))]:
+        if not source_file.is_file():
+            continue
+        for line in source_file.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if "ubuntu.com" not in stripped:
+                continue
+            if stripped.startswith("deb-src "):
+                stanzas.append(stripped)
+            elif stripped.startswith("deb "):
+                stanzas.append("deb-src " + stripped[4:])
+
+    if not stanzas:
+        raise RuntimeError("no se encontraron mirrors Ubuntu para descargar el paquete fuente")
+    (source_parts / "ubuntu-src.sources").write_text(
+        "\n\n".join(stanzas) + "\n", encoding="utf-8"
+    )
+    return [
+        "-o", f"Dir::Etc::sourcelist={source_list}",
+        "-o", f"Dir::Etc::sourceparts={source_parts}",
+    ]
+
+
+def source_package_copyright(
+    package: str, package_version: str, temporary: Path
+) -> tuple[Path, str, str]:
+    """Fetch the exact source package's Debian copyright file with apt verification."""
+    package_name = package.partition(":")[0]
+    source_fields = subprocess.check_output(
+        ["dpkg-query", "-W", "-f=${source:Package}\t${source:Version}", package],
+        text=True,
+    ).strip().split("\t", 1)
+    source_package = source_fields[0] if source_fields and source_fields[0] else package_name
+    source_version = (
+        source_fields[1]
+        if len(source_fields) > 1 and source_fields[1]
+        else package_version
+    )
+    apt_options = _ubuntu_source_options(temporary / "apt")
+    subprocess.run(["apt-get", *apt_options, "update"], check=True)
+    source_root = temporary / "source"
+    source_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["apt-get", *apt_options, "source", f"{source_package}={source_version}"],
+        cwd=source_root,
+        check=True,
+    )
+    candidates = list(source_root.glob("*/debian/copyright"))
+    if len(candidates) != 1 or not candidates[0].is_file():
+        raise RuntimeError(
+            f"no se encontró debian/copyright para el paquete fuente exacto "
+            f"{source_package}={source_version} ({package}={package_version})"
+        )
+    return candidates[0], source_package, source_version
+
+
+def install_system_library_notices(binary: Path, license_root: Path) -> list[dict[str, str]]:
+    """Copy copyright files for every package owning a linked ELF dependency.
+
+    The Ubuntu base image and compiler packages can change independently of the
+    pinned llama.cpp source. Resolve notices from the exact runtime ELF closure
+    during the image build and retain a hash-indexed inventory alongside them.
+    """
+    ldd_output = subprocess.check_output(["ldd", str(binary)], text=True)
+    dependencies = parse_ldd_dependencies(ldd_output)
+    notice_dir = license_root / "system-libraries"
+    notice_dir.mkdir(parents=True, exist_ok=True)
+    package_notices: dict[str, tuple[str, str, str, str, str, str]] = {}
+    records: list[dict[str, str]] = []
+    apt_indexes_ready = False
+
+    def archive_notice(
+        package: str, package_version: str, architecture: str
+    ) -> tuple[Path, str, str, str]:
+        package_name = package.partition(":")[0]
+        with tempfile.TemporaryDirectory(prefix="llm-system-notice-") as temporary:
+            package_root = Path(temporary)
+            package_spec = f"{package_name}:{architecture}={package_version}"
+            try:
+                subprocess.run(
+                    ["apt-get", "download", package_spec], cwd=package_root, check=True
+                )
+            except subprocess.CalledProcessError:
+                # Ubuntu may have superseded the exact binary archive while its
+                # source package metadata still resolves the installed version.
+                source, source_package, source_version = source_package_copyright(
+                    package, package_version, package_root
+                )
+                notice_source = "exact-source-package"
+            else:
+                archives = sorted(package_root.glob("*.deb"))
+                if len(archives) != 1:
+                    raise RuntimeError(
+                        f"apt no devolvió un único archivo para paquete {package_spec}"
+                    )
+                archive = archives[0]
+                fields = subprocess.check_output(
+                    ["dpkg-deb", "--field", str(archive), "Package", "Version", "Architecture"],
+                    text=True,
+                )
+                metadata = {
+                    key: value.strip()
+                    for line in fields.splitlines()
+                    if ":" in line
+                    for key, value in [line.split(":", 1)]
+                }
+                if (
+                    metadata.get("Package") != package_name
+                    or metadata.get("Version") != package_version
+                    or metadata.get("Architecture") not in {architecture, "all"}
+                ):
+                    raise RuntimeError(
+                        f"paquete descargado no coincide con el instalado: {package_spec}"
+                    )
+                extracted = package_root / "extracted"
+                subprocess.run(
+                    ["dpkg-deb", "--extract", str(archive), str(extracted)], check=True
+                )
+                source = extracted / "usr" / "share" / "doc" / package_name / "copyright"
+                notice_source = "exact-package-archive"
+                source_package = ""
+                source_version = ""
+                if not source.is_file():
+                    source, source_package, source_version = source_package_copyright(
+                        package, package_version, package_root
+                    )
+                    notice_source = "exact-source-package"
+            destination = notice_dir / f"{re.sub(r'[^A-Za-z0-9_.+-]', '_', package)}.copyright"
+            shutil.copy2(source, destination)
+            return destination, notice_source, source_package, source_version
+
+    for raw_path in dependencies:
+        linked_path = Path(raw_path)
+        library_path = linked_path.resolve(strict=True)
+        packages, notice_owner_path = package_owners_for_library(
+            library_path, soname=linked_path.name
+        )
+        if not packages:
+            raise RuntimeError(f"sin paquete Debian propietario para biblioteca {library_path}")
+        for package in sorted(packages):
+            if package not in package_notices:
+                package_version = subprocess.check_output(
+                    ["dpkg-query", "-W", "-f=${Version}", package], text=True
+                ).strip()
+                architecture = subprocess.check_output(
+                    ["dpkg-query", "-W", "-f=${Architecture}", package], text=True
+                ).strip()
+                if not package_version or not architecture:
+                    raise RuntimeError(f"versión/arquitectura ausente para paquete {package}")
+                files = subprocess.check_output(
+                    ["dpkg-query", "-L", package], text=True
+                ).splitlines()
+                candidates = [
+                    Path(item) for item in files
+                    if item.startswith("/") and Path(item).name == "copyright"
+                ]
+                source_notice = next((item for item in candidates if item.is_file()), None)
+                if source_notice is None:
+                    if not apt_indexes_ready:
+                        subprocess.run(["apt-get", "update"], check=True)
+                        apt_indexes_ready = True
+                    destination, source_kind, source_package, source_version = archive_notice(
+                        package, package_version, architecture
+                    )
+                else:
+                    safe_name = re.sub(r"[^A-Za-z0-9_.+-]", "_", package)
+                    destination = notice_dir / f"{safe_name}.copyright"
+                    shutil.copy2(source_notice, destination)
+                    source_kind = "installed-package"
+                    source_package = ""
+                    source_version = ""
+                digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+                package_notices[package] = (
+                    str(destination.relative_to(license_root)), digest, package_version,
+                    source_kind, source_package, source_version
+                )
+            (
+                notice_path, digest, package_version, source_kind,
+                source_package, source_version,
+            ) = package_notices[package]
+            record = {
+                "library": str(library_path),
+                "package": package,
+                "package_version": package_version,
+                "notice": notice_path,
+                "sha256": digest,
+                "notice_source": source_kind,
+            }
+            if notice_owner_path != library_path:
+                record["notice_owner_resolution"] = "same-soname-system-package"
+                record["notice_owner_library"] = str(notice_owner_path)
+            if source_package:
+                record["source_package"] = source_package
+                record["source_version"] = source_version
+            records.append(record)
+
+    manifest = notice_dir / "manifest.json"
+    manifest.write_text(
+        json.dumps({"schema": "llama-server-system-notices/1", "libraries": records}, indent=2)
+        + "\n",
+        encoding="utf-8",
+    )
+    return records
+
+
 def _validate_supplemental_destination(lock: dict, supplemental: dict) -> str:
     destination = supplemental.get("destination")
     if (
@@ -208,6 +527,7 @@ def build(
                 supplemental["sha256"],
                 notice_root / supplemental["destination"],
             )
+        install_system_library_notices(install_prefix / "llama-server", notice_root)
         _run([str(install_prefix / "llama-server"), "--version"])
     finally:
         if temp is not None:

@@ -160,17 +160,24 @@
         "S26"
       ],
       "scope": "FFmpeg + cortes/ASR/OCR/flujo/beat map + LLM/VLM configurado → receta editable.",
-      "terms_review": "Entradas autorizadas; máscaras/OCR/tempos con confianza; red opcional con caché/quotas; no HyperFrames cloud.",
+      "terms_review": "Entradas autorizadas; máscaras/OCR/tempos con confianza; red opcional con caché/quotas; no HyperFrames cloud. Adaptador de código propio (commit 1a11cec5a95144578e5fdaad4c2901ad14d55911); su única dependencia binaria es ffmpeg/ffprobe, ya fijado en el lock de Ubuntu 24.04 amd64: binario por defecto GPL-2+ según su copyright, redistribución condicional a cumplir la oferta de fuente correspondiente (este repo no la cumple por sí solo); no introduce componentes nuevos con términos propios.",
       "hardware_notes": "CPU o stages GPU acotados según análisis.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C02"
       ],
-      "code_revision": "local-cpu-v1",
+      "code_revision": "1a11cec5a95144578e5fdaad4c2901ad14d55911",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/ffmpeg-ubuntu24.04-amd64.lock.json": "6d0452ce5e025f44bc3157fe655aff0e0b884b082523d284b24d2ad5032dccfb"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
+      "evidence_entrypoint": "studio/comfy_studio/engines/reference_local.py",
+      "evidence_test": "studio/tests/test_engine_reference_local.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -1981,7 +1988,7 @@
         "LOCAL-LLM-01"
       ],
       "scope": "llama-server CPU (llama.cpp) fijado y compilado en la imagen; el adaptador OpenAI-compatible se conecta solo a 127.0.0.1. El proceso no se supervisa ni se inicia automáticamente; el usuario configura sus propios pesos .gguf en runtime.",
-      "terms_review": "llama.cpp v0.9.0 (commit cd959bae99ff4bed22bef2604f45241c09bbb8c8) está bajo MIT y el build desactiva CUDA, HTTPS y UI precompilada. El lock fija y verifica el aviso Unicode License V3 para las tablas de normalización Unicode 16.0.0; faltan avisos de atribución adicionales de cpp-httplib/nlohmann y revisar los avisos de las bibliotecas finales del sistema. No se redistribuyen pesos.",
+      "terms_review": "llama.cpp v0.9.0 (commit cd959bae99ff4bed22bef2604f45241c09bbb8c8) está bajo MIT. El lock selecciona CPU, desactiva CUDA, HTTPS, UI precompilada y descargas de conectores. Los avisos Unicode License V3 y las licencias vendorizadas de miniaudio (MIT-0), stb_image (MIT) y sheredom/subprocess.h (Unlicense) se preservan en Third-Party-LICENSES.md; cpp-httplib, nlohmann y los avisos fuente del upstream se copian desde el pin. El build deriva las bibliotecas ELF finales con ldd y copia el copyright del paquete Debian propietario en el mismo árbol de avisos, con inventario y SHA-256. No se redistribuyen pesos.",
       "hardware_notes": "CPU u offload GPU segun modelo; binario de decenas de MB; WARM sin residencia VRAM por defecto.",
       "build_selected": true,
       "runtime_installs_allowed": false,
@@ -1994,10 +2001,10 @@
       ],
       "code_revision": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
       "dependency_lock_hashes": {
-        "upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json": "3a06a7621f689764e40a5258f408c5935b19f9c8a1f0638443f9f89d860174f1"
+        "upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json": "bc47670adc05a14de12522b802d285ffdad1926ca0334948b1c2c007c3d9658a"
       },
       "redistribution_decision": "conditional",
-      "notices_reviewed": false,
+      "notices_reviewed": true,
       "evidence_entrypoint": "studio/comfy_studio/engines/llm_server.py",
       "evidence_test": "studio/tests/test_engine_llm_server.py",
       "lock_required_before_build": true,

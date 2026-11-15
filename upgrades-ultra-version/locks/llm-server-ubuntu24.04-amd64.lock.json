@@ -32,10 +32,10 @@
     "vendor/hash/sha256/LICENSE",
     "vendor/hash/xxhash/LICENSE"
   ],
-  "license_review": "The pinned source is MIT-licensed; the listed upstream license and notice files are copied into the image. Unicode License V3 attribution for the generated Unicode 16.0.0 normalization tables is included as a hash-verified supplemental notice. Additional cpp-httplib/nlohmann header attributions and final linked system-library notice coverage remain under review. No model weights are included.",
+  "license_review": "The pinned source is MIT-licensed; upstream notices are copied from the pinned source. The hash-verified supplemental notice preserves Unicode License V3 and the vendored miniaudio (MIT-0), stb_image (MIT), and sheredom/subprocess.h (Unlicense) terms. The image build records the actual linked ELF library closure and copies each owning Debian package copyright file with a SHA-256 inventory. No model weights are included.",
   "supplemental_license": {
-    "source": "docs/licenses/llama-cpp-unicode.md",
-    "destination": "Unicode-LICENSE.md",
-    "sha256": "6aecea039b5c87a5247f5af396242d4d993c62b7f15198835443b9577134677e"
+    "source": "docs/licenses/llama-cpp-notices.md",
+    "destination": "Third-Party-LICENSES.md",
+    "sha256": "6bfdcc5d44f312019745ab1873d56682a3a4a54dbe217240a49ed84a963e1d7f"
   }
 }
