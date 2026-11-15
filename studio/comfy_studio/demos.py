@@ -227,7 +227,7 @@ def _prepare_demo_output(demo_id: str, output_root: Path) -> tuple[Path, Path]:
     if demo_id == "D01":
         generated.append(out_dir / _D01_REPORT_ARTIFACT)
     if demo_id == "D02":
-        generated.append(out_dir / _D02_MEASUREMENT_ARTIFACT)
+        generated.extend(out_dir / name for name in _D02_ALL_ARTIFACTS)
     if demo_id == "D05":
         generated.extend(out_dir / name for name in (
             "D05_delivery_package.zip", "D05_master_16x9.mp4", "D05_master_9x16.mp4"))
@@ -278,7 +278,7 @@ def _expected_artifact_names(demo_id: str) -> set[str]:
     if demo_id == "D01":
         return {_D01_REPORT_ARTIFACT}
     if demo_id == "D02":
-        return {_D02_MEASUREMENT_ARTIFACT}
+        return set(_D02_ALL_ARTIFACTS)
     if demo_id == "D05":
         return {
             "D05_delivery_package.zip",
@@ -794,6 +794,14 @@ def _write_d01_reprojection_report(
 
 
 _D02_REGIONS = ("actor_region", "shadow_region", "reflection_region", "intact_region")
+_D02_MEDIA_FILES = (
+    "D02_actor_before.png",
+    "D02_actor_after.png",
+    "D02_audio_before.wav",
+    "D02_audio_after.wav",
+)
+_D02_MEASUREMENT_ARTIFACT = "D02_causal_layer_measurement.json"
+_D02_ALL_ARTIFACTS = (*_D02_MEDIA_FILES, _D02_MEASUREMENT_ARTIFACT)
 
 
 def _d02_buffer(buffer: Any, pixels: int, name: str) -> list[int]:
@@ -830,11 +838,15 @@ class _D02Scene:
     """Parsed D02 scene: strict buffers, disjoint regions, typed sound events."""
 
     pixels: int
+    frame_width: int
+    frame_height: int
+    sample_rate_hz: int
+    duration_s: float
     background: list[int]
     before: list[int]
     after: list[int]
     regions: dict[str, list[bool]]
-    events: list[tuple[str, str, bool, bool]]
+    events: list[tuple[str, str, bool, bool, int, int, float, float]]
 
 
 def _d02_parse_scene(data: dict[str, Any]) -> _D02Scene:
@@ -842,6 +854,35 @@ def _d02_parse_scene(data: dict[str, Any]) -> _D02Scene:
     pixels = data.get("pixels")
     if not isinstance(pixels, int) or isinstance(pixels, bool) or pixels <= 0:
         raise DemoError("D02: contador de píxeles inválido")
+    frame_width = data.get("frame_width")
+    frame_height = data.get("frame_height")
+    if (
+        not isinstance(frame_width, int)
+        or isinstance(frame_width, bool)
+        or frame_width <= 0
+        or not isinstance(frame_height, int)
+        or isinstance(frame_height, bool)
+        or frame_height <= 0
+        or frame_width * frame_height != pixels
+    ):
+        raise DemoError("D02: dimensiones de imagen inválidas")
+    audio = data.get("audio")
+    if not isinstance(audio, dict):
+        raise DemoError("D02: configuración de audio inválida")
+    sample_rate_hz = audio.get("sample_rate_hz")
+    duration_s = audio.get("duration_s")
+    if (
+        not isinstance(sample_rate_hz, int)
+        or isinstance(sample_rate_hz, bool)
+        or not 8000 <= sample_rate_hz <= 48000
+        or isinstance(duration_s, bool)
+        or not isinstance(duration_s, (int, float))
+        or not math.isfinite(duration_s)
+        or not 0 < duration_s <= 30
+    ):
+        raise DemoError("D02: parámetros de audio inválidos")
+    if duration_s * sample_rate_hz > 250_000:
+        raise DemoError("D02: duración excede el límite de muestras CPU")
     background = _d02_buffer(data.get("background"), pixels, "background")
     before = _d02_buffer(data.get("before"), pixels, "before")
     after = _d02_buffer(data.get("after"), pixels, "after")
@@ -855,9 +896,9 @@ def _d02_parse_scene(data: dict[str, Any]) -> _D02Scene:
             raise DemoError(f"D02: la región {name} no oculta nada en before")
 
     raw_events = data.get("sound_events")
-    if not isinstance(raw_events, list) or not raw_events:
+    if not isinstance(raw_events, list) or not 1 <= len(raw_events) <= 128:
         raise DemoError("D02: sound_events ausente o vacío")
-    parsed: list[tuple[str, str, bool, bool]] = []
+    parsed: list[tuple[str, str, bool, bool, int, int, float, float]] = []
     seen_ids: set[str] = set()
     for event in raw_events:
         if not isinstance(event, dict):
@@ -867,8 +908,18 @@ def _d02_parse_scene(data: dict[str, Any]) -> _D02Scene:
         presence = (event.get("present_before"), event.get("present_after"))
         start_s = event.get("start_s")
         end_s = event.get("end_s")
+        frequency_hz = event.get("frequency_hz")
+        amplitude = event.get("amplitude")
         timing_valid = not any(isinstance(t, bool) for t in (start_s, end_s)) and all(
             isinstance(t, (int, float)) and math.isfinite(t) for t in (start_s, end_s)
+        )
+        waveform_valid = (
+            isinstance(frequency_hz, int)
+            and not isinstance(frequency_hz, bool)
+            and 1 <= frequency_hz < sample_rate_hz // 2
+            and isinstance(amplitude, int)
+            and not isinstance(amplitude, bool)
+            and 1 <= amplitude <= 32767
         )
         if (
             not isinstance(event_id, str)
@@ -878,13 +929,31 @@ def _d02_parse_scene(data: dict[str, Any]) -> _D02Scene:
             or not all(isinstance(value, bool) for value in presence)
             or not timing_valid
             or not 0 <= start_s < end_s  # type: ignore[operator]
+            or end_s > duration_s
+            or not waveform_valid
         ):
             raise DemoError(f"D02: evento de sonido malformado: {event_id!r}")
         seen_ids.add(event_id)
-        parsed.append((event_id, cause, presence[0], presence[1]))
+        parsed.append((
+            event_id,
+            cause,
+            presence[0],
+            presence[1],
+            frequency_hz,
+            amplitude,
+            float(start_s),
+            float(end_s),
+        ))
+
+    if sum(event[5] for event in parsed) > 32767:
+        raise DemoError("D02: amplitudes simultáneas exceden PCM de 16 bits")
 
     return _D02Scene(
         pixels=pixels,
+        frame_width=frame_width,
+        frame_height=frame_height,
+        sample_rate_hz=sample_rate_hz,
+        duration_s=float(duration_s),
         background=background,
         before=before,
         after=after,
@@ -975,7 +1044,6 @@ def _check_d02_causal_layers(data: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-_D02_MEASUREMENT_ARTIFACT = "D02_causal_layer_measurement.json"
 _D02_HELDOUT_SEED = 0x00D02CA1  # fixed in code: reproducible held-out scene
 _D02_HELDOUT_PIXELS = 32
 
@@ -1029,19 +1097,22 @@ def _d02_heldout_data() -> dict[str, Any]:
     sound_events = [
         {"id": "heldout-actor-step", "caused_by": "actor",
          "present_before": True, "present_after": False,
-         "start_s": 0.0, "end_s": 0.5},
+         "start_s": 0.0, "end_s": 0.5, "frequency_hz": 660, "amplitude": 1200},
         {"id": "heldout-actor-vocal", "caused_by": "actor",
          "present_before": True, "present_after": False,
-         "start_s": 0.5, "end_s": 1.0},
+         "start_s": 0.5, "end_s": 1.0, "frequency_hz": 440, "amplitude": 1400},
         {"id": "heldout-ambient-wind", "caused_by": "ambient",
          "present_before": True, "present_after": True,
-         "start_s": 0.0, "end_s": 1.0},
+         "start_s": 0.0, "end_s": 1.0, "frequency_hz": 110, "amplitude": 1600},
         {"id": "heldout-ambient-birds", "caused_by": "ambient",
          "present_before": True, "present_after": True,
-         "start_s": 0.25, "end_s": 0.75},
+         "start_s": 0.25, "end_s": 0.75, "frequency_hz": 880, "amplitude": 900},
     ]
     return {
         "pixels": pixels,
+        "frame_width": 8,
+        "frame_height": 4,
+        "audio": {"sample_rate_hz": 8000, "duration_s": 1.0},
         "background": background,
         "before": before,
         "after": after,
@@ -1076,17 +1147,149 @@ def _d02_heldout_measurement() -> dict[str, Any]:
     }
 
 
-def _write_d02_measurement_report(
-    fixture: Path, data: dict[str, Any], out_dir: Path
-) -> Path:
-    """Write the compact D02 measurement report (synthetic CPU evidence only).
+def _d02_png_chunk(kind: bytes, payload: bytes) -> bytes:
+    body = kind + payload
+    return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body))
 
-    Contents: source fixture SHA-256, fixed held-out seed, per-check counts
-    and errors for both the fixture and the deterministic held-out scene, and
-    ``gpu_used: false``. No PNG/image rendering and no GPU/model claims.
+
+def _d02_write_png(path: Path, scene: _D02Scene, values: list[int]) -> None:
+    """Write one valid RGB frame from the fixture's scalar grayscale pixels."""
+    if len(values) != scene.pixels:
+        raise DemoError("D02: buffer PNG no coincide con dimensiones declaradas")
+    rows = []
+    for row in range(scene.frame_height):
+        start = row * scene.frame_width
+        row_values = values[start : start + scene.frame_width]
+        rows.append(b"\x00" + b"".join(bytes((value, value, value)) for value in row_values))
+    header = struct.pack(">IIBBBBB", scene.frame_width, scene.frame_height, 8, 2, 0, 0, 0)
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + _d02_png_chunk(b"IHDR", header)
+        + _d02_png_chunk(b"IDAT", zlib.compress(b"".join(rows), level=9))
+        + _d02_png_chunk(b"IEND", b"")
+    )
+
+
+def _d02_wave_samples(
+    scene: _D02Scene, *, presence_index: int, cause: str | None = None
+) -> list[int]:
+    total_samples = round(scene.duration_s * scene.sample_rate_hz)
+    output: list[int] = []
+    for sample_index in range(total_samples):
+        time_s = sample_index / scene.sample_rate_hz
+        value = sum(
+            event[5] * math.sin(2.0 * math.pi * event[4] * time_s)
+            for event in scene.events
+            if event[presence_index]
+            and (cause is None or event[1] == cause)
+            and event[6] <= time_s < event[7]
+        )
+        sample = round(value)
+        if not -32768 <= sample <= 32767:
+            raise DemoError("D02: mezcla de audio excede PCM de 16 bits")
+        output.append(sample)
+    return output
+
+
+def _d02_write_wav(path: Path, sample_rate_hz: int, samples: list[int]) -> None:
+    with wave.open(str(path), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(sample_rate_hz)
+        stream.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+
+
+def _d02_rms(values: list[int]) -> float:
+    if not values:
+        return 0.0
+    return math.sqrt(sum(value * value for value in values) / len(values))
+
+
+def _write_d02_causal_media(data: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+    """Materialize deterministic synthetic RGB and PCM before/after artifacts."""
+    scene = _d02_parse_scene(data)
+    image_paths = {
+        "before": out_dir / _D02_MEDIA_FILES[0],
+        "after": out_dir / _D02_MEDIA_FILES[1],
+    }
+    _d02_write_png(image_paths["before"], scene, scene.before)
+    _d02_write_png(image_paths["after"], scene, scene.after)
+
+    before_samples = _d02_wave_samples(scene, presence_index=2)
+    after_samples = _d02_wave_samples(scene, presence_index=3)
+    actor_samples = _d02_wave_samples(scene, presence_index=2, cause="actor")
+    ambient_samples = _d02_wave_samples(scene, presence_index=3, cause="ambient")
+    wave_paths = {
+        "before": out_dir / _D02_MEDIA_FILES[2],
+        "after": out_dir / _D02_MEDIA_FILES[3],
+    }
+    _d02_write_wav(wave_paths["before"], scene.sample_rate_hz, before_samples)
+    _d02_write_wav(wave_paths["after"], scene.sample_rate_hz, after_samples)
+
+    ambient_errors = [
+        actual - expected
+        for actual, expected in zip(after_samples, ambient_samples, strict=True)
+    ]
+    actor_errors = [
+        (before - after) - actor
+        for before, after, actor in zip(
+            before_samples, after_samples, actor_samples, strict=True
+        )
+    ]
+    removal_errors = {
+        name: sum(
+            1
+            for index, active in enumerate(scene.regions[name])
+            if active and scene.after[index] != scene.background[index]
+        )
+        for name in ("actor_region", "shadow_region", "reflection_region")
+    }
+    image_metrics = {
+        "width": scene.frame_width,
+        "height": scene.frame_height,
+        "channels": 3,
+        "frame_count": 1,
+        "changed_pixels": sum(
+            before != after
+            for before, after in zip(scene.before, scene.after, strict=True)
+        ),
+        "removal_errors_by_region": removal_errors,
+        "intact_deviation_pixels": sum(
+            1
+            for index, active in enumerate(scene.regions["intact_region"])
+            if active and scene.before[index] != scene.after[index]
+        ),
+    }
+    audio_metrics = {
+        "sample_rate_hz": scene.sample_rate_hz,
+        "channels": 1,
+        "sample_width_bytes": 2,
+        "sample_count": len(before_samples),
+        "actor_removed_rms": _d02_rms(actor_samples),
+        "ambient_preservation_rmse": _d02_rms(ambient_errors),
+        "actor_subtraction_rmse": _d02_rms(actor_errors),
+        "before_rms": _d02_rms(before_samples),
+        "after_rms": _d02_rms(after_samples),
+        "events_checked": len(scene.events),
+    }
+    artifacts = {
+        path.name: {"sha256": _sha256(path), "bytes": path.stat().st_size}
+        for path in (*image_paths.values(), *wave_paths.values())
+    }
+    return {"image": image_metrics, "audio": audio_metrics, "artifacts": artifacts}
+
+
+def _write_d02_measurement_report(
+    fixture: Path, data: dict[str, Any], media: dict[str, Any], out_dir: Path
+) -> Path:
+    """Write D02 scalar and materialized-media measurements (synthetic CPU only).
+
+    The report includes source fixture SHA-256, deterministic heldout checks,
+    measured PNG/WAV artifacts and ``gpu_used: false``. It makes no model claim.
     """
     report = {
-        "schema": "comfy_studio.d02_measurement.v1",
+        "schema": "comfy_studio.d02_measurement.v2",
+        "evidence_scope": "synthetic_cpu_only",
         "scope": (
             "synthetic CPU evidence only: fixture consistency and a deterministic "
             "held-out scene; no GPU, no omnimatte or model-quality claim"
@@ -1094,6 +1297,7 @@ def _write_d02_measurement_report(
         "gpu_used": False,
         "fixture_sha256": _sha256(fixture),
         "seed": _D02_HELDOUT_SEED,
+        "media": media,
         "checks": {
             "fixture": _d02_scene_measurement(data),
             "heldout": _d02_heldout_measurement(),
@@ -1737,8 +1941,13 @@ def run_demo(
     artifact: Path | None = None
     project_artifact: Path | None = None
     measurement_report: Path | None = None
+    media_artifacts: list[Path] = []
     if demo_id == "D02":
-        measurement_report = _write_d02_measurement_report(fixture, fixture_data, out_dir)
+        media = _write_d02_causal_media(fixture_data, out_dir)
+        media_artifacts = [out_dir / name for name in _D02_MEDIA_FILES]
+        measurement_report = _write_d02_measurement_report(
+            fixture, fixture_data, media, out_dir
+        )
     elif demo_id == "D01":
         measurement_report = _write_d01_reprojection_report(fixture, fixture_data, out_dir)
     elif demo_id == "D05":
@@ -1761,15 +1970,20 @@ def run_demo(
         "result": "cpu_real_input_flow_completed" if source_video is not None
         else "cpu_fixture_checks_passed",
         "claim_scope": (
-            "fixture consistency/toolchain only; no real camera "
-            "calibration, scene coverage, model quality, or capability proof"
-            if demo_id == "D01"
+            "synthetic CPU pixel/audio fixture evidence only; no model quality, "
+            "real-footage, or GPU capability proof"
+            if demo_id == "D02"
+            else (
+                "fixture consistency/toolchain only; no real camera "
+                "calibration, scene coverage, model quality, or capability proof"
+                if demo_id == "D01"
             else (
                 "user-provided source and transcript processed through project ingest, montage, "
                 "FFmpeg delivery and editable package; CPU/toolchain evidence only, no model "
                 "quality or capability proof"
                 if source_video is not None
                 else "fixture consistency/toolchain only; no model quality or capability proof"
+            )
             )
         ),
         "inputs": inputs,
@@ -1795,6 +2009,7 @@ def run_demo(
         "artifacts": [],
     }
     generated_artifacts = [artifact] if artifact else []
+    generated_artifacts.extend(media_artifacts)
     if measurement_report is not None:
         generated_artifacts.append(measurement_report)
     if demo_id == "D05":

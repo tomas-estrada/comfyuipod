@@ -7,8 +7,11 @@ Puro CPU.
 from __future__ import annotations
 
 import json
+import math
 import shutil
+import struct
 import subprocess
+import wave
 from collections.abc import Callable
 from pathlib import Path
 from zipfile import ZipFile
@@ -102,7 +105,10 @@ def test_cpu_demo_runner_writes_hashed_fixture_evidence(tmp_path: Path, demo_id:
     manifest_path = Path(result["manifest"])
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["inputs"][0]["sha256"]
-    assert manifest["claim_scope"].startswith("fixture consistency")
+    if demo_id == "D02":
+        assert manifest["claim_scope"].startswith("synthetic CPU pixel/audio fixture")
+    else:
+        assert manifest["claim_scope"].startswith("fixture consistency")
     assert all(stage["status"] == ("pending_gpu" if stage["neural"] else "done")
                for stage in manifest["stages"])
     assert all(stage["pending_reason"] for stage in manifest["stages"] if stage["neural"])
@@ -424,8 +430,19 @@ def test_d02_writes_measurement_report_artifact(tmp_path: Path) -> None:
     assert artifacts[report_name]["bytes"] == report_path.stat().st_size
     assert artifacts[report_name]["sha256"] == demos_module._sha256(report_path)
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    assert report["schema"] == "comfy_studio.d02_measurement.v1"
+    assert report["schema"] == "comfy_studio.d02_measurement.v2"
+    assert report["evidence_scope"] == "synthetic_cpu_only"
     assert report["gpu_used"] is False
+    for name in (
+        "D02_actor_before.png",
+        "D02_actor_after.png",
+        "D02_audio_before.wav",
+        "D02_audio_after.wav",
+    ):
+        assert report["media"]["artifacts"][name] == {
+            "sha256": artifacts[name]["sha256"],
+            "bytes": artifacts[name]["bytes"],
+        }
     assert report["fixture_sha256"] == demos_module._sha256(
         demos_module.FIXTURE_DIR / "d02_causal_layers.json"
     )
@@ -438,6 +455,109 @@ def test_d02_writes_measurement_report_artifact(tmp_path: Path) -> None:
         invariants = report["checks"][section]["invariants"]
         assert invariants
         assert all(value is True for value in invariants.values())
+
+
+def test_d02_materializes_and_measures_actual_png_and_pcm_outputs(tmp_path: Path) -> None:
+    result = run_demo("D02", tmp_path)
+    artifact_map = {item["path"]: item for item in result["artifacts"]}
+    media_names = {
+        "D02_actor_before.png",
+        "D02_actor_after.png",
+        "D02_audio_before.wav",
+        "D02_audio_after.wav",
+    }
+    assert media_names <= artifact_map.keys()
+
+    from PIL import Image
+
+    out_dir = Path(result["manifest"]).parent
+    fixture = _d02_fixture_data()
+    with Image.open(out_dir / "D02_actor_before.png") as before_image:
+        before_image.load()
+        before_pixels = list(before_image.convert("RGB").getdata())
+        before_size = before_image.size
+    with Image.open(out_dir / "D02_actor_after.png") as after_image:
+        after_image.load()
+        after_pixels = list(after_image.convert("RGB").getdata())
+        after_size = after_image.size
+    assert before_size == after_size == (fixture["frame_width"], fixture["frame_height"])
+    assert len(before_pixels) == len(after_pixels) == fixture["pixels"]
+    for index in range(fixture["pixels"]):
+        assert before_pixels[index] == (fixture["before"][index],) * 3
+        assert after_pixels[index] == (fixture["after"][index],) * 3
+    for region_name in ("actor_region", "shadow_region", "reflection_region"):
+        region = fixture[region_name]
+        assert all(before_pixels[i] != after_pixels[i] for i, active in enumerate(region) if active)
+    assert all(
+        before_pixels[i] == after_pixels[i]
+        for i, active in enumerate(fixture["intact_region"])
+        if active
+    )
+
+    def read_pcm(name: str) -> tuple[int, list[int]]:
+        with wave.open(str(out_dir / name), "rb") as stream:
+            assert stream.getnchannels() == 1
+            assert stream.getsampwidth() == 2
+            sample_rate = stream.getframerate()
+            raw = stream.readframes(stream.getnframes())
+        return sample_rate, [item[0] for item in struct.iter_unpack("<h", raw)]
+
+    before_rate, before_samples = read_pcm("D02_audio_before.wav")
+    after_rate, after_samples = read_pcm("D02_audio_after.wav")
+    audio = fixture["audio"]
+    sample_rate = audio["sample_rate_hz"]
+    sample_count = round(audio["duration_s"] * sample_rate)
+
+    def expected_samples(presence_key: str, cause: str | None = None) -> list[int]:
+        result_samples = []
+        for index in range(sample_count):
+            time_s = index / sample_rate
+            value = sum(
+                event["amplitude"] * math.sin(2 * math.pi * event["frequency_hz"] * time_s)
+                for event in fixture["sound_events"]
+                if event[presence_key]
+                and (cause is None or event["caused_by"] == cause)
+                and event["start_s"] <= time_s < event["end_s"]
+            )
+            result_samples.append(round(value))
+        return result_samples
+
+    assert before_rate == after_rate == sample_rate
+    assert len(before_samples) == len(after_samples) == sample_count
+    assert before_samples == expected_samples("present_before")
+    assert after_samples == expected_samples("present_after")
+    actor_only = expected_samples("present_before", cause="actor")
+    assert sum(sample * sample for sample in actor_only) > 0
+    assert before_samples != after_samples
+
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    report = json.loads(
+        (out_dir / demos_module._D02_MEASUREMENT_ARTIFACT).read_text(encoding="utf-8")
+    )
+    for name in media_names:
+        file_bytes = (out_dir / name).read_bytes()
+        assert artifact_map[name]["sha256"] == demos_module._sha256(out_dir / name)
+        assert artifact_map[name]["bytes"] == len(file_bytes)
+        assert any(item["path"] == name for item in manifest["artifacts"])
+    assert report["evidence_scope"] == "synthetic_cpu_only"
+    assert report["gpu_used"] is False
+    assert report["media"]["image"]["intact_deviation_pixels"] == 0
+    assert report["media"]["audio"]["ambient_preservation_rmse"] == 0.0
+    assert report["media"]["audio"]["actor_removed_rms"] > 0
+
+
+def test_d02_resume_rejects_a_tampered_media_artifact(tmp_path: Path) -> None:
+    first = run_demo("D02", tmp_path)
+    out_dir = Path(first["manifest"]).parent
+    media_path = out_dir / "D02_audio_after.wav"
+    media_path.write_bytes(media_path.read_bytes() + b"tamper")
+
+    resumed = run_demo("D02", tmp_path, resume=True)
+
+    assert resumed["resumed"] is False
+    artifact = next(item for item in resumed["artifacts"] if item["path"] == media_path.name)
+    assert artifact["sha256"] == demos_module._sha256(media_path)
+    assert media_path.read_bytes().endswith(b"tamper") is False
 
 
 def _d02_mutations() -> dict[str, Callable[[dict], None]]:
@@ -531,6 +651,19 @@ def _d02_malformations() -> dict[str, Callable[[dict], None]]:
     def zero_length_sound(data: dict) -> None:
         data["sound_events"][1]["end_s"] = data["sound_events"][1]["start_s"]
 
+    def mismatched_image_dimensions(data: dict) -> None:
+        data["frame_width"] += 1
+
+    def excessive_sample_count(data: dict) -> None:
+        data["audio"]["duration_s"] = 30
+        data["audio"]["sample_rate_hz"] = 48000
+
+    def out_of_range_audio_frequency(data: dict) -> None:
+        data["sound_events"][0]["frequency_hz"] = 4000
+
+    def too_many_sound_events(data: dict) -> None:
+        data["sound_events"] = data["sound_events"] * 33
+
     return {
         "missing_pixels": missing_pixels,
         "short_before": short_before,
@@ -545,6 +678,10 @@ def _d02_malformations() -> dict[str, Callable[[dict], None]]:
         "duplicate_sound_id": duplicate_sound_id,
         "empty_sound_events": empty_sound_events,
         "zero_length_sound": zero_length_sound,
+        "mismatched_image_dimensions": mismatched_image_dimensions,
+        "excessive_sample_count": excessive_sample_count,
+        "out_of_range_audio_frequency": out_of_range_audio_frequency,
+        "too_many_sound_events": too_many_sound_events,
     }
 
 
