@@ -781,6 +781,7 @@ class ProductionService:
         if state.phase != "done":
             return
         if state.metadata.get("simulated"):
+            # Stub outputs are not probed deliverables; never publish their path.
             state.final_output_path = None
             state.phase = "simulated"
             state.record(

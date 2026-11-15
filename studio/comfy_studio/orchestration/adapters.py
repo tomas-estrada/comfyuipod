@@ -681,7 +681,14 @@ class EngineAssembler:
             return {"ok": False, "error": str(exc)[:500]}
         result = _result_to_dict(raw)
         if not result.get("ok", False):
-            return {"ok": False, "error": result.get("error", "fallo de ensamblaje")}
+            # `error or stderr_tail or fallback`: un motor que falla sin `error`
+            # tipado pero con cola de stderr deja diagnostico util, no vacio.
+            return {
+                "ok": False,
+                "error": result.get("error")
+                or result.get("stderr_tail")
+                or "fallo de ensamblaje",
+            }
         # el editor devuelve la ruta del reel en payload['output'] (o output_path).
         output = result.get("output_path")
         if not output:

@@ -128,3 +128,23 @@ def test_install_http_error_fails_typed(monkeypatch: pytest.MonkeyPatch) -> None
     res = asyncio.run(eng.install("ComfyUI-SomeNode"))
     assert res.ok is False
     assert "HTTP 500" in (res.error or "")
+
+
+def test_run_preserves_simulated_boundary_from_local_client() -> None:
+    from types import SimpleNamespace
+
+    class SimulatedClient(_FakeClient):
+        async def execute_prompt_job(self, graph, **kwargs):
+            self.last_graph = graph
+            return SimpleNamespace(
+                outputs=[_FakeOutput("fixture-output.mp4")],
+                simulated=True,
+            )
+
+    engine = ComfyUIEngine(SimulatedClient())
+    result = asyncio.run(
+        engine.run(EngineRunSpec(job={"graph": {"1": {"class_type": "SaveVideo", "inputs": {}}}}))
+    )
+
+    assert result.ok is True
+    assert result.simulated is True

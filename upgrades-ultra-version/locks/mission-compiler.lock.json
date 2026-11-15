@@ -31,8 +31,8 @@
     "studio/comfy_studio/mission_compiler.py": "637bc5d1c3e6ac996cb93f01363e094d099c4ccce18f7d51897963c1c9d20cd4"
   },
   "integration_source_sha256": {
-    "studio/comfy_studio/creative/brief.py": "4da543668209612cc1cedbf0c9a95adf2b0f2a44f4656ed5cc34a785daa5d4cd",
-    "studio/comfy_studio/orchestration/service.py": "c8ce3c2eb7caf6a1c59d0868468bc680fbfda9357472d7e1494393fd6cd9395a",
+    "studio/comfy_studio/creative/brief.py": "56b7d57e1b3209642308ff17d34630a80ee74ce96208d9d509f62120e8bf1804",
+    "studio/comfy_studio/orchestration/service.py": "edc276cb211a166120dd026f601e2be807fe160ba5b32ec798027711c56d063a",
     "studio/comfy_studio/orchestration/state.py": "8a18431f342f4059e2776859ab4de54ca8aa46a41a8b0de09a121b1976bd112d",
     "studio/comfy_studio/routers/productions.py": "641712f592d3d3fa75a57fedae2ad889d64a4855bd040e44b833a5f8fd765be9",
     "studio/comfy_studio/webutil.py": "5b5adab0aba236dfdbdc816a0d5e4cafbbdcfcffd960766646adc8b8526c3d3f",
