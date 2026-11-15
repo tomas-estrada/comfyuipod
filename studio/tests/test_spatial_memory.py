@@ -58,6 +58,59 @@ def test_context_limit_respected() -> None:
         m.visit("a", "s3", (0, 0, 0))
 
 
+def test_project_anchor_count_limit_rejects_new_anchors_without_mutation() -> None:
+    m = SpatialMemory(max_anchors=2)
+    m.register(Anchor("a"))
+    m.register(Anchor("b"))
+
+    with pytest.raises(SpatialError, match="límite de anclas.*2"):
+        m.register(Anchor("c"))
+
+    assert set(m.anchors) == {"a", "b"}
+
+
+def test_spatial_memory_rejects_unbounded_anchor_and_shot_ids() -> None:
+    with pytest.raises(SpatialError, match="anchor_id.*128"):
+        SpatialMemory().register(Anchor("a" * 129))
+
+    memory = SpatialMemory()
+    memory.register(Anchor("a"))
+    with pytest.raises(SpatialError, match="shot_id.*128"):
+        memory.visit("a", "s" * 129, (0, 0, 0))
+
+
+def test_project_total_visit_limit_is_shared_across_anchors_and_idempotent() -> None:
+    m = SpatialMemory(max_shots=4, max_total_visits=3)
+    m.register(Anchor("a"))
+    m.register(Anchor("b"))
+    m.visit("a", "s1", (0, 0, 0))
+    m.visit("a", "s2", (0, 0, 0))
+    m.visit("b", "s3", (0, 0, 0))
+
+    # Retrying an existing visit at the project limit remains a no-op.
+    m.visit("a", "s1", (0, 0, 0))
+    with pytest.raises(SpatialError, match="límite total de visitas.*3"):
+        m.visit("b", "s4", (0, 0, 0))
+
+    assert sum(len(visits) for visits in m.visits.values()) == 3
+    assert [visit.shot_id for visit in m.visits["b"]] == ["s3"]
+
+
+def test_project_wide_limits_survive_serialization() -> None:
+    memory = SpatialMemory(max_anchors=2, max_total_visits=3)
+    memory.register(Anchor("a"))
+    memory.register(Anchor("b"))
+    memory.visit("a", "s1", (0, 0, 0))
+    memory.visit("b", "s2", (0, 0, 0))
+    memory.visit("a", "s3", (0, 0, 0))
+    restored = SpatialMemory.from_dict(memory.to_dict())
+
+    with pytest.raises(SpatialError, match="límite de anclas.*2"):
+        restored.register(Anchor("c"))
+    with pytest.raises(SpatialError, match="límite total de visitas.*3"):
+        restored.visit("b", "s4", (0, 0, 0))
+
+
 def test_round_trip_needs_three_visits() -> None:
     m = SpatialMemory()
     m.register(Anchor("a"))
