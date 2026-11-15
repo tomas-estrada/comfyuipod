@@ -8,7 +8,7 @@ evidencia observada; se respetan límites de escena/duración/contexto.
 Este módulo implementa el CONTRATO:
 
 - `Anchor`: un ancla espacial persistente (id estable, posición) con procedencia
-  observed/inferred (reutiliza la distinción de W09/W10).
+  observed/inferred (mantiene la procedencia de cada ancla espacial).
 - `SpatialMemory`: el registro de anclas entre planos; `visit` registra la
   posición observada de un ancla en un plano, y `drift` mide cuánto se movió un
   ancla entre dos visitas (A→B→A debe conservar el ancla con drift medido).

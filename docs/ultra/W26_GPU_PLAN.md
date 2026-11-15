@@ -118,7 +118,7 @@ el desafío neural.
 
 | Demo | Reto neural GPU (resumen) |
 |------|---------------------------|
-| D01 | Coche en lugar real del Aburrá: reconstrucción→guías→generación→relight→Foley→4K vs baselines |
+| D01 | Coche en un lugar real solicitado: consultar el contexto bajo demanda, reconstrucción→guías→generación→relight→Foley→4K vs baselines |
 | D02 | Borrar una causa y sus consecuencias (VOID/omnimatte) vs borrado de máscara; error revelado/residual |
 | D03 | Producto articulado, cambio de material, multicámara; heldout multivista y consistencia |
 | D04 | Actor que habla español con identidad persistente; retarget/Audio2Face/InfiniteTalk; turnos y sonido |

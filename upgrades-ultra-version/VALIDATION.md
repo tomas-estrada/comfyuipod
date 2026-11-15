@@ -2,11 +2,11 @@
 
 Este documento informa comprobaciones de la especificación, no del producto Ultra.
 
-- 34 capacidades C01–C34 obligatorias.
+- 33 capacidades activas obligatorias.
 - 14 programas P01–P14.
 - 30 opciones adicionales N01–N30, con disposición explícita.
-- 27 paquetes W00–W26, con DAG sin ciclos y referencias comprobadas.
-- 30 grupos de aceptación A00–A29 y cinco demostraciones D01–D05.
+- 26 paquetes de trabajo activos, con DAG sin ciclos y referencias comprobadas.
+- 29 grupos de aceptación activos y cinco demostraciones D01–D05.
 - 114 registros de fuentes primarias/heredadas, con alcance de verificación.
 - Goal portable de aproximadamente 1.200 caracteres, separado de la misión extendida.
 

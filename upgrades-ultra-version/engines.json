@@ -4,7 +4,7 @@
   "counts": {
     "engines": 88,
     "additional_candidates": 30,
-    "capabilities": 34
+    "capabilities": 33
   },
   "policy": {
     "required": "Engine code/environment/entrypoints must be built and integrated before pre-GPU acceptance; weights may await runtime and explicit terms, status remains accurate.",
@@ -348,9 +348,7 @@
       "weights_policy": "exact_components_on_demand",
       "implementation_status": "specified_not_implemented_here",
       "gpu_validation": "not_run",
-      "capabilities": [
-        "C07"
-      ],
+      "capabilities": [],
       "code_revision": null,
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
@@ -1543,9 +1541,7 @@
       "weights_policy": "exact_components_on_demand",
       "implementation_status": "specified_not_implemented_here",
       "gpu_validation": "not_run",
-      "capabilities": [
-        "C07"
-      ],
+      "capabilities": [],
       "code_revision": null,
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",

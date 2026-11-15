@@ -96,7 +96,6 @@ Capacidades: C08. Trabajo: W11.
 - **Outputs:** trayectoria de cámara, proxy render y medidas de encuadre, visibilidad y colisión.
 - **Experimento y controles:** comparar trayectorias conocidas con el proxy y medir reproyección, encuadre y colisiones.
 - **Aceptación:** convención de ejes probada con fixture conocido; ningún camino atraviesa geometría sólida sin declararlo como efecto ficticio.
-- **Límite:** este programa no resuelve ni verifica lugares reales.
 
 ## P09. Rodaje de vehículos con dinámica
 
@@ -142,7 +141,7 @@ Capacidades: C16, C27. Trabajo: W14, W19.
 - **Hipótesis:** Separar voz, actuación facial y render permite cambiar encuadre/luz sin rehacer identidad o sincronía.
 - **Inputs:** Texto/audio y actor/voz autorizados, rig/morph targets y referencias por hablante.
 - **Outputs:** Stems/texto/alineación, blendshapes/poses temporales editables, identidad persistente y render.
-- **Experimento y controles:** Nombres del Aburrá, cifras y dos hablantes; cambiar voz, cámara o luz por separado. Medir timing labial, turnos, ASR/lexicon e identidad con positivos/negativos.
+- **Experimento y controles:** Topónimos del brief, cifras y dos hablantes; contrastar los datos de lugar con fuentes consultadas por el agente y cambiar voz, cámara o luz por separado. Medir timing labial, turnos, ASR/lexicon e identidad con positivos/negativos.
 - **Aceptación:** La actuación facial puede reabrirse y cambiarse sin regenerar audio. Mapeo de morphs verificado; no simular compatibilidad universal. Target inicial de sincronía: retraso dentro de dos frames al fps declarado, sujeto a protocolo validado.
 - **Límite que no se puede ocultar:** Gates de FLAME/Audio2Emotion se respetan. El fallback de rig manual es una ruta funcional distinta y se identifica; no acredita recuperación neural de una persona.
 

@@ -1,6 +1,6 @@
 """Dirección cinematográfica por restricciones (plan Ultra, W11 / A13).
 
-W11 pide cámaras/reconstrucción/ensayo de rodaje (C05/C07/C08/C20): trayectoria,
+W11 pide cámaras/reconstrucción/ensayo de rodaje (C05/C08/C20): trayectoria,
 focal, duración, legibilidad, identidad, oclusiones y continuidad, con animatics
 y un optimizador de focal/path. El invariante (A13): «datos insuficientes
 impiden cámara factual; no rellenar fachadas como observadas», y «colisiones/

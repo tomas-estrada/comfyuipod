@@ -12,7 +12,7 @@ las tareas de validación restantes estén completas.
 ## DAG de ejecución (backlog.json)
 
 Camino crítico inicial: **W00 → W01 → W02 → {W03, W04} → W07**, luego fan-out
-(W05/W06/W08/W09/W10…). W25 fue la integración final de ese corte; W26 tiene una
+(W05/W06/W08/W10…). W25 fue la integración final de ese corte; W26 tiene una
 demo SDXL ejecutada, mientras D01–D05 completas y L4 siguen pendientes.
 
 ## Niveles de evidencia (acceptance.md)
@@ -25,7 +25,7 @@ capacidad obligatoria; "Ultra validada" exige L3/L4 posterior.
 
 | W | Título | Estado | Evidencia | Nivel |
 |---|--------|--------|-----------|-------|
-| W00 | Baseline y reconciliación de PRs | done | baseline `b54195f`; #58 merged; #64 merged; #59 diferida (conflictos); W09 retirado del producto actual | L1 |
+| W00 | Baseline y reconciliación de PRs | done | baseline `b54195f`; #58 merged; #64 merged; #59 diferida (conflictos) | L1 |
 | W01 | Integridad transaccional de modelos | in_review | PR `fix/ultra-w01-asset-integrity`: 3 P0 corregidos + regresiones | L1 |
 
 ## W01 — detalle (3 defectos P0, research.md)

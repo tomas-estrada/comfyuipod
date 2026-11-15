@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Keep all 58 currently selected engines selected and all 34 capabilities mandatory.
+- Keep all 58 currently selected engines selected and all 33 active capabilities mandatory.
 - Never promote a stub, proxy, mock, or unverified claim to a real implementation.
 - A07 fields require per-component source, tracked lock bytes, terms/notices, real entrypoint, and build/runtime evidence.
 - A CPU-only check never establishes GPU quality, CUDA compatibility, VRAM, performance, L3, or L4.
@@ -36,7 +36,7 @@
 
 - [ ] Record current main SHA and required workflow/image digest from authoritative GitHub state.
 - [ ] Recompute A07 blockers and per-capability levels from the current files; label stale snapshot claims as historical.
-- [ ] Map every still-open acceptance item A00–A29, C01–C34, and D01–D05 to its current evidence and next action.
+- [ ] Map every still-open acceptance item A00–A29, the 33 active capabilities, and D01–D05 to its current evidence and next action.
 - [ ] Confirm all 58 selected IDs are present exactly once and remain in scope.
 
 ### Task 2: Close the core/platform A07 engine partition
@@ -88,7 +88,7 @@
 
 ### Task 7: Close 3D, body/motion, causal, light and 4D acceptance
 
-**Capabilities/scenarios:** C05–C22, C28–C30, D01–D04; acceptance A11–A19.
+**Capabilities/scenarios:** C05–C22, C28–C30, D01–D04; acceptance A12–A19.
 
 - [ ] Complete project-owned GLB/GLTF geometry, rig, articulation, motion, physics, face and temporal-scene entrypoints with reopenable assets and CPU ground truth.
 - [ ] Complete causal actor-on/off, mask/alpha, shadow/reflection and sound preservation fixtures; finish separate relighting and restyling contracts.
@@ -109,4 +109,4 @@
 - [ ] Run A07 manifest validation and independent physical-file checks; require zero non-GPU release blockers.
 - [ ] Run relevant CPU integration suites and repository validation; preserve explicit pending GPU results.
 - [ ] Build and smoke the current candidate image, verify its digest and all selected engine artifacts, and merge only with required CI green and branch current.
-- [ ] Audit A00–A28, C01–C34 and D01–D05 against current artifacts; leave only A29 real target-GPU measurements/quality/holdouts pending.
+- [ ] Audit A00–A28, the 33 active capabilities, and D01–D05 against current artifacts; leave only A29 real target-GPU measurements/quality/holdouts pending.

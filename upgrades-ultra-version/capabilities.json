@@ -151,20 +151,6 @@
       "gpu_evidence": "pending_separate_authorization"
     },
     {
-      "id": "C07",
-      "name": "Lugares reales del Aburrá (retirado)",
-      "mandatory": true,
-      "pre_gpu_required": "retired_from_current_product",
-      "engines": [],
-      "work_items": [],
-      "programs": [],
-      "behavior": "No existe una ruta de producto para resolver ubicaciones reales ni verificar su representación.",
-      "acceptance": "Retirado del producto actual; no se afirma búsqueda, selección, cobertura ni reconstrucción de lugares reales.",
-      "sources": [],
-      "status": "retired_from_current_product",
-      "gpu_evidence": "not_applicable_retired"
-    },
-    {
       "id": "C08",
       "name": "Animatic y ensayo virtual",
       "mandatory": true,

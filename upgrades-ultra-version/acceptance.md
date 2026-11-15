@@ -120,10 +120,6 @@ Pruebas obligatorias con fixture pequeño, sin descargar modelos reales:
 - MiniMax cloud o 2K no publicado no cierra la ruta 4K. Upscale local sí forma parte del plan.
 - GPU performance y calidad pendientes explícitamente hasta A29.
 
-### A11. C07 retirado
-
-C07 conserva su identificador por compatibilidad del ledger, pero no forma parte del producto actual. No hay criterio de aceptación vigente ni se debe atribuir al producto resolución o verificación de ubicaciones reales.
-
 ### A12. Geometría y ajuste físico
 
 - Malla/partes/materiales/cámaras reabribles, units/transforms explícitos y asset ID persistente.
@@ -301,7 +297,7 @@ W26 ejecutó una demo SDXL acotada por USD 0.59 y destruyó el pod. Se probó un
 
 | Demo | Entrega | Fixture CPU y ground truth | Validación GPU posterior |
 | --- | --- | --- | --- |
-| D01 | Coche en lugar real verificable del Aburrá, varias cámaras, luces y sonido | Escena sintética calibrada; ruta/oclusiones/cámara/coverage | Reconstrucción/guías→generación→relight→Foley→4K; logos, fondo, reproyección y movimiento contra baselines |
+| D01 | Coche en un lugar real solicitado por el usuario, varias cámaras, luces y sonido | Escena sintética calibrada; contexto del lugar consultado bajo demanda con fuentes; ruta/oclusiones/cámara/coverage | Reconstrucción/guías→generación→relight→Foley→4K; logos, fondo, reproyección y movimiento contra baselines |
 | D02 | Eliminar una causa y sus consecuencias | Render actor-on/off con sombra/reflejo/sonido y partes intactas | VOID/omnimatte vs borrado solo de máscara, error revelado/residual, invariantes y costes |
 | D03 | Producto articulado con cambio de material y varias cámaras | CAD/partes sintéticas, joints/mallas/PBR/convs conocidas, Mitsuba ajuste | Reconstrucción/partes/material y transferencia neural, heldout multivista y consistencia |
 | D04 | Actor que interactúa y habla español con identidad persistente | Rig autorizado, contactos, frase/voz fixture, lipsync temporal y reencuadre | Recuperación/generación/retarget/Audio2Face/InfiniteTalk; identidad/contactos/turnos/sonido |
