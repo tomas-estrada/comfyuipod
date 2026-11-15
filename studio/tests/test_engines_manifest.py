@@ -38,10 +38,12 @@ def test_real_manifest_is_coherent() -> None:
 
 def test_source_lock_hashes_are_rederived_from_the_pinned_revision() -> None:
     mod = _load_module()
+    manifest = mod.load_json(mod.DEFAULT_MANIFEST)
+    engine = next(item for item in manifest["engines"] if item["id"] == "mission-compiler")
     blockers = mod._source_lock_blockers(
         "mission-compiler",
         {
-            "source_revision": "2290328d991127c8816220a0f2bdaf209dab8754",
+            "source_revision": engine["code_revision"],
             "pinned_source_sha256": {
                 "studio/comfy_studio/mission_compiler.py": "0" * 64,
             },
