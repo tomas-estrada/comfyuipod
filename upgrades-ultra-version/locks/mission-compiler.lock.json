@@ -1,7 +1,7 @@
 {
   "schema": "ultra.mission-compiler-source-lock/2",
   "engine_id": "mission-compiler",
-  "source_revision": "2290328d991127c8816220a0f2bdaf209dab8754",
+  "source_revision": "cdda33fd344666534c2bd2d2a5ae27fe8a937aba",
   "runtime": {
     "python_requires": ">=3.11",
     "additional_external_distributions": [],
