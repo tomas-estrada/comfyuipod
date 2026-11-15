@@ -49,6 +49,7 @@ from .audio import (
     MAX_STEM_EVENTS,
     RENDER_TIMEOUT_S,
     TARGET_SAMPLE_RATE,
+    AudioProcessError,
     Mix,
     RenderedStem,
     SampleValidationError,
@@ -85,9 +86,10 @@ DEFAULT_ONSET_TOLERANCE_S = 0.25
 #: Desviación máxima aceptada entre el timebase declarado y el video fuente.
 SOURCE_TIMEBASE_TOLERANCE_S = 0.5
 #: Tolerancia fps entre lo declarado y lo medido con ffprobe.
-SOURCE_FPS_TOLERANCE = 0.5
+SOURCE_FPS_TOLERANCE = 0.001
 #: Tolerancia para «onset medido ≈ onset previsto» en el stem renderizado.
 ONSET_MEASURE_TOLERANCE_S = 0.01
+PERSISTED_SAMPLE_CORRELATION_MIN = 0.8
 #: Nombre fijo del archivo de procedencia.
 PROVENANCE_FILENAME = "scene_sound_provenance.json"
 
@@ -343,6 +345,13 @@ def build_mix(plan: SceneSoundPlan) -> tuple[Mix, dict[str, tuple[float, int]]]:
     for cue in plan.cues:
         delay_ms, frame = frame_aligned_delay_ms(cue.onset_s, plan.fps)
         effective = delay_ms / 1000.0
+        action = next(action for action in plan.actions if action.action_id == cue.action_id)
+        if not action.contains(effective, plan.onset_tolerance_s):
+            raise SceneSoundError(
+                f"cue {cue.cue_id}: onset alineado {effective}s fuera de la ventana "
+                f"de la acción {cue.action_id} [{action.start_s},{action.end_s}] "
+                f"± {plan.onset_tolerance_s}s"
+            )
         stems.setdefault(cue.stem, []).append(
             SoundEvent(
                 event_id=cue.cue_id,
@@ -464,26 +473,20 @@ def verify_source_timebase(
     return probe
 
 
-def measure_first_onset_s(
+def _decode_mono_pcm16(
     path: str | Path,
     *,
-    ffmpeg_bin: str | None = None,
-    timeout_s: float = RENDER_TIMEOUT_S,
-    threshold: int = 128,
-    sustain_samples: int = 24,
-) -> float | None:
-    """Mide el onset REAL del primer sonido en un WAV renderizado.
-
-    Decodifica el PCM s16le (mono 48 kHz) y devuelve el instante (s) en que la
-    señal supera el umbral de forma sostenida. `None` si el archivo es
-    silencioso de principio a fin.
-    """
+    ffmpeg_bin: str | None,
+    timeout_s: float,
+) -> array:
+    """Decodifica audio a PCM s16 mono 48 kHz con timeout y error tipado."""
     ff, _ = _resolve_bins(ffmpeg_bin, None)
     source = Path(path)
     if not source.is_file():
-        raise SceneSoundError(f"stem {source} no existe para medir onset")
-    proc = subprocess.run(
-        [
+        raise SceneSoundError(f"audio {source} no existe para verificarlo")
+    try:
+        proc = subprocess.run(
+            [
             ff,
             "-hide_banner",
             "-nostdin",
@@ -498,23 +501,90 @@ def measure_first_onset_s(
             "-ar",
             str(TARGET_SAMPLE_RATE),
             "-",
-        ],
-        capture_output=True,
-        timeout=timeout_s,
-    )
+            ],
+            capture_output=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AudioProcessError(
+            f"ffmpeg (medición de onset): timeout de {timeout_s:.0f}s"
+        ) from exc
+    except OSError as exc:
+        raise AudioProcessError(
+            f"ffmpeg (medición de onset): binario no disponible: {exc}"
+        ) from exc
     if proc.returncode != 0:
         detail = proc.stderr.decode("utf-8", "replace")[-300:]
-        raise SceneSoundError(f"stem {source} no es legible para medir onset: {detail}")
+        raise SceneSoundError(f"audio {source} no es legible para verificarlo: {detail}")
     samples = array("h")
     samples.frombytes(proc.stdout)
     if sys.byteorder == "big":
         samples.byteswap()
+    return samples
+
+
+def measure_first_onset_s(
+    path: str | Path,
+    *,
+    ffmpeg_bin: str | None = None,
+    timeout_s: float = RENDER_TIMEOUT_S,
+    threshold: int = 128,
+    sustain_samples: int = 24,
+) -> float | None:
+    """Mide el primer sonido con un umbral relativo para conservar ataques suaves."""
+    samples = _decode_mono_pcm16(
+        path, ffmpeg_bin=ffmpeg_bin, timeout_s=timeout_s
+    )
     if len(samples) < sustain_samples:
         return None
+    peak = max(abs(sample) for sample in samples)
+    if peak == 0:
+        return None
+    effective_threshold = min(threshold, max(1, round(peak * 0.001)))
     for index in range(len(samples) - sustain_samples):
-        if all(abs(samples[index + offset]) >= threshold for offset in range(sustain_samples)):
+        if all(
+            abs(samples[index + offset]) >= effective_threshold
+            for offset in range(sustain_samples)
+        ):
             return index / TARGET_SAMPLE_RATE
     return None
+
+
+def _sample_signature_correlation(
+    source: array,
+    rendered: array,
+    *,
+    start_sample: int,
+    sample_rate: int = TARGET_SAMPLE_RATE,
+) -> float | None:
+    """Correlación normalizada de una ventana de muestra en el stem persistido."""
+    max_window = min(sample_rate // 10, len(source))
+    if max_window < 256 or start_sample < 0 or start_sample + max_window > len(rendered):
+        return None
+    window = min(2048, max_window)
+    if window < 256:
+        return None
+    # Elegir una parte audible de la muestra para que un ataque suave no haga
+    # fallar la verificación de una señal que sí está presente.
+    best_start = max(
+        range(0, max_window - window + 1, max(1, window // 4)),
+        key=lambda offset: sum(value * value for value in source[offset : offset + window]),
+    )
+    expected = source[best_start : best_start + window]
+    actual_start = start_sample + best_start
+    actual = rendered[actual_start : actual_start + window]
+    expected_mean = sum(expected) / window
+    actual_mean = sum(actual) / window
+    expected_centered = [value - expected_mean for value in expected]
+    actual_centered = [value - actual_mean for value in actual]
+    expected_energy = sum(value * value for value in expected_centered)
+    actual_energy = sum(value * value for value in actual_centered)
+    if expected_energy == 0 or actual_energy == 0:
+        return None
+    covariance = sum(
+        left * right for left, right in zip(expected_centered, actual_centered, strict=True)
+    )
+    return covariance / math.sqrt(expected_energy * actual_energy)
 
 
 def _verify_event_placements(
@@ -522,6 +592,7 @@ def _verify_event_placements(
     mix: Mix,
     samples: Mapping[str, str | Path],
     placement: dict[str, tuple[float, int]],
+    persisted_stems: list[RenderedStem],
     *,
     work_dir: Path,
     ffmpeg_bin: str,
@@ -536,6 +607,9 @@ def _verify_event_placements(
     render: nada se persiste.
     """
     events_by_id = {event.event_id: event for event in mix.all_events()}
+    persisted_by_stem = {entry.stem: entry for entry in persisted_stems}
+    decoded_samples: dict[str, array] = {}
+    decoded_stems: dict[str, array] = {}
     records: list[dict[str, Any]] = []
     for cue in plan.cues:
         event = events_by_id[cue.cue_id]
@@ -566,6 +640,30 @@ def _verify_event_placements(
                 f"cue {cue.cue_id}: onset medido {measured:.4f}s no coincide con el "
                 f"previsto {effective:.4f}s (Δ {delta_ms} ms)"
             )
+        persisted = persisted_by_stem.get(cue.stem)
+        if persisted is None:
+            raise SceneSoundError(f"cue {cue.cue_id}: falta el stem persistido {cue.stem}")
+        if cue.sample_asset_id not in decoded_samples:
+            decoded_samples[cue.sample_asset_id] = _decode_mono_pcm16(
+                samples[cue.sample_asset_id], ffmpeg_bin=ffmpeg_bin, timeout_s=timeout_s
+            )
+        sample_pcm = decoded_samples[cue.sample_asset_id]
+        if cue.stem not in decoded_stems:
+            decoded_stems[cue.stem] = _decode_mono_pcm16(
+                persisted.path, ffmpeg_bin=ffmpeg_bin, timeout_s=timeout_s
+            )
+        correlation = _sample_signature_correlation(
+            sample_pcm,
+            decoded_stems[cue.stem],
+            start_sample=round(effective * TARGET_SAMPLE_RATE),
+        )
+        if correlation is None or correlation < PERSISTED_SAMPLE_CORRELATION_MIN:
+            measured_correlation = "unavailable" if correlation is None else f"{correlation:.3f}"
+            raise SceneSoundError(
+                f"cue {cue.cue_id}: muestra no verificada en el stem persistido "
+                f"(correlación {measured_correlation}; mínimo "
+                f"{PERSISTED_SAMPLE_CORRELATION_MIN:.2f})"
+            )
         records.append(
             {
                 "cue_id": cue.cue_id,
@@ -576,6 +674,8 @@ def _verify_event_placements(
                 "frame": frame,
                 "measured_onset_s": round(measured, 6),
                 "measured_onset_delta_ms": delta_ms,
+                "persisted_sample_correlation": round(correlation, 6),
+                "persisted_stem_verified": True,
                 "verified": True,
             }
         )
@@ -640,6 +740,7 @@ def render_scene_sound(
             mix,
             samples,
             placement,
+            rendered,
             work_dir=Path(temp_dir),
             ffmpeg_bin=ff,
             ffprobe_bin=fp,

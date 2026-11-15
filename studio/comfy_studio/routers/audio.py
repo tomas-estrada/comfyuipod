@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from comfy_studio.audio import (
     TARGET_SAMPLE_RATE,
     AudioError,
+    AudioProcessError,
     Mix,
     SampleValidationError,
     SoundEvent,
@@ -674,6 +675,9 @@ def register_routes(app: FastAPI) -> None:
         except SceneSoundError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         store.set_meta(project_id, _SCENE_PLAN_META_KEY, plan.to_dict())
+        # Previous renders remain available as project assets, but no longer
+        # represent the current plan.
+        store.set_meta(project_id, _SCENE_RENDER_META_KEY, None)
         return _scene_plan_response(plan)
 
     @app.post("/studio/api/projects/{project_id}/sound/scene-plan/render")
@@ -737,9 +741,10 @@ def register_routes(app: FastAPI) -> None:
                     for entry in result.rendered:
                         measured = provenance_stems[entry.stem]
                         data = entry.path.read_bytes()
+                        saved_filename = f"scene-stem-{entry.stem}.wav"
                         asset = store.save_upload(
                             project_id,
-                            filename=f"scene-stem-{entry.stem}.wav",
+                            filename=saved_filename,
                             content_type="audio/wav",
                             data=data,
                             max_upload_bytes=config.max_upload_bytes,
@@ -770,10 +775,12 @@ def register_routes(app: FastAPI) -> None:
                             },
                         )
                         saved_asset_ids.append(asset["id"])
+                        measured["file"] = saved_filename
+                        measured["asset_id"] = asset["id"]
                         saved_stems[entry.stem] = {
                             "stem": entry.stem,
                             "asset_id": asset["id"],
-                            "file": measured["file"],
+                            "file": saved_filename,
                             "sha256": measured["sha256"],
                             "first_onset_s": measured["first_onset_s"],
                             "earliest_intended_onset_s": measured[
@@ -788,6 +795,10 @@ def register_routes(app: FastAPI) -> None:
                             "true_peak_dbfs": entry.true_peak_dbfs,
                             "clipped": entry.clipped,
                         }
+                    provenance_bytes = (
+                        json.dumps(provenance, sort_keys=True, indent=2, ensure_ascii=False)
+                        + "\n"
+                    ).encode("utf-8")
                     provenance_asset = store.save_upload(
                         project_id,
                         filename="scene-sound-provenance.json",
@@ -833,6 +844,8 @@ def register_routes(app: FastAPI) -> None:
             }
         except HTTPException:
             raise
+        except AudioProcessError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except SampleValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (AudioError, SceneSoundError) as exc:
@@ -850,4 +863,10 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(
                 status_code=404, detail="Procedencia de sonido por escena no encontrada"
             )
-        return raw
+        current_plan = _load_scene_plan(store, project_id)
+        current_digest = plan_digest(current_plan) if current_plan is not None else None
+        return {
+            **raw,
+            "stale": current_digest != raw.get("plan_sha256"),
+            "current_plan_sha256": current_digest,
+        }

@@ -36,6 +36,7 @@ from comfy_studio.scene_sound import (
     frame_of_cue,
     measure_first_onset_s,
     render_scene_sound,
+    verify_source_timebase,
 )
 
 FFMPEG = shutil.which("ffmpeg")
@@ -251,6 +252,30 @@ def test_build_mix_separates_stems_and_snaps_onsets_to_frame_grid() -> None:
     assert mix_digest(mix)
 
 
+def test_build_mix_rejects_frame_rounding_outside_action_window() -> None:
+    plan = _plan(
+        actions=[VideoAction("walk-a", "steps", 0.5005, 4.0)],
+        cues=[_cue("step-on-1", "walk-a", 0.5005)],
+        onset_tolerance_s=0.0001,
+    )
+    with pytest.raises(SceneSoundError, match="onset alineado"):
+        build_mix(plan)
+
+
+def test_source_timebase_fails_closed_for_fractional_fps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "comfy_studio.scene_sound.probe_source_timebase",
+        lambda *args, **kwargs: {
+            "fps": 29.97002997,
+            "r_frame_rate": "30000/1001",
+            "duration_s": 15.0,
+            "frame_count": 450,
+        },
+    )
+    with pytest.raises(SceneSoundError, match="timebase del video fuente incompatible"):
+        verify_source_timebase(_plan(), "unused-video.mp4")
+
+
 def test_measure_first_onset_s_rejects_silence_or_bad_file(tmp_path: Path) -> None:
     silence = tmp_path / "silence.wav"
     subprocess.run(
@@ -268,6 +293,34 @@ def test_measure_first_onset_s_rejects_silence_or_bad_file(tmp_path: Path) -> No
     fake.write_bytes(b"no es audio")
     with pytest.raises(SceneSoundError, match="legible"):
         measure_first_onset_s(fake, ffmpeg_bin=FFMPEG)
+
+
+@FF_REQUIRED
+def test_measure_first_onset_accepts_quiet_signal_below_absolute_floor(tmp_path: Path) -> None:
+    quiet = tmp_path / "quiet.wav"
+    subprocess.run(
+        [
+            FFMPEG,
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=0.2",
+            "-af",
+            "volume=0.02,aformat=sample_rates=48000:channel_layouts=stereo",
+            "-c:a",
+            "pcm_s16le",
+            str(quiet),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    onset = measure_first_onset_s(quiet, ffmpeg_bin=FFMPEG)
+    assert onset is not None
+    assert onset <= 0.01
 
 
 # --- Ensamble real con ffmpeg ------------------------------------------------------
@@ -312,6 +365,8 @@ def test_render_scene_sound_maps_actions_to_editable_stems_and_measures_onsets(
         record = measured[cue_id]
         assert record["frame"] == round(expected * 24)
         assert abs(record["measured_onset_s"] - expected) <= 0.01
+        assert record["persisted_stem_verified"] is True
+        assert record["persisted_sample_correlation"] >= 0.8
         assert record["verified"] is True
 
     # El onset real del stem de pasos es el más temprano de sus eventos.

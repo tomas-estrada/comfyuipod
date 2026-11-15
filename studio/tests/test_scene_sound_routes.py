@@ -194,6 +194,7 @@ def test_scene_plan_render_measures_and_persists_provenance(
     assert abs(stems["steps"]["first_onset_s"] - 2.0) <= 0.01
     assert abs(stems["braking"]["first_onset_s"] - 7.5) <= 0.01
     assert abs(stems["ambience"]["first_onset_s"] - 0.5) <= 0.01
+    assert stems["steps"]["file"] == "scene-stem-steps.wav"
     for entry in stems.values():
         assert entry["integrated_loudness_lufs"] <= -0.1
         assert entry["true_peak_dbfs"] < -0.1
@@ -206,6 +207,13 @@ def test_scene_plan_render_measures_and_persists_provenance(
     assert provenance["schema"] == "scene-sound-provenance/1"
     assert provenance["source_video"]["asset_id"] == source_id
     assert provenance["timebase"]["fps"] == 24
+    assert provenance["stale"] is False
+    assert all(entry.get("asset_id") for entry in provenance["stems"])
+    assert {entry["file"] for entry in provenance["stems"]} == {
+        "scene-stem-ambience.wav",
+        "scene-stem-braking.wav",
+        "scene-stem-steps.wav",
+    }
     assert {sample["license"] for sample in provenance["samples"].values()} == {"user-owned"}
     stem_hashes = {entry["stem"]: entry["sha256"] for entry in provenance["stems"]}
     assert len(set(stem_hashes.values())) == 3  # stems separados y editables
@@ -215,6 +223,13 @@ def test_scene_plan_render_measures_and_persists_provenance(
     names = {asset.get("metadata", {}).get("artifact_kind") for asset in assets["assets"]}
     assert "scene_sound_stem" in names
     assert "scene_sound_provenance" in names
+
+    changed_plan = _plan_payload(source_id, sample_ids)
+    changed_plan["cues"][1]["onset_s"] = 2.25
+    assert client.put(plan_url, json=changed_plan).status_code == 200
+    stale_provenance = client.get(f"{plan_url}/provenance").json()
+    assert stale_provenance["stale"] is True
+    assert stale_provenance["current_plan_sha256"] != stale_provenance["plan_sha256"]
 
 
 def test_scene_plan_requires_project_and_plan(scene_client: TestClient) -> None:
