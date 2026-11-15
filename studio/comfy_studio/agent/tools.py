@@ -5510,8 +5510,8 @@ def create_default_tool_belt() -> ToolBelt:
             name="forget_production_memory",
             description=(
                 "Elimina del proyecto activo una memoria y su historial de correcciones. "
-                "Primero requiere confirm=false; usa confirm=true únicamente si el usuario "
-                "pidió explícitamente eliminar esa memoria."
+                "Primero consulta con confirm=false y pide al usuario que confirme; vuelve "
+                "con confirm=true solo después de recibir su respuesta afirmativa explícita."
             ),
             args_model=ForgetProductionMemoryArgs,
             handler=_handle_forget_production_memory,

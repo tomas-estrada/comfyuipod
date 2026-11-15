@@ -130,12 +130,37 @@ async def test_production_memory_tools_persist_project_scoped_corrections_and_co
     other_id = tool_context.store.create_project("Other private project")["id"]
     original_id = tool_context.project_id
     tool_context.project_id = other_id
-    assert (
-        await belt.execute(
-            "retrieve_production_memory", {"query": "warm product lighting"}, tool_context
-        )
-    )["records"] == []
+    other_record = await belt.execute(
+        "remember_production_memory",
+        {
+            "kind": "recipe",
+            "key": "warm-product-reveal",
+            "content": {"summary": "Cool cyan light for young families"},
+            "tags": ["family", "cyan"],
+        },
+        tool_context,
+    )
+    other_project_matches = await belt.execute(
+        "retrieve_production_memory", {"query": "warm product lighting"}, tool_context
+    )
+    assert [item["memory_id"] for item in other_project_matches["records"]] == [
+        other_record["memory_id"]
+    ]
+    assert other_project_matches["records"][0]["project_id"] == other_id
+    other_matches = await belt.execute(
+        "retrieve_production_memory", {"query": "cool cyan families"}, tool_context
+    )
+    assert [item["memory_id"] for item in other_matches["records"]] == [
+        other_record["memory_id"]
+    ]
     tool_context.project_id = original_id
+    assert remembered["source_refs"] == ["brief:version-2"]
+    own_matches = await belt.execute(
+        "retrieve_production_memory", {"query": "warm product lighting"}, tool_context
+    )
+    assert [item["memory_id"] for item in own_matches["records"]] == [
+        remembered["memory_id"]
+    ]
 
     corrected = await belt.execute(
         "correct_production_memory",
