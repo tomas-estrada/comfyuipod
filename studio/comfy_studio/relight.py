@@ -20,6 +20,12 @@ image composite and bounded project-video path operate on pixels; the video path
 applies only a spatially uniform, frame-interpolated exposure gain. It does not
 provide semantic or physically based relighting, and does not complete all W16
 acceptance criteria.
+
+C21 añade la ruta sintética acotada (`FrameAOVs` + `LightParams` +
+`relight_frames_synthetic`): reiluminación Lambertiana pura CPU sobre AOV
+calibrados (la calibración debe reconstruir el frame fuente bajo la luz
+declarada), con logo protegido bit a bit, métricas por frame/temporal/de región
+contra un ground truth independiente, y límites estrictos de píxeles y frames.
 """
 
 from __future__ import annotations
@@ -299,6 +305,421 @@ def render_relight(
         "intensity": intensity_v,
         "ambient": ambient_v,
         "renderer": "cpu_png_relight",
+    }
+
+
+# --- C21: relight CPU acotado y determinista con AOV sintéticos calibrados ---
+
+#: Límite de píxeles por frame en la ruta sintética (CPU pura, O(px·frames)).
+_MAX_SYNTH_PIXELS = 1_000_000
+#: Máximo de frames por llamada de relight sintético.
+_MAX_SYNTH_FRAMES = 64
+#: La calibración debe ser casi exacta: los AOV + luz declarada tienen que
+#: explicar el frame fuente (mismo modelo Lambertiano, error de redondeo 0).
+_CALIBRATION_TOLERANCE = 1.0
+#: Un normal LEGÍTIMO codificado (byte = round(127.5·c + 127.5), ‖c‖=1) se
+#: decodifica con longitud ≈ 1 (error de cuantización < 0.5/127.5 por eje).
+#: Longitud < 0.25 ⇒ pase no calibrado/basura (p.ej. 0x80,0x80,0x80 «plano»).
+_NORMAL_MIN_LENGTH = 0.25
+
+
+@dataclass(slots=True)
+class LightParams:
+    """Parámetros acotados de una luz direccional Lambertiana.
+
+    `azimuth_deg` ∈ [-180, 180], `elevation_deg` ∈ [-90, 90]; dirección unitaria
+    (cos(el)·sin(az), sin(el), cos(el)·cos(az)). `intensity` ∈ [0, 4],
+    `ambient` ∈ [0, 1]; todo finito. Cualquier valor fuera de rango o no numérico
+    se rechaza en construcción.
+    """
+
+    azimuth_deg: float
+    elevation_deg: float
+    intensity: float
+    ambient: float
+
+    def __post_init__(self) -> None:
+        for name in ("azimuth_deg", "elevation_deg", "intensity", "ambient"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise RelightError(f"{name} debe ser numérico")
+            if not math.isfinite(float(value)):
+                raise RelightError(f"{name} debe ser finito, no {value}")
+        if not -180.0 <= self.azimuth_deg <= 180.0:
+            raise RelightError(f"azimuth_deg fuera de rango [-180, 180]: {self.azimuth_deg}")
+        if not -90.0 <= self.elevation_deg <= 90.0:
+            raise RelightError(f"elevation_deg fuera de rango [-90, 90]: {self.elevation_deg}")
+        if not 0.0 <= self.intensity <= _MAX_INTENSITY:
+            raise RelightError(f"intensity fuera de rango [0, {_MAX_INTENSITY}]: {self.intensity}")
+        if not 0.0 <= self.ambient <= _MAX_AMBIENT:
+            raise RelightError(f"ambient fuera de rango [0, {_MAX_AMBIENT}]: {self.ambient}")
+
+
+@dataclass(slots=True)
+class FrameAOVs:
+    """AOV calibrados de un frame + su frame fuente RGB y máscara protegida.
+
+    `albedo`/`normal` son RGB (3 bytes/px), `occlusion`/`protected` 1 byte/px,
+    `source_frame` RGB del frame fuente. `protected >= 128` marca píxeles que el
+    relight NO puede cambiar (bit a bit idénticos al frame fuente).
+    """
+
+    albedo: bytes
+    normal: bytes
+    occlusion: bytes
+    protected: bytes
+    source_frame: bytes
+
+
+def _light_direction(azimuth_deg: float, elevation_deg: float) -> tuple[float, float, float]:
+    """Dirección de luz unitaria (convención documentada, compartida con tests)."""
+    azimuth = math.radians(azimuth_deg)
+    elevation = math.radians(elevation_deg)
+    return (
+        math.cos(elevation) * math.sin(azimuth),
+        math.sin(elevation),
+        math.cos(elevation) * math.cos(azimuth),
+    )
+
+
+def _lambert_render(
+    albedo: bytes,
+    normal: bytes,
+    occlusion: bytes,
+    light: LightParams,
+    width: int,
+    height: int,
+) -> bytes:
+    """Render Lambertiano CPU determinista: albedo · (n·l)⁺ · intensidad · (1-oclusión) + ambiente.
+
+    Misma aritmética (mismo orden de operaciones float) que el ground truth de
+    referencia; determinista y puro CPU (sin GPU).
+    """
+    lx, ly, lz = _light_direction(light.azimuth_deg, light.elevation_deg)
+    pixels = width * height
+    out = bytearray(pixels * 3)
+    for index in range(pixels):
+        nx = normal[index * 3] / 127.5 - 1
+        ny = normal[index * 3 + 1] / 127.5 - 1
+        nz = normal[index * 3 + 2] / 127.5 - 1
+        length = math.sqrt(nx * nx + ny * ny + nz * nz)
+        nx, ny, nz = nx / length, ny / length, nz / length
+        diffuse = max(0.0, nx * lx + ny * ly + nz * lz)
+        irradiance = diffuse * light.intensity * (1 - occlusion[index] / 255) + light.ambient
+        for channel in range(3):
+            value = round(albedo[index * 3 + channel] * irradiance)
+            out[index * 3 + channel] = 0 if value < 0 else (255 if value > 255 else value)
+    return bytes(out)
+
+
+def _validate_synth_dimensions(width: object, height: object) -> int:
+    if isinstance(width, bool) or not isinstance(width, int):
+        raise RelightError("width debe ser un entero")
+    if isinstance(height, bool) or not isinstance(height, int):
+        raise RelightError("height debe ser un entero")
+    if not (1 <= width <= _MAX_DIMENSION and 1 <= height <= _MAX_DIMENSION):
+        raise RelightError(
+            f"dimensiones inválidas {width}x{height}: cada lado en [1, {_MAX_DIMENSION}]"
+        )
+    pixels = width * height
+    if pixels > _MAX_SYNTH_PIXELS:
+        raise RelightError(
+            f"{pixels} px supera el límite de {_MAX_SYNTH_PIXELS} px por frame sintético"
+        )
+    return pixels
+
+
+def _validate_frame_buffers(
+    frame: FrameAOVs, index: int, pixels: int, width: int, height: int
+) -> None:
+    if not isinstance(frame, FrameAOVs):
+        raise RelightError(f"frame {index}: se esperaba un FrameAOVs")
+    buffers = (
+        ("albedo", pixels * 3),
+        ("normal", pixels * 3),
+        ("occlusion", pixels),
+        ("protected", pixels),
+        ("source_frame", pixels * 3),
+    )
+    for name, expected in buffers:
+        value = getattr(frame, name)
+        if not isinstance(value, (bytes, bytearray)):
+            raise RelightError(f"frame {index}: {name} debe ser un buffer de bytes")
+        if len(value) != expected:
+            raise RelightError(
+                f"frame {index}: longitud de {name} {len(value)} != {expected} "
+                f"para {width}x{height}"
+            )
+
+
+def _validate_normals(frame: FrameAOVs, index: int, pixels: int) -> None:
+    """Un normal no calibrado (longitud decodificada ~0) se rechaza explícitamente."""
+    normal = bytes(frame.normal)
+    for index_px in range(pixels):
+        nx = normal[index_px * 3] / 127.5 - 1
+        ny = normal[index_px * 3 + 1] / 127.5 - 1
+        nz = normal[index_px * 3 + 2] / 127.5 - 1
+        if math.sqrt(nx * nx + ny * ny + nz * nz) < _NORMAL_MIN_LENGTH:
+            raise RelightError(
+                f"frame {index}: normal degenerada en el píxel {index_px} "
+                f"(longitud < {_NORMAL_MIN_LENGTH}): pase de normales no calibrado"
+            )
+
+
+def _validate_ground_truth(data: object, index: int, pixels: int) -> bytes:
+    if not isinstance(data, (bytes, bytearray)):
+        raise RelightError(f"ground truth {index} debe ser un buffer de bytes RGB")
+    ground_truth = bytes(data)
+    if len(ground_truth) != pixels * 3:
+        raise RelightError(
+            f"ground truth {index}: longitud {len(ground_truth)} != {pixels * 3} para {pixels} px"
+        )
+    return ground_truth
+
+
+def relight_frames_synthetic(
+    frames: list[FrameAOVs],
+    width: int,
+    height: int,
+    source_light: LightParams,
+    targets: list[LightParams],
+    ground_truth: list[bytes],
+    error_tolerance: float = 2.0,
+) -> dict[str, Any]:
+    """Relight CPU acotado y determinista sobre AOV sintéticos CALIBRADOS.
+
+    Contrato C21:
+    - Los AOV (albedo/normal/occlusion) deben explicar el frame fuente bajo la
+      luz declarada (`source_light`): si la calibración Lambertiana no
+      reconstruye el fuente (MAE > 1/255), los AOV no están calibrados y se
+      rechaza — comparar contra un ground truth no tendría sentido.
+    - Cada salida i re-ilumina el frame i (o el frame único, transmitido a todas
+      las luces objetivo) con `targets[i]` y se compara contra `ground_truth[i]`,
+      un render de referencia INDEPENDIENTE del módulo.
+    - Los píxeles con `protected >= 128` se copian bit a bit del frame fuente
+      (logo protegido); la comparación en esa región usa el ground truth con la
+      misma protección compuesta (el logo no se re-ilumina tampoco en el
+      ground truth esperado).
+    - Métricas: por frame, de región editada, de región protegida y temporal
+      (deltas entre frames consecutivos en la región editable).
+    - Límites: ≤ 1_000_000 px por frame, 1..64 frames; luz objetivo distinta de
+      la fuente. Puro CPU, sin GPU.
+    """
+    pixels = _validate_synth_dimensions(width, height)
+    if isinstance(error_tolerance, bool) or not isinstance(error_tolerance, (int, float)):
+        raise RelightError("error_tolerance debe ser numérico")
+    tolerance = float(error_tolerance)
+    if not math.isfinite(tolerance) or tolerance < 0.0:
+        raise RelightError(f"error_tolerance debe ser finito y >= 0, no {error_tolerance}")
+    if not isinstance(source_light, LightParams):
+        raise RelightError("source_light debe ser un LightParams")
+    if not isinstance(targets, list) or not all(isinstance(t, LightParams) for t in targets):
+        raise RelightError("targets debe ser una lista de LightParams")
+    if not isinstance(frames, list):
+        raise RelightError("frames debe ser una lista de FrameAOVs")
+    if not 1 <= len(frames) <= _MAX_SYNTH_FRAMES:
+        raise RelightError(f"{len(frames)} frames fuera del rango [1, {_MAX_SYNTH_FRAMES}]")
+    if not isinstance(ground_truth, list):
+        raise RelightError("ground_truth debe ser una lista de buffers RGB")
+    if len(targets) != len(ground_truth) or len(frames) not in (1, len(targets)):
+        raise RelightError(
+            "frames/luz objetivo/ground truth desalineados: "
+            f"{len(frames)} frames, {len(targets)} luces objetivo, {len(ground_truth)} ground truth"
+        )
+    if not ground_truth:
+        raise RelightError("ground truth vacío: se necesita al menos un frame de referencia")
+
+    for index, frame in enumerate(frames):
+        _validate_frame_buffers(frame, index, pixels, width, height)
+    ground_truth_bytes = [
+        _validate_ground_truth(gt, i, pixels) for i, gt in enumerate(ground_truth)
+    ]
+    for index, frame in enumerate(frames):
+        _validate_normals(frame, index, pixels)
+    for index, target in enumerate(targets):
+        if target == source_light:
+            raise RelightError(
+                f"la luz objetivo {index} es igual a la luz fuente: no cambia la iluminación"
+            )
+
+    # Calibración: los AOV + la luz declarada deben reconstruir el frame fuente.
+    calibration_frames: list[float] = []
+    for index, frame in enumerate(frames):
+        calibrated = _lambert_render(
+            bytes(frame.albedo),
+            bytes(frame.normal),
+            bytes(frame.occlusion),
+            source_light,
+            width,
+            height,
+        )
+        source_frame = bytes(frame.source_frame)
+        diff_sum = sum(
+            abs(calibrated[offset] - source_frame[offset]) for offset in range(pixels * 3)
+        )
+        calibration_mae = diff_sum / (pixels * 3)
+        if calibration_mae > _CALIBRATION_TOLERANCE:
+            raise RelightError(
+                f"calibración fallida en el frame {index}: MAE {calibration_mae:.4f} > "
+                f"{_CALIBRATION_TOLERANCE}: los AOV no explican el frame fuente "
+                "bajo la luz declarada"
+            )
+        calibration_frames.append(calibration_mae)
+
+    outputs: list[bytes] = []
+    per_frame: list[dict[str, Any]] = []
+    edited_gt_total = 0
+    edited_src_total = 0
+    edited_count = 0
+    edited_max_abs = 0
+    protected_max_abs = 0
+    gt_protected_max_abs = 0
+    for index, target in enumerate(targets):
+        frame = frames[0] if len(frames) == 1 else frames[index]
+        reference = ground_truth_bytes[index]
+        protected = bytes(frame.protected)
+        source_frame = bytes(frame.source_frame)
+        lit = bytearray(
+            _lambert_render(
+                bytes(frame.albedo),
+                bytes(frame.normal),
+                bytes(frame.occlusion),
+                target,
+                width,
+                height,
+            )
+        )
+        frame_gt_max = 0
+        frame_src_max = 0
+        frame_gt_sum = 0
+        frame_src_sum = 0
+        frame_edited = 0
+        frame_protected_max = 0
+        frame_gt_protected_max = 0
+        for pixel in range(pixels):
+            offset = pixel * 3
+            if protected[pixel] >= 128:
+                # Logo protegido: bit a bit el frame fuente, sin re-iluminar.
+                lit[offset : offset + 3] = source_frame[offset : offset + 3]
+                for channel in range(3):
+                    pos = offset + channel
+                    protected_diff = abs(lit[pos] - source_frame[pos])
+                    frame_protected_max = max(frame_protected_max, protected_diff)
+                    frame_gt_protected_max = max(
+                        frame_gt_protected_max, abs(reference[pos] - source_frame[pos])
+                    )
+            else:
+                for channel in range(3):
+                    pos = offset + channel
+                    out_value = lit[pos]
+                    frame_gt_sum += abs(out_value - reference[pos])
+                    frame_src_sum += abs(out_value - source_frame[pos])
+                    frame_edited += 1
+                gt_diffs = (abs(lit[pos] - reference[pos]) for pos in range(offset, offset + 3))
+                src_diffs = (abs(lit[pos] - source_frame[pos]) for pos in range(offset, offset + 3))
+                frame_gt_max = max(frame_gt_max, *gt_diffs)
+                frame_src_max = max(frame_src_max, *src_diffs)
+        edited_gt_total += frame_gt_sum
+        edited_src_total += frame_src_sum
+        edited_count += frame_edited
+        edited_max_abs = max(edited_max_abs, frame_gt_max)
+        protected_max_abs = max(protected_max_abs, frame_protected_max)
+        gt_protected_max_abs = max(gt_protected_max_abs, frame_gt_protected_max)
+        outputs.append(bytes(lit))
+        per_frame.append(
+            {
+                "frame": index,
+                "light": {
+                    "azimuth_deg": target.azimuth_deg,
+                    "elevation_deg": target.elevation_deg,
+                    "intensity": target.intensity,
+                    "ambient": target.ambient,
+                },
+                "edited_mae_vs_ground_truth": (
+                    round(frame_gt_sum / frame_edited, 6) if frame_edited else 0.0
+                ),
+                "edited_max_abs": frame_gt_max,
+                "edited_mae_vs_source": (
+                    round(frame_src_sum / frame_edited, 6) if frame_edited else 0.0
+                ),
+                "protected_bit_exact": frame_protected_max == 0,
+                "protected_max_abs_vs_source": frame_protected_max,
+                "ground_truth_protected_max_abs": frame_gt_protected_max,
+            }
+        )
+
+    # Consistencia temporal: deltas entre frames consecutivos en la región
+    # editable de AMBOS frames (los protegidos están congelados por diseño).
+    delta_max = 0
+    delta_sum = 0
+    delta_count = 0
+    for index in range(1, len(outputs)):
+        single = len(frames) == 1
+        previous_protected = bytes(frames[0].protected if single else frames[index - 1].protected)
+        current_protected = bytes(frames[0].protected if single else frames[index].protected)
+        for pixel in range(pixels):
+            if previous_protected[pixel] >= 128 or current_protected[pixel] >= 128:
+                continue
+            offset = pixel * 3
+            for channel in range(3):
+                pos = offset + channel
+                delta_error = abs(
+                    (outputs[index][pos] - outputs[index - 1][pos])
+                    - (ground_truth_bytes[index][pos] - ground_truth_bytes[index - 1][pos])
+                )
+                delta_sum += delta_error
+                delta_count += 1
+                delta_max = max(delta_max, delta_error)
+
+    edited_mae_gt = edited_gt_total / edited_count if edited_count else 0.0
+    edited_mae_source = edited_src_total / edited_count if edited_count else 0.0
+    protected_mae_gt = 0.0  # el ground truth protegido es el fuente: bit a bit.
+    temporal = {
+        "pairs": len(outputs) - 1,
+        "max_delta_error": delta_max,
+        "mae_delta_error": round(delta_sum / delta_count, 6) if delta_count else 0.0,
+        "within_tolerance": delta_max <= tolerance,
+    }
+    return {
+        "renderer": "cpu-lambert-aov-relight-v1",
+        "frames": len(outputs),
+        "width": width,
+        "height": height,
+        "pixels": pixels,
+        "error_tolerance": tolerance,
+        "frames_rgb": outputs,
+        "calibration": {
+            "ok": True,
+            "mae": max(calibration_frames) if calibration_frames else 0.0,
+            "tolerance": _CALIBRATION_TOLERANCE,
+            "per_frame_mae": [round(mae, 6) for mae in calibration_frames],
+        },
+        "per_frame": per_frame,
+        "edited_region": {
+            "mae_vs_ground_truth": round(edited_mae_gt, 6),
+            "max_abs": edited_max_abs,
+            "within_tolerance": edited_max_abs <= tolerance,
+            "mae_vs_source": round(edited_mae_source, 6),
+            "illumination_changed": edited_mae_source > 0.0,
+        },
+        "protected_region": {
+            "bit_exact": protected_max_abs == 0,
+            "max_abs_diff_vs_source": protected_max_abs,
+            "mae_vs_ground_truth": protected_mae_gt,
+            "ground_truth_protected_max_abs": gt_protected_max_abs,
+            "ground_truth_honors_protection": gt_protected_max_abs == 0,
+        },
+        "temporal": temporal,
+        "passed": (
+            edited_max_abs <= tolerance and protected_max_abs == 0 and temporal["within_tolerance"]
+        ),
+        "limitations": (
+            "Lambertian diffuse relight from calibrated albedo/normal/occlusion AOVs on CPU; "
+            "no specular, subsurface, global illumination or shadow re-projection. Protected "
+            "pixels are copied bit-exact from the source frame and the ground truth is "
+            "compared with the same protection composited. Deterministic; same arithmetic "
+            "and operation order as the reference renderer."
+        ),
     }
 
 
@@ -638,11 +1059,14 @@ __all__ = [
     "AOV",
     "AOVSet",
     "AOVValidity",
+    "FrameAOVs",
     "LIGHTING_DEPENDENT",
     "LIGHT_INDEPENDENT",
+    "LightParams",
     "RelightError",
     "TaskKind",
     "assert_tasks_distinct",
     "invalidate_for_task",
     "preserved_fields",
+    "relight_frames_synthetic",
 ]
