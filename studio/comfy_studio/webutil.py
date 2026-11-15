@@ -62,7 +62,8 @@ class ProductionPlanRequest(BaseModel):
     """Cuerpo para planificar una producción (borrador barato, pre-aprobación)."""
 
     idea: str = Field(..., min_length=1, max_length=4000)
-    cost_cap_usd: float = Field(default=0.0, ge=0.0, le=1000.0)
+    cost_cap_usd: float | None = Field(default=None, ge=0.0, le=1000.0)
+    brief: dict[str, Any] | None = None
     project_id: str | None = Field(
         default=None,
         description=(
