@@ -119,7 +119,9 @@ def test_system_library_notice_handles_wheel_vendored_soname(
 ) -> None:
     vendored = tmp_path / "python" / "torch" / "lib" / "libgomp.so.1"
     vendored.parent.mkdir(parents=True)
-    vendored.write_bytes(b"wheel-vendored runtime")
+    vendored_binary = vendored.parent / "libgomp-gcc.so.1"
+    vendored_binary.write_bytes(b"wheel-vendored runtime")
+    vendored.symlink_to(vendored_binary.name)
     system_copy = tmp_path / "usr" / "lib" / "libgomp.so.1"
     system_copy.parent.mkdir(parents=True)
     system_copy.write_bytes(b"system runtime with the same SONAME")
@@ -131,7 +133,7 @@ def test_system_library_notice_handles_wheel_vendored_soname(
         if command[0] == "ldd":
             return f"libgomp.so.1 => {vendored} (0x0001)\n"
         if command[:2] == ["dpkg-query", "-S"]:
-            if Path(command[2]) == vendored.resolve():
+            if Path(command[2]) == vendored_binary.resolve():
                 raise build_module.subprocess.CalledProcessError(1, command)
             if Path(command[2]) == system_copy.resolve():
                 return f"libgomp1:amd64: {system_copy}\n"
@@ -150,7 +152,7 @@ def test_system_library_notice_handles_wheel_vendored_soname(
     license_root = tmp_path / "licenses" / "llama.cpp"
     records = build_module.install_system_library_notices(vendored, license_root)
 
-    assert records[0]["library"] == str(vendored.resolve())
+    assert records[0]["library"] == str(vendored_binary.resolve())
     assert records[0]["package"] == "libgomp1:amd64"
     assert records[0]["notice_owner_resolution"] == "same-soname-system-package"
     assert records[0]["notice_owner_library"] == str(system_copy.resolve())

@@ -140,7 +140,9 @@ def _parse_dpkg_owners(output: str) -> set[str]:
     }
 
 
-def package_owners_for_library(library_path: Path) -> tuple[set[str], Path]:
+def package_owners_for_library(
+    library_path: Path, *, soname: str | None = None
+) -> tuple[set[str], Path]:
     """Resolve a linked library to its Debian package or a packaged same-SONAME copy.
 
     CUDA-enabled Python wheels can vendor runtime libraries such as libgomp in
@@ -161,7 +163,7 @@ def package_owners_for_library(library_path: Path) -> tuple[set[str], Path]:
         return owners, library_path
 
     cache = subprocess.check_output(["ldconfig", "-p"], text=True)
-    soname = library_path.name
+    soname = soname or library_path.name
     matches: list[tuple[str, Path]] = []
     for line in cache.splitlines():
         name, separator, raw_path = line.partition("=>")
@@ -361,8 +363,11 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
             return destination, notice_source, source_package, source_version
 
     for raw_path in dependencies:
-        library_path = Path(raw_path).resolve(strict=True)
-        packages, notice_owner_path = package_owners_for_library(library_path)
+        linked_path = Path(raw_path)
+        library_path = linked_path.resolve(strict=True)
+        packages, notice_owner_path = package_owners_for_library(
+            library_path, soname=linked_path.name
+        )
         if not packages:
             raise RuntimeError(f"sin paquete Debian propietario para biblioteca {library_path}")
         for package in sorted(packages):
