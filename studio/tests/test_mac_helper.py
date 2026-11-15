@@ -239,18 +239,20 @@ def _run_comfy(
     )
 
 
-def _derived_disk_gb(*, animate: bool = False) -> int:
+def _derived_disk_gb(*, animate: bool = False, music: bool = False) -> int:
     """Mínimo de disco que deriva `scripts/storage_requirement.py` para studio."""
     script = REPO_ROOT / "scripts" / "storage_requirement.py"
     cmd = [sys.executable, str(script), "--profile", "studio", "--json"]
     if animate:
         cmd += ["--opt-in", "STUDIO_INCLUDE_ANIMATE"]
+    if music:
+        cmd += ["--opt-in", "STUDIO_INCLUDE_MUSIC"]
     out = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
     return int(json.loads(out.stdout)["min_volume_gb"])
 
 
-def derived_disk_gb(*, animate: bool = False) -> int:
-    return _derived_disk_gb(animate=animate)
+def derived_disk_gb(*, animate: bool = False, music: bool = False) -> int:
+    return _derived_disk_gb(animate=animate, music=music)
 
 
 def _vastai_calls(state_dir: Path) -> list[dict[str, Any]]:
@@ -545,6 +547,29 @@ def test_rent_studio_animate_opt_in_raises_derived_disk(tmp_path: Path) -> None:
     assert c_args[c_args.index("--disk") + 1] == str(derived_disk_gb(animate=True))
     env_arg = c_args[c_args.index("--env") + 1]
     assert '-e STUDIO_INCLUDE_ANIMATE="1"' in env_arg
+
+
+def test_rent_studio_music_opt_in_raises_derived_disk(tmp_path: Path) -> None:
+    bin_dir, state_dir = _setup_mock_bin(tmp_path)
+    (state_dir / "offers_fixture.json").write_text(
+        json.dumps(_sample_offers_fixture()), encoding="utf-8"
+    )
+    sim = _run_comfy(
+        ["rent", "studio", "--yes"],
+        bin_dir=bin_dir,
+        state_dir=state_dir,
+        extra_env={
+            "COMFY_IMAGE": "ghcr.io/test-owner/comfyuipod:latest",
+            "STUDIO_INCLUDE_MUSIC": "1",
+        },
+        stdin_text="synthetic-test-key\n",
+    )
+    assert sim.returncode == 0, f"stderr={sim.stderr}\nstdout={sim.stdout}"
+    created = json.loads((state_dir / "created_instance.json").read_text(encoding="utf-8"))
+    args = created["args"]
+    assert args[args.index("--disk") + 1] == str(derived_disk_gb(music=True))
+    env_arg = args[args.index("--env") + 1]
+    assert '-e STUDIO_INCLUDE_MUSIC="1"' in env_arg
 
 
 def test_rent_studio_rejects_insufficient_disk_override_and_accepts_valid_override(

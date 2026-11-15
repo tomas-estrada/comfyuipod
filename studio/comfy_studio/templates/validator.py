@@ -15,7 +15,7 @@ BUILTIN_CONTEXT_PLACEHOLDERS: frozenset[str] = frozenset(
 )
 
 TERMINAL_OUTPUT_CLASSES: frozenset[str] = frozenset(
-    {"SaveImage", "VHS_VideoCombine", "SaveGLB"}
+    {"SaveImage", "VHS_VideoCombine", "SaveGLB", "SaveAudioAdvanced"}
 )
 
 VALID_PARAM_TYPES: frozenset[str] = frozenset(
@@ -340,6 +340,25 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": (),
         "outputs": 1,  # AUDIO
     },
+    "TextEncodeAceStepAudio1.5": {
+        "required_inputs": (
+            "clip", "tags", "lyrics", "seed", "bpm", "duration",
+            "timesignature", "language", "keyscale", "generate_audio_codes",
+            "cfg_scale", "temperature", "top_p", "top_k", "min_p",
+        ),
+        "optional_inputs": (),
+        "outputs": 1,  # CONDITIONING
+    },
+    "EmptyAceStep1.5LatentAudio": {
+        "required_inputs": ("seconds", "batch_size"),
+        "optional_inputs": (),
+        "outputs": 1,  # LATENT
+    },
+    "SaveAudioAdvanced": {
+        "required_inputs": ("audio", "filename_prefix", "format"),
+        "optional_inputs": (),
+        "outputs": 1,  # AUDIO (also an output node)
+    },
     "LatentSyncNode": {
         "required_inputs": (
             "images",
@@ -574,9 +593,10 @@ def validate_template_definition(raw_def: dict[str, Any]) -> dict[str, Any]:
                 f"Plantilla {template_id!r}: falta el campo requerido {req_top!r}."
             )
 
-    if raw_def["output_kind"] not in ("video", "image", "model3d"):
+    if raw_def["output_kind"] not in ("video", "image", "model3d", "audio"):
         raise TemplateValidationError(
-            f"Plantilla {template_id!r}: 'output_kind' debe ser 'video', 'image' o 'model3d'."
+            f"Plantilla {template_id!r}: 'output_kind' debe ser 'video', 'image', "
+            "'model3d' o 'audio'."
         )
 
     docs = raw_def["docs"]
@@ -708,7 +728,7 @@ def validate_template_definition(raw_def: dict[str, Any]) -> dict[str, Any]:
     if not terminal_nodes:
         raise TemplateValidationError(
             f"Plantilla {template_id!r}: el workflow debe incluir al menos un nodo "
-            "de salida (SaveImage o VHS_VideoCombine)."
+            "de salida (SaveImage, VHS_VideoCombine, SaveGLB o SaveAudioAdvanced)."
         )
 
     for term_id, term_node in terminal_nodes:
