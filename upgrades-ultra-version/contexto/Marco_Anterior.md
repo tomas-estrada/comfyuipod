@@ -34,7 +34,7 @@ La principal oportunidad es combinar percepción, reconstrucción, simulación, 
 | Secretos | Inyectados al ejecutar; ausentes del código, capas, logs y resultados públicos. |
 | Persistencia | Código y biblioteca pública base en main/imagen; proyectos, pesos elegidos y medios personales en almacenamiento de trabajo persistente. |
 
-La biblioteca geográfica pública del Aburrá debe seguir incluida físicamente en la imagen. Una carpeta generada en el sandbox del worker o una caché de un pod no sustituye ese entregable. Los proyectos privados y los modelos descargados durante el uso tienen un ciclo de persistencia distinto y nunca se incorporan automáticamente a una imagen pública.
+Cuando un brief pide un lugar real, el agente consulta bajo demanda información pertinente y conserva las fuentes. Los proyectos privados y los modelos descargados durante el uso tienen un ciclo de persistencia distinto y nunca se incorporan automáticamente a una imagen pública.
 
 ## 3. Base actual del repositorio
 
@@ -79,7 +79,7 @@ OpenUSD puede representar las escenas; OpenTimelineIO puede representar el monta
 
 El tiempo debe tener una base racional explícita y los adaptadores deben convertir FPS, unidades, ejes, orientación y espacios de color. Muchos microfallos aparecen en esas conversiones.
 
-## 5. Catálogo de 34 capacidades
+## 5. Catálogo de 33 capacidades activas
 
 Las capacidades siguientes son propuestas del laboratorio. Las herramientas citadas aportan piezas concretas; su combinación y las funciones de autonomía requieren desarrollo propio.
 
@@ -98,8 +98,6 @@ Las capacidades siguientes son propuestas del laboratorio. Las herramientas cita
 **C05. Director de fotografía con trayectorias explícitas.** Usar profundidad y cámaras para proponer dolly, órbita, seguimiento, grúa o acercamientos que respeten los sujetos. WorldForge V2 publica código, pesos y una ruta con GPU de 80 GB basada en MiniMax-H3 y una LoRA de trayectoria [S02]. El perfil de 96 GB es un candidato razonable, pendiente de adaptar y medir.
 
 **C06. Escenarios explorables con memoria espacial.** Generar sucesivos tramos y regresar a un lugar conservando referencias. AlayaWorld aporta memoria espacial e historial; WorldCrafter ofrece una alternativa con memoria consultable por cámara [S03–S04]. La ruta documentada de la demo de WorldCrafter se validó en H200: su funcionamiento en 96 GB permanece experimental.
-
-**C07. Retirado del producto.** No hay ruta para resolver ni verificar lugares reales.
 
 **C08. Ensayo virtual de rodaje.** Antes de generar el plano caro, producir un animatic con posiciones, focal, trayectoria, duración y siluetas. Buscar rutas que mantengan el producto legible y eviten obstáculos. Usar Blender como base; cambiar a síntesis neuronal solo para los planos donde aporte una mejora. La función exige integrar colisiones, visibilidad y composición.
 
@@ -451,16 +449,6 @@ StoryMem, HoloCine y ShotStream permiten comparar enfoques distintos. El agente 
 **Trabajo propio:** selección y caducidad de recuerdos, detección de deriva, reglas de continuidad y regeneración localizada. Evitar llenar la memoria con cada salida: los errores también se pueden amplificar al reutilizarlos.
 
 **Evaluación:** secuencias donde reaparecen dos personas, un producto o un vehículo, con oclusiones y cambios de encuadre. Separar identidad, vestuario, posesión de objetos y coherencia de movimiento.
-
-### P08. Escenarios reales con cobertura y confianza
-
-**Objetivo:** validar trayectorias de cámara en escenarios sintéticos controlados.
-
-MapAnything aporta incorporación de priors y reconstrucción; TAPIP3D puede aportar trayectorias coherentes en espacio 3D. El estudio separa geometría estática, objetos móviles y referencias de distintas fechas.
-
-**Trabajo propio:** alinear geometría sintética, cámaras e incertidumbre para evitar afirmar exactitud no medida.
-
-**Evaluación:** reservar fotografías y comparar el render desde sus cámaras. El mapa de cobertura debe predecir dónde falla la reconstrucción. No promocionar imágenes sintetizadas como evidencia geográfica.
 
 ### P09. Dinámica de vehículos para rodaje
 

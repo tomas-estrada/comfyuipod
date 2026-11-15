@@ -398,49 +398,6 @@
       ]
     },
     {
-      "id": "W09",
-      "title": "W09 retirado del producto",
-      "depends_on": [
-        "W01",
-        "W04",
-        "W07"
-      ],
-      "owner_area": "retired",
-      "requirements": [
-        "R18",
-        "R20"
-      ],
-      "programs": [
-        "P08"
-      ],
-      "capabilities": [
-        "C07"
-      ],
-      "deliverables": [
-        "No se implementa en el producto actual; C07 se conserva solo para estabilidad de IDs"
-      ],
-      "acceptance_ids": [
-        "A11"
-      ],
-      "invariant": "C07 no tiene ruta ni aceptación de producto en esta revisión.",
-      "status": "retired_from_current_product",
-      "scope": "retired",
-      "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
-      "work_budget": {
-        "recommended_active_minutes_per_leaf": 60,
-        "max_active_minutes_per_leaf": 90,
-        "max_failed_acceptance_attempts": 3,
-        "counters_persist_on_resume": true,
-        "notes": "Not a global mission limit. Large package may need several leaves/PRs; do not reset an item just to evade its cap."
-      },
-      "completion_evidence": [
-        "real PR/commit identifiers",
-        "semantic tests/log with private data redacted",
-        "inspected artifact pointers",
-        "conductor verification and merged/reconciled integration state"
-      ]
-    },
-    {
       "id": "W10",
       "title": "Activos 3D, partes y ajuste inverso",
       "depends_on": [
@@ -492,14 +449,12 @@
       "title": "Cámaras, reconstrucción y ensayo de rodaje",
       "depends_on": [
         "W08",
-        "W09",
         "W10"
       ],
       "owner_area": "camera/spatial",
       "requirements": [
         "R07",
-        "R08",
-        "R18"
+        "R08"
       ],
       "programs": [
         "P06",
@@ -869,7 +824,6 @@
       "title": "Memoria espacial, multishot y reconstrucción 4D",
       "depends_on": [
         "W08",
-        "W09",
         "W10",
         "W11",
         "W13",
@@ -878,8 +832,7 @@
       "owner_area": "worlds/continuity",
       "requirements": [
         "R08",
-        "R11",
-        "R18"
+        "R11"
       ],
       "programs": [
         "P05",
@@ -1175,7 +1128,6 @@
         "W06",
         "W07",
         "W08",
-        "W09",
         "W10",
         "W11",
         "W12",

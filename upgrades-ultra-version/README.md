@@ -23,10 +23,10 @@ Usar el texto de [GOAL.md](GOAL.md). Tiene aproximadamente 1.200 caracteres. [MI
 | [requirements.md](requirements.md) | Qué debe hacer el estudio y qué no cuenta como terminado |
 | [design.md](design.md) | Contratos, DAG, scheduler, motores, UI, datos y memoria |
 | [research.md](research.md) | Evidencia actual del repo, defectos y decisiones técnicas |
-| [capabilities.json](capabilities.json) | C01–C34: función, ruta, prueba y relación con trabajo/programas |
+| [capabilities.json](capabilities.json) | Capacidades activas: función, ruta, prueba y relación con trabajo/programas |
 | [programs.md](programs.md) | P01–P14: hipótesis, input/output, experimentos y límites |
 | [engines.json](engines.json) | Selección de rutas, alternativas N01–N30, licencias y compatibilidad |
-| [backlog.json](backlog.json) | W00–W26: dependencias, entregables, aceptación y budget por ítem |
+| [backlog.json](backlog.json) | 26 paquetes activos: dependencias, entregables, aceptación y budget por ítem |
 | [tasks.md](tasks.md) | Cómo avanzar, coordinar, reanudar y evitar iteraciones sin cierre |
 | [acceptance.md](acceptance.md) | A00–A29 y cinco demostraciones D01–D05 |
 | [runner-guide.md](runner-guide.md) | Adaptación a CrewAI o Kiro Crew sin confundirlos con el runtime del estudio |
@@ -34,7 +34,7 @@ Usar el texto de [GOAL.md](GOAL.md). Tiene aproximadamente 1.200 caracteres. [MI
 | [snapshot.json](snapshot.json) | SHA/PR/CI consultados; volver a verificar antes de editar |
 | [contexto/Marco_Anterior.md](contexto/Marco_Anterior.md) | Marco previo completo como referencia histórica |
 
-La misión contiene 34 objetivos funcionales, 14 programas y 30 opciones adicionales. No son 64 motores distintos obligatorios. engines.json incluye además plataformas/servicios propios y alternativas; sus números no se convierten en downloads al boot.
+La misión contiene 33 objetivos funcionales activos, 14 programas y 30 opciones adicionales. No son motores distintos que deban instalarse todos. engines.json incluye además plataformas/servicios propios y alternativas; sus números no se convierten en downloads al boot.
 
 Para que una ruta marcada `build_selected` cuente como preparada para A07,
 `scripts/check_engines_manifest.py` reporta como bloqueos los SHA de código
