@@ -43,6 +43,8 @@ jobs:
       - name: Checkout del repositorio
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # A07 checks re-derive first-party source locks from immutable commits.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Ejecutar ShellCheck sobre scripts Bash (§9.1)
