@@ -361,7 +361,6 @@ class EngineRunnerAdapter:
             "job_id",
             "idempotency_key",
             "project_id",
-            "atlas",
             "background_image",
             "background_sha256",
             "project_reference",

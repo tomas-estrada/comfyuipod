@@ -5161,7 +5161,7 @@ def create_default_tool_belt() -> ToolBelt:
             description=(
                 "Persiste una posición 3D inferida de un ancla del proyecto en un plano. "
                 "Las visitas sobreviven reinicios y devuelven deriva A→B→A cuando hay tres; "
-                "nunca se promocionan a evidencia observada o del atlas. Disponible para artist3d."
+                "nunca se promocionan a evidencia observada. Disponible para artist3d."
             ),
             args_model=RememberSpatialAnchorArgs,
             handler=_handle_remember_spatial_anchor,
