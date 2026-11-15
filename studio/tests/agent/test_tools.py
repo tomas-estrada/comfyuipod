@@ -114,7 +114,7 @@ async def test_production_memory_tools_persist_project_scoped_corrections_and_co
             "kind": "recipe",
             "key": "warm-product-reveal",
             "content": {"summary": "Warm light, then a slow product reveal"},
-            "tags": ["lighting", "product"],
+            "tags": ["lighting", "product", "audience:beauty", "format:16:9"],
             "source_refs": ["brief:version-2"],
         },
         tool_context,
@@ -126,6 +126,12 @@ async def test_production_memory_tools_persist_project_scoped_corrections_and_co
         "retrieve_production_memory", {"query": "warm product lighting"}, tool_context
     )
     assert [item["memory_id"] for item in matches["records"]] == [remembered["memory_id"]]
+    incompatible = await belt.execute(
+        "retrieve_production_memory",
+        {"query": "warm product lighting", "tags": ["audience:families"]},
+        tool_context,
+    )
+    assert incompatible["records"] == []
 
     other_id = tool_context.store.create_project("Other private project")["id"]
     original_id = tool_context.project_id
@@ -136,7 +142,7 @@ async def test_production_memory_tools_persist_project_scoped_corrections_and_co
             "kind": "recipe",
             "key": "warm-product-reveal",
             "content": {"summary": "Cool cyan light for young families"},
-            "tags": ["family", "cyan"],
+            "tags": ["family", "cyan", "audience:families", "format:9:16"],
         },
         tool_context,
     )
@@ -148,7 +154,12 @@ async def test_production_memory_tools_persist_project_scoped_corrections_and_co
     ]
     assert other_project_matches["records"][0]["project_id"] == other_id
     other_matches = await belt.execute(
-        "retrieve_production_memory", {"query": "cool cyan families"}, tool_context
+        "retrieve_production_memory",
+        {
+            "query": "warm product lighting",
+            "tags": ["audience:families", "format:9:16"],
+        },
+        tool_context,
     )
     assert [item["memory_id"] for item in other_matches["records"]] == [
         other_record["memory_id"]

@@ -59,6 +59,33 @@ def test_memory_round_trips_through_project_store_and_retrieves_deterministicall
     )
 
 
+def test_retrieval_applies_all_explicit_audience_and_format_compatibility_tags(tmp_path) -> None:
+    _, memory, project_id = _memory(tmp_path)
+    adult = memory.remember(
+        project_id,
+        kind="recipe",
+        key="product-reel-adult",
+        content={"summary": "Warm product reveal"},
+        tags=["audience:beauty", "format:16:9"],
+    )
+    family = memory.remember(
+        project_id,
+        kind="recipe",
+        key="product-reel-family",
+        content={"summary": "Warm product reveal"},
+        tags=["audience:families", "format:9:16"],
+    )
+
+    matches = memory.retrieve(
+        project_id,
+        "warm product reveal",
+        tags=["audience:families", "format:9:16"],
+    )
+
+    assert [item["memory_id"] for item in matches] == [family["memory_id"]]
+    assert adult["memory_id"] not in {item["memory_id"] for item in matches}
+
+
 def test_correction_preserves_version_history_and_duplicate_write_is_idempotent(
     tmp_path,
 ) -> None:

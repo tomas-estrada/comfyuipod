@@ -466,9 +466,10 @@ class ProductionMemory:
         query: str,
         *,
         kinds: Iterable[MemoryKind | str] | None = None,
+        tags: Iterable[str] | None = None,
         limit: int = 8,
     ) -> list[dict[str, Any]]:
-        """Rank same-project memories by deterministic token overlap."""
+        """Rank same-project memories by tokens after exact compatibility-tag filters."""
         if not isinstance(query, str) or not query.strip():
             raise MemoryValidationError("query no puede estar vacío")
         if len(query) > self.limits.max_query_chars:
@@ -482,6 +483,7 @@ class ProductionMemory:
         selected_kinds = (
             {self._normalize_kind(kind) for kind in kinds} if kinds is not None else None
         )
+        required_tags = set(self._normalize_tags(tags)) if tags is not None else set()
         query_tokens = _tokens(query)
         if not query_tokens:
             return []
@@ -489,6 +491,8 @@ class ProductionMemory:
         scored: list[tuple[int, str, dict[str, Any]]] = []
         for row in records:
             if selected_kinds is not None and row["kind"] not in selected_kinds:
+                continue
+            if required_tags and not required_tags.issubset(set(row["tags"])):
                 continue
             searchable = _canonical_json(
                 {
