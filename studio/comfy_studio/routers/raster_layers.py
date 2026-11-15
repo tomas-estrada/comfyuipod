@@ -34,6 +34,7 @@ from comfy_studio.video_restyle import (
     DEFAULT_STRENGTH,
     LutGradeError,
     lut_grade,
+    lut_grade_batch,
 )
 
 _META_KEY = "ultra_raster_layer_set_v1"
@@ -74,6 +75,29 @@ class LutGradeRequest(BaseModel):
     lut_cube: str
     strength: float = DEFAULT_STRENGTH
     mask_asset_id: str | None = None
+
+
+class LutGradeBatchVariant(BaseModel):
+    """Una variante con nombre del lote C22: LUT ``.cube`` inline."""
+
+    name: str = Field(min_length=1, max_length=64)
+    lut_cube: str
+    strength: float = DEFAULT_STRENGTH
+
+
+class LutGradeBatchRequest(BaseModel):
+    """Lote C22: un vídeo, una máscara de proyecto y tres variantes con nombre."""
+
+    asset_id: str
+    variants: list[LutGradeBatchVariant] = Field(max_length=8)
+    mask_asset_id: str | None = None
+
+
+def _variant_filename(name: str) -> str:
+    """Nombre de archivo seguro derivado del nombre declarado de la variante."""
+    slug = "".join(ch if ch.isalnum() else "-" for ch in name.strip().lower())
+    slug = slug.strip("-") or "variant"
+    return f"lut-grade-batch-{slug[:48]}.mkv"
 
 
 def _mark_previous_lut_output_stale(
@@ -600,6 +624,91 @@ def register_routes(app: FastAPI) -> None:
             "neural_style_transfer": evidence["neural_style_transfer"],
             "claim": "gradación con LUT 3D declarada por el usuario; "
             "no transferencia de estilo neuronal",
+        }
+
+    @app.post(
+        "/studio/api/projects/{project_id}/raster-layers/lut-grade/batch",
+        status_code=201,
+    )
+    async def lut_grade_batch_project_video(
+        project_id: str, body: LutGradeBatchRequest, request: Request
+    ) -> dict[str, Any]:
+        """Lote C22: tres variantes de estilo desde la misma actuación (CPU).
+
+        Un solo asset de vídeo, una máscara de proyecto y exactamente tres
+        LUTs ``.cube`` con nombre único. Cada variante usa la misma ruta
+        ``ffmpeg-lut3d-cpu`` (ffv1 bgr0 lossless) y se exige: mismo nº de
+        frames que la fuente, línea temporal idéntica medida con ffprobe
+        (digest de instantes PTS normalizados como fracciones exactas) y
+        píxeles decodificados exactos en la región ``mask==0`` contra la
+        fuente. El provenance de cada variante (hash de LUT, fuente y máscara,
+        métrica temporal y alineación) se persiste en el metadato del asset de
+        salida. El ``time_base`` del contenedor se reporta aparte: NO se
+        afirma que el string de contenedor de la salida (Matroska) permanezca
+        idéntico al de la fuente. Sin inferencia neuronal ni reclamos de
+        calidad de modelo/GPU.
+        """
+        store = _store(request)
+        _require_project(store, project_id)
+        config = request.app.state.config
+        try:
+            variant_results, alignment, protected_pixels = await run_in_threadpool(
+                lut_grade_batch,
+                store,
+                project_id,
+                body.asset_id,
+                [item.model_dump() for item in body.variants],
+                mask_asset_id=body.mask_asset_id,
+                ffmpeg_timeout_s=config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=config.studio_ffprobe_timeout_s,
+            )
+        except LutGradeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MediaValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+        variants: list[dict[str, Any]] = []
+        for name, output_bytes, evidence in variant_results:
+            batch_meta = {
+                "artifact_kind": "lut_grade_batch_output",
+                "variant_name": name,
+                "renderer": evidence["renderer"],
+                "style": evidence["style"],
+                "neural_style_transfer": evidence["neural_style_transfer"],
+                "lut_sha256": evidence["lut"]["sha256"],
+                "strength": evidence["strength"],
+                "source_asset_id": evidence["source"]["asset_id"],
+                "source_sha256": evidence["source"]["sha256"],
+                "mask_asset_id": evidence["mask"]["asset_id"],
+                "mask_sha256": evidence["mask"]["sha256"],
+                "output_sha256": evidence["output"]["sha256"],
+                "temporal_stability": evidence["temporal_stability"],
+                "alignment": alignment,
+                "protected_pixels": protected_pixels["per_variant"].get(name, {}),
+            }
+            asset = store.save_upload(
+                project_id,
+                filename=_variant_filename(name),
+                content_type="video/x-matroska",
+                data=output_bytes,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={
+                    "lut_grade_batch": batch_meta,
+                    "pixel_render": evidence["renderer"],
+                },
+            )
+            variants.append({"name": name, "asset": asset, "evidence": evidence})
+
+        style = variant_results[0][2]["style"]
+        return {
+            "variants": variants,
+            "alignment": alignment,
+            "protected_pixels": protected_pixels,
+            "style": style,
+            "neural_style_transfer": "not_claimed",
+            "claim": "tres variantes de gradación LUT declaradas por el usuario "
+            "desde la misma actuación; no transferencia de estilo neuronal",
         }
 
 
