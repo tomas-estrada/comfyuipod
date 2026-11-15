@@ -321,7 +321,12 @@ def test_planner_params_cannot_forge_orchestration_owned_job_keys():
 
 
 def test_planner_params_pass_through_unchanged_when_not_reserved():
-    """El filtro solo descarta las claves reservadas; lo demás pasa intacto."""
+    """El filtro solo descarta las claves reservadas; lo demás pasa intacto.
+
+    `graph` es ahora también una clave reservada: un grafo de workflow es
+    entrada ejecutable del motor y debe venir del resolvedor de plantillas
+    (221ac040), nunca de los params del planner (salida de un LLM).
+    """
     from comfy_studio.orchestration.executor import _RESERVED_JOB_KEYS, execute_next_shot
 
     legit = {
@@ -332,14 +337,20 @@ def test_planner_params_pass_through_unchanged_when_not_reserved():
         "negative_prompt": "borroso",
         "cfg": 7.5,
     }
+    # El planner intenta colar un grafo ejecutable junto con sus params
+    # legítimos: el grafo debe descartarse, los params seguir pasando.
+    planner_params = dict(legit)
+    planner_params["graph"] = {"1": {"class_type": "CheckpointLoader", "inputs": {}}}
     runner = _CapturingRunner()
-    state = _state_with_params(legit)
+    state = _state_with_params(planner_params)
 
     execute_next_shot(state, runner=runner)
 
     job = runner.jobs[0]
     for key, value in legit.items():
         assert job[key] == value, f"{key} alterado: {job[key]!r} != {value!r}"
+    # El grafo del planner no sobrevivió al job enviado al motor.
+    assert "graph" not in job, "params del planner forjaron job['graph']"
     # Las reservadas siguen siendo las de la orquestación.
     assert job["kind"] == "gen"
     assert job["shot"] == "shot-real"
