@@ -599,14 +599,6 @@ RUN python3 /usr/local/bin/build_llm_server.py --lock /tmp/llm-server.lock.json 
     /opt/venvs/studio/bin/python /tmp/smoke_mitsuba_cpu_fit.py && \
     rm -f /tmp/smoke_blender_cpu.py /tmp/smoke_blender_physics.py /tmp/smoke_mitsuba_cpu_fit.py
 
-# Atlas audiovisual georreferenciado del Valle de Aburrá: los BYTES REALES del
-# bundle (catálogo SQLite, fotos, licencias, OSM) dentro de la imagen en una ruta
-# inmutable. Capa tardía a propósito: cambiar una fotografía no reconstruye los
-# motores pesados. El build FALLA si el bundle está incompleto o sin licencias.
-COPY atlas/ /opt/studio-atlas/
-ENV STUDIO_ATLAS_DIR=/opt/studio-atlas
-RUN /opt/venvs/studio/bin/python -m comfy_studio.atlas verify-bundle --root /opt/studio-atlas     && /opt/venvs/studio/bin/python -m comfy_studio.atlas stats --root /opt/studio-atlas | head -n 30
-
 EXPOSE 8188
 
 # BAJA-02: start-period=900s superior al timeout de 600s de la Fase 1.

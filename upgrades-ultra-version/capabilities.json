@@ -156,7 +156,6 @@
       "mandatory": true,
       "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
       "engines": [
-        "atlas-offline",
         "map-anything",
         "depth-anything3"
       ],
