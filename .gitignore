@@ -25,10 +25,6 @@ comfyctl/target/
 studio/remotion/node_modules/
 .agent-runs/
 
-# estado mutable del atlas (selecciones por proyecto): no va al repo/imagen
-atlas/selection*.json
 # Los pesos de modelos viven en el volumen del pod (/workspace/comfyui-data),
 # nunca en el repo: una raíz `models/` solo puede ser un artefacto de pruebas.
 /models/
-atlas/catalog.db-wal
-atlas/catalog.db-shm
