@@ -45,8 +45,8 @@ def test_plan_records_recipe_binding_against_resource_budget(tmp_path):
     binding = out["plan"]["metadata"]["recipe_binding"]
     assert binding["vram_budget_mb"] == 96 * 1024
     assert binding["estimate_only"] is True
-    # Planner may already have selected an explicit atlas template. That layer
-    # is admitted and estimated without counting as a newly bound template.
+    # Planner may already have selected a template. That layer is admitted and
+    # estimated without counting as a newly bound template.
     assert binding["bound"] + binding["skipped_has_template"] >= 1
     gen_layers = [
         layer

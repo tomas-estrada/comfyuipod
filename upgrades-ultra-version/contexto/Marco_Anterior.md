@@ -99,7 +99,7 @@ Las capacidades siguientes son propuestas del laboratorio. Las herramientas cita
 
 **C06. Escenarios explorables con memoria espacial.** Generar sucesivos tramos y regresar a un lugar conservando referencias. AlayaWorld aporta memoria espacial e historial; WorldCrafter ofrece una alternativa con memoria consultable por cámara [S03–S04]. La ruta documentada de la demo de WorldCrafter se validó en H200: su funcionamiento en 96 GB permanece experimental.
 
-**C07. Reconstrucción de lugares reales del Aburrá.** Alinear referencias de fachadas, puentes, parques y calles con el atlas incluido. Depth Anything 3 y ViPE aportan geometría y cámaras [S05–S06]. Priorizar reconstrucción multivista y rutas dentro de cobertura observada. Una vista generada sin evidencia suficiente no debe convertirse en la nueva referencia factual del lugar.
+**C07. Retirado del producto.** No hay ruta para resolver ni verificar lugares reales.
 
 **C08. Ensayo virtual de rodaje.** Antes de generar el plano caro, producir un animatic con posiciones, focal, trayectoria, duración y siluetas. Buscar rutas que mantengan el producto legible y eviten obstáculos. Usar Blender como base; cambiar a síntesis neuronal solo para los planos donde aporte una mejora. La función exige integrar colisiones, visibilidad y composición.
 
@@ -283,7 +283,7 @@ Estas son propuestas de pruebas futuras, no resultados obtenidos.
 
 | Experimento | Entrada | Resultado que debe demostrar |
 | --- | --- | --- |
-| Carro en Puente 4 Sur | Video propio, referencias del atlas y brief | Fondo verificable, trayectoria coherente y producto conservado; cobertura no inventada. |
+| Carro en escenario sintético | Video y assets propios con brief | Trayectoria coherente y producto conservado. |
 | Baile adaptado | Video autorizado de movimiento y foto del personaje | Movimiento reconocible, identidad, contacto de pies y montaje adecuado al propósito. |
 | Actor grabado en casa | Actuación breve y keyframes de dirección | Reestilización con evaluación de rostro, mirada, labios y continuidad. |
 | Producto por partes | Fotos o modelo verificado | Despiece controlable y recomposición sin alterar elementos importantes. |
@@ -302,7 +302,7 @@ Estas son propuestas de pruebas futuras, no resultados obtenidos.
 
 **Segunda entrega: control de movimiento y reparación.** Wan-Animate, Wan-Move, VACE y operaciones temporales. Conectar QA localizado con reparación y preservar el material aprobado. Esta combinación abre casos de uso visibles y comparables.
 
-**Tercera entrega: estudio espacial local.** Atlas del Aburrá, cámaras y profundidad; selección de trayectorias y animatics; reconstrucción de objetos y escenas donde exista evidencia suficiente. Incluir rigging y movimiento reutilizable.
+**Tercera entrega: estudio espacial local.** Cámaras y profundidad para escenas sintéticas; selección de trayectorias y animatics; reconstrucción de objetos. Incluir rigging y movimiento reutilizable.
 
 **Cuarta entrega: rodaje y sonido avanzados.** Reiluminación, reestilización de actuaciones, música, voz y diseño sonoro por eventos. Consolidar los perfiles de calidad y memoria.
 
@@ -310,7 +310,7 @@ Estas son propuestas de pruebas futuras, no resultados obtenidos.
 
 No se pretende instalar todas las alternativas de cada familia en el primer lote. Se implementa una ruta principal por capacidad y se incorporan alternativas cuando aporten un comportamiento distinto o mejores resultados medidos. Las dependencias que se elijan sí deben quedar preparadas en la imagen.
 
-Las pruebas GPU llegarán después de preparar estas entregas. Este documento no modifica el prompt previo del atlas; cuando se produzcan nuevos prompts deberá reflejarse el perfil principal de 96 GB y las condiciones actuales, sustituyendo cualquier exigencia anterior de ajustar toda innovación a 32 GB.
+Las pruebas GPU llegarán después de preparar estas entregas. Cuando se produzcan nuevos prompts deberán reflejarse el perfil principal de 96 GB y las condiciones actuales, sustituyendo cualquier exigencia anterior de ajustar toda innovación a 32 GB.
 
 ## 14. Ampliación v2: requisitos de un laboratorio avanzado
 
@@ -454,11 +454,11 @@ StoryMem, HoloCine y ShotStream permiten comparar enfoques distintos. El agente 
 
 ### P08. Escenarios reales con cobertura y confianza
 
-**Objetivo:** que el atlas sea una representación verificable del lugar desde donde se decide rodar.
+**Objetivo:** validar trayectorias de cámara en escenarios sintéticos controlados.
 
 MapAnything aporta incorporación de priors y reconstrucción; TAPIP3D puede aportar trayectorias coherentes en espacio 3D. El estudio separa geometría estática, objetos móviles y referencias de distintas fechas.
 
-**Trabajo propio:** alinear coordenadas locales, referencias del atlas, cámaras e incertidumbre. Buscar activamente entre fuentes permitidas la vista que más reduce una zona desconocida; si no existe, escoger una cámara respaldada por datos.
+**Trabajo propio:** alinear geometría sintética, cámaras e incertidumbre para evitar afirmar exactitud no medida.
 
 **Evaluación:** reservar fotografías y comparar el render desde sus cámaras. El mapa de cobertura debe predecir dónde falla la reconstrucción. No promocionar imágenes sintetizadas como evidencia geográfica.
 
@@ -605,7 +605,7 @@ Estas demostraciones son objetivos de investigación futuros. Deben producir vid
 
 ### D01. Carro real en una locación verificable
 
-Entrada: assets propios del vehículo y referencias del atlas para una zona del Aburrá.
+Entrada: assets propios del vehículo y escena sintética con escala y cámara conocidas.
 
 Producción: una acción corta con tres cámaras, variación de luz, reflejos coherentes y sonido de referencia. La geometría y la matrícula no pueden variar sin una decisión explícita. Si no hay cobertura para una cámara, el plan escoge otra.
 
@@ -679,7 +679,7 @@ La siguiente distribución expresa fronteras técnicas para futuros encargos; no
 | Memoria y montaje | Una ruta multi-shot con referencias y continuidad evaluadas. |
 | Capas y edición causal | Omnimatte o edición equivalente, consecuencias dependientes y reparación localizada. |
 | Luz y materiales | Una ruta temporal y una ruta física comparadas sobre los mismos casos. |
-| Locaciones y cámaras | Atlas, calibración, cobertura y cámara elegida por evidencia. |
+| Locaciones y cámaras | Escena sintética, calibración y cámara comprobada. |
 | Vehículos y mecanismos | Simulación parametrizada, exportación y correspondencia visual comprobadas. |
 | Personajes | Un rig corporal/facial interoperable y un caso de actuación completo. |
 | Sonido | Dirección por eventos, referencia sonora, pistas y mezcla verificadas. |

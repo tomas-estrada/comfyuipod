@@ -78,7 +78,7 @@ bytes de layer comprimidos, tamaño instalado por env/engine, temporales máximo
 
 Si el runner gratuito no alcanza, documentar el recurso faltante y usar solo infraestructura ya disponible/autorizada que lo tenga. No alquilar build hosts ni mover la preparación de engines al pod para evitar el problema. Un build-only OCI/cache/Release no implica otro runtime ni otro repo.
 
-La imagen final contiene binarios, frontend compilado, navegador/fonts necesarios, scripts/model manifests, instrucciones de licencia, engine locks y atlas base. Los pesos de tareas no se incluyen salvo un componente mínimo indispensable explícitamente justificado. El arranque comprueba code/env/assets y reporta missing weights, sin descargar catálogos ni hacer pip/npm/git clone.
+La imagen final contiene binarios, frontend compilado, navegador/fonts necesarios, scripts/model manifests, instrucciones de licencia y engine locks. Los pesos de tareas no se incluyen salvo un componente mínimo indispensable explícitamente justificado. El arranque comprueba code/env/assets y reporta missing weights, sin descargar catálogos ni hacer pip/npm/git clone.
 
 ## Integridad y adquisición de modelos
 
@@ -121,23 +121,6 @@ Conectores de inspiración:
 - Extraer receta (hook, duración, beats, movimientos) y adaptarla al brief propio, no clonar el archivo ni atribuir éxito causal demostrado.
 
 No se publican contenidos ni se mandan mensajes automáticamente. El entregable incluye copy/hashtags como hipótesis basadas en contexto, con fuentes/fecha si hay datos recientes, no una garantía de alcance.
-
-## Atlas y geometría
-
-Mantener el bundle base como entrada inmutable de build del mismo repo. Conservar los medios reales, metadatos, licencia, hashes, thumbnails, índice, calibration reports, transforms y coverage atlas. Si un dominio desaparece, el bundle publicado sigue funcionando offline.
-
-Asignar a cada región/vista coverage: catalog_only, observed_single, observed_multiview, calibrated, reconstructed_validated, inferred. Incluir fecha, exactitud/posición/rumbo desconocidos y regiones ocluidas. Unknown no se rellena con heading=0 ni timestamp actual.
-
-Selección:
-- Lugar explícito en parámetros o en el prompt tiene prioridad sobre selección previa.
-- La vista explícita pasa exactamente los mismos checks que la seleccionada automáticamente.
-- Municipio/nombre/coords y semejanza visual se cotejan; radio cercano no prueba que el fondo corresponda a la fachada.
-- strict_exact aplica límites de posición/cámara/calibración y coverage del shot completo.
-- Sin cobertura, elegir shot restringido a evidencia, adquirir una vista útil de fuente permitida o terminar esa variante como insuficiente. Si el lugar fue fijado, no sustituirlo por otro.
-
-Reconstruir con MapAnything/DA3 y/o SfM que se seleccione por evidencia; guardar imágenes de entrada, poses, solape y evaluación con vistas excluidas. Un solo depth map sirve para un proxy 2.5D, no certifica geometría oculta.
-
-La adquisición activa propone la siguiente zona/ángulo que reduzca incertidumbre y busca evidencia autorizada. Solo una actualización de bundle validada convierte nuevos archivos en baseline público. Un pod puede mantener overlays privados de trabajo con procedencia, sin publicar automáticamente assets personales.
 
 ## Edición causal, luz y simulación
 

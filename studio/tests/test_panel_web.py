@@ -158,7 +158,7 @@ def test_system_summary_updates_after_secondary_health_changes() -> None:
     assert "health-download-badge" in app_js
     assert 'sseBadge.classList.contains("status-warn")' in app_js
     sse_start = app_js.index("function connectProgressSse()")
-    sse_end = app_js.index("/* --- ATLAS GEORREFERENCIADO", sse_start)
+    sse_end = app_js.index("/* --- EVENT LISTENERS & INITIALIZATION ---", sse_start)
     sse_body = app_js[sse_start:sse_end]
     assert sse_body.count("updateSystemHealthSummary()") >= 4
 
@@ -1562,16 +1562,9 @@ def test_panel_sse_refreshes_do_not_stack_or_run_in_hidden_tab() -> None:
     assert "refreshJobs();" not in progress_body
 
 
-def test_panel_escapes_server_text_in_atlas_and_montage_views() -> None:
+def test_panel_escapes_server_text_in_montage_view() -> None:
     """Los datos del servidor se escapan antes de insertarse como HTML."""
     app_js = (PANEL_DIR / "app.js").read_text(encoding="utf-8")
-
-    atlas_start = app_js.index("async function showAtlasPlace(")
-    atlas_end = app_js.index("async function selectAtlasView(", atlas_start)
-    atlas_body = app_js[atlas_start:atlas_end]
-    assert "textContent" in atlas_body
-    assert "detail.textContent" in atlas_body
-    assert "detail.innerHTML" not in atlas_body
 
     montage_start = app_js.index("function renderMontagePlan()")
     montage_end = app_js.index("function renderEdlView()", montage_start)

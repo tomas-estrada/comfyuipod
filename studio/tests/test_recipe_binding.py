@@ -125,8 +125,8 @@ def test_binds_over_a_real_planned_state() -> None:
     """Flujo completo: plan_production (stub) + bind_recipes.
 
     Invariante real (robusto al cambio del planner): tras el binding, TODA capa
-    de generación tiene una plantilla ejecutable — ya sea porque el planner se la
-    dio (p. ej. el atlas fija wan_i2v cuando hay contexto geográfico) o porque
+    de generación tiene una plantilla ejecutable — ya sea porque el planner la
+    fijó en el plan o porque
     bind_recipes le asignó una receta. No se depende de que el stub deje las
     capas sin plantilla (eso varía según el planner).
     """

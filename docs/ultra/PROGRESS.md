@@ -25,7 +25,7 @@ capacidad obligatoria; "Ultra validada" exige L3/L4 posterior.
 
 | W | Título | Estado | Evidencia | Nivel |
 |---|--------|--------|-----------|-------|
-| W00 | Baseline y reconciliación de PRs | done | baseline `b54195f`; #58 merged; #64 merged; #59 diferida (conflictos); #63 atlas = base W09 | L1 |
+| W00 | Baseline y reconciliación de PRs | done | baseline `b54195f`; #58 merged; #64 merged; #59 diferida (conflictos); W09 retirado del producto actual | L1 |
 | W01 | Integridad transaccional de modelos | in_review | PR `fix/ultra-w01-asset-integrity`: 3 P0 corregidos + regresiones | L1 |
 
 ## W01 — detalle (3 defectos P0, research.md)

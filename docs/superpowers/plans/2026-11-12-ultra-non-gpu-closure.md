@@ -41,7 +41,7 @@
 
 ### Task 2: Close the core/platform A07 engine partition
 
-**Engines:** `ffmpeg`, `whisperx`, `qwen3-vl`, `mission-compiler`, `production-memory`, `reference-local`, `hyperframes`, `remotion`, `blender`, `opencode-ui`, `opentimelineio`, `opencolorio`, `atlas-offline`, `research-lab`, `llm-server`, `chrono`.
+**Engines:** `ffmpeg`, `whisperx`, `qwen3-vl`, `mission-compiler`, `production-memory`, `reference-local`, `hyperframes`, `remotion`, `blender`, `opencode-ui`, `opentimelineio`, `opencolorio`, `research-lab`, `llm-server`, `chrono`.
 
 - [ ] For every engine, pin source to an immutable SHA and record its exact selected component/version.
 - [ ] Add tracked lock files with content hashes and component/build dependency records; validate them with the A07 checker.
@@ -86,11 +86,10 @@
 - [ ] Finish the real browser/client path (create, upload, plan, preview, edit, cancel, resume) with deterministic CPU backend and accessible progress/failure states.
 - [ ] Complete preregistered experiments, held-out split/leakage checks, accepted-run provenance, adapter rollback, and all D05 artifacts.
 
-### Task 7: Close Atlas, 3D, body/motion, causal, light and 4D acceptance
+### Task 7: Close 3D, body/motion, causal, light and 4D acceptance
 
 **Capabilities/scenarios:** C05–C22, C28–C30, D01–D04; acceptance A11–A19.
 
-- [ ] Complete exact-view/offline Atlas selection and stratified source-validity acceptance.
 - [ ] Complete project-owned GLB/GLTF geometry, rig, articulation, motion, physics, face and temporal-scene entrypoints with reopenable assets and CPU ground truth.
 - [ ] Complete causal actor-on/off, mask/alpha, shadow/reflection and sound preservation fixtures; finish separate relighting and restyling contracts.
 - [ ] Complete A→B→A memory drift baseline and editable 4D reconstruction/reframe path.

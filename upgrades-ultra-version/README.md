@@ -21,7 +21,7 @@ Usar el texto de [GOAL.md](GOAL.md). Tiene aproximadamente 1.200 caracteres. [MI
 | [GOAL.md](GOAL.md) | Mandato breve para el agente |
 | [MISSION.md](MISSION.md) | Autorización/scope, principios y cierre |
 | [requirements.md](requirements.md) | Qué debe hacer el estudio y qué no cuenta como terminado |
-| [design.md](design.md) | Contratos, DAG, scheduler, motores, atlas, UI, datos y memoria |
+| [design.md](design.md) | Contratos, DAG, scheduler, motores, UI, datos y memoria |
 | [research.md](research.md) | Evidencia actual del repo, defectos y decisiones técnicas |
 | [capabilities.json](capabilities.json) | C01–C34: función, ruta, prueba y relación con trabajo/programas |
 | [programs.md](programs.md) | P01–P14: hipótesis, input/output, experimentos y límites |
@@ -51,7 +51,7 @@ release esté listo.
 
 - GOAL/MISSION y anexos actuales prevalecen sobre premisas antiguas del marco histórico.
 - Un usuario, una imagen/pod Linux, perfil RTX PRO 6000 Blackwell 96 GB y perfiles host RAM128/256 separados; la compatibilidad de una GPU no equivale a validación de todas las recetas.
-- Motores preparados en build; pesos/LoRA/VAE/encoders bajo demanda. Atlas base físicamente dentro de la misma imagen GHCR.
+- Motores preparados en build; pesos/LoRA/VAE/encoders bajo demanda.
 - Disco derivado de componentes/uso reales; 180/200GB no es cap ni mínimo universal.
 - Una autoridad de producción y lease global de GPU; extender la API/orquestación existente.
 - Proxies para trabajar, entregables finales4K y proyectos editables.

@@ -1000,19 +1000,6 @@
       "gpu_measured_here": false
     },
     {
-      "id": "R02",
-      "label": "Atlas PR#63",
-      "urls": [
-        "https://github.com/tomas-estrada/comfyuipod/pull/63",
-        "https://github.com/tomas-estrada/comfyuipod/tree/c12618815c5e7181bbb69e4ce9d249a0075fd3c4"
-      ],
-      "kind": "primary_source",
-      "checked_at_utc": "2026-11-05",
-      "verification": "read_metadata_manifest_service_acquire_and_adapters",
-      "limitation": "Counts are manifest declarations, not independent visual audit.",
-      "gpu_measured_here": false
-    },
-    {
       "id": "R03",
       "label": "CI de main revisada",
       "urls": [
@@ -1329,6 +1316,19 @@
       "checked_at_utc": "2026-11-07",
       "verification": "official_repository_and_license_referenced_by_engines_json",
       "limitation": "The code pin and build configuration are locally verified, but image CI, generated Unicode table attribution, model quality, hardware performance, and supervised runtime remain separate evidence gates.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "R02",
+      "label": "Fuente histórica retirada",
+      "urls": [
+        "https://github.com/tomas-estrada/comfyuipod/pull/63",
+        "https://github.com/tomas-estrada/comfyuipod/tree/c12618815c5e7181bbb69e4ce9d249a0075fd3c4"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "retired_scope_reference_retained_for_manifest_integrity",
+      "limitation": "No demuestra soporte ni aceptación del producto actual.",
       "gpu_measured_here": false
     }
   ]

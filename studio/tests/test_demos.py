@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import sqlite3
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -96,7 +95,7 @@ def test_demo_serialization_reports_cpu_and_gpu_counts() -> None:
     assert len(data["stages"]) == 5
 
 
-@pytest.mark.parametrize("demo_id", ["D01", "D02", "D03", "D04"])
+@pytest.mark.parametrize("demo_id", ["D02", "D03", "D04"])
 def test_cpu_demo_runner_writes_hashed_fixture_evidence(tmp_path: Path, demo_id: str) -> None:
     result = run_demo(demo_id, tmp_path)
     assert result["result"] == "cpu_fixture_checks_passed"
@@ -109,101 +108,16 @@ def test_cpu_demo_runner_writes_hashed_fixture_evidence(tmp_path: Path, demo_id:
     assert all(stage["pending_reason"] for stage in manifest["stages"] if stage["neural"])
 
 
-def test_d01_manifest_binds_verified_atlas_references_and_states_camera_limits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_demo_resume_rebuilds_manifest_missing_result(
+    tmp_path: Path,
 ) -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(repo_root / "atlas"))
-
-    result = run_demo("D01", tmp_path)
-    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
-    evidence = manifest["checks"]["atlas_reference_evidence"]
-    atlas_inputs = [item for item in manifest["inputs"] if item.get("kind") == "atlas_reference"]
-
-    d01 = next(demo for demo in demo_catalog() if demo.demo_id == "D01")
-    assert all(name in manifest["checks"] for name in d01.expected)
-    assert evidence["place_id"] == "plc_medellin_avenida_el_poblado"
-    assert evidence["reference_count"] == 3
-    assert evidence["gps_coordinate_span_m"] == pytest.approx(86.03, abs=0.2)
-    assert evidence["verified_camera_view_count"] == 0
-    assert evidence["estimated_camera_view_count"] == 0
-    assert evidence["camera_coverage_status"] == "not_established"
-    assert len(atlas_inputs) == 3
-    assert all(item["sha256_verified"] is True for item in atlas_inputs)
-    assert all(item["license"] == "CC BY 3.0" for item in atlas_inputs)
-    assert all(item["license_url"] and item["attribution"] for item in atlas_inputs)
-
-
-def test_d01_resume_rechecks_atlas_files_before_reusing_a_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    source_root = repo_root / "atlas"
-    fixture = json.loads(
-        (repo_root / "studio/comfy_studio/data/demos/d01_vehicle_cameras.json").read_text()
-    )
-    atlas_root = tmp_path / "atlas"
-    files_root = atlas_root / "files"
-    files_root.mkdir(parents=True)
-    shutil.copy2(source_root / "catalog.db", atlas_root / "catalog.db")
-
-    catalog_uri = f"{(source_root / 'catalog.db').as_uri()}?mode=ro"
-    source_connection = sqlite3.connect(catalog_uri, uri=True)
-    try:
-        file_paths = [
-            source_connection.execute(
-                """SELECT r.file_path FROM views v
-                   JOIN atlas_refs r ON r.ref_id=v.ref_id WHERE v.view_id=?""",
-                (view_id,),
-            ).fetchone()[0]
-            for view_id in fixture["atlas_site"]["view_ids"]
-        ]
-    finally:
-        source_connection.close()
-    for relative in file_paths:
-        target = files_root / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_root / "files" / relative, target)
-
-    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(atlas_root))
-    run = run_demo("D01", tmp_path / "runs")
-    manifest_path = Path(run["manifest"])
-    first_asset = files_root / file_paths[0]
-    first_asset.write_bytes(first_asset.read_bytes() + b"tampered")
-
-    with pytest.raises(DemoError, match="SHA-256 del Atlas no coincide"):
-        run_demo("D01", tmp_path / "runs", resume=True)
-    assert manifest_path.is_file()
-
-
-def test_d01_catalog_open_errors_are_reported_as_demo_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(repo_root / "atlas"))
-
-    def fail_catalog_open(*args: object, **kwargs: object) -> sqlite3.Connection:
-        assert "?mode=ro&immutable=1" in args[0]
-        raise sqlite3.OperationalError("read-only catalog unavailable")
-
-    monkeypatch.setattr(demos_module.sqlite3, "connect", fail_catalog_open)
-    with pytest.raises(DemoError, match="no se pudo leer el catálogo Atlas: OperationalError"):
-        run_demo("D01", tmp_path)
-
-
-def test_d01_resume_rebuilds_manifest_missing_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    monkeypatch.setenv("STUDIO_ATLAS_DIR", str(repo_root / "atlas"))
-
-    first = run_demo("D01", tmp_path)
+    first = run_demo("D02", tmp_path)
     manifest_path = Path(first["manifest"])
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     del manifest["result"]
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    resumed = run_demo("D01", tmp_path, resume=True)
+    resumed = run_demo("D02", tmp_path, resume=True)
 
     assert resumed["result"] == "cpu_fixture_checks_passed"
     assert json.loads(manifest_path.read_text(encoding="utf-8"))["result"] == (
@@ -345,12 +259,12 @@ def test_runner_rejects_unknown_demo(tmp_path: Path) -> None:
 
 
 def test_resume_reuses_verified_run_and_cleanup_is_scoped(tmp_path: Path) -> None:
-    first = run_demo("D01", tmp_path)
-    resumed = run_demo("D01", tmp_path, resume=True)
+    first = run_demo("D02", tmp_path)
+    resumed = run_demo("D02", tmp_path, resume=True)
     assert resumed["resumed"] is True
     assert resumed["manifest"] == first["manifest"]
-    assert clean_demo_output("D01", tmp_path) is True
-    assert clean_demo_output("D01", tmp_path) is False
+    assert clean_demo_output("D02", tmp_path) is True
+    assert clean_demo_output("D02", tmp_path) is False
     assert not Path(first["manifest"]).exists()
 
 
@@ -361,9 +275,9 @@ def test_cleanup_refuses_symlinked_demo_directory(tmp_path: Path, symlink_or_ski
     protected.write_text("keep", encoding="utf-8")
     output_root = tmp_path / "runs"
     output_root.mkdir()
-    symlink_or_skip(output_root / "D01", outside)
+    symlink_or_skip(output_root / "D02", outside)
     with pytest.raises(DemoError, match="symlink"):
-        clean_demo_output("D01", output_root)
+        clean_demo_output("D02", output_root)
     assert protected.read_text(encoding="utf-8") == "keep"
 
 
@@ -374,9 +288,9 @@ def test_runner_refuses_symlinked_demo_directory(
     outside.mkdir()
     output_root = tmp_path / "runs"
     output_root.mkdir()
-    symlink_or_skip(output_root / "D01", outside)
+    symlink_or_skip(output_root / "D02", outside)
     with pytest.raises(DemoError, match="output symlink"):
-        run_demo("D01", output_root)
+        run_demo("D02", output_root)
     assert list(outside.iterdir()) == []
 
 
@@ -386,10 +300,10 @@ def test_runner_refuses_symlinked_manifest_and_d05_artifacts(
     outside = tmp_path / "protected.json"
     outside.write_text("protected", encoding="utf-8")
     output_root = tmp_path / "runs"
-    (output_root / "D01").mkdir(parents=True)
-    symlink_or_skip(output_root / "D01" / "run_manifest.json", outside, directory=False)
+    (output_root / "D02").mkdir(parents=True)
+    symlink_or_skip(output_root / "D02" / "run_manifest.json", outside, directory=False)
     with pytest.raises(DemoError, match="output symlink"):
-        run_demo("D01", output_root)
+        run_demo("D02", output_root)
     assert outside.read_text(encoding="utf-8") == "protected"
 
     (output_root / "D05").mkdir()
@@ -401,7 +315,7 @@ def test_runner_refuses_symlinked_manifest_and_d05_artifacts(
 
 @pytest.mark.parametrize(
     ("demo_id", "artifact_name"),
-    [("D01", "run_manifest.json"), ("D05", "D05_master_16x9.mp4")],
+    [("D02", "run_manifest.json"), ("D05", "D05_master_16x9.mp4")],
 )
 def test_runner_refuses_hardlinked_output_files(
     tmp_path: Path, demo_id: str, artifact_name: str

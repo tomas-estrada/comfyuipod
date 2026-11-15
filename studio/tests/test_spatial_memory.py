@@ -1,8 +1,4 @@
-"""Memoria espacial, multishot y 4D (plan Ultra, W17 / A19).
-
-A->B->A conserva anclas y registra drift; imagen generada no es evidencia del
-atlas; límites de contexto. Puro CPU.
-"""
+"""Memoria espacial, multishot y 4D (plan Ultra, W17 / A19). Puro CPU."""
 
 from __future__ import annotations
 
@@ -13,7 +9,7 @@ from comfy_studio.spatial_memory import (
     Provenance,
     SpatialError,
     SpatialMemory,
-    assert_not_atlas_evidence,
+    assert_not_observed_evidence,
 )
 
 
@@ -120,25 +116,24 @@ def test_round_trip_needs_three_visits() -> None:
         m.round_trip_drift("a")
 
 
-def test_inferred_anchor_is_not_atlas_evidence() -> None:
-    """A19: ninguna imagen/ancla generada se promociona a evidencia del atlas."""
+def test_inferred_anchor_is_not_observed_evidence() -> None:
     m = SpatialMemory()
     m.register(Anchor("fachada_sintetica", provenance=Provenance.INFERRED))
-    with pytest.raises(SpatialError, match="no es evidencia del atlas"):
-        assert_not_atlas_evidence(m, "fachada_sintetica")
+    with pytest.raises(SpatialError, match="no es evidencia"):
+        assert_not_observed_evidence(m, "fachada_sintetica")
 
 
-def test_synthetic_anchor_is_not_atlas_evidence() -> None:
+def test_synthetic_anchor_is_not_observed_evidence() -> None:
     m = SpatialMemory()
     m.register(Anchor("ancla_fixture", provenance=Provenance.SYNTHETIC))
-    with pytest.raises(SpatialError, match="no es evidencia del atlas"):
-        assert_not_atlas_evidence(m, "ancla_fixture")
+    with pytest.raises(SpatialError, match="no es evidencia"):
+        assert_not_observed_evidence(m, "ancla_fixture")
 
 
-def test_observed_anchor_is_valid_atlas_evidence() -> None:
+def test_observed_anchor_is_valid_observed_evidence() -> None:
     m = SpatialMemory()
     m.register(Anchor("puente_real", provenance=Provenance.OBSERVED))
-    assert_not_atlas_evidence(m, "puente_real")  # no lanza
+    assert_not_observed_evidence(m, "puente_real")
 
 
 def test_serialization_reports_drift_per_anchor() -> None:

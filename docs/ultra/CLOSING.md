@@ -17,7 +17,7 @@ El plan Ultra (`upgrades-ultra-version/`) define una misión extensa: 34
 capacidades (C01–C34), 14 programas (P01–P14) y 27 paquetes de trabajo
 (W00–W26). Esta sesión completó e integró la **columna vertebral de
 infraestructura y orquestación**, la **primera capa de capacidades** y una
-**imagen candidata reproducible con el atlas offline incluido**. El grueso de
+**imagen candidata reproducible**. El grueso de
 las capacidades creativas sigue pendiente y se declara con precisión abajo.
 
 No se alquiló GPU ni se usaron APIs facturadas. Todo lo verificado es a nivel de
@@ -36,7 +36,6 @@ GPU (eso es L3/L4 → W26).
 | W05 | Archivo semántico e ingesta | #72 | dedup, aislamiento de corruptos, segmentos con evidencia (A08) | L1 |
 | W07 | Release gate de engines | #70 | validador de `engines.json` (coherencia vs. bloqueos de release) | L1 |
 | W08 | Base AV, recetas y selección | #74, #76 | catálogo LTX/Wan/Qwen/SeedVR2 + selector por VRAM real + enlace planner→receta | L1 |
-| W09 | Atlas offline del Valle de Aburrá | #63, #78 | 1230 imágenes georreferenciadas + atribuciones/hashes **físicamente en la imagen** | L1/L2 |
 
 Cadena conectada y probada end-to-end en CPU:
 `planner → bind_recipes (receta por VRAM real) → template ejecutable →
@@ -52,7 +51,7 @@ executor (orden topológico) → LeasedEngineRunner (lease GPU) → engine`.
   workflow GHCR.
 - **Smoke:** unitario + full-stack E2E (nginx+status+portal+supervisor+SIGTERM)
   + `MODEL_PROFILE=studio` E2E.
-- **Contiene:** W00–W09 + atlas offline físico + cadena de orquestación.
+- **Contiene:** cadena de infraestructura y orquestación del corte histórico.
 - `requirements.lock` subido como artefacto de reproducibilidad.
 
 Es una imagen candidata reproducible con digest real. **No** es "Ultra validada":
@@ -63,7 +62,7 @@ no se ejecutó generación neuronal en GPU.
 ### Capacidades del backlog aún no implementadas
 - **W06** Inspiración activa → receta (C02).
 - **W10** Activos 3D, partes, ajuste inverso (C09, C10) — Trellis/PartCrafter/Mitsuba.
-- **W11** Cámaras, reconstrucción, ensayo de rodaje (C05, C07, C08, C20).
+- **W11** Cámaras, reconstrucción, ensayo de rodaje (C05, C08, C20).
 - **W12** Física, vehículos, productos articulados (C10, C15, C18, C19).
 - **W13** Movimiento humano, rigging, actuación (C11–C15).
 - **W14** Avatar facial editable (C16).
@@ -131,9 +130,8 @@ el orden de dependencias y la distinción preparado (L1/L2) vs validado-GPU (L3)
 | W05 | `ingest.py` | A08 | C01 |
 | W06 | `inspiration.py` | A09 | C02 |
 | W08 | `av_recipes.py` + `recipe_binding.py` | A10 | C23, C28, C30 |
-| W09 | `atlas/` (PR #63) | A11 | C07 |
 | W10 | `assets3d.py` | A12 | C09, C10 |
-| W11 | `cinematography.py` | A13 | C05, C07, C08, C20 |
+| W11 | `cinematography.py` | A13 | C05, C08, C20 |
 | W12 | `physics.py` | A14 | C10, C15, C18, C19 |
 | W13 | `motion.py` | A15 | C11–C15 |
 | W14 | `face.py` | A16 | C16 |
