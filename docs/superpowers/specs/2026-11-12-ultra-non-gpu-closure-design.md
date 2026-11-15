@@ -5,7 +5,7 @@
 Bring every mandatory capability and every selected engine in the Ultra ledger
 to its documented pre-GPU acceptance level. The only allowed remaining work is
 the real target-GPU campaign defined by A29. This design preserves all 58
-`build_selected` engines, all 34 mandatory capabilities, and demonstrations
+`build_selected` engines, all 33 active capabilities, and demonstrations
 D01–D05.
 
 ## Goals
@@ -71,6 +71,6 @@ D01–D05.
 ## Completion proof
 
 Completion requires a requirement-by-requirement audit showing all A00–A28,
-C01–C34, A29 preparation, and D01–D05 pre-GPU criteria satisfied on current
+All 33 active capabilities, A29 preparation, and D01–D05 pre-GPU criteria satisfied on current
 main, all selected-engine A07 blockers resolved, a current promoted image
 verified, and only actual target-GPU measurements/quality/holdouts pending.

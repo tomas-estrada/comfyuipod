@@ -35,9 +35,9 @@
     "W25": "#100",
     "capabilities_doc": "#94,#98"
   },
-  "capability_coverage": "Current candidate: C26 is L0; 24 active capabilities are L1 partial and 8 are L2 partial; C07 is retired; none has full acceptance. C06, C17, C21, C27 and C28 have new bounded CPU evidence, but semantic, model-quality, held-out and broader acceptance remain open. W26 is historical L3 for one SDXL recipe only. A07 is coherent but not release-ready (261 blockers); target-GPU and held-out evidence remain pending.",
+  "capability_coverage": "Current candidate: C26 is L0; 24 active capabilities are L1 partial and 8 are L2 partial; none has full acceptance. C06, C17, C21, C27 and C28 have new bounded CPU evidence, but semantic, model-quality, held-out and broader acceptance remain open. W26 is historical L3 for one SDXL recipe only. A07 is coherent but not release-ready (261 blockers); target-GPU and held-out evidence remain pending.",
   "pending_capabilities": [
-    "C01-C34 except retired C07: complete applicable capability acceptance without elevating levels from partial evidence",
+    "Complete applicable acceptance for the 33 active capabilities without elevating levels from partial evidence",
     "C06,C17,C21,C28: complete quality, semantic and broader acceptance beyond their bounded CPU paths; C26 remains L0 until a directed music-generation path is implemented and connected",
     "C11-C14,C16,C22,C25,C29,C30: complete model-quality, semantic, holdout, and broader product acceptance beyond the documented CPU paths",
     "A07: resolve 261 release blockers across 53 of 57 selected engines with per-component pin, dependency, license/notice, and implemented-entrypoint evidence",
@@ -101,8 +101,5 @@
     "Los 7 fallos son sensibles al entorno POSIX: 3x test_mac_helper (fixture limpia os.environ -> sin SYSTEMROOT en Windows), 2x test_m5_capture3d (setenv PATH='' rompe el lanzamiento de subprocess en Windows). storage_requirement.py --profile studio --json ejecutado directo produce JSON valido.",
     "test_gpu_lease multiproceso y tests POSIX son sensibles a Windows; verificados en CI Linux."
   ],
-  "notes": "Snapshot verified on main 3d5b93e38c3a838e1e71c35cfe1a716d1768ff73, workflow 43587693820. Candidate sha-3d5b93e digest: sha256:02d198ca858e162362d51669ec19910d5c6ce0bfe370665f75ad714bd2d7de3c; promoted latest manifest digest: sha256:c8e76463125ef210258b5ec5fd4e20b8188b83e29b97dd650d8449e2e8f7994f. Main software, image and smoke checks passed, but no target-GPU measurement was run. check_engines_manifest.py still reports 266 blockers across 54 selected engines. W26 remains one historical L3 SDXL run and does not validate other recipes or GPU quality for this snapshot.",
-  "retired_capabilities": [
-    "C07"
-  ]
+  "notes": "Snapshot verified on main 3d5b93e38c3a838e1e71c35cfe1a716d1768ff73, workflow 43587693820. Candidate sha-3d5b93e digest: sha256:02d198ca858e162362d51669ec19910d5c6ce0bfe370665f75ad714bd2d7de3c; promoted latest manifest digest: sha256:c8e76463125ef210258b5ec5fd4e20b8188b83e29b97dd650d8449e2e8f7994f. Main software, image and smoke checks passed, but no target-GPU measurement was run. check_engines_manifest.py still reports 266 blockers across 54 selected engines. W26 remains one historical L3 SDXL run and does not validate other recipes or GPU quality for this snapshot."
 }

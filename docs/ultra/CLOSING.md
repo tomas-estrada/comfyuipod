@@ -13,8 +13,8 @@ Fecha: 2026-11-05 UTC. Revisión final de main: `1cbfb48`.
 
 ## Qué significa este estado
 
-El plan Ultra (`upgrades-ultra-version/`) define una misión extensa: 34
-capacidades (C01–C34), 14 programas (P01–P14) y 27 paquetes de trabajo
+El plan Ultra (`upgrades-ultra-version/`) define 33 capacidades activas,
+14 programas (P01–P14) y 26 paquetes de trabajo
 (W00–W26). Esta sesión completó e integró la **columna vertebral de
 infraestructura y orquestación**, la **primera capa de capacidades** y una
 **imagen candidata reproducible**. El grueso de
@@ -172,7 +172,7 @@ campaña GPU (W26)**, que sigue fuera de esta fase por diseño.
 4. **W26 / validación GPU (L3-L4)**: campaña GPU autorizada.
 
 El estado honesto sigue siendo **BLOCKED_PRE_GPU**: la arquitectura y los
-contratos de las 34 capacidades existen y se prueban, con imagen candidata
+contratos de las 33 capacidades activas existen y se prueban, con imagen candidata
 reproducible, pero la validación de calidad neuronal y el cierre de los
 sub-items de integración con engines reales siguen pendientes. Nada se etiqueta
 como validado-GPU sin medición.

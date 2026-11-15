@@ -57,4 +57,4 @@ Each task must first add a failing focused test, implement the minimum real path
 
 ## Remaining work after this tranche
 
-Re-run the current acceptance audit. Continue with every remaining C01-C34/A00-A28/D01-D05 requirement and all 56 currently incomplete selected A07 engine entries. Reconcile status only from current checks and artifacts. The separate GPU campaign is outside this plan and remains the only permitted final class of pending evidence.
+Re-run the current acceptance audit. Continue with every remaining active capability/A00-A28/D01-D05 requirement and all 56 currently incomplete selected A07 engine entries. Reconcile status only from current checks and artifacts. The separate GPU campaign is outside this plan and remains the only permitted final class of pending evidence.
