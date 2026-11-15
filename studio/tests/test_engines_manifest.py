@@ -75,23 +75,43 @@ def test_ffmpeg_has_complete_a07_manifest_evidence() -> None:
     assert lock["copyright"]["sha256"] in dockerfile
 
 
-def test_reference_local_records_its_tracked_implemented_entrypoint() -> None:
-    """Implemented first-party code is evidenced without clearing unrelated A07 gates."""
+def test_reference_local_has_complete_a07_manifest_evidence() -> None:
+    """First-party adapter: pinned code SHA + the already-locked FFmpeg component.
+
+    reference-local es código propio (commit 1a11cec5) y su única dependencia
+    binaria es ffmpeg/ffprobe del paquete Ubuntu ya fijado y verificado por
+    hash, así que ya no debe disparar los gates pin/lock/terms de A07.
+    """
     mod = _load_module()
     manifest = mod.load_json(mod.DEFAULT_MANIFEST)
     cap_ids = mod._capability_ids(mod.DEFAULT_CAPS)
     engine = next(item for item in manifest["engines"] if item["id"] == "reference-local")
+    lock_name, lock_hash = next(iter(engine["dependency_lock_hashes"].items()))
+    lock_path = mod.REPO_ROOT / lock_name
 
     problems, blockers = mod.validate({"engines": [engine]}, cap_ids)
 
     assert problems == []
+    assert blockers == [], f"gates A07 sin cerrar: {blockers}"
+    assert engine["code_revision"] == "1a11cec5a95144578e5fdaad4c2901ad14d55911"
     assert engine["implementation_status"] == "implemented"
     assert engine["evidence_entrypoint"] == "studio/comfy_studio/engines/reference_local.py"
     assert engine["evidence_test"] == "studio/tests/test_engine_reference_local.py"
-    assert not any("entrypoint real" in blocker for blocker in blockers)
-    assert not any("evidence_entrypoint" in blocker for blocker in blockers)
-    assert any("SHA inmutable de 40 hex" in blocker for blocker in blockers)
-    assert any("hashes SHA-256" in blocker for blocker in blockers)
+    # El lock adjuntado es el FFmpeg ya fijado, versionado, y su hash cuadra.
+    assert lock_name == "upgrades-ultra-version/locks/ffmpeg-ubuntu24.04-amd64.lock.json"
+    assert lock_path.is_file()
+    assert lock_name in (mod._git_tracked_paths(mod.REPO_ROOT) or set())
+    assert hashlib.sha256(lock_path.read_bytes()).hexdigest() == lock_hash
+    assert mod.load_json(lock_path)["engine_id"] == "ffmpeg"
+    # La redistribución hereda la decisión condicional del componente ffmpeg.
+    assert engine["redistribution_decision"] == "conditional"
+    assert engine["notices_reviewed"] is True
+
+    # El cierre de reference-local no prepara el release del manifiesto completo.
+    full_problems, full_blockers = mod.validate(manifest, cap_ids)
+    assert full_problems == []
+    assert full_blockers, "el manifiesto completo debe seguir con bloqueos pendientes"
+    assert not any("reference-local" in blocker for blocker in full_blockers)
 
 
 def test_counts_mismatch_is_a_problem() -> None:

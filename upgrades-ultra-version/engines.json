@@ -160,7 +160,7 @@
         "S26"
       ],
       "scope": "FFmpeg + cortes/ASR/OCR/flujo/beat map + LLM/VLM configurado → receta editable.",
-      "terms_review": "Entradas autorizadas; máscaras/OCR/tempos con confianza; red opcional con caché/quotas; no HyperFrames cloud.",
+      "terms_review": "Entradas autorizadas; máscaras/OCR/tempos con confianza; red opcional con caché/quotas; no HyperFrames cloud. Adaptador de código propio (commit 1a11cec5a95144578e5fdaad4c2901ad14d55911); su única dependencia binaria es ffmpeg/ffprobe, ya fijado en el lock de Ubuntu 24.04 amd64: binario por defecto GPL-2+ según su copyright, redistribución condicional a cumplir la oferta de fuente correspondiente (este repo no la cumple por sí solo); no introduce componentes nuevos con términos propios.",
       "hardware_notes": "CPU o stages GPU acotados según análisis.",
       "build_selected": true,
       "runtime_installs_allowed": false,
@@ -170,7 +170,12 @@
       "capabilities": [
         "C02"
       ],
-      "code_revision": "local-cpu-v1",
+      "code_revision": "1a11cec5a95144578e5fdaad4c2901ad14d55911",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/ffmpeg-ubuntu24.04-amd64.lock.json": "6d0452ce5e025f44bc3157fe655aff0e0b884b082523d284b24d2ad5032dccfb"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
       "evidence_entrypoint": "studio/comfy_studio/engines/reference_local.py",
       "evidence_test": "studio/tests/test_engine_reference_local.py",
       "lock_required_before_build": true,
