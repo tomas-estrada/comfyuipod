@@ -30,6 +30,12 @@ class RasterLayerIntegrityUnknownError(RasterLayerError):
 
 MAX_RASTER_LAYERS = 32
 
+# Round-trip exactness boundary: only 8-bit PNGs whose Pillow mode converts
+# losslessly to RGBA (unassociated straight alpha) are supported. Anything
+# else (16-bit depth, palette, CMYK, float modes) is rejected fail-closed.
+EXACT_RGBA_SUPPORTED_MODES = frozenset({"RGBA", "RGB", "LA", "L"})
+RGBA_ROUNDTRIP_SEMANTICS = "unassociated-straight-alpha-8bit"
+
 
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -100,6 +106,22 @@ def _available_memory_bytes() -> int | None:
         except (OSError, subprocess.SubprocessError, ValueError):
             pass
     return min(available) if available else None
+
+
+def _working_memory_budget() -> tuple[int, int]:
+    """Reserve at most five percent of available memory for CPU raster work.
+
+    Four RGBA surfaces per pixel conservatively cover source, destination and
+    Pillow's alpha-composite temporaries.
+    """
+    available_memory = _available_memory_bytes()
+    if available_memory is None or available_memory <= 0:
+        raise RasterLayerError("memoria disponible desconocida; composición rechazada")
+    working_memory_budget = available_memory // 20
+    max_pixels = working_memory_budget // 16
+    if max_pixels < 1:
+        raise RasterLayerError("memoria disponible insuficiente para composición RGBA")
+    return working_memory_budget, max_pixels
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,14 +213,15 @@ def affected_by(layers: list[RasterLayer], changed_id: str) -> set[str]:
         affected.update(descendants)
 
 
-def _open_rgba(
+def _load_project_png(
     store: ProjectStore,
     project_id: str,
     asset_id: str,
     *,
     max_pixels: int,
     expected_sha256: str | None = None,
-) -> tuple[Image.Image, str]:
+) -> tuple[Image.Image, str, Path]:
+    """Open a project-owned PNG and return it loaded, unconverted, plus its hash."""
     asset = store.get_asset(project_id, asset_id)
     path = store.get_asset_path(project_id, asset_id)
     if asset is None or path is None:
@@ -219,13 +242,34 @@ def _open_rgba(
                 raise RasterLayerStaleError(
                     f"{asset_id}: la fuente cambió desde que se guardó la capa"
                 )
-            return source.convert("RGBA"), digest
+            return source.copy(), digest, path
     except (
         OSError,
         UnidentifiedImageError,
         Image.DecompressionBombError,
     ) as exc:
         raise RasterLayerError(f"{asset_id}: PNG ilegible") from exc
+
+
+def _open_rgba(
+    store: ProjectStore,
+    project_id: str,
+    asset_id: str,
+    *,
+    max_pixels: int,
+    expected_sha256: str | None = None,
+) -> tuple[Image.Image, str]:
+    source, digest, _ = _load_project_png(
+        store,
+        project_id,
+        asset_id,
+        max_pixels=max_pixels,
+        expected_sha256=expected_sha256,
+    )
+    try:
+        return source.convert("RGBA"), digest
+    finally:
+        source.close()
 
 
 def validate_asset_references(
@@ -289,16 +333,7 @@ def composite_layers(
         raise RasterLayerIntegrityUnknownError(
             "integrity unknown for layers without a pinned source hash: " + ", ".join(unknown)
         )
-    available_memory = _available_memory_bytes()
-    if available_memory is None or available_memory <= 0:
-        raise RasterLayerError("memoria disponible desconocida; composición rechazada")
-    # At most five percent of currently available memory is assigned to the
-    # compositor. Four RGBA surfaces per pixel conservatively cover source,
-    # destination and Pillow's alpha-composite temporaries.
-    working_memory_budget = available_memory // 20
-    max_pixels = working_memory_budget // 16
-    if max_pixels < 1:
-        raise RasterLayerError("memoria disponible insuficiente para composición RGBA")
+    working_memory_budget, max_pixels = _working_memory_budget()
     canvas: Image.Image | None = None
     sources: list[dict[str, str]] = []
     try:
@@ -324,9 +359,7 @@ def composite_layers(
             finally:
                 image.close()
         assert canvas is not None
-        encoded = io.BytesIO()
-        canvas.save(encoded, format="PNG", optimize=False)
-        data = encoded.getvalue()
+        data = _encode_png(canvas)
         return data, {
             "width": canvas.width,
             "height": canvas.height,
@@ -340,6 +373,160 @@ def composite_layers(
     finally:
         if canvas is not None:
             canvas.close()
+
+
+def _encode_png(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", optimize=False)
+    return buffer.getvalue()
+
+
+def _png_bit_depth(path: Path) -> int | None:
+    """Parse the IHDR bit-depth byte; None when the header is not readable."""
+    header = path.read_bytes()[:33]
+    if len(header) < 33 or not header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    if header[12:16] != b"IHDR":
+        return None
+    return header[24]
+
+
+def rgba_roundtrip(
+    store: ProjectStore,
+    project_id: str,
+    asset_id: str,
+    *,
+    semantics: str,
+    source_sha256: str | None = None,
+) -> tuple[bytes, bytes, dict[str, Any]]:
+    """Decompose a project PNG into color and alpha planes and reassemble it.
+
+    Semantics are explicit and fail-closed: only 8-bit PNGs with unassociated
+    (straight) alpha are supported. The color plane carries the original RGB
+    with a fully opaque alpha channel, so RGB under alpha=0 survives the
+    decompose step verbatim; the alpha plane is the isolated alpha channel.
+    Exactness is proven by decoding the emitted plane PNGs, reconstructing the
+    RGBA image from those decoded planes and comparing bytes against the
+    loaded source; any mismatch is an error, never a relaxed claim.
+    """
+    if semantics != RGBA_ROUNDTRIP_SEMANTICS:
+        raise RasterLayerError(
+            f"semántica {semantics!r} no soportada; se requiere "
+            f"{RGBA_ROUNDTRIP_SEMANTICS!r} (alpha recto no premultiplicado)"
+        )
+    working_memory_budget, max_pixels = _working_memory_budget()
+    source, digest, path = _load_project_png(
+        store,
+        project_id,
+        asset_id,
+        max_pixels=max_pixels,
+        expected_sha256=source_sha256,
+    )
+    # Inicializado antes del try exterior: si el modo o la profundidad se
+    # rechazan, rgba aún no existe y el finally no debe desreferenciarlo.
+    rgba: Image.Image | None = None
+    try:
+        if source.mode not in EXACT_RGBA_SUPPORTED_MODES:
+            raise RasterLayerError(
+                f"{asset_id}: modo {source.mode!r} no soportado para roundtrip "
+                "RGBA exacto; se requiere 8-bit RGBA/RGB/LA/L"
+            )
+        bit_depth = _png_bit_depth(path)
+        if bit_depth != 8:
+            raise RasterLayerError(
+                f"{asset_id}: profundidad {bit_depth!r} no soportada para "
+                "roundtrip RGBA exacto; se requiere PNG de 8 bits"
+            )
+        rgba = source.convert("RGBA")
+        # Every image below is initialized before its try/finally so the
+        # cleanup closes exactly the resources that were actually created.
+        red: Image.Image | None = None
+        green: Image.Image | None = None
+        blue: Image.Image | None = None
+        alpha: Image.Image | None = None
+        opaque_alpha: Image.Image | None = None
+        color_plane: Image.Image | None = None
+        decoded_color: Image.Image | None = None
+        decoded_alpha: Image.Image | None = None
+        reconstructed: Image.Image | None = None
+        try:
+            red, green, blue, alpha = rgba.split()
+            opaque_alpha = Image.new("L", rgba.size, 255)
+            color_plane = Image.merge("RGBA", (red, green, blue, opaque_alpha))
+            # Encode both planes as the PNGs that will be delivered, then
+            # decode exactly those bytes: the proof covers the delivered
+            # artifacts, not in-memory intermediates.
+            color_png = _encode_png(color_plane)
+            alpha_png = _encode_png(alpha)
+            try:
+                decoded_color = Image.open(io.BytesIO(color_png))
+                decoded_alpha = Image.open(io.BytesIO(alpha_png))
+                if decoded_color.mode != "RGBA" or decoded_alpha.mode != "L":
+                    raise RasterLayerError(
+                        f"{asset_id}: los planos emitidos no decodifican en "
+                        "RGBA/L; roundtrip rechazado"
+                    )
+                color_bands = decoded_color.split()
+                reconstructed = Image.merge(
+                    "RGBA", (color_bands[0], color_bands[1], color_bands[2], decoded_alpha)
+                )
+            except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+                raise RasterLayerError(
+                    f"{asset_id}: los planos emitidos no son PNG legibles"
+                ) from exc
+            try:
+                source_rgba_bytes = rgba.tobytes()
+                reconstructed_bytes = reconstructed.tobytes()
+                if source_rgba_bytes != reconstructed_bytes:
+                    raise RasterLayerError(
+                        f"{asset_id}: la reconstrucción RGBA no es "
+                        "idéntica a la fuente; roundtrip rechazado"
+                    )
+                source_rgba_sha256 = hashlib.sha256(source_rgba_bytes).hexdigest()
+                reconstructed_sha256 = hashlib.sha256(reconstructed_bytes).hexdigest()
+                evidence: dict[str, Any] = {
+                    "exact_rgba_roundtrip": True,
+                    "semantics": {
+                        "declared": semantics,
+                        "alpha_encoding": "unassociated (straight) alpha",
+                        "premultiplied": False,
+                        "bit_depth": 8,
+                        "modes_supported": sorted(EXACT_RGBA_SUPPORTED_MODES),
+                    },
+                    # La igualdad exacta byte a byte (medida sobre los planos
+                    # PNG decodificados) demuestra que el RGB bajo alpha=0 no
+                    # fue premultiplicado ni descartado.
+                    "rgb_under_alpha_zero": "preserved",
+                    "source": {
+                        "asset_id": asset_id,
+                        "mode": source.mode,
+                        "width": rgba.width,
+                        "height": rgba.height,
+                        "sha256": digest,
+                    },
+                    "source_rgba_sha256": source_rgba_sha256,
+                    "reconstructed_sha256": reconstructed_sha256,
+                    "color_plane_sha256": hashlib.sha256(color_png).hexdigest(),
+                    "alpha_plane_sha256": hashlib.sha256(alpha_png).hexdigest(),
+                    "working_memory_budget_bytes": working_memory_budget,
+                    "renderer": "pillow-cpu",
+                    "matting": "not_run",
+                }
+                return color_png, alpha_png, evidence
+            finally:
+                reconstructed.close()
+        finally:
+            for plane in (red, green, blue, alpha, opaque_alpha, color_plane):
+                if plane is not None:
+                    plane.close()
+            if decoded_color is not None:
+                decoded_color.close()
+            if decoded_alpha is not None:
+                decoded_alpha.close()
+    finally:
+        if rgba is not None:
+            rgba.close()
+        source.close()
 
 
 def canonical_manifest(layers: list[RasterLayer]) -> dict[str, Any]:
@@ -373,6 +560,7 @@ __all__ = [
     "composite_layers",
     "integrity_unknown_layer_ids",
     "parse_manifest",
+    "rgba_roundtrip",
     "validate_asset_references",
     "validate_layers",
 ]
