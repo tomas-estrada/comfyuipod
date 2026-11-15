@@ -499,6 +499,7 @@ class StudioConfig:
     studio_include_3d: bool = False
     studio_include_minimax: bool = False
     studio_include_qwen_layered: bool = False
+    studio_include_music: bool = False
     comfy_user: str = "admin"
     comfy_pass: str | None = field(default=None, repr=False)
     vast_api_key: str | None = field(default=None, repr=False)
@@ -694,6 +695,9 @@ class StudioConfig:
             studio_include_qwen_layered=_parse_bool(
                 source.get("STUDIO_INCLUDE_QWEN_LAYERED"), default=False
             ),
+            studio_include_music=_parse_bool(
+                source.get("STUDIO_INCLUDE_MUSIC"), default=False
+            ),
             comfy_user=(
                 source.get("COMFY_USER", "").strip()
                 or source.get("STUDIO_AUTH_USER", "").strip()
@@ -848,6 +852,16 @@ class StudioConfig:
     def qwen_layered_weights_expected(self) -> bool:
         return bool(self.studio_include_qwen_layered)
 
+    def music_weights_expected(self) -> bool:
+        """Whether the optional ACE-Step 1.5 AIO checkpoint was requested."""
+        return bool(self.studio_include_music)
+
+    def music_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """True only when requested ACE-Step weights are present on disk."""
+        return self.music_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_MUSIC", env
+        )
+
     def redactor(self) -> SecretRedactor:
         return SecretRedactor.from_config(self)
 
@@ -880,6 +894,7 @@ class StudioConfig:
             "STUDIO_INCLUDE_QWEN_LAYERED": (
                 "1" if self.studio_include_qwen_layered else "0"
             ),
+            "STUDIO_INCLUDE_MUSIC": "1" if self.studio_include_music else "0",
             "COMFY_USER": self.comfy_user,
             "COMFY_PASS": self.masked_comfy_pass_status(),
             "VAST_API_KEY": "<definida>" if self.vast_api_key else "<no definida>",

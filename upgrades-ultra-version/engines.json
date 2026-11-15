@@ -921,17 +921,25 @@
         "S35"
       ],
       "scope": "Base/XL según receta, estructura musical y variantes con beat map.",
-      "terms_review": "Términos de componentes y datos/outputs en aprendizaje; no etiquetar stems sintéticos como separación exacta.",
-      "hardware_notes": "No ejecutar XL y generador video simultáneos; benchmark por variante.",
+      "terms_review": "El checkpoint ACE-Step 1.5 Turbo AIO está identificado en el manifiesto como Apache-2.0; el archivo es opt-in y no se hornea por defecto. No etiquetar stems sintéticos como separación exacta.",
+      "hardware_notes": "Generación requiere ComfyUI/GPU; runtime, VRAM/RAM, calidad y alineación musical pendientes de medición en GPU objetivo.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C26"
       ],
-      "code_revision": null,
+      "code_revision": "bdc63e72f5ab29fde448c161db3057827148c0ef",
+      "dependency_lock_hashes": {
+        "config/nodes.lock": "d82654ad0720e7eeb744ec12c79c42633630734c5814ce3e8941c6f7c4c1c5d8"
+      },
+      "redistribution_decision": "allowed",
+      "notices_reviewed": true,
+      "upstream_url": "https://github.com/Comfy-Org/ComfyUI",
+      "evidence_entrypoint": "studio/comfy_studio/agent/tools.py",
+      "evidence_test": "studio/tests/test_c26_ace_step_tool.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },

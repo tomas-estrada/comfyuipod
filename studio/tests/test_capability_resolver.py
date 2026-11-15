@@ -1204,6 +1204,7 @@ def test_group_needs_follow_the_manifest(data_dir: Path) -> None:
         ("STUDIO_INCLUDE_ANIMATE", 1),
         ("STUDIO_INCLUDE_3D", 1),
         ("STUDIO_INCLUDE_MINIMAX", 6),
+        ("STUDIO_INCLUDE_MUSIC", 1),
     ):
         needs = needs_for_group(flag, env=env)
         assert len(needs) == expected_count, flag
