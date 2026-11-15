@@ -47,6 +47,10 @@ class SampleValidationError(AudioError):
     """La muestra de audio del proyecto no es válida (ilegible, larga, ausente)."""
 
 
+class AudioProcessError(AudioError):
+    """No se pudo ejecutar el proceso multimedia dentro de sus límites."""
+
+
 # Ensamblado real (A20/C25): CPU, FFmpeg acotado, sin generación ni separación
 # por modelo. La salida es PCM WAV s16 estéreo a sample rate fijo.
 TARGET_SAMPLE_RATE = 48000
@@ -266,8 +270,8 @@ def frame_aligned_delay_ms(onset_s: float, fps: int) -> tuple[int, int]:
     """Alinea un onset al grid de frames del timebase compartido.
 
     Devuelve `(delay_ms, frame)`: el delay en ms para `adelay` y el frame del
-    timebase al que cae el onset. Nunca adelanta el sonido: se ancla al frame
-    (0.502 s @24fps cae en el frame 12 → 500 ms, no 502 ms).
+    timebase al que cae el onset. El redondeo puede adelantar o retrasar hasta
+    medio frame (0.495 s @24fps cae en el frame 12 → 500 ms).
     """
     if isinstance(fps, bool) or not isinstance(fps, int) or fps <= 0:
         raise AudioError("fps debe ser un entero > 0")
@@ -331,9 +335,9 @@ def _run_argv(cmd: list[str], timeout_s: float, what: str) -> subprocess.Complet
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
     except subprocess.TimeoutExpired as exc:
-        raise AudioError(f"{what}: timeout de {timeout_s:.0f}s") from exc
+        raise AudioProcessError(f"{what}: timeout de {timeout_s:.0f}s") from exc
     except OSError as exc:
-        raise AudioError(f"{what}: binario no disponible: {exc}") from exc
+        raise AudioProcessError(f"{what}: binario no disponible: {exc}") from exc
 
 
 def _probe_streams(path: Path, ffprobe_bin: str, timeout_s: float) -> dict[str, Any] | None:
