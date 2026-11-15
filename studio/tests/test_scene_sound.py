@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from comfy_studio.audio import SampleValidationError
+from comfy_studio.audio import AudioProcessError, SampleValidationError
 from comfy_studio.scene_sound import (
     DEFAULT_ONSET_TOLERANCE_S,
     MAX_ACTIONS,
@@ -293,6 +293,22 @@ def test_measure_first_onset_s_rejects_silence_or_bad_file(tmp_path: Path) -> No
     fake.write_bytes(b"no es audio")
     with pytest.raises(SceneSoundError, match="legible"):
         measure_first_onset_s(fake, ffmpeg_bin=FFMPEG)
+
+
+def test_measure_first_onset_maps_ffmpeg_timeout_to_typed_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import comfy_studio.scene_sound as scene_sound_module
+
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"audio")
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(scene_sound_module.subprocess, "run", timeout)
+    with pytest.raises(AudioProcessError, match="timeout"):
+        measure_first_onset_s(audio, ffmpeg_bin="ffmpeg", timeout_s=0.01)
 
 
 @FF_REQUIRED

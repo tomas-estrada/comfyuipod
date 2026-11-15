@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from comfy_studio.app import create_app
+from comfy_studio.audio import AudioProcessError
 from comfy_studio.config import StudioConfig
 from comfy_studio.stubs.comfyui import ComfyUIStubState, create_stub_comfyui_app
 
@@ -161,7 +162,7 @@ def test_scene_plan_persists_validated_plan(client: TestClient, tmp_path: Path) 
 
 
 def test_scene_plan_render_measures_and_persists_provenance(
-    scene_client: TestClient, tmp_path: Path
+    scene_client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = scene_client
     project_id = client.post(
@@ -230,6 +231,14 @@ def test_scene_plan_render_measures_and_persists_provenance(
     stale_provenance = client.get(f"{plan_url}/provenance").json()
     assert stale_provenance["stale"] is True
     assert stale_provenance["current_plan_sha256"] != stale_provenance["plan_sha256"]
+
+    def fail_render(*args, **kwargs):
+        raise AudioProcessError("ffmpeg: timeout de 1s")
+
+    monkeypatch.setattr("comfy_studio.routers.audio.render_scene_sound", fail_render)
+    unavailable = client.post(f"{plan_url}/render")
+    assert unavailable.status_code == 503
+    assert "timeout" in unavailable.json()["detail"]
 
 
 def test_scene_plan_requires_project_and_plan(scene_client: TestClient) -> None:
