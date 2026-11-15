@@ -28,12 +28,13 @@ from threading import Event
 from typing import Any
 
 from comfy_studio.engines.storyboard_gate import StoryboardGate, StoryboardState
+from comfy_studio.mission_compiler import MissionCompilation, compile_mission
 from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
 from comfy_studio.orchestration.conductor import Collaborators, build_production_graph
 from comfy_studio.orchestration.planner import plan_production as _plan
 from comfy_studio.orchestration.recipe_binding import bind_recipes
 from comfy_studio.orchestration.reference_selection import compile_project_references
-from comfy_studio.orchestration.state import ProductionState, ShotStatus
+from comfy_studio.orchestration.state import Layer, ProductionState, Sequence, Shot, ShotStatus
 from comfy_studio.progress import ProgressBroker
 
 
@@ -68,6 +69,79 @@ def _terminal_reason(state: ProductionState) -> str | None:
 
 def _gate_key(production_id: str) -> str:
     return f"__gate__{production_id}"
+
+
+def _plan_response(state: ProductionState) -> dict[str, Any]:
+    response = {
+        "production_id": state.id,
+        "phase": state.phase,
+        "plan": state.to_dict(),
+    }
+    gate = state.metadata.get("storyboard_gate") or {}
+    if gate.get("state"):
+        response["storyboard_state"] = gate["state"]
+    return response
+
+
+def _apply_mission_compilation(
+    state: ProductionState,
+    compilation: MissionCompilation,
+) -> None:
+    """Project the transient compiled DAG into ProductionState's existing graph."""
+    constraints = [item.to_dict() for item in compilation.constraints]
+    shots: list[Shot] = []
+    for task in compilation.tasks:
+        prompt = task.description
+        if constraints:
+            rendered_constraints = "; ".join(
+                f"{item['key']}={json.dumps(item['value'], ensure_ascii=False, sort_keys=True)}"
+                for item in constraints
+            )
+            prompt = f"{prompt}\nRestricciones explícitas: {rendered_constraints}"
+        shot = Shot(
+            id=task.task_id,
+            description=task.description[:500],
+            duration_s=task.duration_s,
+            acceptance={"vbench_min": 0.55, "semantic_min": 0.6},
+            depends_on=list(task.depends_on),
+        )
+        shot.layers.append(
+            Layer(
+                kind="gen",
+                engine="comfyui",
+                params={
+                    "prompt": prompt,
+                    "capability": "video.text_to_video",
+                    "mission_task_id": task.task_id,
+                    "source_refs": list(task.source_refs),
+                },
+            )
+        )
+        shots.append(shot)
+    state.sequences = [
+        Sequence(
+            id=f"seq-{compilation.idempotency_key[:12]}",
+            title="secuencia de misión",
+            shots=shots,
+        )
+    ]
+    if shots and compilation.cost_cap_usd > 0:
+        per_shot = compilation.cost_cap_usd / len(shots)
+        for index, shot in enumerate(shots):
+            shot.cost_cap_usd = (
+                compilation.cost_cap_usd - per_shot * (len(shots) - 1)
+                if index == len(shots) - 1
+                else per_shot
+            )
+    receipt = compilation.receipt()
+    state.metadata["mission_compilation"] = receipt
+    state.record(
+        "mission_compiled",
+        schema=receipt["schema"],
+        idempotency_key=receipt["idempotency_key"],
+        graph_sha256=receipt["graph_sha256"],
+        tasks=len(shots),
+    )
 
 
 class ProductionService:
@@ -118,11 +192,36 @@ class ProductionService:
         self,
         idea: str,
         *,
-        cost_cap_usd: float = 0.0,
+        cost_cap_usd: float | None = 0.0,
         project_id: str | None = None,
+        brief: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Planifica (barato) y deja la producción esperando aprobación humana."""
-        state = ProductionState(idea=idea, cost_cap_usd=cost_cap_usd)
+        compilation: MissionCompilation | None = None
+        if brief is not None:
+            compilation = compile_mission(
+                brief,
+                cost_cap_usd=cost_cap_usd if cost_cap_usd not in (None, 0.0) else None,
+            )
+            brief_project_id = brief.get("project_id")
+            if project_id and brief_project_id and brief_project_id != project_id:
+                raise ValueError("El brief pertenece a otro proyecto")
+            project_id = project_id or brief_project_id
+            production_id = f"prod_{compilation.idempotency_key[:32]}"
+            existing = self.checkpointer.load(production_id)
+            if existing is not None:
+                return _plan_response(existing)
+            state = ProductionState(
+                idea=str(brief.get("prompt") or idea),
+                id=production_id,
+                cost_cap_usd=compilation.cost_cap_usd,
+            )
+            _apply_mission_compilation(state, compilation)
+        else:
+            state = ProductionState(
+                idea=idea,
+                cost_cap_usd=0.0 if cost_cap_usd is None else cost_cap_usd,
+            )
         if project_id:
             # fail-closed: un proyecto inexistente se rechaza al planificar,
             # no al aprobar (cuando ya se gastó la aprobación humana).

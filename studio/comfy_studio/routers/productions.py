@@ -86,6 +86,7 @@ def register_routes(app: FastAPI) -> None:
                 body.idea,
                 cost_cap_usd=body.cost_cap_usd,
                 project_id=body.project_id,
+                brief=body.brief,
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
