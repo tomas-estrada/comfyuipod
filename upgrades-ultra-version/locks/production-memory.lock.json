@@ -1,0 +1,22 @@
+{
+  "schema": "ultra.production-memory-source-lock/1",
+  "engine_id": "production-memory",
+  "source_revision": "8de272798924116b383e6802868dc0dfeab5b4ff",
+  "runtime": {
+    "python_requires": ">=3.11",
+    "additional_external_distributions": [],
+    "standard_library": ["hashlib", "json", "re", "sqlite3", "threading"]
+  },
+  "internal_source_sha256": {
+    "studio/comfy_studio/production_memory.py": "713cd3e0f0bebfd8bf79df9a6d3e013112240065c3e3c8fad6b3e0ddde68a5d0",
+    "studio/comfy_studio/agent/tools.py": "b2d511b0a614b8dca0755370c697c6ced58a1a7bc33343cbdba579e8f0651627",
+    "studio/comfy_studio/projects.py": "8e6f16b056f94c19d2685a9eb10ace1c8d258867cc3de362c2730cb5ec4a8037",
+    "studio/comfy_studio/config.py": "438ba5096be2f34ff072deb95278d78438408c3b9e6f37db40f46b42028370d0",
+    "studio/pyproject.toml": "0131d62134e151bfa53c348977d7b1593f652bd9fda2c9153b1c7ce285eb1ead"
+  },
+  "persistence": {
+    "backend": "ProjectStore SQLite metadata in studio.db",
+    "external_services": []
+  },
+  "notice": "No additional third-party runtime packages or assets are introduced; the engine uses the host application's pinned image dependency closure."
+}

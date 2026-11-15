@@ -29,6 +29,10 @@ Tabla maestra de los **20 motores** registrados en `comfy_studio/engines/registr
 [`ace-step.md`](ace-step.md). El motor del registro `music_gen` es una vía
 separada; no representa la implementación activa de esa herramienta.
 
+La memoria durable de decisiones y recetas del agente vive en ProjectStore y no
+es un proceso de engine separado; su alcance, límites y lock están en
+[`production-memory.md`](production-memory.md).
+
 ## Política de invarianza
 
 1. **Ningún método lanza**: toda falla se tipifica en `EngineResult(ok=False, ...)`.
