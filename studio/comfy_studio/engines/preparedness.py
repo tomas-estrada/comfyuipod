@@ -497,12 +497,6 @@ def build_default_prep_specs() -> dict[str, EnginePrepSpec]:
             note="análisis local de referencias; requiere ffmpeg/ffprobe y módulo inspiration",
         ),
         EnginePrepSpec(
-            name="atlas-offline",
-            modules=("comfy_studio.atlas.packaging",),
-            config_env=("STUDIO_ATLAS_ROOT",),
-            note="empaquetado/verificación del bundle del atlas; módulo packaging",
-        ),
-        EnginePrepSpec(
             name="scene-optimizer",
             modules=("comfy_studio.cinematography",),
             note="validación de composición/plan de cámara; módulo cinematography",

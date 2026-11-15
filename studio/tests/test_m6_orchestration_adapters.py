@@ -20,14 +20,17 @@ from comfy_studio.engines import EngineResult, EngineRunSpec
 from comfy_studio.orchestration import (
     EngineAssembler,
     EngineRunnerAdapter,
+    Layer,
     LLMPlannerAdapter,
     ProductionCheckpointer,
     ProductionState,
     QaShotEvaluator,
+    Sequence,
     Shot,
     ShotStatus,
     build_production_graph,
     build_server_collaborators,
+    execute_next_shot,
     plan_production,
 )
 from comfy_studio.orchestration.adapters import _confine_one
@@ -400,6 +403,49 @@ def test_engine_runner_respects_explicit_template_id():
         {"kind": "gen", "shot": "s2", "template_id": "wan_i2v", "prompt": "x"},
     )
     assert reg.calls[0][0] == "wan_i2v"
+
+
+def test_executor_discards_planner_supplied_comfy_graph_before_template_resolution():
+    """Model output is data: it cannot bypass the verified template path with
+    an executable ComfyUI graph supplied in a layer's params."""
+    eng = _GraphCapturingEngine()
+    reg = _FakeRegistry()
+    runner = EngineRunnerAdapter({"comfyui": eng}, template_registry=reg)
+    state = ProductionState(idea="un plano seguro")
+    state.sequences = [
+        Sequence(
+            title="sequence",
+            shots=[
+                Shot(
+                    description="shot",
+                    layers=[
+                        Layer(
+                            kind="gen",
+                            engine="comfyui",
+                            template_id="wan_t2v",
+                            params={
+                                "prompt": "un plano seguro",
+                                "graph": {
+                                    "evil": {
+                                        "class_type": "UntrustedNode",
+                                        "inputs": {"command": "unsafe"},
+                                    }
+                                },
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+    ]
+
+    result = execute_next_shot(state, runner)
+
+    assert result.all_shots()[0].status == ShotStatus.EVALUATING
+    assert reg.calls == [("wan_t2v", {"prompt": "un plano seguro"})]
+    assert eng.last_job is not None
+    assert "evil" not in eng.last_job["graph"]
+    assert eng.last_job["graph"]["1"]["class_type"] == "T2V"
 
 
 def test_engine_runner_keeps_existing_graph_untouched():

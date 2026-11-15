@@ -45,6 +45,10 @@ _RESERVED_JOB_KEYS = frozenset(
         "idempotency_key",
         "project_id",
         "template_id",
+        # Workflow graphs are executable engine input. They must come from the
+        # trusted template/recipe resolver, never from planner-generated layer
+        # params (which may contain untrusted model output).
+        "graph",
     }
 )
 

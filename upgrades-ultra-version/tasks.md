@@ -22,7 +22,7 @@ Un paquete grande puede necesitar varias PRs secuenciales. Antes de despacharlo,
 Orden de rondas orientativo, subordinado al DAG real:
 - Baseline → integridad → recursos.
 - Scheduler y contratos; después fábrica de engines/build representativo.
-- Ingesta/evaluación, generación base, atlas y activos geométricos según dependencias.
+- Ingesta/evaluación, generación base y activos geométricos según dependencias.
 - Referencias, cámara, física, movimiento, audio, capas y luz.
 - Cara, memoria/4D y acabado; después UI y director integrado.
 - Investigador y demostraciones finales; release candidato con estado de evidencia explícito. W26 ya ejecutó una demo SDXL; faltan D01–D05, holdouts y repetición en una imagen del `main` actual.

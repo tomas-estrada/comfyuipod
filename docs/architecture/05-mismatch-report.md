@@ -11,36 +11,25 @@ Clasificación de documentos:
   `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE_CANONICAL.md`, `docs/walkthrough.md`,
   `docs/POLITICA_ARQUITECTURA_RECURSOS.md`.
 - **Registro fechado** — describe un momento pasado; se espera que derive:
-  `docs/decisiones.md`, `docs/auditorias/`, `docs/propuestas/`, `docs/ultra/`,
-  `docs/atlas-merge-runbook.md`. `docs/README.md:3` lo advierte explícitamente.
+  `docs/decisiones.md`, `docs/auditorias/`, `docs/propuestas/` y `docs/ultra/`.
+  `docs/README.md:3` lo advierte explícitamente.
 
 ---
 
 ## 1. Desfases en documentación de estado vivo
 
-### M-01 — Recuento de motores: 16 vs 21 — CORREGIDO en esta rama
+### M-01 — Recuento de motores: 16 vs 20 — CORREGIDO en esta rama
 
 | Lado | Evidencia |
 |---|---|
 | Documento | `docs/ARCHITECTURE.md:19` — "Contrato uniforme de 16 motores" |
-| Código | `studio/comfy_studio/engines/registry.py` — `ENGINE_CLASSES` con 21 entradas |
+| Código | `studio/comfy_studio/engines/registry.py` — `ENGINE_CLASSES` con 20 entradas |
 | Documento | `docs/POLITICA_ARQUITECTURA_RECURSOS.md:132` — "los 16 motores" |
 
 Severidad: **baja** (cifra obsoleta, no contraria a la arquitectura).
-Estado: **corregido** — ambos pasan a 21.
-Nota: `README.md:21` ya decía 21 (corregido en una pasada anterior); el desfase
+Estado: **corregido** — ambos pasan a 20.
+Nota: `README.md:21` ya decía 20 (corregido en una pasada anterior); el desfase
 sobrevivió porque el barrido no alcanzó estos dos ficheros.
-
-### M-02 — Enumeración de herramientas incompleta — CORREGIDO en esta rama
-
-| Lado | Evidencia |
-|---|---|
-| Documento | `docs/walkthrough.md:13` — afirma "54 herramientas" y enumera 46 |
-| Código | `studio/comfy_studio/agent/tools.py` — 46 `ToolSpec`; `studio/comfy_studio/atlas/agent_tools.py` — 8 specs Atlas. Total **54** |
-
-Severidad: **baja** (la cifra es correcta; la lista está 8 nombres corta).
-Estado: **corregido** — añadidos los 8 nombres Atlas.
-Nota: mismo defecto que tuvo `README.md:21`, corregido allí con anterioridad.
 
 ### M-03 — Topología de puertos — SIN DESFASE
 
@@ -62,7 +51,6 @@ Confirmado: **sin desfase**.
 | `docs/decisiones.md:280` | `routers/` con 9 módulos | 15 módulos | Describe la decomposición en su fecha |
 | `docs/decisiones.md:280` | `app.py` de 2.622 líneas | 717 líneas | La propia decisión lo redujo |
 | `docs/walkthrough.md:42` | "699 passed" | 2524 passed | Registro de corrida local |
-| `docs/atlas-merge-runbook.md:26` | "819 passed" | 2524 passed | Runbook fechado |
 
 `docs/README.md:3` marca estos ficheros como "registros fechados, no estado vivo".
 **No se corrigen**: reescribirlos destruiría el histórico que los justifica.

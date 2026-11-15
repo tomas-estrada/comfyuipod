@@ -31,23 +31,6 @@ No se ha demostrado todavía exclusión global de GPU entre todos los motores. L
 
 Las líneas son orientativas para el SHA indicado. Si cambió el código, localizar símbolos con rg y verificar el caso, sin restaurar errores antiguos ni duplicar arreglos.
 
-## Atlas: avances reales y trabajo restante
-
-PR https://github.com/tomas-estrada/comfyuipod/pull/63, head consultada `c12618815c5e7181bbb69e4ce9d249a0075fd3c4`.
-
-Su manifiesto declara 10.209 lugares de catálogo, 152 con vistas usables, 1.203 referencias totales, 612 referencias/vistas usables, 168 escenarios y cero producciones. Estos son contadores declarados por el catálogo, no un muestreo independiente de exactitud. No llamar a eso “10.209 localizaciones reconstruidas”.
-
-La versión actual mejora respecto a revisiones anteriores: resolución explícita de lugar, detección de rumbo incompatible, validación de hashes y un adaptador que comprueba entradas de imagen. No repetir como actuales los errores que ya resolvió.
-
-Persisten riesgos concretos observables en la lectura:
-- `prepare_shot` con `view_id` obtiene limitaciones de `select_view` pero asigna `chosen=view`; verificar que las limitaciones y restricciones pertenezcan a la vista realmente elegida, no a otra.
-- `select_view` trata heading/fov incompatibles como duros, pero distancia excesiva y calibración desconocida pueden acompañar un status ok. Para un modo de lugar exacto hace falta un contrato más estricto.
-- La preparación automática usa selección activa o cobertura cuando no recibe place explícito. Probar que el lugar nombrado en el prompt llega desde el planner hasta esta llamada y no queda sustituido por la selección anterior.
-- La ruta de plantilla sin entrada de imagen ahora rechaza el fondo. Eso evita ignorarlo, pero aún debe existir una receta alternativa real que lo consuma y preserve su geografía.
-- Un nombre OSM, una miniatura y una foto real no equivalen a geometría multivista ni a una vista nueva factual.
-
-La cobertura fotográfica declarada es desigual: Medellín 451 referencias, Bello 55, Itagüí 33, Envigado 22, Copacabana 22, Sabaneta 20, Caldas 7 y La Estrella 2. La adquisición debe incrementar cobertura válida en municipios poco representados, no inflar contadores con geotags genéricos.
-
 ## Kiro Crew: usar sus mecanismos reales
 
 Código consultado: https://github.com/kirodotdev/KiroCrew/tree/4a546774f478c27058d61e7005ca931fd01b1c97
@@ -111,7 +94,6 @@ La matriz Cosmos distingue precisión, memoria por dispositivo, memoria host y r
 Estas combinaciones son propuestas de desarrollo, no afirmaciones de novedad académica mundial:
 - Compilador de intención a constraints y un grafo causal de escena/montaje/sonido.
 - Reparación contrafactual que compare la escena intervenida con ground truth sintético y preserve partes no afectadas.
-- Adquisición de la siguiente vista útil del atlas según incertidumbre/cobertura, dentro de fuentes gratuitas permitidas.
 - Política multi-fidelidad: ensayar en proxies, medir incertidumbre, refinar solo intervalos fallidos.
 - Biblioteca Pareto de recetas condicionada por hardware/escena y contador de fallos real.
 - Investigador con dataset/holdout y protocolos prerregistrados que produce PRs de adaptadores o presets verificables; ninguna auto-modificación del pod.

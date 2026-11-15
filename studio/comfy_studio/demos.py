@@ -12,9 +12,7 @@ import argparse
 import hashlib
 import json
 import math
-import os
 import shutil
-import sqlite3
 import stat
 import struct
 import subprocess
@@ -25,11 +23,9 @@ import wave
 import zlib
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
-from .atlas import ENV_ATLAS_DIR, default_atlas_root
-from .atlas.geo import haversine_m
 from .media_bins import find_ffmpeg, find_ffprobe
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "data" / "demos"
@@ -134,7 +130,7 @@ def _stage(name: str, neural: bool) -> DemoStage:
 def demo_catalog() -> list[Demo]:
     """Five scenarios from the Ultra plan; neural work is never implied done."""
     return [
-        Demo("D01", "Coche en lugar real del Aburrá, varias cámaras/luces/sonido",
+        Demo("D01", "Coche en escena de fixture, varias cámaras/luces/sonido",
              ["fixtures/d01_vehicle_cameras.json"],
              ["reprojection_rmse_below_fixture_limit", "logo_mask_unchanged"],
              ["heldout_views"], 3,
@@ -183,203 +179,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _demo_atlas_root() -> Path:
-    """Use the configured Atlas; fall back to the checkout bundle for local runs."""
-    configured = default_atlas_root()
-    if (configured / "catalog.db").is_file() or ENV_ATLAS_DIR in os.environ:
-        return configured
-    checkout_bundle = Path(__file__).resolve().parents[2] / "atlas"
-    return checkout_bundle if (checkout_bundle / "catalog.db").is_file() else configured
-
-
-def _check_d01_atlas_references(
-    data: dict[str, Any],
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Verify D01's licensed reference photos without treating GPS as calibration."""
-    spec = data.get("atlas_site")
-    if not isinstance(spec, dict):
-        raise DemoError("D01: falta la selección de referencias del Atlas")
-    place_id = spec.get("place_id")
-    view_ids = spec.get("view_ids")
-    max_span_m = spec.get("max_gps_span_m")
-    if (
-        not isinstance(place_id, str)
-        or not place_id
-        or not isinstance(view_ids, list)
-        or len(view_ids) < 2
-        or any(not isinstance(view_id, str) or not view_id for view_id in view_ids)
-        or len(set(view_ids)) != len(view_ids)
-        or isinstance(max_span_m, bool)
-        or not isinstance(max_span_m, (int, float))
-        or not math.isfinite(max_span_m)
-        or max_span_m < 0
-    ):
-        raise DemoError("D01: selección de vistas del Atlas inválida")
-
-    atlas_root = _demo_atlas_root()
-    db_path = atlas_root / "catalog.db"
-    files_root = atlas_root / "files"
-    if not db_path.is_file() or not files_root.is_dir():
-        raise DemoError(f"D01: Atlas no disponible en {atlas_root}")
-
-    records: list[dict[str, Any]] = []
-    coordinates: list[tuple[float, float]] = []
-    verified_view_count = 0
-    estimated_view_count = 0
-    orientation_metadata_view_count = 0
-    connection: sqlite3.Connection | None = None
-    try:
-        connection = sqlite3.connect(
-            f"{db_path.resolve().as_uri()}?mode=ro&immutable=1", uri=True
-        )
-        connection.row_factory = sqlite3.Row
-        place = connection.execute(
-            "SELECT place_id, name, municipality FROM places WHERE place_id=?",
-            (place_id,),
-        ).fetchone()
-        if place is None:
-            raise DemoError(f"D01: lugar del Atlas inexistente: {place_id}")
-        for view_id in view_ids:
-            row = connection.execute(
-                """SELECT v.view_id, v.place_id, v.ref_id, v.lat, v.lon,
-                          v.heading_deg, v.fov_deg, v.calib_state, v.usable AS view_usable,
-                          r.place_id AS ref_place_id, r.title, r.file_path, r.sha256,
-                          r.source_page, r.license, r.license_url, r.attribution,
-                          r.intrinsics, r.usable AS ref_usable,
-                          l.license AS registered_license,
-                          l.license_url AS registered_license_url,
-                          l.attribution AS registered_attribution
-                   FROM views v
-                   JOIN atlas_refs r ON r.ref_id=v.ref_id
-                   LEFT JOIN licenses l ON l.ref_id=r.ref_id
-                   WHERE v.view_id=?""",
-                (view_id,),
-            ).fetchone()
-            if (
-                row is None
-                or not row["view_usable"]
-                or row["place_id"] != place_id
-            ):
-                raise DemoError(f"D01: vista ausente, no usable o de otro lugar: {view_id}")
-            if (
-                not row["ref_usable"]
-                or row["ref_place_id"] != place_id
-            ):
-                raise DemoError(f"D01: referencia ausente o no usable: {row['ref_id']}")
-
-            for field_name in ("license", "license_url", "attribution"):
-                value = row[field_name]
-                if not value or value != row[f"registered_{field_name}"]:
-                    raise DemoError(
-                        f"D01: metadatos de licencia incompletos o inconsistentes: "
-                        f"{row['ref_id']}/{field_name}"
-                    )
-            if row["license"].strip().upper() in {"UNKNOWN", "UNLICENSED"}:
-                raise DemoError(f"D01: referencia sin licencia utilizable: {row['ref_id']}")
-
-            relative_path = PurePosixPath(row["file_path"])
-            if (
-                relative_path.is_absolute()
-                or ".." in relative_path.parts
-                or "\\" in row["file_path"]
-                or not relative_path.parts
-            ):
-                raise DemoError(f"D01: ruta de referencia inválida: {row['file_path']}")
-            try:
-                resolved_files = files_root.resolve(strict=True)
-                asset_path = (resolved_files / Path(*relative_path.parts)).resolve(strict=True)
-                asset_path.relative_to(resolved_files)
-            except (OSError, ValueError) as exc:
-                raise DemoError(
-                    f"D01: archivo Atlas ausente o fuera de files/: {row['file_path']}"
-                ) from exc
-            if not asset_path.is_file() or len(row["sha256"]) != 64:
-                raise DemoError(f"D01: archivo o SHA-256 inválido: {row['ref_id']}")
-            actual_sha256 = _sha256(asset_path)
-            if actual_sha256 != row["sha256"]:
-                raise DemoError(f"D01: SHA-256 del Atlas no coincide: {row['ref_id']}")
-
-            if (
-                row["lat"] is None
-                or row["lon"] is None
-                or not math.isfinite(row["lat"])
-                or not math.isfinite(row["lon"])
-                or not -90 <= row["lat"] <= 90
-                or not -180 <= row["lon"] <= 180
-            ):
-                raise DemoError(f"D01: coordenadas GPS inválidas o ausentes: {view_id}")
-            coordinates.append((row["lat"], row["lon"]))
-            calibration = str(row["calib_state"])
-            verified_view_count += calibration == "verified"
-            estimated_view_count += calibration == "estimated"
-            orientation_metadata_view_count += (
-                row["heading_deg"] is not None and row["fov_deg"] is not None
-            )
-            records.append(
-                {
-                    "kind": "atlas_reference",
-                    "path": f"atlas://{place_id}/{row['view_id']}",
-                    "file_path": f"files/{row['file_path']}",
-                    "sha256": row["sha256"],
-                    "sha256_verified": True,
-                    "place_id": place_id,
-                    "view_id": row["view_id"],
-                    "ref_id": row["ref_id"],
-                    "title": row["title"],
-                    "source_page": row["source_page"],
-                    "license": row["license"],
-                    "license_url": row["license_url"],
-                    "attribution": row["attribution"],
-                    "gps_lat": row["lat"],
-                    "gps_lon": row["lon"],
-                    "calib_state": calibration,
-                    "heading_deg": row["heading_deg"],
-                    "fov_deg": row["fov_deg"],
-                    "intrinsics_available": bool(row["intrinsics"]),
-                }
-            )
-    except sqlite3.Error as exc:
-        raise DemoError(f"D01: no se pudo leer el catálogo Atlas: {type(exc).__name__}") from exc
-    finally:
-        if connection is not None:
-            connection.close()
-
-    gps_span_m = max(
-        haversine_m(lat1, lon1, lat2, lon2)
-        for index, (lat1, lon1) in enumerate(coordinates)
-        for lat2, lon2 in coordinates[index + 1 :]
-    )
-    if gps_span_m > float(max_span_m):
-        raise DemoError(
-            f"D01: las coordenadas del Atlas abarcan {gps_span_m:.1f} m; "
-            f"el límite declarado es {float(max_span_m):.1f} m"
-        )
-    evidence = {
-        "place_id": place_id,
-        "place_name": place["name"],
-        "municipality": place["municipality"],
-        "reference_count": len(records),
-        "gps_coordinate_span_m": round(gps_span_m, 3),
-        "verified_camera_view_count": verified_view_count,
-        "estimated_camera_view_count": estimated_view_count,
-        "views_with_heading_and_fov": orientation_metadata_view_count,
-        "camera_coverage_status": "not_established",
-        "geometry_scope": (
-            "GPS proximity and source integrity only; does not establish camera calibration, "
-            "field of view, occlusion, or multiview reconstruction"
-        ),
-    }
-    return evidence, [
-        {
-            "kind": "atlas_place",
-            "place_id": place_id,
-            "name": place["name"],
-            "municipality": place["municipality"],
-        },
-        *records,
-    ]
 
 
 def _load_fixture(demo: Demo) -> tuple[Path, dict[str, Any]]:
@@ -796,7 +595,17 @@ def _make_d05_inventory(root: Path, ffmpeg: str) -> dict[str, Any]:
     }
 
 
-def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, Any]]:
+def _render_d05(
+    data: dict[str, Any],
+    out_dir: Path,
+    *,
+    source_video: Path | None = None,
+    brief: str | None = None,
+    transcript: str | None = None,
+    transcript_start: float = 0.0,
+    transcript_end: float | None = None,
+    source_license: str | None = None,
+) -> tuple[Path, dict[str, Any]]:
     ffmpeg = find_ffmpeg()
     ffprobe = find_ffprobe()
     if not ffmpeg or not ffprobe:
@@ -818,72 +627,137 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
     checkpoints: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="d05-workspace-", dir=out_dir) as workspace:
         root = Path(workspace)
-        source = root / "source.mp4"
-        command = [
-            ffmpeg,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc2=size=320x180:rate=12:duration=2",
-            "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            str(source),
-        ]
-        try:
-            made = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise DemoError(f"D05 source fixture generation failed: {exc}") from exc
-        if made.returncode or not source.is_file():
-            raise DemoError(f"D05 source fixture generation failed: {made.stderr[-1200:]}")
-        inventory = _make_d05_inventory(root, ffmpeg)
+        real_source = source_video is not None
+        if real_source:
+            try:
+                source = source_video.expanduser().resolve(strict=True)
+            except OSError as exc:
+                raise DemoError(f"D05 source video is unavailable: {exc}") from exc
+            if not source.is_file() or source.stat().st_size > 512 * 1024 * 1024:
+                raise DemoError("D05 source must be a regular video file no larger than 512 MiB")
+            active_brief = (brief or "").strip()
+            active_transcript = (transcript or "").strip()
+            if len(active_brief) < 3 or not active_transcript:
+                raise DemoError("D05 real-source mode requires --brief and --transcript")
+            if (
+                not math.isfinite(transcript_start)
+                or transcript_start < 0
+                or transcript_end is None
+                or not math.isfinite(transcript_end)
+                or transcript_end <= transcript_start
+            ):
+                raise DemoError("D05 real-source mode requires a valid transcript time range")
+            if not (source_license or "").strip():
+                raise DemoError("D05 real-source mode requires a source license or rights label")
+            inventory = {
+                "input_count": 1,
+                "real_project_source": True,
+                "source_filename": source.name,
+                "source_sha256": _sha256(source),
+                "source_bytes": source.stat().st_size,
+            }
+            effective_brief = active_brief
+            effective_transcript = active_transcript
+            effective_license = source_license.strip()
+            (out_dir / "D05_asset_inventory.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "comfy_studio.d05_asset_inventory.v1",
+                        "mode": "user_project_source",
+                        "source": {
+                            "filename": source.name,
+                            "sha256": inventory["source_sha256"],
+                            "bytes": inventory["source_bytes"],
+                            "caller_asserted_rights_label": effective_license,
+                            "rights_verified": False,
+                        },
+                        "brief": active_brief,
+                        "transcript_sha256": hashlib.sha256(
+                            active_transcript.encode("utf-8")
+                        ).hexdigest(),
+                        "transcript_time_range_sec": [transcript_start, transcript_end],
+                        "weights_available": False,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                ) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            source = root / "source.mp4"
+            command = [
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                "-i", "testsrc2=size=320x180:rate=12:duration=2", "-an", "-c:v", "libx264",
+                "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(source),
+            ]
+            try:
+                made = subprocess.run(
+                    command, capture_output=True, text=True, timeout=60, check=False
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise DemoError(f"D05 source fixture generation failed: {exc}") from exc
+            if made.returncode or not source.is_file():
+                raise DemoError(f"D05 source fixture generation failed: {made.stderr[-1200:]}")
+            inventory = _make_d05_inventory(root, ffmpeg)
+            effective_brief = "bosque amanecer"
+            effective_transcript = "bosque amanecer paisaje de prueba"
+            effective_license = "CC0-1.0"
         checkpoints.append(
             {
-                "stage": "100_asset_ingest",
+                "stage": "project_source_ingest" if real_source else "100_asset_ingest",
                 "status": "done",
-                "failed_items_isolated": inventory["corrupt"] + inventory["unsupported"],
+                "failed_items_isolated": (
+                    inventory.get("corrupt", 0) + inventory.get("unsupported", 0)
+                ),
             }
         )
 
         store = ProjectStore(root / "studio-data")
         project = store.create_project(
-            data["project_name"], description="Synthetic CPU acceptance fixture"
+            data["project_name"],
+            description=(
+                "User-provided CPU input" if real_source else "Synthetic CPU acceptance fixture"
+            ),
         )
+        source_mime = {
+            ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm",
+            ".mov": "video/quicktime", ".qt": "video/quicktime", ".mkv": "video/x-matroska",
+        }.get(source.suffix.lower())
+        if source_mime is None:
+            raise DemoError(
+                "D05 source must use a supported video extension: mp4, m4v, webm, mov, qt, mkv"
+            )
         uploaded = store.save_upload(
             project["id"],
-            filename="source.mp4",
-            content_type="video/mp4",
+            filename=source.name,
+            content_type=source_mime,
             data=source.read_bytes(),
-            max_upload_bytes=8 * 1024 * 1024,
+            max_upload_bytes=512 * 1024 * 1024,
             category="uploads",
-            metadata={"license": "CC0-1.0"},
+            metadata={"license": effective_license},
         )
+        stored_source_path = store.get_asset_path(project["id"], uploaded["id"])
+        if stored_source_path is None or _sha256(stored_source_path) != _sha256(source):
+            raise DemoError("D05 project ingest did not preserve the source video bytes")
         store.save_transcription(
             project["id"],
             asset_id=uploaded["id"],
             language="es",
-            backend="fixture",
+            backend="user_provided" if real_source else "fixture",
             segments=[
                 {
                     "id": "seg-001",
-                    "start": 0.0,
-                    "end": 1.5,
-                    "text": "bosque amanecer paisaje de prueba",
+                    "end": transcript_end if real_source else 1.5,
+                    "start": transcript_start,
+                    "text": effective_transcript,
                 }
             ],
         )
         plan = plan_montage_from_brief(
             store,
             project["id"],
-            brief="bosque amanecer",
+            brief=effective_brief,
             target_duration_sec=1.0,
             max_cuts=2,
             min_segment_sec=0.2,
@@ -949,6 +823,18 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         if source_path is None:
             raise DemoError("D05 source asset was not retained")
         selected = plan["cuts"][0]
+        source_probe = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height", "-of", "json", str(source_path)],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if source_probe.returncode:
+            raise DemoError(f"D05 could not inspect source video: {source_probe.stderr[-1200:]}")
+        source_streams = json.loads(source_probe.stdout).get("streams", [])
+        if not source_streams:
+            raise DemoError("D05 source has no video stream")
+        source_width = int(source_streams[0]["width"])
+        source_height = int(source_streams[0]["height"])
         timeline = TimelineSpec(
             name=data["project_name"],
             aspect="16:9",
@@ -959,11 +845,14 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
                     str(source_path),
                     selected["in_sec"],
                     selected["out_sec"],
-                    license="CC0-1.0",
-                    src_width=320,
-                    src_height=180,
+                    license=effective_license,
+                    src_width=source_width,
+                    src_height=source_height,
                     source_asset_id=uploaded["id"],
-                    reason="brief evidence: bosque/amanecer",
+                    reason=(
+                        f"user brief evidence: {effective_brief}"
+                        if real_source else "fixture evidence: bosque/amanecer"
+                    ),
                 )
             ],
             titles=[Title(data["titles"][0]["id"], data["titles"][0]["text"], 0.0, 1.0)],
@@ -981,16 +870,25 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
                     "metadata": {
                         "aspect": aspect,
                         "dimensions": list(dimensions[aspect]),
-                        "synthetic_cpu_fixture": True,
+                        "synthetic_cpu_fixture": not real_source,
                     },
                 }
                 for aspect, path in masters.items()
             ],
         )
         reopened = load_editable_package(package)
-        delivery_manifest = json.loads((package / "delivery-manifest.json").read_text())
-        credits_verified = bool(delivery_manifest.get("credits")) and all(
-            credit.get("license") == "CC0-1.0"
+        delivery_manifest_path = package / "delivery-manifest.json"
+        delivery_manifest = json.loads(delivery_manifest_path.read_text())
+        delivery_manifest["rights_assertion"] = {
+            "caller_asserted_label": effective_license,
+            "rights_verified": False,
+        }
+        delivery_manifest_path.write_text(
+            json.dumps(delivery_manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        credit_metadata_retained = bool(delivery_manifest.get("credits")) and all(
+            credit.get("license") == effective_license
             and credit.get("source_asset_id") == uploaded["id"]
             for credit in delivery_manifest["credits"]
         )
@@ -1008,8 +906,8 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         )
         if not editable_ok:
             raise DemoError("D05 editable project changed approved clip data during title edit")
-        if not credits_verified:
-            raise DemoError("D05 delivery package did not retain source credit and license")
+        if not credit_metadata_retained:
+            raise DemoError("D05 delivery package did not retain caller-provided credit metadata")
         archive = out_dir / "D05_delivery_package.zip"
         from zipfile import ZIP_STORED, ZipFile
 
@@ -1025,7 +923,9 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         "brief_to_edl": {
             "cuts": len(plan["cuts"]),
             "simulated_ml": plan["simulated"],
-            "evidence_mode": "CPU fixture transcript",
+            "evidence_mode": (
+                "user-provided transcript" if real_source else "CPU fixture transcript"
+            ),
         },
         "ffmpeg_encode": {
             "dimensions_verified": {aspect: True for aspect in dimensions},
@@ -1042,17 +942,21 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
                 aspect: detail["probed_color_range"] == "tv"
                 for aspect, detail in delivery_verifications.items()
             },
-            "synthetic_fixture": True,
+            "synthetic_fixture": not real_source,
+            "real_project_source": real_source,
             "quality_claim": False,
         },
         "editable_roundtrip": {
             "reopened": True,
             "title_edit_preserved_clips": editable_ok,
-            "credits_verified": credits_verified,
+            "credit_metadata_retained": credit_metadata_retained,
+            "rights_verified": False,
         },
         "recovery": {
             "partial_failures_isolated": True,
-            "successful_inputs_retained": inventory["valid_assets_survived_partial_failures"],
+            "successful_inputs_retained": inventory.get(
+                "valid_assets_survived_partial_failures", real_source
+            ),
         },
         "duration_s": round(time.monotonic() - started, 3),
         "checkpoints": checkpoints + [{"stage": "delivery_package", "status": "done"}],
@@ -1065,7 +969,18 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
     }
 
 
-def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[str, Any]:
+def run_demo(
+    demo_id: str,
+    output_root: Path,
+    *,
+    resume: bool = False,
+    source_video: Path | None = None,
+    brief: str | None = None,
+    transcript: str | None = None,
+    transcript_start: float = 0.0,
+    transcript_end: float | None = None,
+    source_license: str | None = None,
+) -> dict[str, Any]:
     demos = {demo.demo_id: demo for demo in demo_catalog()}
     if demo_id not in demos:
         raise DemoError(f"demo desconocida: {demo_id}; disponibles: {', '.join(demos)}")
@@ -1079,10 +994,42 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
         "path": f"fixtures/{fixture.name}",
         "sha256": input_hash,
     }]
-    if demo_id == "D01":
-        atlas_evidence, atlas_inputs = _check_d01_atlas_references(fixture_data)
-        checks["atlas_reference_evidence"] = atlas_evidence
-        inputs.extend(atlas_inputs)
+    if source_video is not None:
+        if demo_id != "D05":
+            raise DemoError("--source-video is supported only for D05")
+        try:
+            source_path = source_video.expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise DemoError(f"D05 source video is unavailable: {exc}") from exc
+        if not source_path.is_file() or source_path.stat().st_size > 512 * 1024 * 1024:
+            raise DemoError("D05 source must be a regular video file no larger than 512 MiB")
+        if source_path.suffix.lower() not in {
+            ".mp4", ".m4v", ".webm", ".mov", ".qt", ".mkv"
+        }:
+            raise DemoError("D05 source must use a supported video extension")
+        if (
+            not math.isfinite(transcript_start)
+            or transcript_start < 0
+            or transcript_end is None
+            or not math.isfinite(transcript_end)
+            or transcript_end <= transcript_start
+        ):
+            raise DemoError(
+                "D05 real-source mode requires --transcript-start and --transcript-end "
+                "with start < end"
+            )
+        inputs.append({
+            "kind": "project_source_video",
+            "path": source_path.name,
+            "sha256": _sha256(source_path),
+            "bytes": source_path.stat().st_size,
+            "brief": (brief or "").strip(),
+            "transcript_sha256": hashlib.sha256((transcript or "").encode("utf-8")).hexdigest(),
+            "transcript_start_s": transcript_start,
+            "transcript_end_s": transcript_end,
+            "caller_asserted_rights_label": source_license,
+            "rights_verified": False,
+        })
     execution_fingerprint = _execution_fingerprint(demo_id)
     if resume and manifest_path.is_file():
         def artifact_is_valid(item: dict[str, Any]) -> bool:
@@ -1102,7 +1049,10 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
             prior = json.loads(manifest_path.read_text(encoding="utf-8"))
             valid = (
                 prior.get("schema") == "comfy_studio.demo_run.v3"
-                and prior.get("result") == "cpu_fixture_checks_passed"
+                and prior.get("result") == (
+                    "cpu_real_input_flow_completed" if source_video is not None
+                    else "cpu_fixture_checks_passed"
+                )
                 and prior.get("inputs") == inputs
                 and prior.get("execution_fingerprint") == execution_fingerprint
                 and isinstance(prior.get("artifacts"), list)
@@ -1127,7 +1077,14 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
     artifact: Path | None = None
     project_artifact: Path | None = None
     if demo_id == "D05":
-        artifact, render_checks = _render_d05(fixture_data, out_dir)
+        if source_video is None:
+            artifact, render_checks = _render_d05(fixture_data, out_dir)
+        else:
+            artifact, render_checks = _render_d05(
+                fixture_data, out_dir, source_video=source_video, brief=brief,
+                transcript=transcript, transcript_start=transcript_start,
+                transcript_end=transcript_end, source_license=source_license,
+            )
         checks.update(render_checks)
         project_artifact = out_dir / "editable_project.json"
     failed = [name for name, value in checks.items() if isinstance(value, bool) and not value]
@@ -1136,12 +1093,19 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
     manifest: dict[str, Any] = {
         "schema": "comfy_studio.demo_run.v3",
         "demo": demo.to_dict(),
-        "result": "cpu_fixture_checks_passed",
+        "result": "cpu_real_input_flow_completed" if source_video is not None
+        else "cpu_fixture_checks_passed",
         "claim_scope": (
-            "fixture consistency/toolchain and Atlas source integrity only; no real camera "
+            "fixture consistency/toolchain only; no real camera "
             "calibration, scene coverage, model quality, or capability proof"
             if demo_id == "D01"
-            else "fixture consistency/toolchain only; no model quality or capability proof"
+            else (
+                "user-provided source and transcript processed through project ingest, montage, "
+                "FFmpeg delivery and editable package; CPU/toolchain evidence only, no model "
+                "quality or capability proof"
+                if source_video is not None
+                else "fixture consistency/toolchain only; no model quality or capability proof"
+            )
         ),
         "inputs": inputs,
         "execution_fingerprint": execution_fingerprint,
@@ -1156,7 +1120,8 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
                 "level": str(s.level),
                 "neural": s.neural,
                 "pending_reason": s.pending_reason,
-                "evidence": "CPU fixture check only"
+                "evidence": "CPU real-input flow only" if source_video is not None
+                else "CPU fixture check only"
                 if s.status is StageStatus.READY_CPU
                 else None,
             }
@@ -1189,6 +1154,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-root", type=Path, default=Path("./demo-runs"))
     parser.add_argument("--resume", action="store_true", help="reuse verified prior artifacts")
     parser.add_argument("--clean", action="store_true", help="remove only the selected demo output")
+    parser.add_argument(
+        "--source-video", type=Path,
+        help="D05: ingest a project-owned video instead of generating a fixture",
+    )
+    parser.add_argument("--brief", help="D05 real-source mode: montage brief")
+    parser.add_argument(
+        "--transcript", help="D05 real-source mode: transcript text for the selected source range"
+    )
+    parser.add_argument("--transcript-start", type=float, default=0.0)
+    parser.add_argument("--transcript-end", type=float)
+    parser.add_argument(
+        "--source-license",
+        help=(
+            "D05: caller-asserted rights/credit label to retain as metadata; "
+            "not independently verified"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.list:
         print(json.dumps([d.to_dict() for d in demo_catalog()], ensure_ascii=False, indent=2))
@@ -1200,7 +1182,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"removed": clean_demo_output(args.demo, args.output_root)}))
             return 0
         print(json.dumps(
-            run_demo(args.demo, args.output_root, resume=args.resume),
+            run_demo(
+                args.demo, args.output_root, resume=args.resume,
+                source_video=args.source_video, brief=args.brief, transcript=args.transcript,
+                transcript_start=args.transcript_start, transcript_end=args.transcript_end,
+                source_license=args.source_license,
+            ),
             ensure_ascii=False,
             indent=2,
         ))

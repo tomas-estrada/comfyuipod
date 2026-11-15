@@ -1,7 +1,7 @@
-"""PR engines-health-states: los 7 niveles, probados en los 21 motores.
+"""PR engines-health-states: los 7 niveles, probados en los 20 motores.
 
 Pines deterministas sobre un árbol sintético en tmp (sin GPU, sin red):
-un árbol completo deja a los 21 en `ready` (prueba que cada spec es
+un árbol completo deja a los 20 en `ready` (prueba que cada spec es
 satisfacible y documenta qué necesita cada motor); sin pesos el estado es
 `weights_missing` y nunca `loaded`/validado; cada hueco reporta su prefijo.
 """
@@ -76,12 +76,10 @@ def _full_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]
         "STUDIO_HEAVY_VIDEO_BASE_URL": "http://127.0.0.1:9",
         "STUDIO_HEAVY_VIDEO_MODEL": "fake-model",
         "STUDIO_HEAVY_VIDEO_KEY": "x" * 8,
-        "STUDIO_ATLAS_ROOT": str(tmp_path / "atlas"),
     }
     for name in ("blender", "node", "npx", "ns-train", "ffmpeg", "nvidia-smi"):
         _exe(bin_dir / name)
     Path(env["STUDIO_REMOTION_PROJECT"]).mkdir(parents=True, exist_ok=True)
-    Path(env["STUDIO_ATLAS_ROOT"]).mkdir(parents=True, exist_ok=True)
     (data / "venvs" / "indextts").mkdir(parents=True, exist_ok=True)
     for wrel in ("models/whisper/faster-whisper-large-v3",
                  "models/rvc", "models/indextts", "models/musicgen",
@@ -106,10 +104,10 @@ def test_arbol_completo_deja_todos_ready(
 ) -> None:
     env = _full_env(tmp_path, monkeypatch)
     report = probe_all(env=env, module_finder=lambda m: True)
-    assert len(report.engines) == 21
+    assert len(report.engines) == 20
     not_ready = {n: p.state for n, p in report.engines.items() if p.state != "ready"}
     assert not_ready == {}, f"motores no listos con árbol completo: {not_ready}"
-    assert report.counts() == {"ready": 21, "weights_missing": 0,
+    assert report.counts() == {"ready": 20, "weights_missing": 0,
                                "not_installed": 0, "integration_missing": 0,
                                "hardware_unavailable": 0}
 

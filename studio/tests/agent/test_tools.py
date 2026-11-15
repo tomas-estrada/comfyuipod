@@ -81,6 +81,73 @@ def test_temporal_scene_sampling_is_artist3d_only() -> None:
     ).list_names()
 
 
+def test_spatial_anchor_memory_tools_are_artist3d_only() -> None:
+    belt = create_default_tool_belt()
+    for name in ("remember_spatial_anchor", "recall_spatial_anchor"):
+        assert name in belt.restricted_to(ROLE_TOOL_SUBSETS["artist3d"]).list_names()
+        assert name not in belt.restricted_to(ROLE_TOOL_SUBSETS["director"]).list_names()
+        assert name not in belt.restricted_to(ROLE_TOOL_SUBSETS["editor"]).list_names()
+
+
+@pytest.mark.anyio
+async def test_artist3d_spatial_anchor_memory_persists_visits_and_reports_drift(
+    tool_context: ToolContext,
+) -> None:
+    artist_belt = create_default_tool_belt().restricted_to(
+        ROLE_TOOL_SUBSETS["artist3d"]
+    )
+    for shot_id, position in (
+        ("shot-a", [1.0, 2.0, 3.0]),
+        ("shot-b", [8.0, 2.0, 3.0]),
+        ("shot-a-return", [1.0, 2.0, 3.0]),
+    ):
+        result = await artist_belt.execute(
+            "remember_spatial_anchor",
+            {"anchor_id": "bridge", "shot_id": shot_id, "position": position},
+            tool_context,
+        )
+        assert result["provenance"] == "inferred"
+        assert result["evidence_claim"] is False
+
+    recalled = await artist_belt.execute(
+        "recall_spatial_anchor", {"anchor_id": "bridge"}, tool_context
+    )
+    assert [visit["shot_id"] for visit in recalled["visits"]] == [
+        "shot-a",
+        "shot-b",
+        "shot-a-return",
+    ]
+    assert recalled["round_trip"] == {
+        "anchor_id": "bridge",
+        "shots": ["shot-a", "shot-b", "shot-a-return"],
+        "drift": 0.0,
+        "returned": True,
+    }
+    assert recalled["evidence_claim"] is False
+
+
+@pytest.mark.anyio
+async def test_artist3d_tool_cannot_write_to_an_observed_spatial_anchor(
+    tool_context: ToolContext,
+) -> None:
+    from comfy_studio.spatial_memory import Anchor, Provenance, SpatialMemory
+
+    memory = SpatialMemory()
+    memory.register(Anchor("surveyed", Provenance.OBSERVED))
+    tool_context.store.set_meta(
+        tool_context.project_id, "ultra_spatial_memory_v1", memory.to_dict()
+    )
+    artist_belt = create_default_tool_belt().restricted_to(
+        ROLE_TOOL_SUBSETS["artist3d"]
+    )
+    with pytest.raises(ToolExecutionError, match="observada"):
+        await artist_belt.execute(
+            "remember_spatial_anchor",
+            {"anchor_id": "surveyed", "shot_id": "shot-a", "position": [0, 0, 0]},
+            tool_context,
+        )
+
+
 @pytest.mark.anyio
 async def test_artist3d_temporal_scene_sample_preserves_synthetic_provenance(
     tool_context: ToolContext,

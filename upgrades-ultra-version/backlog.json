@@ -399,13 +399,13 @@
     },
     {
       "id": "W09",
-      "title": "Atlas offline, selección estricta y expansión válida",
+      "title": "W09 retirado del producto",
       "depends_on": [
         "W01",
         "W04",
         "W07"
       ],
-      "owner_area": "atlas",
+      "owner_area": "retired",
       "requirements": [
         "R18",
         "R20"
@@ -417,16 +417,14 @@
         "C07"
       ],
       "deliverables": [
-        "Integrar/reparar #63 según estado actual, validar vista explícita y prompt-place",
-        "Bundle interno con archivos/licencias/hashes y mapa de coverage",
-        "Ampliación gratuita verificable y gaps por municipio; no inflar catálogo"
+        "No se implementa en el producto actual; C07 se conserva solo para estabilidad de IDs"
       ],
       "acceptance_ids": [
         "A11"
       ],
-      "invariant": "Strict_exact nunca sustituye el lugar ni acepta cámara desconocida como verificada.",
-      "status": "specified_not_started",
-      "scope": "current_pre_gpu",
+      "invariant": "C07 no tiene ruta ni aceptación de producto en esta revisión.",
+      "status": "retired_from_current_product",
+      "scope": "retired",
       "dispatch_policy": "Only when dependencies accepted; split large work into independent assertable items before dispatch.",
       "work_budget": {
         "recommended_active_minutes_per_leaf": 60,
@@ -509,7 +507,6 @@
       ],
       "capabilities": [
         "C05",
-        "C07",
         "C08",
         "C20"
       ],
@@ -895,7 +892,7 @@
       "deliverables": [
         "StoryMem y AlayaWorld en memoria de escena/versiones",
         "OVOW a escena temporal editable con objetos/cámaras",
-        "Pruebas A→B→A, identidad y retorno; inferido separado de atlas"
+        "Pruebas A→B→A, identidad y retorno; inferido separado de geografía observada"
       ],
       "acceptance_ids": [
         "A19"

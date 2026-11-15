@@ -25,12 +25,18 @@ Verifica que el acento aprobado viene de datos, no de una suposición.
 from __future__ import annotations
 
 import math
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
 
 class VoiceError(ValueError):
     """Contrato de voz inválido."""
+
+
+def _normalize_lexicon_text(text: str) -> str:
+    """Normalize equivalent Unicode spellings without removing accents or punctuation."""
+    return unicodedata.normalize("NFC", " ".join(text.split()).casefold())
 
 
 @dataclass(slots=True)
@@ -43,16 +49,24 @@ class PronunciationLexicon:
     #: ¿es una variante regional aprobada, o mero soporte de idioma base?
     approved_variant: bool = False
 
+    def __post_init__(self) -> None:
+        # Normalize direct constructor input too; this field is public and is
+        # also populated from persisted project metadata.
+        self.entries = {
+            _normalize_lexicon_text(text): phonetic.strip()
+            for text, phonetic in self.entries.items()
+        }
+
     def add(self, text: str, phonetic: str) -> None:
         """Corrige/añade una entrada (el lexicon es corregible)."""
-        key = text.strip().lower()
+        key = _normalize_lexicon_text(text)
         value = phonetic.strip()
         if not key or not value:
             raise VoiceError("entrada de lexicon requiere texto y fonética")
         self.entries[key] = value
 
     def covers(self, text: str) -> bool:
-        return text.strip().lower() in self.entries
+        return _normalize_lexicon_text(text) in self.entries
 
     def coverage(self, sample: list[str]) -> float:
         """Fracción de un dataset de muestra cubierta por el lexicon."""
@@ -86,7 +100,7 @@ class PronunciationLexicon:
             lexicon = cls(
                 locale=str(data["locale"]),
                 entries={
-                    str(text).strip().lower(): str(value).strip() for text, value in entries.items()
+                    str(text): str(value).strip() for text, value in entries.items()
                 },
                 approved_variant=bool(data.get("approved_variant", False)),
             )

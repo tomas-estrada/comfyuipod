@@ -168,6 +168,17 @@ class MusicGenEngine:
         if m.bpm:
             cmd += ["--bpm", str(m.bpm)]
         m.output_path.parent.mkdir(parents=True, exist_ok=True)
+        # A previous request may have left this path behind. Never report
+        # success unless this invocation produced a non-empty output.
+        try:
+            m.output_path.unlink(missing_ok=True)
+        except OSError as exc:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=redactor.redact(f"no se pudo limpiar salida anterior: {exc}"),
+            )
         try:
             res = subprocess.run(
                 cmd,
@@ -191,7 +202,7 @@ class MusicGenEngine:
                 verb="run",
                 error=redactor.redact(f"no se pudo lanzar music_gen: {exc}"),
             )
-        if res.returncode != 0 or not m.output_path.exists():
+        if res.returncode != 0:
             return EngineResult(
                 ok=False,
                 engine=self.name,
@@ -199,6 +210,13 @@ class MusicGenEngine:
                 error=redactor.redact(
                     f"music_gen falló rc={res.returncode}: {(res.stderr or '')[:300]}"
                 ),
+            )
+        if not m.output_path.is_file() or m.output_path.stat().st_size == 0:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error="music_gen no produjo una salida nueva no vacía",
             )
         return EngineResult(
             ok=True,

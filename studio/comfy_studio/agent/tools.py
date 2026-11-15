@@ -27,7 +27,7 @@ from ..ml import is_real_backend
 from ..progress import ProgressBroker
 from ..projects import MEASUREMENT_STATUS_OK, ProjectStore
 from ..review_pins import match_pin_to_cut, open_pin_summary
-from ..spatial_memory import SpatialError, TemporalScene
+from ..spatial_memory import Anchor, Provenance, SpatialError, SpatialMemory, TemporalScene
 from ..templates import (
     TemplateNotFoundError,
     TemplateParamError,
@@ -1591,6 +1591,24 @@ class SampleTemporalSceneArgs(BaseModel):
     time_s: float = Field(..., ge=0.0, le=120.0, allow_inf_nan=False)
 
 
+class RememberSpatialAnchorArgs(BaseModel):
+    """Registra una observación inferida de ancla en un plano del proyecto."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_id: str = Field(..., min_length=1, max_length=128)
+    shot_id: str = Field(..., min_length=1, max_length=128)
+    position: tuple[float, float, float]
+
+
+class RecallSpatialAnchorArgs(BaseModel):
+    """Consulta una secuencia espacial persistida para un ancla."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_id: str = Field(..., min_length=1, max_length=128)
+
+
 RoleLiteral = Literal["director", "editor", "artist3d"]
 
 ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
@@ -1631,6 +1649,8 @@ ROLE_TOOL_SUBSETS: dict[str, tuple[str, ...]] = {
         "index_media",
         "find_shots_text",
         "sample_temporal_scene",
+        "remember_spatial_anchor",
+        "recall_spatial_anchor",
     ),
 }
 
@@ -1787,6 +1807,79 @@ async def _handle_sample_temporal_scene(
         }
     except SpatialError as exc:
         raise ToolExecutionError(f"Escena temporal inválida: {exc}") from exc
+
+
+async def _handle_remember_spatial_anchor(
+    args: RememberSpatialAnchorArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    """Guarda una visita inferida sin elevarla a evidencia observada."""
+    if context.store.get_project(context.project_id) is None:
+        raise ToolExecutionError("Proyecto no encontrado")
+    key = "ultra_spatial_memory_v1"
+    raw = context.store.get_meta(context.project_id, key)
+    try:
+        memory = SpatialMemory.from_dict(raw) if raw is not None else SpatialMemory()
+        existing = memory.anchors.get(args.anchor_id)
+        if existing is not None and existing.provenance is Provenance.OBSERVED:
+            raise ToolExecutionError(
+                "No se puede añadir una visita inferida a un ancla observada; "
+                "usa una captura verificada para conservar su procedencia"
+            )
+        if existing is None:
+            memory.register(Anchor(args.anchor_id, provenance=Provenance.INFERRED))
+        memory.visit(args.anchor_id, args.shot_id, args.position)
+        context.store.set_meta(context.project_id, key, memory.to_dict())
+        visits = memory.visits[args.anchor_id]
+        return {
+            "project_id": context.project_id,
+            "anchor_id": args.anchor_id,
+            "shot_id": args.shot_id,
+            "position": list(args.position),
+            "provenance": memory.anchors[args.anchor_id].provenance.value,
+            "visit_count": len(visits),
+            "drift": round(memory.drift(args.anchor_id), 6),
+            "round_trip": (
+                memory.round_trip_drift(args.anchor_id) if len(visits) >= 3 else None
+            ),
+            "evidence_claim": False,
+        }
+    except SpatialError as exc:
+        raise ToolExecutionError(f"Memoria espacial inválida: {exc}") from exc
+
+
+async def _handle_recall_spatial_anchor(
+    args: RecallSpatialAnchorArgs,
+    context: ToolContext,
+) -> dict[str, Any]:
+    """Recupera el historial espacial del proyecto sin promover evidencia."""
+    if context.store.get_project(context.project_id) is None:
+        raise ToolExecutionError("Proyecto no encontrado")
+    raw = context.store.get_meta(context.project_id, "ultra_spatial_memory_v1")
+    if raw is None:
+        raise ToolExecutionError("No hay memoria espacial registrada en este proyecto")
+    try:
+        memory = SpatialMemory.from_dict(raw)
+        anchor = memory.anchors.get(args.anchor_id)
+        if anchor is None:
+            raise ToolExecutionError(f"Ancla {args.anchor_id!r} no registrada")
+        visits = memory.visits[args.anchor_id]
+        return {
+            "project_id": context.project_id,
+            "anchor_id": args.anchor_id,
+            "provenance": anchor.provenance.value,
+            "visits": [
+                {"shot_id": visit.shot_id, "position": list(visit.position)}
+                for visit in visits
+            ],
+            "drift": round(memory.drift(args.anchor_id), 6),
+            "round_trip": (
+                memory.round_trip_drift(args.anchor_id) if len(visits) >= 3 else None
+            ),
+            "evidence_claim": False,
+        }
+    except SpatialError as exc:
+        raise ToolExecutionError(f"Memoria espacial inválida: {exc}") from exc
 
 
 async def _handle_enqueue_render(
@@ -5064,6 +5157,31 @@ def create_default_tool_belt() -> ToolBelt:
     )
     belt.register(
         ToolSpec(
+            name="remember_spatial_anchor",
+            description=(
+                "Persiste una posición 3D inferida de un ancla del proyecto en un plano. "
+                "Las visitas sobreviven reinicios y devuelven deriva A→B→A cuando hay tres; "
+                "nunca se promocionan a evidencia observada. Disponible para artist3d."
+            ),
+            args_model=RememberSpatialAnchorArgs,
+            handler=_handle_remember_spatial_anchor,
+        )
+    )
+    belt.register(
+        ToolSpec(
+            name="recall_spatial_anchor",
+            description=(
+                "Recupera visitas y deriva de un ancla espacial guardada en el proyecto activo. "
+                "Devuelve la procedencia original y no declara evidencia factual. "
+                "Disponible para artist3d."
+            ),
+            args_model=RecallSpatialAnchorArgs,
+            handler=_handle_recall_spatial_anchor,
+            parallel_safe=False,
+        )
+    )
+    belt.register(
+        ToolSpec(
             name="propose_edl",
             description=(
                 "Propone y guarda una versión de EDL (Edit Decision List) con cortes in/out "
@@ -5697,7 +5815,4 @@ def create_default_tool_belt() -> ToolBelt:
             parallel_safe=False,
         )
     )
-    from comfy_studio.atlas.agent_tools import register_atlas_tools
-
-    register_atlas_tools(belt)
     return belt

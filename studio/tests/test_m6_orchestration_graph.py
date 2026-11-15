@@ -351,4 +351,5 @@ def test_planner_params_pass_through_unchanged_when_not_reserved():
         "idempotency_key",
         "project_id",
         "template_id",
+        "graph",
     }

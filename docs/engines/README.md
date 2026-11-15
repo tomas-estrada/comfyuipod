@@ -21,7 +21,7 @@ Tabla maestra de los **20 motores** registrados en `comfy_studio/engines/registr
 | roto | warm | sí | SAM 3 | ml/runner | stub con PNG vacío |
 | ad_studio | warm | sí | composición ffmpeg+audio | ad_studio | stub con MP4 vacío |
 | **reference-local** | **warm** | **sí** | **CPU puro** | **inspiration.py** | **`STUDIO_STUB_REFERENCE_LOCAL=1`** |
-| **atlas-offline** | **warm** | **sí** | **CPU puro** | **atlas/packaging.py** | **no; real si la raíz existe** |
+| llm_server | warm | sí | llama.cpp | llm_server.py | `STUDIO_STUB_LLM_SERVER=1` |
 | **scene-optimizer** | **warm** | **sí** | **CPU puro** | **cinematography.py** | **`STUDIO_STUB_SCENE_OPTIMIZER=1`** |
 | **chrono** | **warm** | **sí** | **proxy CPU** | **physics.py** | **`STUDIO_STUB_CHRONO=1`** |
 

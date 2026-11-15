@@ -1,7 +1,7 @@
 """Invarianza de paridad entre el roster y el manifiesto de engines (M4-SCR-001).
 
 (a) set(build_default_registry().names()) == set(build_default_prep_specs().keys())  -> FAIL-HARD
-(b) los 4 motores añadidos en este slice están declarados en engines.json
+(b) los 3 motores añadidos en este slice están declarados en engines.json
     (build_selected=true o disposition excluded/reference_only) -> FAIL-HARD.
     Nota: los motores pre-existentes fuera del manifiesto son problema previo
     fuera del alcance de este slice.
@@ -18,8 +18,8 @@ from comfy_studio.engines.registry import build_default_registry, resolve_engine
 REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "upgrades-ultra-version" / "engines.json"
 
-# Los 4 motores añadidos en este slice.
-_NEW_ENGINES = frozenset({"reference-local", "atlas-offline", "scene-optimizer", "chrono"})
+# Los 3 motores añadidos en este slice.
+_NEW_ENGINES = frozenset({"reference-local", "scene-optimizer", "chrono"})
 
 
 def _load_manifest() -> dict:
@@ -47,7 +47,7 @@ def test_roster_names_all_resolve() -> None:
 
 
 def test_new_engines_in_manifest() -> None:
-    """(b) Los 4 motores nuevos están declarados correctamente en engines.json."""
+    """(b) Los 3 motores nuevos están declarados correctamente en engines.json."""
     manifest = _load_manifest()
     by_id = {e["id"]: e for e in manifest["engines"]}
     missing: list[str] = []
@@ -85,4 +85,4 @@ def test_manifest_extra_ids_are_reported_not_fatal() -> None:
     assert len(extras) == expected
     # No fail-hard; reportar.
     print(f"[roster_parity] engines.json declara {len(extras)} ids fuera del roster")
-    assert len(roster_names) == 21
+    assert len(roster_names) == 20

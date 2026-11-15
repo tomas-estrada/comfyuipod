@@ -2,8 +2,8 @@
 
 W17 pide memoria espacial entre planos y reconstrucción 4D con objetos/poses/
 cámaras temporales editables. El invariante (A19): una secuencia A→B→A conserva
-las anclas y registra el **drift**; ninguna imagen generada se promociona a
-evidencia del atlas; se respetan límites de escena/duración/contexto.
+las anclas y registra el **drift**; ninguna ancla inferida se promociona como
+evidencia observada; se respetan límites de escena/duración/contexto.
 
 Este módulo implementa el CONTRATO:
 
@@ -12,8 +12,8 @@ Este módulo implementa el CONTRATO:
 - `SpatialMemory`: el registro de anclas entre planos; `visit` registra la
   posición observada de un ancla en un plano, y `drift` mide cuánto se movió un
   ancla entre dos visitas (A→B→A debe conservar el ancla con drift medido).
-- `assert_not_atlas_evidence`: una posición de un ancla INFERIDA (generada) no se
-  promociona a evidencia factual del atlas (A19).
+- `assert_not_observed_evidence`: un ancla INFERIDA (generada) no se promociona
+  como evidencia observada (A19).
 
 Geometría vectorial simple; la reconstrucción 4D neural es GPU/A29. Verifica la
 conservación de anclas, el drift y la honestidad de procedencia.
@@ -35,6 +35,9 @@ MAX_SCENE_DURATION_S = 120.0
 MAX_SCENE_FPS = 240
 MAX_SCENE_ENTITIES = 16
 MAX_SCENE_KEYS_PER_ENTITY = 256
+MAX_SPATIAL_ANCHORS = 256
+MAX_SPATIAL_VISITS = 4096
+MAX_SPATIAL_ID_LENGTH = 128
 
 
 class Provenance(StrEnum):
@@ -69,32 +72,64 @@ class Visit:
 
 @dataclass(slots=True)
 class SpatialMemory:
-    """Memoria de anclas entre planos; mide drift y conserva anclas (A19)."""
+    """Memoria por proyecto: 256 anclas, 4096 visitas e IDs de 128 caracteres."""
 
     anchors: dict[str, Anchor] = field(default_factory=dict)
     #: visitas por ancla, en orden temporal.
     visits: dict[str, list[Visit]] = field(default_factory=dict)
     #: límite de contexto por receta (nº de planos recordados).
     max_shots: int = 32
+    #: límites por proyecto; cada memoria puede reducir, pero no ampliar, estos topes.
+    max_anchors: int = MAX_SPATIAL_ANCHORS
+    max_total_visits: int = MAX_SPATIAL_VISITS
+
+    def __post_init__(self) -> None:
+        self._validate_limits()
+
+    def _validate_limits(self) -> None:
+        if self.max_shots <= 0:
+            raise SpatialError("max_shots debe ser > 0")
+        if not isinstance(self.max_anchors, int) or isinstance(self.max_anchors, bool):
+            raise SpatialError("max_anchors debe ser un entero")
+        if not 0 < self.max_anchors <= MAX_SPATIAL_ANCHORS:
+            raise SpatialError(
+                f"max_anchors debe estar entre 1 y {MAX_SPATIAL_ANCHORS}"
+            )
+        if not isinstance(self.max_total_visits, int) or isinstance(
+            self.max_total_visits, bool
+        ):
+            raise SpatialError("max_total_visits debe ser un entero")
+        if not 0 < self.max_total_visits <= MAX_SPATIAL_VISITS:
+            raise SpatialError(
+                f"max_total_visits debe estar entre 1 y {MAX_SPATIAL_VISITS}"
+            )
 
     def register(self, anchor: Anchor) -> None:
+        self._validate_limits()
         if not anchor.anchor_id.strip():
             raise SpatialError("anchor_id vacío")
+        if len(anchor.anchor_id) > MAX_SPATIAL_ID_LENGTH:
+            raise SpatialError(f"anchor_id excede {MAX_SPATIAL_ID_LENGTH} caracteres")
         if not isinstance(anchor.provenance, Provenance):
             raise SpatialError(f"procedencia inválida para ancla {anchor.anchor_id}")
         existing = self.anchors.get(anchor.anchor_id)
         if existing is not None and existing.provenance is not anchor.provenance:
             raise SpatialError(f"procedencia inmutable para ancla {anchor.anchor_id}")
+        if existing is None and len(self.anchors) >= self.max_anchors:
+            raise SpatialError(f"límite de anclas excedido ({self.max_anchors})")
         self.anchors[anchor.anchor_id] = anchor
         self.visits.setdefault(anchor.anchor_id, [])
 
     def visit(self, anchor_id: str, shot_id: str, position: Vec3) -> None:
+        self._validate_limits()
         if anchor_id not in self.anchors:
             raise SpatialError(f"ancla no registrada: {anchor_id}")
         if not shot_id.strip() or len(position) != 3 or any(
             not math.isfinite(value) for value in position
         ):
             raise SpatialError("visita requiere shot_id y posición 3D finita")
+        if len(shot_id) > MAX_SPATIAL_ID_LENGTH:
+            raise SpatialError(f"shot_id excede {MAX_SPATIAL_ID_LENGTH} caracteres")
         visits = self.visits[anchor_id]
         previous = next((visit for visit in visits if visit.shot_id == shot_id), None)
         if previous is not None:
@@ -104,6 +139,11 @@ class SpatialMemory:
         if len({v.shot_id for v in visits} | {shot_id}) > self.max_shots:
             raise SpatialError(
                 f"límite de contexto excedido ({self.max_shots} planos) para {anchor_id}"
+            )
+        total_visits = sum(len(anchor_visits) for anchor_visits in self.visits.values())
+        if total_visits >= self.max_total_visits:
+            raise SpatialError(
+                f"límite total de visitas excedido ({self.max_total_visits})"
             )
         visits.append(Visit(shot_id=shot_id, position=position))
 
@@ -133,6 +173,8 @@ class SpatialMemory:
         return {
             "schema": "spatial-memory/1",
             "max_shots": self.max_shots,
+            "max_anchors": self.max_anchors,
+            "max_total_visits": self.max_total_visits,
             "anchors": {
                 aid: {"provenance": str(a.provenance)} for aid, a in self.anchors.items()
             },
@@ -147,18 +189,31 @@ class SpatialMemory:
         }
 
     def validate(self) -> None:
-        if self.max_shots <= 0:
-            raise SpatialError("max_shots debe ser > 0")
+        self._validate_limits()
         if set(self.anchors) != set(self.visits):
             raise SpatialError("cada ancla debe tener su lista de visitas")
+        if len(self.anchors) > self.max_anchors:
+            raise SpatialError(f"límite de anclas excedido ({self.max_anchors})")
+        total_visits = sum(len(anchor_visits) for anchor_visits in self.visits.values())
+        if total_visits > self.max_total_visits:
+            raise SpatialError(
+                f"límite total de visitas excedido ({self.max_total_visits})"
+            )
         for anchor_id, anchor in self.anchors.items():
-            if not anchor_id or anchor.anchor_id != anchor_id:
+            if (
+                not anchor_id
+                or len(anchor_id) > MAX_SPATIAL_ID_LENGTH
+                or anchor.anchor_id != anchor_id
+            ):
                 raise SpatialError("anchor_id inconsistente")
             if len({visit.shot_id for visit in self.visits[anchor_id]}) > self.max_shots:
                 raise SpatialError(f"límite de contexto excedido para {anchor_id}")
             for visit in self.visits[anchor_id]:
-                if not visit.shot_id or len(visit.position) != 3 or any(
-                    not math.isfinite(value) for value in visit.position
+                if (
+                    not visit.shot_id
+                    or len(visit.shot_id) > MAX_SPATIAL_ID_LENGTH
+                    or len(visit.position) != 3
+                    or any(not math.isfinite(value) for value in visit.position)
                 ):
                     raise SpatialError(f"visita inválida para ancla {anchor_id}")
 
@@ -167,7 +222,11 @@ class SpatialMemory:
         if data.get("schema") not in (None, "spatial-memory/1"):
             raise SpatialError(f"schema desconocido: {data.get('schema')!r}")
         try:
-            memory = cls(max_shots=int(data.get("max_shots", 32)))
+            memory = cls(
+                max_shots=int(data.get("max_shots", 32)),
+                max_anchors=int(data.get("max_anchors", MAX_SPATIAL_ANCHORS)),
+                max_total_visits=int(data.get("max_total_visits", MAX_SPATIAL_VISITS)),
+            )
             for anchor_id, value in data.get("anchors", {}).items():
                 memory.register(
                     Anchor(anchor_id=anchor_id, provenance=Provenance(value["provenance"]))
@@ -189,15 +248,15 @@ class SpatialMemory:
             raise SpatialError(f"memoria espacial serializada inválida: {exc}") from exc
 
 
-def assert_not_atlas_evidence(memory: SpatialMemory, anchor_id: str) -> None:
-    """Solo anclas observadas pueden promocionarse a evidencia factual (A19)."""
+def assert_not_observed_evidence(memory: SpatialMemory, anchor_id: str) -> None:
+    """Reject inferred or synthetic anchors when observed evidence is required."""
     anchor = memory.anchors.get(anchor_id)
     if anchor is None:
         raise SpatialError(f"ancla inexistente: {anchor_id}")
     if anchor.provenance is not Provenance.OBSERVED:
         raise SpatialError(
             f"ancla {anchor_id} {anchor.provenance.value.upper()} (no observada): "
-            "no es evidencia del atlas"
+            "no es evidencia observada"
         )
 
 
@@ -207,6 +266,9 @@ __all__ = [
     "CameraKey",
     "MAX_SCENE_DURATION_S",
     "MAX_SCENE_FPS",
+    "MAX_SPATIAL_ID_LENGTH",
+    "MAX_SPATIAL_ANCHORS",
+    "MAX_SPATIAL_VISITS",
     "ObjectEntity",
     "ObjectKey",
     "PoseEntity",
@@ -218,7 +280,7 @@ __all__ = [
     "TemporalScene",
     "Timebase",
     "Visit",
-    "assert_not_atlas_evidence",
+    "assert_not_observed_evidence",
     "synthetic_round_trip_fixture",
 ]
 
