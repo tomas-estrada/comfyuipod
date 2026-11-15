@@ -1,7 +1,7 @@
-"""PR engines-health-states: los 7 niveles, probados en los 21 motores.
+"""PR engines-health-states: los 7 niveles, probados en los 20 motores.
 
 Pines deterministas sobre un árbol sintético en tmp (sin GPU, sin red):
-un árbol completo deja a los 21 en `ready` (prueba que cada spec es
+un árbol completo deja a los 20 en `ready` (prueba que cada spec es
 satisfacible y documenta qué necesita cada motor); sin pesos el estado es
 `weights_missing` y nunca `loaded`/validado; cada hueco reporta su prefijo.
 """
