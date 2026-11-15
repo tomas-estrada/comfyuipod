@@ -47,7 +47,7 @@ jobs:
 
       - name: Ejecutar ShellCheck sobre scripts Bash (§9.1)
         run: |
-          shellcheck scripts/start.sh scripts/download-models.sh tools/mac/comfy
+          shellcheck scripts/start.sh scripts/download-models.sh scripts/install_ci_ffmpeg.sh tools/mac/comfy
 
       - name: Renderizar los diagramas PlantUML y fallar si no son legibles (MAAD)
         # Un .puml que "parsea" pero nadie ha visto es inutil: la sintaxis puede
@@ -440,10 +440,7 @@ jobs:
 
       - name: Instalar ffmpeg/ffprobe para los tests de percepción M3 (VAL-PERC-001/002/003/006)
         timeout-minutes: 15
-        uses: FedericoCarboni/setup-ffmpeg@8073ccb51e517ed576e6871c7f2360c6de4ebb7c
-        with:
-          ffmpeg-version: 7.0.2
-          linking-type: static
+        run: bash scripts/install_ci_ffmpeg.sh
 
       - name: Verificar ffmpeg/ffprobe
         run: |
