@@ -364,7 +364,6 @@ class EngineRunnerAdapter:
             "atlas",
             "background_image",
             "background_sha256",
-            "atlas_resolved",
             "project_reference",
             "recipe_id",
             "recipe_engine",

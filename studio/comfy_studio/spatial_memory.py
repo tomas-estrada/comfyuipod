@@ -2,8 +2,8 @@
 
 W17 pide memoria espacial entre planos y reconstrucción 4D con objetos/poses/
 cámaras temporales editables. El invariante (A19): una secuencia A→B→A conserva
-las anclas y registra el **drift**; ninguna imagen generada se promociona a
-evidencia del atlas; se respetan límites de escena/duración/contexto.
+las anclas y registra el **drift**; ninguna ancla inferida se promociona como
+evidencia observada; se respetan límites de escena/duración/contexto.
 
 Este módulo implementa el CONTRATO:
 
@@ -12,8 +12,8 @@ Este módulo implementa el CONTRATO:
 - `SpatialMemory`: el registro de anclas entre planos; `visit` registra la
   posición observada de un ancla en un plano, y `drift` mide cuánto se movió un
   ancla entre dos visitas (A→B→A debe conservar el ancla con drift medido).
-- `assert_not_atlas_evidence`: una posición de un ancla INFERIDA (generada) no se
-  promociona a evidencia factual del atlas (A19).
+- `assert_not_observed_evidence`: un ancla INFERIDA (generada) no se promociona
+  como evidencia observada (A19).
 
 Geometría vectorial simple; la reconstrucción 4D neural es GPU/A29. Verifica la
 conservación de anclas, el drift y la honestidad de procedencia.
@@ -248,15 +248,15 @@ class SpatialMemory:
             raise SpatialError(f"memoria espacial serializada inválida: {exc}") from exc
 
 
-def assert_not_atlas_evidence(memory: SpatialMemory, anchor_id: str) -> None:
-    """Solo anclas observadas pueden promocionarse a evidencia factual (A19)."""
+def assert_not_observed_evidence(memory: SpatialMemory, anchor_id: str) -> None:
+    """Reject inferred or synthetic anchors when observed evidence is required."""
     anchor = memory.anchors.get(anchor_id)
     if anchor is None:
         raise SpatialError(f"ancla inexistente: {anchor_id}")
     if anchor.provenance is not Provenance.OBSERVED:
         raise SpatialError(
             f"ancla {anchor_id} {anchor.provenance.value.upper()} (no observada): "
-            "no es evidencia del atlas"
+            "no es evidencia observada"
         )
 
 
@@ -280,7 +280,7 @@ __all__ = [
     "TemporalScene",
     "Timebase",
     "Visit",
-    "assert_not_atlas_evidence",
+    "assert_not_observed_evidence",
     "synthetic_round_trip_fixture",
 ]
 
