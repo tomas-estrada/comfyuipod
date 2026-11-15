@@ -48,6 +48,19 @@ def _channel_swap_cube(size: int = 2) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _identity_cube(size: int = 2) -> str:
+    """LUT 3D determinista identidad: salida = entrada."""
+    lines = [f"LUT_3D_SIZE {size}"]
+    for b_index in range(size):
+        for g_index in range(size):
+            for r_index in range(size):
+                r = r_index / (size - 1)
+                g = g_index / (size - 1)
+                b = b_index / (size - 1)
+                lines.append(f"{r:.6f} {g:.6f} {b:.6f}")
+    return "\n".join(lines) + "\n"
+
+
 def _upload_video(
     client: TestClient, project_id: str, *, fps: int = 4, frames: int = 4
 ) -> str:
@@ -103,6 +116,7 @@ def _upload_image(client: TestClient, project_id: str, img: Image.Image) -> str:
 
 
 def _decode_rgb(video_path: Path, out_dir: Path) -> list[Image.Image]:
+    out_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [
             find_ffmpeg(),
@@ -394,3 +408,195 @@ def test_parse_lut_cube_unit_validation() -> None:
         parse_lut_cube("no es un lut")
     with pytest.raises(ValueError):
         parse_lut_cube("LUT_3D_SIZE 200\n" + "0 0 0\n" * 8)
+
+
+def test_lut_grade_batch_three_named_variants_share_timeline_and_protect_pixels(
+    client: TestClient,
+) -> None:
+    """C22: tres variantes de estilo desde la misma actuación.
+
+    Un solo vídeo, una máscara de proyecto y tres LUTs con nombre. Todas las
+    salidas deben conservar el nº de frames y la línea temporal de la fuente
+    (PTS medidos con ffprobe), los píxeles protegidos deben ser exactos, y la
+    provenance debe registrar el hash de cada LUT, de la máscara y de la
+    fuente además de la métrica temporal por variante.
+    """
+    project_id = client.post("/studio/api/projects", json={"name": "Batch"}).json()["id"]
+    asset_id = _upload_video(client, project_id)
+    # Máscara: todo gradado (255) salvo la franja y en [14, 34) protegida (0),
+    # que contiene el recorrido completo del cuadrado rojo en movimiento.
+    mask = Image.new("L", (64, 48), 255)
+    for py in range(14, 34):
+        for px in range(64):
+            mask.putpixel((px, py), 0)
+    mask_id = _upload_image(client, project_id, mask)
+
+    url = f"/studio/api/projects/{project_id}/raster-layers/lut-grade/batch"
+    response = client.post(
+        url,
+        json={
+            "asset_id": asset_id,
+            "mask_asset_id": mask_id,
+            "variants": [
+                {"name": "identity", "lut_cube": _identity_cube()},
+                {"name": "swap", "lut_cube": _channel_swap_cube()},
+                {"name": "swap4", "lut_cube": _channel_swap_cube(4)},
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    variants = body["variants"]
+    assert [item["name"] for item in variants] == ["identity", "swap", "swap4"]
+    assert body["style"] == "user_directed_lut_grade"
+    assert body["neural_style_transfer"] == "not_claimed"
+
+    # Misma actuación: las tres variantes provienen del mismo asset fuente.
+    source_sha = variants[0]["evidence"]["source"]["sha256"]
+    assert source_sha
+    assert all(item["evidence"]["source"]["sha256"] == source_sha for item in variants)
+    assert all(item["evidence"]["source"]["asset_id"] == asset_id for item in variants)
+    # Cada LUT con su propio hash y todos distintos.
+    lut_shas = [item["evidence"]["lut"]["sha256"] for item in variants]
+    assert len(set(lut_shas)) == 3
+    assert all(len(sha) == 64 for sha in lut_shas)
+    # Máscara protegida: asset y sha256 en todas las evidencias.
+    assert all(item["evidence"]["mask"]["asset_id"] == mask_id for item in variants)
+    assert all(len(item["evidence"]["mask"]["sha256"]) == 64 for item in variants)
+    # Métrica temporal medida por variante sobre pares adyacentes reales.
+    for item in variants:
+        stability = item["evidence"]["temporal_stability"]
+        assert stability["method"] == "adjacent_frame_rgb_mean_abs_diff"
+        assert stability["sampled_pairs"] >= 2
+        assert math.isfinite(stability["mean_abs_diff"])
+        assert math.isfinite(stability["max_abs_diff"])
+
+    # Alineación temporal: PTS reales de ffprobe idénticos a la fuente.
+    alignment = body["alignment"]
+    assert alignment["method"] == "ffprobe_frame_pts"
+    assert alignment["frame_count"] == 4
+    assert alignment["timeline_identical"] is True
+    source_pts_digest = alignment["source"]["pts_digest"]
+    assert alignment["variant_pts_digests"] == {
+        "identity": source_pts_digest,
+        "swap": source_pts_digest,
+        "swap4": source_pts_digest,
+    }
+    assert len(set(alignment["variant_time_bases"].values())) == 1
+
+    # Píxeles protegidos exactos: comparación sobre frames decodificados.
+    protected = body["protected_pixels"]
+    assert protected["verified"] is True
+    assert protected["method"] == "decoded_rgb_exact_compare"
+    assert protected["max_abs_diff"] == 0
+    assert protected["sampled_frames"] >= 2
+    assert set(protected["per_variant"]) == {"identity", "swap", "swap4"}
+
+    # Píxeles reales de cada salida: protegido exacto, gradado fuera de la franja.
+    source_url = client.get(
+        f"/studio/api/projects/{project_id}/assets/{asset_id}"
+    ).json()["preview_url"]
+    source_response = client.get(source_url)
+    assert source_response.status_code == 200
+    for item in variants:
+        assert item["asset"]["kind"] == "video"
+        video_response = client.get(item["asset"]["preview_url"])
+        assert video_response.status_code == 200
+        probe = item["evidence"]["output_probe"]
+        assert probe["codec_name"] == "ffv1"
+        assert probe["frame_count"] == 4
+        assert probe["has_audio"] is False
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            out_path = tmp_dir / "out.mkv"
+            out_path.write_bytes(video_response.content)
+            src_path = tmp_dir / "src.mp4"
+            src_path.write_bytes(source_response.content)
+            src_frames = _decode_rgb(src_path, tmp_dir / "src")
+            out_frames = _decode_rgb(out_path, tmp_dir / "out")
+            assert len(out_frames) == len(src_frames) == 4
+            for i, (src_frame, out_frame) in enumerate(
+                zip(src_frames, out_frames, strict=True)
+            ):
+                # Franja protegida: fondo verde y cuadrado rojo exactos a la fuente.
+                assert out_frame.getpixel((2, 20)) == src_frame.getpixel((2, 20))
+                x = 8 + i * 12 + 4
+                assert out_frame.getpixel((x, 24)) == src_frame.getpixel((x, 24))
+                # Fuera de la franja: gradado según el LUT de la variante.
+                outside = out_frame.getpixel((2, 2))
+                if item["name"] == "identity":
+                    assert outside == src_frame.getpixel((2, 2))
+                else:
+                    _assert_blueish(outside)
+
+    # Provenance persistido por variante: hash de LUT, fuente, máscara y métrica.
+    for item in variants:
+        stored = client.get(
+            f"/studio/api/projects/{project_id}/assets/{item['asset']['id']}"
+        ).json()
+        meta = stored["metadata"]["lut_grade_batch"]
+        assert meta["variant_name"] == item["name"]
+        assert meta["lut_sha256"] == item["evidence"]["lut"]["sha256"]
+        assert meta["source_sha256"] == source_sha
+        assert meta["mask_sha256"] == item["evidence"]["mask"]["sha256"]
+        assert meta["temporal_stability"]["sampled_pairs"] >= 2
+        assert meta["alignment"]["timeline_identical"] is True
+
+
+def test_lut_grade_batch_rejects_bad_variant_sets(client: TestClient) -> None:
+    project_id = client.post("/studio/api/projects", json={"name": "BatchBad"}).json()["id"]
+    asset_id = _upload_video(client, project_id)
+    url = f"/studio/api/projects/{project_id}/raster-layers/lut-grade/batch"
+
+    # Ni dos ni cuatro: el lote C22 exige exactamente tres variantes con nombre.
+    two = client.post(
+        url,
+        json={
+            "asset_id": asset_id,
+            "variants": [
+                {"name": "a", "lut_cube": _channel_swap_cube()},
+                {"name": "b", "lut_cube": _identity_cube()},
+            ],
+        },
+    )
+    assert two.status_code == 422
+    four = client.post(
+        url,
+        json={
+            "asset_id": asset_id,
+            "variants": [
+                {"name": f"v{i}", "lut_cube": _channel_swap_cube()} for i in range(4)
+            ],
+        },
+    )
+    assert four.status_code == 422
+
+    # Nombres duplicados: rechazados.
+    dupes = client.post(
+        url,
+        json={
+            "asset_id": asset_id,
+            "variants": [
+                {"name": "same", "lut_cube": _channel_swap_cube()},
+                {"name": "same", "lut_cube": _identity_cube()},
+                {"name": "other", "lut_cube": _channel_swap_cube(4)},
+            ],
+        },
+    )
+    assert dupes.status_code == 422
+    assert "nombre" in dupes.json()["detail"]
+
+    # LUT inválido en una variante: rechazado el lote completo.
+    bad_lut = client.post(
+        url,
+        json={
+            "asset_id": asset_id,
+            "variants": [
+                {"name": "a", "lut_cube": _channel_swap_cube()},
+                {"name": "b", "lut_cube": _identity_cube()},
+                {"name": "c", "lut_cube": "LUT_3D_SIZE 2\n"},
+            ],
+        },
+    )
+    assert bad_lut.status_code == 422
+    assert "LUT" in bad_lut.json()["detail"]
