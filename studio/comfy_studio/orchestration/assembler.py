@@ -102,6 +102,10 @@ def assemble_reel(
         return state
 
     state.final_output_path = result.get("output_path")
+    if result.get("simulated"):
+        state.metadata["simulated"] = True
+        state.metadata["execution_mode"] = "simulated"
+        state.record("simulation_boundary", stage="assembly")
     state.phase = "done"
     state.record("assemble", clips=len(clips), output=state.final_output_path)
     return state
