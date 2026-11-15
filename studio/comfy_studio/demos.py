@@ -224,6 +224,8 @@ def _prepare_demo_output(demo_id: str, output_root: Path) -> tuple[Path, Path]:
 
     manifest = out_dir / "run_manifest.json"
     generated = [manifest, out_dir / "editable_project.json"]
+    if demo_id == "D01":
+        generated.append(out_dir / _D01_REPORT_ARTIFACT)
     if demo_id == "D02":
         generated.append(out_dir / _D02_MEASUREMENT_ARTIFACT)
     if demo_id == "D05":
@@ -273,6 +275,8 @@ def _execution_fingerprint(demo_id: str) -> dict[str, Any]:
 
 
 def _expected_artifact_names(demo_id: str) -> set[str]:
+    if demo_id == "D01":
+        return {_D01_REPORT_ARTIFACT}
     if demo_id == "D02":
         return {_D02_MEASUREMENT_ARTIFACT}
     if demo_id == "D05":
@@ -291,21 +295,7 @@ def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
     if demo_id == "D02":
         return _check_d02_causal_layers(data)
     if demo_id == "D01":
-        cameras = data["cameras"]
-        errors = []
-        for camera in cameras:
-            for point in camera["points"]:
-                x, y, z = point["xyz"]
-                u, v = point["uv"]
-                fx, fy, cx, cy = camera["intrinsics"]
-                projected = (fx * x / z + cx, fy * y / z + cy)
-                errors.append(math.dist(projected, (u, v)))
-        rmse = math.sqrt(sum(err * err for err in errors) / len(errors))
-        logos_same = data["logo_mask_before"] == data["logo_mask_after"]
-        limit = float(data["max_reprojection_rmse_px"])
-        return {"reprojection_rmse_px": rmse, "fixture_limit_px": limit,
-                "reprojection_rmse_below_fixture_limit": rmse <= limit,
-                "logo_mask_unchanged": logos_same}
+        return _check_d01_vehicle_cameras(data)
     if demo_id == "D03":
         parts = {part["id"] for part in data["parts"]}
         joints = data["joints"]
@@ -334,6 +324,474 @@ def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
                     row.get("license") and row.get("source") for row in credits
                 ), "render": data["render"]}
     raise DemoError(f"demo desconocida: {demo_id}")
+
+
+_D01_REPORT_ARTIFACT = "D01_reprojection_coverage.json"
+_D01_FIXTURE_SCHEMA = "comfy_studio.demo_fixture.d01.v2"
+_D01_REPORT_SCHEMA = "comfy_studio.d01_reprojection_coverage.v1"
+_D01_WORLD_UP = (0.0, 0.0, 1.0)
+_D01_EVIDENCE_SCOPE = "synthetic_cpu_only"
+
+
+def _d01_finite_list(value: Any, length: int, name: str) -> list[float]:
+    """Strict finite-number list: exact length, no bool/int coercion surprises."""
+    if (
+        not isinstance(value, list)
+        or len(value) != length
+        or any(
+            isinstance(component, bool)
+            or not isinstance(component, (int, float))
+            or not math.isfinite(component)
+            for component in value
+        )
+    ):
+        raise DemoError(f"D01: {name} malformado")
+    return [float(component) for component in value]
+
+
+def _d01_sub(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _d01_cross(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
+def _d01_dot(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _d01_normalize(
+    a: tuple[float, float, float], name: str
+) -> tuple[float, float, float]:
+    norm = math.sqrt(_d01_dot(a, a))
+    if not math.isfinite(norm) or norm <= 1e-12:
+        raise DemoError(f"D01: vector {name} degenerado")
+    return (a[0] / norm, a[1] / norm, a[2] / norm)
+
+
+def _d01_camera_basis(
+    position: tuple[float, float, float], look_at: tuple[float, float, float]
+) -> tuple[tuple[float, float, float], ...]:
+    """Deterministic look-at basis: right = forward x world_up, up = right x forward."""
+    forward = _d01_normalize(_d01_sub(look_at, position), "forward")
+    right = _d01_normalize(_d01_cross(forward, _D01_WORLD_UP), "right")
+    up = _d01_cross(right, forward)
+    return (right, up, forward)
+
+
+def _d01_project(
+    point: tuple[float, float, float],
+    position: tuple[float, float, float],
+    basis: tuple[tuple[float, float, float], ...],
+    intrinsics: tuple[float, float, float, float],
+) -> tuple[float, float, float] | None:
+    """Pinhole projection (u, v, depth); None when the point is behind the camera."""
+    right, up, forward = basis
+    delta = _d01_sub(point, position)
+    depth = _d01_dot(delta, forward)
+    if depth <= 1e-9:
+        return None
+    fx, fy, cx, cy = intrinsics
+    u = fx * _d01_dot(delta, right) / depth + cx
+    v = fy * _d01_dot(delta, up) / depth + cy
+    return (u, v, depth)
+
+
+def _d01_ray_hits_box(
+    origin: tuple[float, float, float],
+    direction: tuple[float, float, float],
+    box_min: tuple[float, float, float],
+    box_max: tuple[float, float, float],
+) -> bool:
+    """Segment (origin, origin + direction) vs axis-aligned box via the slab method."""
+    t_enter = 0.0
+    t_exit = 1.0
+    for axis in range(3):
+        o = origin[axis]
+        d = direction[axis]
+        lo = box_min[axis]
+        hi = box_max[axis]
+        if abs(d) < 1e-12:
+            if o < lo or o > hi:
+                return False
+            continue
+        t0 = (lo - o) / d
+        t1 = (hi - o) / d
+        if t0 > t1:
+            t0, t1 = t1, t0
+        t_enter = max(t_enter, t0)
+        t_exit = min(t_exit, t1)
+        if t_enter > t_exit:
+            return False
+    return True
+
+
+@dataclass(slots=True)
+class _D01Landmark:
+    landmark_id: str
+    xyz: tuple[float, float, float]
+
+
+@dataclass(slots=True)
+class _D01Occluder:
+    occluder_id: str
+    box_min: tuple[float, float, float]
+    box_max: tuple[float, float, float]
+
+
+@dataclass(slots=True)
+class _D01View:
+    view_id: str
+    split: str
+    position: tuple[float, float, float]
+    look_at: tuple[float, float, float]
+    intrinsics: tuple[float, float, float, float]
+    image_size: tuple[int, int]
+    observations: dict[str, tuple[float, float]]
+
+
+@dataclass(slots=True)
+class _D01Scene:
+    landmarks: list[_D01Landmark]
+    views: list[_D01View]
+    occluders: list[_D01Occluder]
+    max_rmse_px: float
+    logo_mask_unchanged: bool
+
+
+def _d01_intrinsics(value: Any, view_id: str) -> tuple[float, float, float, float]:
+    """Strict calibration: exactly four finite numbers with positive focal lengths."""
+    components = _d01_finite_list(value, 4, f"calibración de {view_id}")
+    fx, fy, cx, cy = components
+    if fx <= 0.0 or fy <= 0.0:
+        raise DemoError(f"D01: calibración de {view_id} con foco no positivo")
+    return (fx, fy, cx, cy)
+
+
+def _d01_parse_fixture(data: dict[str, Any]) -> _D01Scene:
+    """Validate the strict D01 scene; malformed input raises DemoError."""
+    if not isinstance(data, dict) or data.get("schema") != _D01_FIXTURE_SCHEMA:
+        raise DemoError("D01: esquema de fixture no reconocido")
+    limit = data.get("max_reprojection_rmse_px")
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, (int, float))
+        or not math.isfinite(limit)
+        or limit <= 0
+    ):
+        raise DemoError("D01: límite de RMSE malformado")
+
+    raw_landmarks = data.get("landmarks")
+    if not isinstance(raw_landmarks, list) or not raw_landmarks:
+        raise DemoError("D01: landmarks ausentes o vacíos")
+    landmarks: list[_D01Landmark] = []
+    seen_landmarks: set[str] = set()
+    for landmark in raw_landmarks:
+        if not isinstance(landmark, dict):
+            raise DemoError("D01: hito malformado")
+        landmark_id = landmark.get("id")
+        if (
+            not isinstance(landmark_id, str)
+            or not landmark_id
+            or landmark_id in seen_landmarks
+        ):
+            raise DemoError(f"D01: hito malformado: {landmark_id!r}")
+        seen_landmarks.add(landmark_id)
+        xyz = _d01_finite_list(landmark.get("xyz"), 3, f"hito {landmark_id} xyz")
+        landmarks.append(_D01Landmark(landmark_id, (xyz[0], xyz[1], xyz[2])))
+
+    raw_views = data.get("views")
+    if not isinstance(raw_views, list) or not raw_views:
+        raise DemoError("D01: vistas ausentes o vacías")
+    views: list[_D01View] = []
+    seen_views: set[str] = set()
+    for view in raw_views:
+        if not isinstance(view, dict):
+            raise DemoError("D01: vista malformada")
+        view_id = view.get("id")
+        if not isinstance(view_id, str) or not view_id or view_id in seen_views:
+            raise DemoError(f"D01: vista malformada: {view_id!r}")
+        seen_views.add(view_id)
+        split = view.get("split")
+        if split not in ("train", "heldout"):
+            raise DemoError(f"D01: vista {view_id} con split inválido")
+        position = tuple(
+            _d01_finite_list(view.get("position"), 3, f"vista {view_id} position")
+        )
+        look_at = tuple(
+            _d01_finite_list(view.get("look_at"), 3, f"vista {view_id} look_at")
+        )
+        if position == look_at:
+            raise DemoError(f"D01: vista {view_id} con posición igual al objetivo")
+        intrinsics = _d01_intrinsics(view.get("intrinsics"), view_id)
+        raw_size = view.get("image_size")
+        if (
+            not isinstance(raw_size, list)
+            or len(raw_size) != 2
+            or any(
+                isinstance(side, bool) or not isinstance(side, int) or side <= 0
+                for side in raw_size
+            )
+        ):
+            raise DemoError(f"D01: vista {view_id} con image_size malformado")
+        raw_observations = view.get("observations")
+        if not isinstance(raw_observations, dict):
+            raise DemoError(f"D01: vista {view_id} sin observaciones")
+        if set(raw_observations) != {lm.landmark_id for lm in landmarks}:
+            raise DemoError(f"D01: vista {view_id} no observa exactamente todos los hitos")
+        observations: dict[str, tuple[float, float]] = {}
+        for landmark_id, uv in raw_observations.items():
+            parsed_uv = _d01_finite_list(
+                uv, 2, f"vista {view_id} observación {landmark_id}"
+            )
+            observations[landmark_id] = (parsed_uv[0], parsed_uv[1])
+        views.append(
+            _D01View(
+                view_id,
+                split,
+                position,  # type: ignore[arg-type]
+                look_at,  # type: ignore[arg-type]
+                intrinsics,
+                (raw_size[0], raw_size[1]),
+                observations,
+            )
+        )
+    if not any(view.split == "train" for view in views):
+        raise DemoError("D01: falta al menos una vista train")
+    if not any(view.split == "heldout" for view in views):
+        raise DemoError("D01: falta al menos una vista heldout")
+
+    raw_occluders = data.get("occluders")
+    if not isinstance(raw_occluders, list):
+        raise DemoError("D01: occluders malformado")
+    occluders: list[_D01Occluder] = []
+    seen_occluders: set[str] = set()
+    for occluder in raw_occluders:
+        if not isinstance(occluder, dict):
+            raise DemoError("D01: oclusor malformado")
+        occluder_id = occluder.get("id")
+        if (
+            not isinstance(occluder_id, str)
+            or not occluder_id
+            or occluder_id in seen_occluders
+        ):
+            raise DemoError(f"D01: oclusor malformado: {occluder_id!r}")
+        seen_occluders.add(occluder_id)
+        box_min = tuple(_d01_finite_list(occluder.get("min"), 3, f"oclusor {occluder_id} min"))
+        box_max = tuple(_d01_finite_list(occluder.get("max"), 3, f"oclusor {occluder_id} max"))
+        if any(lo >= hi for lo, hi in zip(box_min, box_max, strict=True)):
+            raise DemoError(f"D01: oclusor {occluder_id} con caja degenerada")
+        occluders.append(_D01Occluder(occluder_id, box_min, box_max))  # type: ignore[arg-type]
+
+    before = data.get("logo_mask_before")
+    after = data.get("logo_mask_after")
+    for mask in (before, after):
+        if (
+            not isinstance(mask, list)
+            or not mask
+            or any(isinstance(pixel, bool) or not isinstance(pixel, int) for pixel in mask)
+        ):
+            raise DemoError("D01: logo mask malformado")
+    logo_mask_unchanged = bool(before == after)
+
+    return _D01Scene(
+        landmarks=landmarks,
+        views=views,
+        occluders=occluders,
+        max_rmse_px=float(limit),
+        logo_mask_unchanged=logo_mask_unchanged,
+    )
+
+
+def _d01_measure_scene(scene: _D01Scene) -> dict[str, Any]:
+    """Project every landmark in every view and measure errors and visibility.
+
+    Observed pixels come from the fixture; projected pixels are recomputed from
+    the fixture calibrations (position, look-at route, intrinsics). Visibility
+    is ray/AABB occlusion plus image-bounds membership; it is never stored in
+    the fixture. Held-out views are aggregated separately.
+    """
+    split_errors: dict[str, list[float]] = {"train": [], "heldout": []}
+    views_report: dict[str, dict[str, Any]] = {}
+    occluded_pairs: list[str] = []
+    for view in scene.views:
+        basis = _d01_camera_basis(view.position, view.look_at)
+        width, height = view.image_size
+        visible = 0
+        landmark_report: dict[str, dict[str, Any]] = {}
+        for landmark in scene.landmarks:
+            projected = _d01_project(landmark.xyz, view.position, basis, view.intrinsics)
+            if projected is None:
+                raise DemoError(
+                    f"D01: hito {landmark.landmark_id} detrás de la cámara {view.view_id}"
+                )
+            u, v, _depth = projected
+            direction = _d01_sub(landmark.xyz, view.position)
+            occluded = any(
+                _d01_ray_hits_box(
+                    view.position, direction, occluder.box_min, occluder.box_max
+                )
+                for occluder in scene.occluders
+            )
+            in_bounds = 0.0 <= u < width and 0.0 <= v < height
+            observed = view.observations[landmark.landmark_id]
+            error_px = math.hypot(u - observed[0], v - observed[1])
+            if occluded:
+                occluded_pairs.append(f"{view.view_id}/{landmark.landmark_id}")
+            if not occluded and in_bounds:
+                visible += 1
+            split_errors[view.split].append(error_px)
+            landmark_report[landmark.landmark_id] = {
+                "observed_uv": [round(observed[0], 6), round(observed[1], 6)],
+                "projected_uv": [round(u, 6), round(v, 6)],
+                "error_px": round(error_px, 6),
+                "occluded": occluded,
+                "in_bounds": in_bounds,
+            }
+        views_report[view.view_id] = {
+            "split": view.split,
+            "visible_landmarks": visible,
+            "coverage": round(visible / len(scene.landmarks), 6),
+            "landmarks": landmark_report,
+        }
+
+    def rmse(errors: list[float]) -> float:
+        if not errors:
+            raise DemoError("D01: sin observaciones para el RMSE")
+        return math.sqrt(sum(err * err for err in errors) / len(errors))
+
+    heldout_views = [view for view in scene.views if view.split == "heldout"]
+    heldout_coverage_mean = round(
+        sum(views_report[view.view_id]["coverage"] for view in heldout_views)
+        / len(heldout_views),
+        6,
+    )
+    return {
+        "views": views_report,
+        "rmse_px": {
+            "train": round(rmse(split_errors["train"]), 6),
+            "heldout": round(rmse(split_errors["heldout"]), 6),
+            "overall": round(
+                rmse(split_errors["train"] + split_errors["heldout"]), 6
+            ),
+        },
+        "coverage_by_view": {
+            view_id: detail["coverage"] for view_id, detail in views_report.items()
+        },
+        "occluded_ids": sorted(occluded_pairs),
+        "heldout_aggregate": {
+            "view_count": len(heldout_views),
+            "rmse_px": round(rmse(split_errors["heldout"]), 6),
+            "coverage_mean": heldout_coverage_mean,
+            "landmarks_visible": sum(
+                views_report[view.view_id]["visible_landmarks"]
+                for view in heldout_views
+            ),
+            "landmarks_total": len(heldout_views) * len(scene.landmarks),
+        },
+    }
+
+
+def _check_d01_vehicle_cameras(data: dict[str, Any]) -> dict[str, Any]:
+    """D01 scene-to-report contract over the synthetic CPU fixture.
+
+    Projects the six 3D landmarks through every calibrated view of the explicit
+    position/look-at route, measures reprojection RMSE against the observed
+    pixels, and derives ray/AABB visibility against the box occluders.
+    Held-out views are aggregated separately. This is synthetic CPU-only
+    evidence: no real camera calibration, no GPU, no neural-quality claim.
+    """
+    scene = _d01_parse_fixture(data)
+    measurement = _d01_measure_scene(scene)
+    limit = scene.max_rmse_px
+    heldout = measurement["heldout_aggregate"]
+    return {
+        "evidence_scope": _D01_EVIDENCE_SCOPE,
+        "reprojection_rmse_px": measurement["rmse_px"]["overall"],
+        "train_reprojection_rmse_px": measurement["rmse_px"]["train"],
+        "heldout_reprojection_rmse_px": measurement["rmse_px"]["heldout"],
+        "fixture_limit_px": limit,
+        "reprojection_rmse_below_fixture_limit": (
+            measurement["rmse_px"]["overall"] <= limit
+        ),
+        "heldout_rmse_below_fixture_limit": measurement["rmse_px"]["heldout"] <= limit,
+        "logo_mask_unchanged": scene.logo_mask_unchanged,
+        "landmark_count": len(scene.landmarks),
+        "train_view_count": sum(1 for view in scene.views if view.split == "train"),
+        "heldout_view_count": heldout["view_count"],
+        "occluder_count": len(scene.occluders),
+        "coverage_by_view": measurement["coverage_by_view"],
+        "heldout_coverage_mean": heldout["coverage_mean"],
+        "heldout_landmarks_visible": heldout["landmarks_visible"],
+        "occluded_ids": measurement["occluded_ids"],
+    }
+
+
+def _write_d01_reprojection_report(
+    fixture: Path, data: dict[str, Any], out_dir: Path
+) -> Path:
+    """Write the D01 reprojection/coverage report (synthetic CPU evidence only).
+
+    Contents: fixture SHA-256, per-view route/calibration, observed vs
+    projected pixels with per-landmark errors, coverage, occluded landmark IDs,
+    train/held-out RMSE aggregates, explicit ``evidence_scope:
+    synthetic_cpu_only`` and ``gpu_used: false``. No GPU or model-quality claim.
+    """
+    scene = _d01_parse_fixture(data)
+    measurement = _d01_measure_scene(scene)
+    report = {
+        "schema": _D01_REPORT_SCHEMA,
+        "evidence_scope": _D01_EVIDENCE_SCOPE,
+        "gpu_used": False,
+        "scope": (
+            "synthetic CPU reprojection and visibility evidence only: fixture "
+            "calibration consistency; no real camera calibration, no GPU, no "
+            "neural reconstruction quality claim"
+        ),
+        "fixture_sha256": _sha256(fixture),
+        "fixture_limit_px": scene.max_rmse_px,
+        "landmarks": [landmark.landmark_id for landmark in scene.landmarks],
+        "occluders": [occluder.occluder_id for occluder in scene.occluders],
+        "views": [
+            {
+                "id": view.view_id,
+                "split": view.split,
+                "position": list(view.position),
+                "look_at": list(view.look_at),
+                "intrinsics": list(view.intrinsics),
+                "image_size": list(view.image_size),
+                "coverage": measurement["views"][view.view_id]["coverage"],
+                "visible_landmarks": (
+                    measurement["views"][view.view_id]["visible_landmarks"]
+                ),
+                "landmarks": measurement["views"][view.view_id]["landmarks"],
+            }
+            for view in scene.views
+        ],
+        "rmse_px": measurement["rmse_px"],
+        "coverage_by_view": measurement["coverage_by_view"],
+        "heldout_aggregate": measurement["heldout_aggregate"],
+        "occluded_ids": measurement["occluded_ids"],
+        "logo_mask_unchanged": scene.logo_mask_unchanged,
+    }
+    path = out_dir / _D01_REPORT_ARTIFACT
+    path.write_text(
+        json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
 
 _D02_REGIONS = ("actor_region", "shadow_region", "reflection_region", "intact_region")
 
@@ -1281,6 +1739,8 @@ def run_demo(
     measurement_report: Path | None = None
     if demo_id == "D02":
         measurement_report = _write_d02_measurement_report(fixture, fixture_data, out_dir)
+    elif demo_id == "D01":
+        measurement_report = _write_d01_reprojection_report(fixture, fixture_data, out_dir)
     elif demo_id == "D05":
         if source_video is None:
             artifact, render_checks = _render_d05(fixture_data, out_dir)
