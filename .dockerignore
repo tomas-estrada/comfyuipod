@@ -17,8 +17,6 @@ studio/tests
 **/.ruff_cache/
 **/*.egg-info/
 
-# The Atlas dataset is retired from the image and excluded from the build context.
-atlas/
 
 # Blender and Mitsuba runtime components have required license notices copied into the image.
 !docs/
