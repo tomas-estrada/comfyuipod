@@ -231,6 +231,57 @@ def test_system_library_notice_recovers_from_exact_source_when_binary_omits_copy
     ]
 
 
+def test_system_library_notice_falls_back_to_source_when_archive_version_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = tmp_path / "lib" / "libstdc++.so.6"
+    library.parent.mkdir()
+    library.write_bytes(b"ELF fixture")
+    source_copyright = "GCC source package copyright and license terms\n"
+    commands: list[list[str]] = []
+
+    def fake_check_output(command: list[str], *, text: bool) -> str:
+        if command[0] == "ldd":
+            return f"{library} (0x0001)\n"
+        if command[0:2] == ["dpkg-query", "-S"]:
+            return f"libstdc++6:amd64: {library}\n"
+        if command[0:2] == ["dpkg-query", "-L"]:
+            return f"{library}\n"
+        if command[0:2] == ["dpkg-query", "-W"]:
+            if "${Version}" in command[2]:
+                return "14.2.0-4ubuntu2~24.04.1\n"
+            if "${Architecture}" in command[2]:
+                return "amd64\n"
+            if "${source:Package}" in command[2]:
+                return "gcc-14\t14.2.0-4ubuntu2~24.04.1\n"
+        raise AssertionError(f"unexpected command: {command}")
+
+    def fake_run(
+        command: list[str], *, check: bool, cwd: Path | None = None
+    ) -> None:
+        commands.append(command)
+        if command[:2] == ["apt-get", "download"]:
+            raise build_module.subprocess.CalledProcessError(100, command)
+        if command[-2:] == ["source", "gcc-14=14.2.0-4ubuntu2~24.04.1"]:
+            assert cwd is not None
+            copyright_file = cwd / "gcc-14-14.2.0" / "debian" / "copyright"
+            copyright_file.parent.mkdir(parents=True)
+            copyright_file.write_text(source_copyright, encoding="utf-8")
+        else:
+            assert command[0] == "apt-get" and command[-1] == "update"
+
+    monkeypatch.setattr(build_module.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(build_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(build_module, "_ubuntu_source_options", lambda _temporary: [])
+
+    license_root = tmp_path / "licenses" / "llama.cpp"
+    records = build_module.install_system_library_notices(library, license_root)
+
+    assert records[0]["notice_source"] == "exact-source-package"
+    assert records[0]["source_package"] == "gcc-14"
+    assert records[0]["sha256"] == hashlib.sha256(source_copyright.encode()).hexdigest()
+
+
 def test_ubuntu_source_options_use_only_configured_ubuntu_mirrors(tmp_path: Path) -> None:
     source_directory = tmp_path / "apt" / "sources.list.d"
     source_directory.mkdir(parents=True)

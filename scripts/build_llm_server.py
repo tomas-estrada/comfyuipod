@@ -247,44 +247,55 @@ def install_system_library_notices(binary: Path, license_root: Path) -> list[dic
         with tempfile.TemporaryDirectory(prefix="llm-system-notice-") as temporary:
             package_root = Path(temporary)
             package_spec = f"{package_name}:{architecture}={package_version}"
-            subprocess.run(["apt-get", "download", package_spec], cwd=package_root, check=True)
-            archives = sorted(package_root.glob("*.deb"))
-            if len(archives) != 1:
-                raise RuntimeError(
-                    f"apt no devolvió un único archivo para paquete {package_spec}"
+            try:
+                subprocess.run(
+                    ["apt-get", "download", package_spec], cwd=package_root, check=True
                 )
-            archive = archives[0]
-            fields = subprocess.check_output(
-                ["dpkg-deb", "--field", str(archive), "Package", "Version", "Architecture"],
-                text=True,
-            )
-            metadata = {
-                key: value.strip()
-                for line in fields.splitlines()
-                if ":" in line
-                for key, value in [line.split(":", 1)]
-            }
-            if (
-                metadata.get("Package") != package_name
-                or metadata.get("Version") != package_version
-                or metadata.get("Architecture") not in {architecture, "all"}
-            ):
-                raise RuntimeError(
-                    f"paquete descargado no coincide con el instalado: {package_spec}"
-                )
-            extracted = package_root / "extracted"
-            subprocess.run(
-                ["dpkg-deb", "--extract", str(archive), str(extracted)], check=True
-            )
-            source = extracted / "usr" / "share" / "doc" / package_name / "copyright"
-            notice_source = "exact-package-archive"
-            source_package = ""
-            source_version = ""
-            if not source.is_file():
+            except subprocess.CalledProcessError:
+                # Ubuntu may have superseded the exact binary archive while its
+                # source package metadata still resolves the installed version.
                 source, source_package, source_version = source_package_copyright(
                     package, package_version, package_root
                 )
                 notice_source = "exact-source-package"
+            else:
+                archives = sorted(package_root.glob("*.deb"))
+                if len(archives) != 1:
+                    raise RuntimeError(
+                        f"apt no devolvió un único archivo para paquete {package_spec}"
+                    )
+                archive = archives[0]
+                fields = subprocess.check_output(
+                    ["dpkg-deb", "--field", str(archive), "Package", "Version", "Architecture"],
+                    text=True,
+                )
+                metadata = {
+                    key: value.strip()
+                    for line in fields.splitlines()
+                    if ":" in line
+                    for key, value in [line.split(":", 1)]
+                }
+                if (
+                    metadata.get("Package") != package_name
+                    or metadata.get("Version") != package_version
+                    or metadata.get("Architecture") not in {architecture, "all"}
+                ):
+                    raise RuntimeError(
+                        f"paquete descargado no coincide con el instalado: {package_spec}"
+                    )
+                extracted = package_root / "extracted"
+                subprocess.run(
+                    ["dpkg-deb", "--extract", str(archive), str(extracted)], check=True
+                )
+                source = extracted / "usr" / "share" / "doc" / package_name / "copyright"
+                notice_source = "exact-package-archive"
+                source_package = ""
+                source_version = ""
+                if not source.is_file():
+                    source, source_package, source_version = source_package_copyright(
+                        package, package_version, package_root
+                    )
+                    notice_source = "exact-source-package"
             destination = notice_dir / f"{re.sub(r'[^A-Za-z0-9_.+-]', '_', package)}.copyright"
             shutil.copy2(source, destination)
             return destination, notice_source, source_package, source_version
