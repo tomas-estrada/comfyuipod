@@ -22,6 +22,7 @@ from comfy_studio.raster_layers import (
     integrity_unknown_layer_ids,
     parse_manifest,
     pin_asset_sources,
+    rgba_roundtrip,
     stale_layer_ids,
 )
 from comfy_studio.video_matting import (
@@ -57,6 +58,14 @@ class RasterLayerSetRequest(BaseModel):
 
 class RasterLayerEditRequest(BaseModel):
     asset_id: str
+
+
+class RgbaRoundtripRequest(BaseModel):
+    """Descomposición RGBA exacta: la semántica debe declararse explícitamente."""
+
+    asset_id: str
+    semantics: str
+    source_sha256: str | None = None
 
 
 class ChromaKeyRequest(BaseModel):
@@ -396,6 +405,81 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RasterLayerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post(
+        "/studio/api/projects/{project_id}/raster-layers/rgba-roundtrip", status_code=201
+    )
+    async def rgba_roundtrip_project_asset(
+        project_id: str, body: RgbaRoundtripRequest, request: Request
+    ) -> dict[str, Any]:
+        """Descomposición RGBA exacta y verificada de un PNG del proyecto (C28).
+
+        La semántica debe declararse explícitamente (alpha recto de 8 bits, no
+        premultiplicado). Entrega dos planos PNG —color con alpha opaco y alpha
+        aislado— y prueba la exactitud decodificando los planos entregados y
+        reconstruyendo el RGBA: cualquier divergencia byte a byte con la fuente
+        es un error, nunca una afirmación relajada. No edita el manifiesto de
+        capas: es una conversión sin estado con provenance (sha256 de fuente).
+        """
+        store = _store(request)
+        _require_project(store, project_id)
+        config = request.app.state.config
+        try:
+            color_png, alpha_png, evidence = await run_in_threadpool(
+                rgba_roundtrip,
+                store,
+                project_id,
+                body.asset_id,
+                semantics=body.semantics,
+                source_sha256=body.source_sha256,
+            )
+            roundtrip_meta = {
+                "artifact_kind": "rgba_roundtrip_plane",
+                "exact_rgba_roundtrip": True,
+                "semantics": evidence["semantics"]["declared"],
+                "source_asset_id": evidence["source"]["asset_id"],
+                "source_sha256": evidence["source"]["sha256"],
+                "source_rgba_sha256": evidence["source_rgba_sha256"],
+                "renderer": evidence["renderer"],
+                "matting": evidence["matting"],
+            }
+            color_asset = store.save_upload(
+                project_id,
+                filename="rgba-roundtrip-color-plane.png",
+                content_type="image/png",
+                data=color_png,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={**roundtrip_meta, "plane": "color"},
+            )
+            alpha_asset = store.save_upload(
+                project_id,
+                filename="rgba-roundtrip-alpha-plane.png",
+                content_type="image/png",
+                data=alpha_png,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={**roundtrip_meta, "plane": "alpha"},
+            )
+        except RasterLayerStaleError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RasterLayerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MediaValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        evidence = {
+            **evidence,
+            "color_plane": color_asset,
+            "alpha_plane": alpha_asset,
+        }
+        return {
+            "color_plane": color_asset,
+            "alpha_plane": alpha_asset,
+            "evidence": evidence,
+            "matting": evidence["matting"],
+            "claim": "descomposición RGBA exacta verificada sobre los planos "
+            "PNG entregados; no matting semántico",
+        }
 
     @app.post(
         "/studio/api/projects/{project_id}/raster-layers/chroma-key", status_code=201
