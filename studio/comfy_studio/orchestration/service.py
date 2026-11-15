@@ -207,10 +207,16 @@ class ProductionService:
             if project_id and brief_project_id and brief_project_id != project_id:
                 raise ValueError("El brief pertenece a otro proyecto")
             project_id = project_id or brief_project_id
-            production_id = f"prod_{compilation.idempotency_key[:32]}"
+            base_production_id = f"prod_{compilation.idempotency_key[:32]}"
+            production_id = base_production_id
+            retry = 0
             existing = self.checkpointer.load(production_id)
-            if existing is not None:
-                return _plan_response(existing)
+            while existing is not None:
+                if existing.phase != "cancelled":
+                    return _plan_response(existing)
+                retry += 1
+                production_id = f"{base_production_id}_r{retry}"
+                existing = self.checkpointer.load(production_id)
             state = ProductionState(
                 idea=str(brief.get("prompt") or idea),
                 id=production_id,

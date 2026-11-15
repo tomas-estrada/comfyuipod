@@ -86,6 +86,82 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _source_lock_blockers(
+    engine_id: str, lock: dict[str, Any], *, repo_root: Path
+) -> list[str]:
+    """Validate pinned code at its Git revision and integration/test hashes at HEAD."""
+    blockers: list[str] = []
+    pinned_sources = lock.get("pinned_source_sha256") or {}
+    revision = str(lock.get("source_revision") or "")
+    if pinned_sources and not COMMIT_SHA_RE.fullmatch(revision):
+        blockers.append(f"{engine_id}: source lock requiere source_revision SHA inmutable")
+    if not isinstance(pinned_sources, dict):
+        blockers.append(f"{engine_id}: pinned_source_sha256 debe ser un objeto")
+        pinned_sources = {}
+    for source_name, expected_hash in pinned_sources.items():
+        relative = Path(str(source_name))
+        if relative.is_absolute() or ".." in relative.parts:
+            blockers.append(f"{engine_id}: source lock contiene ruta inválida {source_name}")
+            continue
+        if not re.fullmatch(r"[0-9a-f]{64}", str(expected_hash), re.IGNORECASE):
+            blockers.append(
+                f"{engine_id}: source lock contiene SHA-256 inválido para {source_name}"
+            )
+            continue
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "show", f"{revision}:{relative.as_posix()}"],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            blockers.append(f"{engine_id}: {source_name} no existe en source_revision {revision}")
+        elif hashlib.sha256(result.stdout).hexdigest().casefold() != str(expected_hash).casefold():
+            blockers.append(
+                f"{engine_id}: SHA-256 de {source_name} no coincide con source_revision {revision}"
+            )
+
+    integration_sources = lock.get("integration_source_sha256") or {}
+    if not isinstance(integration_sources, dict):
+        blockers.append(f"{engine_id}: integration_source_sha256 debe ser un objeto")
+        integration_sources = {}
+    for source_name, expected_hash in integration_sources.items():
+        relative = Path(str(source_name))
+        if relative.is_absolute() or ".." in relative.parts:
+            blockers.append(f"{engine_id}: integration source contiene ruta inválida {source_name}")
+            continue
+        try:
+            actual_hash = _sha256_file(repo_root / relative)
+        except OSError:
+            blockers.append(f"{engine_id}: integration source {source_name} no es legible")
+            continue
+        if actual_hash.casefold() != str(expected_hash).casefold():
+            blockers.append(
+                f"{engine_id}: SHA-256 no coincide para integration source {source_name}"
+            )
+
+    verification_test = lock.get("verification_test")
+    if verification_test is not None:
+        if not isinstance(verification_test, dict):
+            blockers.append(f"{engine_id}: verification_test debe ser un objeto")
+        else:
+            test_path = str(verification_test.get("path") or "")
+            expected_hash = str(verification_test.get("sha256") or "")
+            relative = Path(test_path)
+            if relative.is_absolute() or ".." in relative.parts or not test_path:
+                blockers.append(f"{engine_id}: verification_test contiene ruta inválida")
+            elif not re.fullmatch(r"[0-9a-f]{64}", expected_hash, re.IGNORECASE):
+                blockers.append(f"{engine_id}: verification_test contiene SHA-256 inválido")
+            else:
+                try:
+                    actual_hash = _sha256_file(repo_root / relative)
+                except OSError:
+                    blockers.append(f"{engine_id}: verification_test {test_path} no es legible")
+                else:
+                    if actual_hash.casefold() != expected_hash.casefold():
+                        blockers.append(f"{engine_id}: SHA-256 no coincide para verification_test")
+    return blockers
+
+
 def _implementation_evidence_blocker(
     engine_id: str,
     label: str,
@@ -260,6 +336,17 @@ def validate(
                         blockers.append(
                             f"{eid}: SHA-256 no coincide para dependency lock {lock_name}"
                         )
+                    elif resolved_lock.suffix.casefold() == ".json":
+                        try:
+                            lock_data = load_json(resolved_lock)
+                        except (OSError, ValueError):
+                            lock_data = None
+                        if isinstance(lock_data, dict):
+                            blockers.extend(
+                                _source_lock_blockers(
+                                    eid, lock_data, repo_root=evidence_root
+                                )
+                            )
 
             if eng.get("redistribution_decision") not in {"allowed", "conditional", "blocked"}:
                 blockers.append(f"{eid}: A07 requiere decisión explícita de redistribución")

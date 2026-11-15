@@ -36,6 +36,23 @@ def test_real_manifest_is_coherent() -> None:
     assert len(blockers) > 0
 
 
+def test_source_lock_hashes_are_rederived_from_the_pinned_revision() -> None:
+    mod = _load_module()
+    blockers = mod._source_lock_blockers(
+        "mission-compiler",
+        {
+            "source_revision": "2290328d991127c8816220a0f2bdaf209dab8754",
+            "pinned_source_sha256": {
+                "studio/comfy_studio/mission_compiler.py": "0" * 64,
+            },
+        },
+        repo_root=REPO_ROOT,
+    )
+
+    assert len(blockers) == 1
+    assert "no coincide con source_revision" in blockers[0]
+
+
 def test_scene_optimizer_has_complete_a07_manifest_evidence() -> None:
     """The integrated CPU scene optimizer must satisfy its declared A07 evidence."""
     mod = _load_module()

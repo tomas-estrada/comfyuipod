@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -165,6 +166,26 @@ def test_production_service_uses_compiled_dag_and_deduplicates_retries(tmp_path)
     assert first_plan["metadata"]["mission_compilation"]["constraints"][0]["key"] == "music"
 
 
+def test_same_brief_can_be_replanned_after_preapproval_cancellation(tmp_path) -> None:
+    class PlannerMustNotRun:
+        def plan(self, *_args, **_kwargs):
+            raise AssertionError("brief compilation must not call an LLM planner")
+
+    service = ProductionService(
+        checkpointer=ProductionCheckpointer(db_path=tmp_path / "missions.sqlite3"),
+        collaborators=Collaborators(planner=PlannerMustNotRun()),
+    )
+    brief = _brief()
+
+    first = service.plan_production(brief["prompt"], brief=brief)
+    service.cancel_production(first["production_id"])
+    second = service.plan_production(brief["prompt"], brief=brief)
+
+    assert second["production_id"] != first["production_id"]
+    assert second["phase"] == "awaiting_approval"
+    assert service.approve_plan(second["production_id"])["phase"] == "simulated"
+
+
 def test_mission_compiler_engine_evidence_matches_locked_sources() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     manifest = json.loads(
@@ -179,5 +200,17 @@ def test_mission_compiler_engine_evidence_matches_locked_sources() -> None:
     assert hashlib.sha256(lock_path.read_bytes()).hexdigest() == expected_lock_hash
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     assert lock["source_revision"] == engine["code_revision"]
-    for source_name, expected_hash in lock["internal_source_sha256"].items():
+    for source_name, expected_hash in lock["pinned_source_sha256"].items():
+        pinned_bytes = subprocess.run(
+            ["git", "-C", str(repo_root), "show", f"{engine['code_revision']}:{source_name}"],
+            check=True,
+            capture_output=True,
+        ).stdout
+        assert hashlib.sha256(pinned_bytes).hexdigest() == expected_hash
+    for source_name, expected_hash in lock["integration_source_sha256"].items():
         assert hashlib.sha256((repo_root / source_name).read_bytes()).hexdigest() == expected_hash
+    test_evidence = lock["verification_test"]
+    assert test_evidence["path"] == engine["evidence_test"]
+    assert hashlib.sha256((repo_root / test_evidence["path"]).read_bytes()).hexdigest() == (
+        test_evidence["sha256"]
+    )

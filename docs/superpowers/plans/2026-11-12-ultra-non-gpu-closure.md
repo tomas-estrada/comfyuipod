@@ -37,7 +37,7 @@
 - [ ] Record current main SHA and required workflow/image digest from authoritative GitHub state.
 - [ ] Recompute A07 blockers and per-capability levels from the current files; label stale snapshot claims as historical.
 - [ ] Map every still-open acceptance item A00–A29, the 33 active capabilities, and D01–D05 to its current evidence and next action.
-- [ ] Confirm all 58 selected IDs are present exactly once and remain in scope.
+- [ ] Confirm all 57 selected IDs are present exactly once and remain in scope.
 
 ### Task 2: Close the core/platform A07 engine partition
 
