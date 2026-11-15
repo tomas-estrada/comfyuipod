@@ -25,4 +25,5 @@ docs/*
 docs/licenses/*
 !docs/licenses/blender.md
 !docs/licenses/mitsuba.md
+!docs/licenses/remotion.md
 !docs/licenses/llama-cpp-notices.md
