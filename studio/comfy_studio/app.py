@@ -20,6 +20,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from comfy_studio.agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
 from comfy_studio.comfyui_client import ComfyUIClient
@@ -143,6 +144,14 @@ def create_app(
 
         async def _run_job_recovery() -> None:
             try:
+                resumed_productions = await run_in_threadpool(
+                    _app.state.production_service.resume_interrupted_approvals
+                )
+                if resumed_productions:
+                    logger.info(
+                        "Recuperación de producciones aprobadas tras reinicio: %d",
+                        len(resumed_productions),
+                    )
                 report = await recover_interrupted_jobs(
                     store=store,
                     comfyui_client=_app.state.comfyui_client,

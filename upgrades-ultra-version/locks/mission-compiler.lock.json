@@ -32,9 +32,9 @@
   },
   "integration_source_sha256": {
     "studio/comfy_studio/creative/brief.py": "56b7d57e1b3209642308ff17d34630a80ee74ce96208d9d509f62120e8bf1804",
-    "studio/comfy_studio/orchestration/service.py": "edc276cb211a166120dd026f601e2be807fe160ba5b32ec798027711c56d063a",
+    "studio/comfy_studio/orchestration/service.py": "4b22656a8623f3af6970a01d0844b67d199afa868fa670b9bd69f8da2a7f60a4",
     "studio/comfy_studio/orchestration/state.py": "8a18431f342f4059e2776859ab4de54ca8aa46a41a8b0de09a121b1976bd112d",
-    "studio/comfy_studio/routers/productions.py": "641712f592d3d3fa75a57fedae2ad889d64a4855bd040e44b833a5f8fd765be9",
+    "studio/comfy_studio/routers/productions.py": "c2e5cdb4f473faea56771802e6a3de8a97b4a1facf190fcbc5259635c6af5d1d",
     "studio/comfy_studio/webutil.py": "5b5adab0aba236dfdbdc816a0d5e4cafbbdcfcffd960766646adc8b8526c3d3f",
     "studio/pyproject.toml": "52cdcf22677d08b001f8e4bb3a8eb29ceccd3712a02f5aeac6180f1373ed40d0"
   },

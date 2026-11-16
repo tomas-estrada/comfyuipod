@@ -104,9 +104,15 @@ de una persona; el agente nunca puede aprobar.
   `studio/comfy_studio/routers/productions.py:3-8` ·
   `studio/comfy_studio/mcp_server.py:155`
 - Confianza: **confirmado**
-- Hueco: `approve` es sincrónico a propósito; el límite de duración lo fija
-  `proxy_read_timeout 3600s`. Una producción de más de una hora daría 504. Está
-  documentado como alternativa, no implementado.
+- Estado actual: `POST /studio/api/productions/{id}/approve` reclama el
+  checkpoint con CAS, persiste `executing` y responde `202` con `job_id`,
+  `status_url` y `cancel_url`. El grafo corre en un worker acotado (una ejecución
+  concurrente, hasta ocho aprobaciones aceptadas); `/status` informa el estado
+  terminal después de guardar los artefactos. Las aprobaciones interrumpidas se
+  recuperan al iniciar Studio. El agente MCP sigue sin poder aprobar.
+- Límite: el worker vive en el proceso único de Studio; no es una cola
+  distribuida ni admite varios workers web. El estado y el reinicio se coordinan
+  mediante el checkpointer SQLite y la política de worker único del servidor.
 
 ## R-09 — Recuperación acotada, nunca bucles infinitos
 

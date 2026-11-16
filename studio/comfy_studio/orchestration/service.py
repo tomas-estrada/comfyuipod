@@ -10,8 +10,10 @@ Expone cuatro operaciones (los tools del agente de la fase 17):
   - `plan_production(idea, cost_cap)` → planifica (barato) y deja la producción en
     AWAITING_APPROVAL; devuelve el plan para que el humano lo revise.
   - `get_plan(production_id)` → el plan actual (estado serializado).
-  - `approve_plan(production_id)` → el humano aprueba; corre el lazo caro
-    (ejecución+evaluación+replan+ensamblaje) y devuelve el resultado.
+  - `approve_plan(production_id)` → el humano aprueba; reclama el snapshot con CAS
+    (una sola ejecución), ENCOLA el lazo caro en el worker de fondo y devuelve el
+    cuerpo 202 de inmediato (`status_url`/`cancel_url`); el estado terminal y sus
+    artefactos se consultan por `production_status` (o `wait_for_terminal`).
   - `production_status(production_id)` → fase, progreso de shots, reel final.
 
 Criterio: servicio PURO (tipado, sin FastAPI dentro). La ruta HTTP y los tools MCP
@@ -23,7 +25,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from typing import Any
 
@@ -52,6 +56,10 @@ class ProductionPlanNotEditableError(RuntimeError):
 
 class ProductionAlreadyTerminalError(RuntimeError):
     """La producción ya terminó (done/simulated/failed/cancelled/halted)."""
+
+
+class ProductionQueueFullError(RuntimeError):
+    """La cola de ejecuciones en segundo plano alcanzó su límite."""
 
 
 #: fases terminales: no admiten edición de plan ni cancelación.
@@ -104,8 +112,7 @@ def _apply_mission_compilation(
         prompt = task.description
         if constraints:
             rendered_constraints = "; ".join(
-                f"{item['key']}={_mission_constraint_json(item['value'])}"
-                for item in constraints
+                f"{item['key']}={_mission_constraint_json(item['value'])}" for item in constraints
             )
             prompt = f"{prompt}\nRestricciones explícitas: {rendered_constraints}"
         shot = Shot(
@@ -172,8 +179,12 @@ class ProductionService:
         self._fully_wired = all(
             getattr(self.collaborators, name) is not None
             for name in (
-                "planner", "runner", "evaluator", "reselect_template",
-                "replan_shot", "assembler",
+                "planner",
+                "runner",
+                "evaluator",
+                "reselect_template",
+                "replan_shot",
+                "assembler",
             )
         )
         # Proyecto de la galería donde se registran las salidas (None = sin
@@ -191,6 +202,12 @@ class ProductionService:
         self._cancel_requested: set[str] = set()
         self._cancel_events: dict[str, Event] = {}
         self._runtime_id = uuid.uuid4().hex
+        self._approval_lock = threading.Lock()
+        self._approval_jobs: set[str] = set()
+        self._approval_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="studio-production"
+        )
+
     def _publish(self, event_type: str, data: dict[str, Any]) -> None:
         """Publica un evento de producción en el bus SSE (thread-safe si hay loop)."""
         if self.broker is not None:
@@ -380,9 +397,7 @@ class ProductionService:
             for edit in shots:
                 shot = by_id.get(str(edit.get("id") or ""))
                 if shot is None:
-                    raise LookupError(
-                        f"shot {edit.get('id')!r} no existe en la producción"
-                    )
+                    raise LookupError(f"shot {edit.get('id')!r} no existe en la producción")
                 if edit.get("remove"):
                     for seq in state.sequences:
                         if shot in seq.shots:
@@ -450,7 +465,61 @@ class ProductionService:
         return self._status_dict(state)
 
     def approve_plan(self, production_id: str) -> dict[str, Any]:
-        """El humano aprueba; corre el lazo caro y devuelve el resultado."""
+        """Approve and execute inline for internal callers and compatibility."""
+        return self._approve_plan(production_id, background=False)
+
+    def approve_plan_background(self, production_id: str) -> dict[str, Any]:
+        """Persist approval, then enqueue its graph in the bounded process worker."""
+        state = self._load(production_id)
+        if state.phase in _TERMINAL_PHASES or state.phase == "executing":
+            with self._approval_lock:
+                already_queued = production_id in self._approval_jobs
+            if already_queued:
+                return self._background_ack(production_id, already_in_progress=True)
+            if state.phase in _TERMINAL_PHASES:
+                return self._approve_plan(production_id, background=False)
+        with self._approval_lock:
+            already_queued = production_id in self._approval_jobs
+            queue_full = len(self._approval_jobs) >= 8
+            if not already_queued and not queue_full:
+                self._approval_jobs.add(production_id)
+        if already_queued:
+            return self._background_ack(production_id, already_in_progress=True)
+        if queue_full:
+            raise ProductionQueueFullError("la cola de producciones está llena")
+        try:
+            result = self._approve_plan(production_id, background=True)
+        except BaseException:
+            with self._approval_lock:
+                self._approval_jobs.discard(production_id)
+            raise
+        if result.get("already_in_progress"):
+            with self._approval_lock:
+                if production_id not in self._cancel_events:
+                    self._approval_jobs.discard(production_id)
+            return self._background_ack(production_id, already_in_progress=True)
+        return result
+
+    def resume_interrupted_approvals(self, *, limit: int = 8) -> list[str]:
+        """Requeue durable approvals left executing by a previous Studio process."""
+        resumed: list[str] = []
+        for production_id in self.checkpointer.list_ids(limit=10000):
+            if len(resumed) >= limit:
+                break
+            state = self.checkpointer.load(production_id)
+            if state is None or state.phase != "executing":
+                continue
+            try:
+                self.approve_plan_background(production_id)
+            except ProductionQueueFullError:
+                break
+            except (ProductionNotFoundError, ProductionAlreadyTerminalError):
+                continue
+            resumed.append(production_id)
+        return resumed
+
+    def _approve_plan(self, production_id: str, *, background: bool) -> dict[str, Any]:
+        """Claim the durable state and execute inline or dispatch the worker."""
         state = self._load(production_id)
         expected_state_json = json.dumps(state.to_dict(), ensure_ascii=False)
         if state.phase == "executing":
@@ -501,13 +570,11 @@ class ProductionService:
                 raise ProductionAlreadyTerminalError(
                     f"la producción ya está en fase {latest.phase}"
                 )
-            return self._run_approved_graph(state, production_id)
+            return self._dispatch_approved_graph(state, production_id, background)
         # una producción cancelada por el humano no se puede aprobar (fail-closed);
         # el resto de fases terminales (done/failed) mantienen el approve idempotente.
         if state.phase == "cancelled":
-            raise ProductionNotApprovedError(
-                "la producción fue cancelada; no se puede aprobar"
-            )
+            raise ProductionNotApprovedError("la producción fue cancelada; no se puede aprobar")
         if state.phase in _TERMINAL_PHASES:
             if state.phase in ("done", "simulated"):
                 registered = state.metadata.get("output_asset_ids") or []
@@ -524,9 +591,7 @@ class ProductionService:
                     "output_asset_ids": registered,
                     "status": self._status_dict(state),
                 }
-            raise ProductionAlreadyTerminalError(
-                f"la producción ya es terminal ({state.phase})"
-            )
+            raise ProductionAlreadyTerminalError(f"la producción ya es terminal ({state.phase})")
         binding = state.metadata.get("recipe_binding")
         unresolved_layers = [
             layer
@@ -557,9 +622,7 @@ class ProductionService:
             if gate.state is StoryboardState.AWAITING_APPROVAL:
                 gate.approve()
             else:
-                raise ProductionNotApprovedError(
-                    f"storyboard no aprobable desde {gate.state}"
-                )
+                raise ProductionNotApprovedError(f"storyboard no aprobable desde {gate.state}")
         self._gates[production_id] = gate
         state.metadata["storyboard_gate"] = gate.to_dict()
         state.storyboard_approved = True
@@ -591,30 +654,69 @@ class ProductionService:
                     "status": self._status_dict(latest),
                 }
             if latest.phase == "cancelled":
-                raise ProductionNotApprovedError(
-                    "la producción fue cancelada; no se puede aprobar"
-                )
+                raise ProductionNotApprovedError("la producción fue cancelada; no se puede aprobar")
             if latest.phase == "awaiting_approval":
                 raise ProductionNotApprovedError(
                     "el plan cambió durante la aprobación; vuelve a intentarlo"
                 )
-            raise ProductionAlreadyTerminalError(
-                f"la producción ya está en fase {latest.phase}"
-            )
+            raise ProductionAlreadyTerminalError(f"la producción ya está en fase {latest.phase}")
 
-        return self._run_approved_graph(state, production_id)
+        return self._dispatch_approved_graph(state, production_id, background)
 
-    def _run_approved_graph(
-        self, state: ProductionState, production_id: str
+    def _dispatch_approved_graph(
+        self, state: ProductionState, production_id: str, background: bool
     ) -> dict[str, Any]:
+        if not background:
+            return self._run_approved_graph(state, production_id)
+        try:
+            future = self._approval_executor.submit(self._run_approved_graph, state, production_id)
+        except BaseException:
+            with self._approval_lock:
+                self._approval_jobs.discard(production_id)
+            raise
+
+        def finish(future: Any) -> None:
+            try:
+                future.result()
+            except BaseException as exc:
+                failed = self.checkpointer.load(production_id)
+                if failed is not None and failed.phase == "executing":
+                    failed.phase = "failed"
+                    failed.metadata.pop("execution_runtime_id", None)
+                    failed.metadata["terminal_reason"] = type(exc).__name__
+                    failed.record("production_failed", error=type(exc).__name__)
+                    self.checkpointer.save(failed)
+                    self._publish("production_finished", self._status_dict(failed))
+            finally:
+                with self._approval_lock:
+                    self._approval_jobs.discard(production_id)
+
+        future.add_done_callback(finish)
+        return self._background_ack(production_id, already_in_progress=False)
+
+    def _background_ack(self, production_id: str, *, already_in_progress: bool) -> dict[str, Any]:
+        status = self.production_status(production_id)
+        if already_in_progress and status["phase"] == "awaiting_approval":
+            # A competing request can observe the in-memory queue reservation
+            # just before the winner's durable CAS becomes visible.
+            status["phase"] = "executing"
+            status["complete"] = False
+        return {
+            "production_id": production_id,
+            "job_id": production_id,
+            "phase": status["phase"],
+            "already_in_progress": already_in_progress,
+            "status_url": f"/studio/api/productions/{production_id}/status",
+            "cancel_url": f"/studio/api/productions/{production_id}/cancel",
+            "status": status,
+        }
+
+    def _run_approved_graph(self, state: ProductionState, production_id: str) -> dict[str, Any]:
         """Run or resume the checkpointed graph and persist its terminal result."""
         # correr el lazo caro (ejecución + evaluación + replan + ensamblaje).
         cancel_event = Event()
         self._cancel_events[production_id] = cancel_event
-        if (
-            production_id in self._cancel_requested
-            or state.metadata.get("cancel_requested")
-        ):
+        if production_id in self._cancel_requested or state.metadata.get("cancel_requested"):
             cancel_event.set()
         graph = build_production_graph(
             checkpointer=self.checkpointer,
@@ -623,9 +725,7 @@ class ProductionService:
         )
         if self.broker is not None:
             # progreso en vivo por SSE: un evento por paso persistido del grafo.
-            graph.on_step = lambda st: self._publish(
-                "production_step", self._status_dict(st)
-            )
+            graph.on_step = lambda st: self._publish("production_step", self._status_dict(st))
         # cancelación cooperativa en proceso: `cancel_production` durante la
         # ejecución sólo persiste el flag; el hook es lo que detiene el lazo.
         graph.should_cancel = cancel_event.is_set
@@ -680,7 +780,27 @@ class ProductionService:
 
     def production_status(self, production_id: str) -> dict[str, Any]:
         state = self._load(production_id)
-        return self._status_dict(state)
+        # The graph can persist its terminal node before gallery registration
+        # and final artifact metadata are committed. Keep polling clients in
+        # the active state until that finalization worker has exited.
+        with self._approval_lock:
+            finalizing = production_id in self._approval_jobs
+        if (
+            not finalizing
+            and state.phase == "done"
+            and state.metadata.get("project_id")
+            and self.store is not None
+            and "output_asset_ids" not in state.metadata
+        ):
+            # Recover the idempotent gallery write if the process stopped after
+            # the graph checkpointed `done` but before finalization was saved.
+            self._register_outputs_in_gallery(state)
+            self.checkpointer.save(state)
+        status = self._status_dict(state)
+        if finalizing and state.phase in _TERMINAL_PHASES:
+            status["phase"] = "executing"
+            status["complete"] = False
+        return status
 
     # -- helpers -------------------------------------------------------------
 
@@ -695,9 +815,16 @@ class ProductionService:
         """
         if state.metadata.get("simulated"):
             state.metadata["output_asset_ids"] = []
+            state.record("gallery_registration_skipped", reason="simulated")
             return []
         project_id = state.metadata.get("project_id")
         if not project_id or self.store is None:
+            state.record(
+                "gallery_registration_skipped",
+                reason="missing_project_or_store",
+                has_project_id=bool(project_id),
+                has_store=self.store is not None,
+            )
             return []
         from pathlib import Path
 
@@ -718,9 +845,7 @@ class ProductionService:
                 continue
             path = Path(shot.output_path)
             if not path.is_file():
-                state.record(
-                    "gallery_skip", shot=shot.id, reason="output inexistente"
-                )
+                state.record("gallery_skip", shot=shot.id, reason="output inexistente")
                 continue
             try:
                 asset = self.store.save_upload(
@@ -741,9 +866,7 @@ class ProductionService:
                     },
                 )
             except Exception as exc:  # noqa: BLE001
-                state.record(
-                    "gallery_error", shot=shot.id, error=str(exc)[:300]
-                )
+                state.record("gallery_error", shot=shot.id, error=str(exc)[:300])
                 continue
             registered.append(str(asset["id"]))
         # reel final
@@ -821,10 +944,7 @@ class ProductionService:
         """Migrate old `done` checkpoints before exposing a path or status."""
         if state.phase != "done" or state.metadata.get("artifact_verified"):
             return
-        if (
-            state.metadata.get("execution_mode") == "real"
-            and not state.metadata.get("simulated")
-        ):
+        if state.metadata.get("execution_mode") == "real" and not state.metadata.get("simulated"):
             self._finalize_artifact_status(state)
         else:
             state.phase = "simulated"
@@ -867,9 +987,7 @@ class ProductionService:
             # sobrevive a los escalones de replan y a los reinicios del pod.
             # Límite inferior si solo reportan algunos runners.
             "cost_spent_usd": (
-                round(sum(s.cost_spent_usd for s in shots), 6)
-                if spend_reported
-                else None
+                round(sum(s.cost_spent_usd for s in shots), 6) if spend_reported else None
             ),
             "spend_reported": spend_reported,
             "terminal_reason": _terminal_reason(state),

@@ -82,6 +82,9 @@ Sobre `routers/productions.py` (mismo patrón de registro que el resto):
   `production_cancel_requested`, `production_finished`. El progreso del lazo de
   producción se expone por SSE (evento por paso persistido) y se refuerza con polling
   de `GET /studio/api/productions/{id}/status` (checkpoint por paso).
+- La aprobación humana responde `202 Accepted` con `job_id`, `status_url` y
+  `cancel_url`; consulta `/status` hasta estado terminal. Si se repite la aprobación
+  mientras el trabajo está activo, devuelve el mismo handle sin ejecutar otro grafo.
 
 Lo que NO se inventa: no hay descarga de modelos bajo demanda en este flujo (eso es
 responsabilidad del otro worker con `scripts/download-models.sh`); no hay acceso del
