@@ -555,6 +555,15 @@ def execute_next_shot(
                 return state
             layer.output_path = result.get("output_path")
             last_output = layer.output_path
+            if result.get("simulated"):
+                state.metadata["simulated"] = True
+                state.metadata["execution_mode"] = "simulated"
+                state.record(
+                    "simulation_boundary",
+                    shot=shot.id,
+                    layer=layer.kind,
+                    engine=layer.engine,
+                )
             state.metadata.pop("_active_layer", None)
             if checkpoint is not None:
                 checkpoint(state)

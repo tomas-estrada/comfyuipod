@@ -104,9 +104,16 @@ def _commercial_claims(text: str) -> list[tuple[str, str]]:
 
 
 def _without_commercial_claims(text: str) -> str:
+    cleaned = text or ""
+    boundaries = ".!?;\n"
     for pattern in _CLAIM_PATTERNS.values():
-        text = pattern.sub(" ", text or "")
-    return text
+        for match in reversed(list(pattern.finditer(cleaned))):
+            start = max(cleaned.rfind(mark, 0, match.start()) for mark in boundaries) + 1
+            ends = [cleaned.find(mark, match.end()) for mark in boundaries]
+            ends = [position for position in ends if position >= 0]
+            end = min(ends) + 1 if ends else len(cleaned)
+            cleaned = f"{cleaned[:start]} {cleaned[end:]}"
+    return cleaned
 
 
 def _assess_commercial_claims(

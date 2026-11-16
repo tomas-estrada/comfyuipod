@@ -1,0 +1,25 @@
+{
+  "text": "En Sabaneta, Itagüí y Envigado: 12/10/2026, cifra 125.000.",
+  "spoken_text": "En Sabaneta, Itagüí y Envigado: doce de octubre de dos mil veintiséis, cifra ciento veinticinco mil.",
+  "locale": "es-CO",
+  "lexicon_matches": [
+    {"name": "Sabaneta", "phonetic": "sa-ba-NE-ta", "source": "authored_lexicon"},
+    {"name": "Itagüí", "phonetic": "i-ta-GU-i", "source": "authored_lexicon"},
+    {"name": "Envigado", "phonetic": "en-vi-GA-do", "source": "authored_lexicon"}
+  ],
+  "pause_markers": [
+    {"marker": ",", "type": "comma", "token_index": 1},
+    {"marker": ":", "type": "colon", "token_index": 4},
+    {"marker": ",", "type": "comma", "token_index": 5},
+    {"marker": ".", "type": "full_stop", "token_index": 7}
+  ],
+  "conversions": [
+    {"raw": "12/10/2026", "spoken": "doce de octubre de dos mil veintiséis", "kind": "date"},
+    {"raw": "125.000", "spoken": "ciento veinticinco mil", "kind": "number"}
+  ],
+  "provenance": {
+    "phonetics_verified_by_audio": false,
+    "accent_claimed": false,
+    "note": "lexicon fonético autoral NO verificado por audio; no se afirma acento paisa ni calidad de modelo (A21); sin ejecución ASR/TTS"
+  }
+}

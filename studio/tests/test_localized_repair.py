@@ -10,6 +10,8 @@ import pytest
 
 from comfy_studio.edl.localized_repair import (
     LocalizedRepairError,
+    _frame_hashes,
+    _ordered_hash_digest,
     build_localized_repair_video,
     localized_repair,
     verify_source_frame_provenance,
@@ -56,7 +58,7 @@ def _make_video(path, seconds, color):
     )
 
 
-def _make_test_pattern_video(path, seconds):
+def _make_test_pattern_video(path, seconds, rate=16):
     subprocess.run(
         [
             FFMPEG,
@@ -66,7 +68,7 @@ def _make_test_pattern_video(path, seconds):
             "-f",
             "lavfi",
             "-i",
-            f"testsrc2=size=320x180:rate=16:duration={seconds}",
+            f"testsrc2=size=320x180:rate={rate}:duration={seconds}",
             "-c:v",
             "libx264",
             "-preset",
@@ -142,6 +144,70 @@ def test_frame_hashes_cover_varying_unchanged_frames(tmp_path):
     assert proof["assembled_frame_count"] == 144
     assert proof["head_expected_sha256"] == proof["head_assembled_sha256"]
     assert proof["tail_expected_sha256"] == proof["tail_assembled_sha256"]
+
+
+def test_c24_ledger_acceptance_15s_moving_source_2s_replacement(tmp_path):
+    """Caso exacto del ledger C24: fuente movil de 15 s, reemplazo exacto de 2 s.
+
+    Afirmaciones: los hashes SHA-256 por fotograma de cabecera y cola coinciden
+    con la secuencia del fuente antes del encode final con perdida; el numero de
+    fotogramas de reemplazo es 2*fps; el total sigue siendo 15*fps; y el reporte
+    declara encode final con perdida sin reclamar identidad de bytes.
+    """
+    fps = 12
+    start_sec, end_sec = 6.0, 8.0
+    src = tmp_path / "ledger_src15.mp4"
+    repl = tmp_path / "ledger_repl2.mp4"
+    out = tmp_path / "ledger_out.mp4"
+    _make_test_pattern_video(src, 15.0, rate=fps)
+    _make_video(repl, 2.0, "blue")
+
+    build = build_localized_repair_video(
+        src,
+        repl,
+        out,
+        edit_start_sec=start_sec,
+        edit_end_sec=end_sec,
+        fps=fps,
+    )
+    proof = build["frame_provenance"]
+
+    # Secuencia SHA-256 por fotograma del fuente completo (15 s * fps).
+    source_hashes = _frame_hashes(src, ffmpeg_bin=FFMPEG, timeout_s=180.0)
+    assert len(source_hashes) == 15 * fps
+
+    head_expected = source_hashes[: 6 * fps]
+    tail_expected = source_hashes[8 * fps :]
+    assert proof["head_frame_count"] == 6 * fps
+    assert proof["tail_frame_count"] == 7 * fps
+    assert proof["replacement_frame_count"] == 2 * fps
+    assert proof["assembled_frame_count"] == 15 * fps
+    assert proof["provenance_ok"] is True
+    assert proof["head_hashes_match"] is True
+    assert proof["tail_hashes_match"] is True
+    # Las secuencias de cabecera y cola provienen del propio fuente.
+    source_head_digest = _ordered_hash_digest(head_expected)
+    source_tail_digest = _ordered_hash_digest(tail_expected)
+    assert proof["head_expected_sha256"] == source_head_digest
+    assert proof["head_assembled_sha256"] == source_head_digest
+    assert proof["tail_expected_sha256"] == source_tail_digest
+    assert proof["tail_assembled_sha256"] == source_tail_digest
+    # El reporte describe el encode final con perdida y no reclama identidad de bytes.
+    assert proof["comparison"] == "sha256_per_frame_pre_final_encode"
+    assert proof["byte_identity_claimed"] is False
+    assert proof["lossy_final_encode"] is True
+    assert build["verification"]["probe_ok"] is True
+    assert build["verification"]["codec_name"] == "h264"
+
+    # El MP4 final conserva 15*fps fotogramas (solo el codec cambia, no el conteo).
+    output_hashes = _frame_hashes(out, ffmpeg_bin=FFMPEG, timeout_s=180.0)
+    assert len(output_hashes) == 15 * fps
+    post = verify_source_frame_provenance(
+        src, out, edit_start_sec=start_sec, edit_end_sec=end_sec
+    )
+    assert post["provenance_ok"] is True
+    assert post["byte_identity_claimed"] is False
+    assert post["lossy_encode"] is True
 
 
 def test_localized_repair_store_flow(tmp_path, store):

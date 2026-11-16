@@ -224,6 +224,8 @@ def test_false_commercial_claims_remain_unverified_and_out_of_plan(
     assert all("no usar como hecho" in item["question"] for item in brief["pending"])
     assert "2025" not in brief["main_message"]
     assert "20.000" not in brief["main_message"]
+    assert "cuesta" not in brief["main_message"]
+    assert "entrada" not in " ".join(brief["keywords"])
     assert "2025" not in " ".join(brief["keywords"])
     assert "20.000" not in " ".join(brief["keywords"])
     assert "2025" not in str(brief["editorial"])

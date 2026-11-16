@@ -511,6 +511,28 @@ def test_assembler_editor_failure_is_typed():
     assert res["error"] == "boom"
 
 
+def test_assembler_editor_failure_without_error_uses_stderr_tail():
+    """Regresión D05: un editor que falla sin `error` tipado pero con cola de
+    stderr debe exponer ese stderr como diagnóstico, no un error vacío."""
+
+    class _StderrTailEditor:
+        name = "bad"
+
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=None,
+                stderr_tail="Remotion executable missing",
+            )
+
+    asm = EngineAssembler(_StderrTailEditor())
+    res = asm.assemble("prod_1", [{"path": "/out/a.mp4"}])
+    assert res["ok"] is False
+    assert "Remotion executable missing" in res["error"]
+
+
 class _TimelineStrictEditor:
     """Editor falso con el MISMO contrato que EditorEngine._parse_timeline.
 

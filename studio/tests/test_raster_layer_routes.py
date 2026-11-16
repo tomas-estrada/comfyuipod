@@ -16,6 +16,83 @@ def _png(pixels: list[tuple[int, int, int, int]]) -> bytes:
     return output.getvalue()
 
 
+def test_rgba_roundtrip_is_exact_for_transparent_partial_and_opaque(
+    client: TestClient,
+) -> None:
+    project_id = client.post(
+        "/studio/api/projects", json={"name": "RGBA roundtrip"}
+    ).json()["id"]
+    pixels = [(123, 45, 67, 0), (200, 30, 10, 128), (5, 6, 7, 255)]
+    upload = client.post(
+        f"/studio/api/projects/{project_id}/uploads",
+        files={"file": ("source.png", _png(pixels), "image/png")},
+    )
+    assert upload.status_code == 201
+    asset_id = upload.json()["id"]
+    url = f"/studio/api/projects/{project_id}/raster-layers/rgba-roundtrip"
+    declared = "unassociated-straight-alpha-8bit"
+
+    missing_semantics = client.post(url, json={"asset_id": asset_id})
+    assert missing_semantics.status_code == 422
+    unsupported_semantics = client.post(
+        url, json={"asset_id": asset_id, "semantics": "premultiplied-alpha-8bit"}
+    )
+    assert unsupported_semantics.status_code == 422
+    wrong_pin = client.post(
+        url,
+        json={
+            "asset_id": asset_id,
+            "semantics": declared,
+            "source_sha256": "0" * 64,
+        },
+    )
+    assert wrong_pin.status_code == 409
+
+    roundtrip = client.post(url, json={"asset_id": asset_id, "semantics": declared})
+    assert roundtrip.status_code == 201, roundtrip.text
+    evidence = roundtrip.json()["evidence"]
+    assert evidence["exact_rgba_roundtrip"] is True
+    assert evidence["semantics"]["alpha_encoding"] == "unassociated (straight) alpha"
+    assert evidence["semantics"]["premultiplied"] is False
+    assert evidence["rgb_under_alpha_zero"] == "preserved"
+    assert evidence["source"]["sha256"] != "0" * 64
+    assert evidence["reconstructed_sha256"] == evidence["source_rgba_sha256"]
+
+    color_response = client.get(evidence["color_plane"]["preview_url"])
+    assert color_response.status_code == 200
+    with Image.open(io.BytesIO(color_response.content)) as color_plane:
+        color_plane.load()
+        assert color_plane.mode == "RGBA"
+        # RGB under alpha=0 survives the decompose step exactly.
+        assert color_plane.getpixel((0, 0)) == (123, 45, 67, 255)
+    alpha_response = client.get(evidence["alpha_plane"]["preview_url"])
+    assert alpha_response.status_code == 200
+    with Image.open(io.BytesIO(alpha_response.content)) as alpha_plane:
+        alpha_plane.load()
+        assert alpha_plane.mode == "L"
+        assert [alpha_plane.getpixel((x, 0)) for x in range(3)] == [0, 128, 255]
+
+    source_path = client.app.state.store.get_asset_path(project_id, asset_id)
+    assert source_path is not None
+    original_bytes = source_path.read_bytes()
+    try:
+        source_path.write_bytes(b"not a png")
+        malformed = client.post(url, json={"asset_id": asset_id, "semantics": declared})
+        assert malformed.status_code == 422
+        assert "ilegible" in malformed.json()["detail"]
+
+        sixteen_bit = io.BytesIO()
+        Image.new("I;16", (1, 1), 700).save(sixteen_bit, format="PNG")
+        source_path.write_bytes(sixteen_bit.getvalue())
+        rejected_depth = client.post(
+            url, json={"asset_id": asset_id, "semantics": declared}
+        )
+        assert rejected_depth.status_code == 422
+        assert "no soportado" in rejected_depth.json()["detail"]
+    finally:
+        source_path.write_bytes(original_bytes)
+
+
 def test_project_raster_layers_persist_and_composite_real_pixels(
     client: TestClient,
 ) -> None:

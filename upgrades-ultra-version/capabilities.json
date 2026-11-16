@@ -600,7 +600,7 @@
         "S34",
         "N25"
       ],
-      "status": "specified_not_implemented_by_this_package",
+      "status": "implemented_pre_gpu; gpu_validation_pending",
       "gpu_evidence": "pending_separate_authorization"
     },
     {

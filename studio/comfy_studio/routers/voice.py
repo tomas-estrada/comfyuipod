@@ -15,6 +15,7 @@ from comfy_studio.voice import (
     VoiceTrack,
     assert_approved_variant,
 )
+from comfy_studio.voice_es_co import LOCALE_ES_CO, normalize_es_co_text
 
 _META_KEY = "ultra_voice_assets_v1"
 
@@ -37,6 +38,10 @@ class VoiceTrackRequest(BaseModel):
 class LexiconValidationRequest(BaseModel):
     sample: list[str] = Field(min_length=1)
     min_coverage: float = Field(default=0.8, ge=0, le=1)
+
+
+class NormalizeEsCoRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=10_000)
 
 
 def _store(request: Request) -> ProjectStore:
@@ -153,6 +158,25 @@ def register_routes(app: FastAPI) -> None:
             }
         except VoiceError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/studio/api/projects/{project_id}/voice/lexicons/{locale}/normalize")
+    async def normalize_es_co_voice_text(
+        project_id: str,
+        locale: str,
+        body: NormalizeEsCoRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        store = _store(request)
+        _require_project(store, project_id)
+        if locale != LOCALE_ES_CO:
+            raise HTTPException(
+                status_code=422,
+                detail=f"locale no soportado para normalización determinista: {locale}",
+            )
+        try:
+            return normalize_es_co_text(body.text).to_dict()
+        except VoiceError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.put("/studio/api/projects/{project_id}/voice/tracks/{speaker}")
     async def put_voice_track(

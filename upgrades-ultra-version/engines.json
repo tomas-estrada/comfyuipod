@@ -68,7 +68,7 @@
         "K22"
       ],
       "scope": "Mantener ASR/diarización existentes detrás del contrato temporal.",
-      "terms_review": "Modelos alineador/ASR separados; idiomas y términos de componentes; no inferir datos comerciales por voz dudosa.",
+      "terms_review": "WhisperX source at 3ccc17b8de34f305300f8a3fd3c9f76ba820c0d0 declares BSD-2-Clause; upstream license text must be carried with any redistribution. ASR and alignment model terms remain separate; do not infer commercial claims from uncertain speech.",
       "hardware_notes": "Tarea GPU programada o CPU con presupuesto; no carga silenciosa al boot.",
       "build_selected": true,
       "runtime_installs_allowed": false,
@@ -79,7 +79,7 @@
         "C01",
         "C27"
       ],
-      "code_revision": "v3.8.6",
+      "code_revision": "3ccc17b8de34f305300f8a3fd3c9f76ba820c0d0",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -129,7 +129,7 @@
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
       "dependency_lock_hashes": {
-        "upgrades-ultra-version/locks/mission-compiler.lock.json": "7e75f51048050399e87168b10c23877fc33ff00e893258f0fd4d0c9066afc492"
+        "upgrades-ultra-version/locks/mission-compiler.lock.json": "bce507cba8404c3ef82a7e48b79bcd31874be128a32cecaeb4c690b1e789f3b6"
       },
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
