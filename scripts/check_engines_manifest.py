@@ -23,6 +23,14 @@ y decisión de redistribución por componente»):
 
 Devuelve 0 si todo cuadra; con `--check` sale distinto de 0 ante el primer
 incumplimiento, para CI. `--json` emite el informe estructurado.
+
+**Modo estricto de release (`--require-release-ready`)**: gate de promoción
+A07. Falla con exit 1 ante cualquier incoherencia de coherencia y con exit 2
+ante CUALQUIER bloqueo de release A07 (evidencia pendiente). Es el modo que
+exige el workflow antes de promover una imagen candidata a `latest`: el
+manifiesto debe estar coherente Y sin bloqueos. `--check` conserva su
+semántica estructural (solo falla por incoherencias) para el desarrollo
+incremental y para PRs candidatos.
 """
 
 from __future__ import annotations
@@ -411,18 +419,32 @@ def build_report(
     engines = manifest.get("engines", [])
     dispo_counts: dict[str, int] = {}
     selected = 0
+    selected_ids: set[str] = set()
     for eng in engines:
         dispo_counts[eng.get("disposition", "?")] = (
             dispo_counts.get(eng.get("disposition", "?"), 0) + 1
         )
         if eng.get("build_selected"):
             selected += 1
+            selected_ids.add(str(eng.get("id")))
+    # Resumen útil para el gate estricto: bloqueos por engine y cuántos de los
+    # engines seleccionados quedan pendientes (los no seleccionados nunca
+    # generan bloqueos A07).
+    blockers_by_engine: dict[str, int] = {}
+    for blocker in blockers:
+        eid = blocker.split(":", 1)[0]
+        blockers_by_engine[eid] = blockers_by_engine.get(eid, 0) + 1
+    selected_engines_with_blockers = sum(
+        1 for eid in blockers_by_engine if eid in selected_ids
+    )
     return {
         "total_engines": len(engines),
         "build_selected": selected,
         "dispositions": dispo_counts,
         "problems": problems,
         "release_blockers": blockers,
+        "release_blockers_by_engine": blockers_by_engine,
+        "selected_engines_with_blockers": selected_engines_with_blockers,
         "a07_evidence_scope": (
             "Manifest declarations only; image inventory, offline boot and runtime "
             "probes require separate CI evidence."
@@ -432,6 +454,35 @@ def build_report(
     }
 
 
+def _print_strict_summary(report: dict[str, Any]) -> None:
+    """Resumen útil del gate estricto: cuántos engines seleccionados quedan."""
+    blockers = report["release_blockers"]
+    if report["coherent"] and not blockers:
+        print("RELEASE LISTA: manifiesto coherente y sin bloqueos de release A07")
+        return
+    selected = report["build_selected"]
+    pending = report["selected_engines_with_blockers"]
+    if not report["coherent"]:
+        print(
+            "RELEASE NO LISTA: "
+            f"{len(report['problems'])} incoherencias de manifiesto "
+            f"y {len(blockers)} bloqueos de release"
+        )
+        return
+    print(
+        f"RELEASE NO LISTA: {len(blockers)} bloqueos A07 en "
+        f"{pending} de {selected} engines seleccionados"
+    )
+    ranked = sorted(
+        report["release_blockers_by_engine"].items(),
+        key=lambda item: (-item[1], item[0]),
+    )
+    for eid, count in ranked[:10]:
+        print(f"  - {eid}: {count} bloqueos")
+    if len(ranked) > 10:
+        print(f"  ... y {len(ranked) - 10} engines más con bloqueos")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -439,6 +490,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="informe JSON")
     parser.add_argument(
         "--check", action="store_true", help="exit != 0 ante incumplimientos (CI)"
+    )
+    parser.add_argument(
+        "--require-release-ready",
+        action="store_true",
+        help=(
+            "modo estricto A07: exit 1 ante incoherencias, exit 2 ante cualquier "
+            "bloqueo de release; gate de promoción a latest"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -464,9 +523,19 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  - {b}")
             if len(blockers) > 5:
                 print(f"  ... y {len(blockers) - 5} más")
+        if args.require_release_ready:
+            _print_strict_summary(report)
 
     # --check falla SOLO por incoherencias reales; missing A07 evidence remains
     # a visible release blocker until the evidence is supplied and verified.
+    # El modo estricto (--require-release-ready) es el gate de promoción A07:
+    # falla ante incoherencias (exit 1) O ante cualquier bloqueo (exit 2).
+    if args.require_release_ready:
+        if problems:
+            return 1
+        if blockers:
+            return 2
+        return 0
     if args.check and problems:
         return 1
     return 0
