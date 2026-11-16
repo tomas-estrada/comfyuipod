@@ -128,3 +128,20 @@ def test_import_registry_rejects_sheet_path_outside_workbook_archive(tmp_path: P
 
     with pytest.raises(ValueError, match="escapes the workbook archive"):
         import_registry(workbook, tmp_path / "registry.csv")
+
+
+def test_import_registry_rejects_oversized_uncompressed_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    import scripts.import_engine_registry_xlsx as importer
+
+    monkeypatch.setattr(importer, "MAX_MEMBER_UNCOMPRESSED_BYTES", 64)
+    workbook = tmp_path / "oversized.xlsx"
+    with ZipFile(workbook, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("payload.bin", b"x" * 65)
+
+    with pytest.raises(ValueError, match="uncompressed member exceeds"):
+        importer.import_registry(workbook, tmp_path / "registry.csv")

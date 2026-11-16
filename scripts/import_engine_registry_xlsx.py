@@ -23,6 +23,9 @@ DOC_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationship
 PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 CELL_REF_RE = re.compile(r"^([A-Z]+)")
 PROVENANCE_COLUMNS = ("source_sheet", "source_excel_row", "source_workbook_sha256")
+MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
+MAX_MEMBER_UNCOMPRESSED_BYTES = 16 * 1024 * 1024
+MAX_TOTAL_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 
 
 def _cell_column(cell_ref: str) -> int:
@@ -59,6 +62,20 @@ def _read_shared_strings(archive: ZipFile) -> list[str]:
     except KeyError:
         return []
     return ["".join(item.itertext()) for item in root.findall(f"{{{MAIN_NS}}}si")]
+
+
+def _check_archive_limits(archive: ZipFile, input_path: Path) -> None:
+    if input_path.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise ValueError("workbook exceeds configured compressed-size limit")
+    total_uncompressed = 0
+    for member in archive.infolist():
+        if member.file_size > MAX_MEMBER_UNCOMPRESSED_BYTES:
+            raise ValueError(
+                f"workbook uncompressed member exceeds configured limit: {member.filename}"
+            )
+        total_uncompressed += member.file_size
+        if total_uncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES:
+            raise ValueError("workbook exceeds configured total uncompressed-size limit")
 
 
 def _registry_sheet_path(archive: ZipFile) -> str:
@@ -105,10 +122,17 @@ def import_registry(input_path: Path, output_path: Path) -> int:
     output_path = Path(output_path)
     if input_path.resolve() == output_path.resolve():
         raise ValueError("input workbook and output CSV must be different files")
-    source_hash = hashlib.sha256(input_path.read_bytes()).hexdigest()
+    if input_path.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise ValueError("workbook exceeds configured compressed-size limit")
+    hasher = hashlib.sha256()
+    with input_path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            hasher.update(block)
+    source_hash = hasher.hexdigest()
 
     try:
         with ZipFile(input_path) as archive:
+            _check_archive_limits(archive, input_path)
             sheet_path = _registry_sheet_path(archive)
             sheet = ET.fromstring(archive.read(sheet_path))
             shared_strings = _read_shared_strings(archive)

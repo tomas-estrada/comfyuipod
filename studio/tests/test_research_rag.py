@@ -123,7 +123,7 @@ def test_csv_quoting_and_escaping_are_preserved(tmp_path: Path) -> None:
     rag = _rag_module()
     _write_catalog(
         tmp_path,
-        'title,url,description\n'
+        "title,url,description\n"
         '"Comfy, tool",https://example.invalid/a,"Says ""use me"" then\ncontinues"\n',
     )
 
@@ -236,3 +236,26 @@ def test_catalog_results_are_labeled_external_and_untrusted(tmp_path: Path) -> N
     plain = rag.format_result(1, 1.0, md_chunk, "note.md")
     assert rag.CATALOG_UNTRUSTED_LABEL not in plain
     assert "section=Section" in plain
+
+
+def test_cli_guidance_applies_to_catalog_sources_and_research_papers(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    rag = _rag_module()
+    (tmp_path / "engines.csv").write_text(
+        "engine,source_url,task_description\n"
+        "Pixel Engine,https://example.invalid/pixel,Local rendering backend\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["research_rag.py", "pixel engine", "--corpus", str(tmp_path)],
+    )
+
+    assert rag.main() == 0
+
+    output = capsys.readouterr().out
+    assert "verify the cited source and its applicability" in output
+    assert "for papers, review the study design" in output
+    assert "cited papers' study design" not in output
