@@ -29,6 +29,8 @@ El workbook tiene discrepancias que están documentadas en [`../research/catalog
 
 No encontré referencias a Atlas en Markdown/JSON de `docs/` y `upgrades-ultra-version/` en este corte. El catálogo nuevo no incorpora Atlas como capacidad.
 
+**Límite del método:** esta auditoría inspeccionó código, pruebas, documentos y CI; no ejecutó un recorrido humano en navegador, no midió hardware y no revalidó todos los enlaces del Excel. Tres colaboradores de solo lectura revisaron engines, Studio UX y operación; no editaron el repositorio. No encontré registros `.agent-runs/run.json` en este worktree, así que sus hallazgos se tratan como revisión consultiva, no como trabajo de implementación con harness. Los próximos agentes que cambien el repo deben iniciarse con el runtime harness aprobado y dejar su run record.
+
 ## Hallazgos priorizados para implementación
 
 ### P0 — Cerrar el bloqueo del release, no inferir readiness del manifiesto
@@ -103,6 +105,14 @@ El harness de Codex registra algunas capacidades locales como fuera de cobertura
 
 **Aceptación:** test declara qué herramientas, subagentes, límites y checkpoints fueron efectivamente interceptados; evidencia persistida por run; comportamiento no conforme falla cerrado o aparece explícitamente restringido.
 
+### P1 — M3-QA-001: probar la interfaz como la operaría una persona y como la usa un agente
+
+La revisión UX de esta auditoría fue estática; no confirma cómo se sienten los flujos al usar Studio. El usuario pidió una prueba “banco de pruebas” con clicks humanos en las zonas de usuario y llamadas headless en las zonas de agente, ejecutando una app a la vez para no sobrecargar el pod.
+
+**Tarea para agente QA:** con una build local/candidata identificada por digest, recorrer en navegador `describir resultado → revisar/editar plan → aprobar → seguir progreso → cancelar/reintentar → abrir/descargar artefacto`; en paralelo, llamar por API las operaciones que el agente usa. Capturar pasos, estado esperado/observado, screenshots/logs redactados y un issue priorizado por fallo.
+
+**Aceptación:** cada app principal tiene un reporte repetible; el flujo UI y el headless se validan por separado; errores/cancelación/retry tienen resultados visibles; no se opera en un pod con cobro activo sin autorización vigente.
+
 ### P2 — Durable, configuration-bound engine readiness
 
 `engines/preparedness.py` guarda `execution_validated` en memoria sin timestamp, revisión de engine ni identidad de weights/config. El estado puede perderse con restart o aplicarse a una configuración distinta.
@@ -140,4 +150,5 @@ Para reducir fallos de integración, cada PR debe indicar SHA base/head, tests y
 - Evidencia declarada: `docs/ultra/CAPABILITY_EVIDENCE.md`, `docs/ultra/status.json`, `upgrades-ultra-version/snapshot.json`.
 - RAG de investigación/catálogos: `scripts/research_rag.py`, `docs/research/datasets/`, y el nuevo registro Open Engine Registry v8.0.
 - Producto: `panel/app.js`, `panel/index.html`, `studio/comfy_studio/routers/productions.py`, `studio/comfy_studio/orchestration/`, `studio/comfy_studio/hardware_profile.py`, `studio/comfy_studio/engines/preparedness.py`.
+- Prueba de banco pendiente: recorrido de Studio/panel con acciones de persona y API headless de agente, según el ticket M3-QA-001.
 - Resultado GPU histórico: `docs/ultra/W26_GPU_RESULTS.md`.
