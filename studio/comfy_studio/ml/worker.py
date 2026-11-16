@@ -21,6 +21,7 @@ Cada respuesta incluye `ok`, `subcommand`, y o bien `payload` (éxito) o
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import sys
@@ -189,6 +190,14 @@ def cmd_asr_transcribe(payload: dict[str, Any]) -> dict[str, Any]:
     real = backends.asr_transcribe(audio_path, language=language) if audio_path else None
     if real is None:
         _stderr("faster-whisper real no disponible; usando simulación determinista")
+        if not audio_path:
+            missing_reason = "la solicitud no contiene una ruta de audio"
+        elif not backends._whisper_model_dir().is_dir():
+            missing_reason = "faltan los pesos locales de faster-whisper large-v3"
+        elif importlib.util.find_spec("faster_whisper") is None:
+            missing_reason = "el paquete faster-whisper no está instalado en el worker"
+        else:
+            missing_reason = "faster-whisper no pudo cargar el modelo o transcribir el archivo"
         return {
             "ok": True,
             "subcommand": "asr_transcribe",
@@ -201,6 +210,7 @@ def cmd_asr_transcribe(payload: dict[str, Any]) -> dict[str, Any]:
                 "model": "large-v3",
                 "simulated": True,
                 "simulation_notice": SIMULATED_ML_NOTICE,
+                "missing_reason": missing_reason,
             },
             "error": None,
             "stderr_tail": None,

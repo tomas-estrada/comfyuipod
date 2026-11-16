@@ -17,6 +17,7 @@ dependencies = [
     "pillow>=10.0.0",
     "sqlite-vec==0.1.9",
     "python-multipart==0.0.33",
+    "opentimelineio==0.18.1",
 ]
 
 [project.optional-dependencies]

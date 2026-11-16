@@ -129,7 +129,7 @@
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
       "dependency_lock_hashes": {
-        "upgrades-ultra-version/locks/mission-compiler.lock.json": "bce507cba8404c3ef82a7e48b79bcd31874be128a32cecaeb4c690b1e789f3b6"
+        "upgrades-ultra-version/locks/mission-compiler.lock.json": "0b7ee1696adab81dfb7db637026b122071a506ae317a4d08a91128f65530d39b"
       },
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
@@ -157,7 +157,7 @@
       ],
       "code_revision": "8de272798924116b383e6802868dc0dfeab5b4ff",
       "dependency_lock_hashes": {
-        "upgrades-ultra-version/locks/production-memory.lock.json": "b4a6ba1342795bee2ac18331bcbe6589cfc4f84c5f1b3aa931a6b32cc9fa54ed"
+        "upgrades-ultra-version/locks/production-memory.lock.json": "48643842ced9d4e334eb33c03387ca743989ae4274bdcf6e4663f2c05dfbd724"
       },
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
@@ -322,19 +322,30 @@
         "S28"
       ],
       "scope": "EDL/OTIO como exportación/importación comprobada, con mapa de efectos soportados.",
-      "terms_review": "No prometer roundtrip perfecto de efectos ajenos; conservar fuentes/manifiesto propio.",
+      "terms_review": "OpenTimelineIO 0.18.1 usa Apache-2.0. El wheel instalado incluye LICENSE.txt y NOTICE.txt; la redistribución queda condicionada a conservarlos. El export soporta cortes y referencias de medios del proyecto; no promete roundtrip de efectos ajenos.",
       "hardware_notes": "CPU.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C32"
       ],
-      "code_revision": "v0.18.1",
+      "code_revision": "44236713c1db295a6ffc66189ae98dbdfd0cb9c4",
+      "dependency_lock_hashes": {
+        "studio/locks/opentimelineio-cp312-linux-amd64.lock": "45658097cf37acc008330312ed228909fc1b6a53a0ed99fc793b8b72e08f7992"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
+      "dependency_packages": [
+        "opentimelineio==0.18.1 (Apache-2.0; wheel carries LICENSE.txt and NOTICE.txt)"
+      ],
+      "evidence_entrypoint": "studio/comfy_studio/edl/otio_export.py",
+      "evidence_test": "studio/tests/test_creative_delivery_provenance.py",
       "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "revision_policy": "official release tag resolved to immutable commit; do not follow a moving branch"
     },
     {
       "id": "opencolorio",
@@ -354,9 +365,10 @@
       "capabilities": [
         "C32"
       ],
-      "code_revision": "v2.6.0",
+      "code_revision": "10a43ec1df03d072ca9a9e2fb3f26e454b0900d8",
       "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "revision_policy": "official release tag resolved to immutable commit; do not follow a moving branch"
     },
     {
       "id": "depth-anything3",
