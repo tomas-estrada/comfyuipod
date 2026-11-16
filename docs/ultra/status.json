@@ -5,8 +5,8 @@
   "main_sha": "d7504cf794c372cde79a8df1b5a83613d333033f",
   "stage": "gpu_partial_L3",
   "overall": "GPU_L3_PARTIAL",
-  "overall_note": "The last promoted image remains the historical main 3d5b93e3 build from workflow 43587693820; its verified digests remain in candidate_image_current and it is not target-GPU evidence. A separate consolidated CPU-evidence branch codex/non-gpu-integration-20261115 is based on main d7504cf and integrates PR work #394–#403. Its full local Studio/panel suite passed (3,147 passed, 3 skipped); consolidated CI and candidate-image checks are pending. The branch manifest audit reports 88 engines, 57 selected, 234 release blockers, coherent declarations, and release_ready=false. No target-GPU evidence is claimed for this branch.",
-  "updated_utc": "2026-11-15T23:51:08Z",
+  "overall_note": "Main remains 81f5bf39bb048f586ea3c25a045e568af85c07da; workflow 43796325868 passed on that main. Current integrated work is on codex/remaining-capability-closure-20261116 at 6ce3d77, six scoped commits ahead of baseline plus the evidence/test correction. The full local Studio suite on the preceding integrated revision reported 3156 passed, 7 skipped, 6 failed; two newly exposed branch failures (BT.709 fixture metadata and mission-compiler integration hash) were corrected and both targeted regressions now pass. Four pre-existing local failures remain: three LangGraph integration tests because LangGraph is absent from this host environment and the Codex harness configuration test because .codex/hooks.json is not present in the checkout. Scoped rerun of mission-compiler, M3 perception, and EDL delivery policy passed 37 tests. PR CI has not run for this branch; no new candidate/promoted image digest is claimed.",
+  "updated_utc": "2026-11-16T23:25:14Z",
   "merged": {
     "W00": "done",
     "W01": "#65",
@@ -109,6 +109,16 @@
     "includes": "Consolidated PR work #394–#403: C23–C30 and D01/D02/D05 evidence plus A07 manifest updates",
     "local_validation": "3,147 passed, 3 skipped in the full Studio/panel suite; repository CI not yet run on this branch",
     "a07": "88 engines, 57 selected, 234 blockers, coherent=true, release_ready=false",
+    "candidate_image_built": false,
+    "target_gpu_evidence": false
+  },
+  "current_work_candidate": {
+    "branch": "codex/remaining-capability-closure-20261116",
+    "head_sha": "6ce3d77",
+    "base_main_sha": "81f5bf39bb048f586ea3c25a045e568af85c07da",
+    "includes": "A07 strict promotion gate, A19 temporal-scene acceptance evidence, causal audio acceptance evidence, BT.709 EDL policy, and regression/evidence-lock corrections",
+    "local_validation": "Full Studio suite before final two regression fixes: 3156 passed, 7 skipped, 6 failed. Both branch-specific failures corrected; related scoped rerun passed 37 tests. Four known environment/baseline failures remain; PR CI pending.",
+    "a07": "88 engines, 57 selected, 228 blockers across 46 selected engines, coherent=true, release_ready=false",
     "candidate_image_built": false,
     "target_gpu_evidence": false
   }
