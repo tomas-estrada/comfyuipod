@@ -39,6 +39,18 @@ MAX_EDL_CUTS = 200
 # (max(N, len+N) nunca rechaza nada): 720p H.264 de un EDL acotado queda muy por debajo.
 MAX_EDL_OUTPUT_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
 
+# A22 (política de color de entrega): `color_space="bt709"` en la petición EDL
+# declara una entrega BT.709 real. La conversión se hace por fuente con su
+# matriz declarada (`colorspace=iall=<matriz>:all=bt709:fast=1`: solo cambio de
+# matriz, sin shift de gamma) y la salida se etiqueta en VUI (setparams + flags
+# del encoder). La verificación exige bt709 en color_space/color_transfer/
+# color_primaries del probe real. Sin matriz conocida en la fuente NO se
+# convierte ni se reetiqueta: fallo cerrado con un error útil.
+EDL_COLOR_SPACES = {"bt709"}
+BT709_SOURCE_MATRICES = {"bt709", "smpte170m", "bt470bg"}
+HDR_COLOR_TRANSFERS = {"smpte2084", "arib-std-b67"}
+HDR_COLOR_PRIMARIES = {"bt2020", "smpte428", "smpte431"}
+
 # M1.5: timeouts configurables y proporcionales. Un timeout fijo de 60 s por corte hacía
 # fallar cualquier clip largo en hosts lentos. La cota es
 # `max(base, min(cap, 4 × duración_del_corte + base))`.
@@ -114,6 +126,47 @@ def _resolve_source_video_path(
     raise ValueError("El proyecto no dispone de ningún asset de vídeo fuente para ejecutar el EDL.")
 
 
+def _resolve_bt709_source_matrix(asset_id: str, source_info: dict[str, Any]) -> str | None:
+    """Matriz de color declarada de la fuente para la conversión BT.709.
+
+    Devuelve `None` si la fuente ya declara bt709 (el filtro `colorspace` no hace
+    falta). Falla cerrado si la fuente no declara una matriz soportada o si
+    declara transferencia/primarios HDR: en esos casos no se puede entregar
+    SDR BT.709 de forma honesta y no se reetiqueta la salida.
+    """
+    # A22: los checks HDR van ANTES del early return de matriz bt709; si la
+    # fuente declarara matriz BT.709 con transferencia/primarios HDR, un
+    # return anticipado los silenciaría y el tag VUI engañoso pasaría como
+    # entrega SDR verificada. Fail-closed primero, matriz después.
+    transfer = source_info.get("color_transfer")
+    if transfer in HDR_COLOR_TRANSFERS:
+        raise RuntimeError(
+            "Política de color BT.709: la fuente "
+            f"{asset_id!r} usa transferencia HDR ({transfer!r}); esta entrega no "
+            "soporta tonemapping HDR→SDR. Usa color_space=None o una fuente SDR."
+        )
+    primaries = source_info.get("color_primaries")
+    if primaries in HDR_COLOR_PRIMARIES:
+        raise RuntimeError(
+            "Política de color BT.709: la fuente "
+            f"{asset_id!r} usa primarios HDR ({primaries!r}); esta entrega no "
+            "soporta conversión de gamuta. Usa color_space=None o una fuente SDR."
+        )
+    matrix = source_info.get("color_space")
+    if matrix == "bt709":
+        return None
+    if matrix not in BT709_SOURCE_MATRICES:
+        raise RuntimeError(
+            "Política de color BT.709: la fuente "
+            f"{asset_id!r} no declara una matriz de color convertible "
+            f"(color_space={matrix!r}; soportadas: {sorted(BT709_SOURCE_MATRICES)}). "
+            "Re-etiqueta la fuente con su matriz real (p. ej. `ffmpeg -colorspace "
+            "smpte170m`) antes de renderizar con color_space=bt709; una fuente con "
+            "metadatos de color desconocidos no se convierte ni se reetiqueta."
+        )
+    return matrix
+
+
 def execute_edl_ffmpeg(
     store: ProjectStore,
     project_id: str,
@@ -126,6 +179,7 @@ def execute_edl_ffmpeg(
     cuts: list[dict[str, Any]] | None = None,
     fps: int = 24,
     color_range: str = "limited",
+    color_space: str | None = None,
     picture_inset_percent: float = 0.0,
     ffmpeg_timeout_s: float = DEFAULT_FFMPEG_TIMEOUT_S,
     ffprobe_timeout_s: float = DEFAULT_FFPROBE_TIMEOUT_S,
@@ -173,6 +227,21 @@ def execute_edl_ffmpeg(
         )
         edl_doc = dict(edl_record["edl"])
 
+    # A22: la política de color llega por parámetro o, si no, del EDL guardado
+    # (`EdlCreateRequest` la persiste como `color_space`). Se valida antes de
+    # arrancar cualquier subprocess.
+    requested_color_space: str | None = (
+        color_space
+        if color_space is not None
+        else (str(edl_doc.get("color_space")) if edl_doc.get("color_space") else None)
+    )
+    if requested_color_space is not None and requested_color_space not in EDL_COLOR_SPACES:
+        raise ValueError(
+            f"color_space no soportado: {requested_color_space!r}. Esta entrega "
+            "solo garantiza la conversión y etiquetado a 'bt709' (con matrices de "
+            "fuente conocidas); cualquier otra política falla cerrado."
+        )
+
     if not raw_cuts:
         raise ValueError("La lista de cortes del EDL está vacía.")
     if len(raw_cuts) > MAX_EDL_CUTS:
@@ -202,24 +271,59 @@ def execute_edl_ffmpeg(
         inner_w, inner_h = target_w, target_h
     output_range = "tv" if color_range == "limited" else "pc"
     full_range_flag = "1" if color_range == "full" else "0"
+    # A22: con la política BT.709 activa el encoder recibe los flags VUI de la
+    # entrega. `setparams` ya etiqueta los frames (es lo que permite que x264
+    # escriba matriz + primarios + transferencia en el VUI); los flags del
+    # encoder los fijan también a nivel de codificador.
+    vui_args = (
+        [
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
+        ]
+        if requested_color_space == "bt709"
+        else []
+    )
 
-    def _vf_chain(input_range: str | None) -> str:
+    def _vf_chain(input_range: str | None, source_matrix: str | None) -> str:
         # ffprobe may not know the source range. Assume limited in that case,
         # matching the conventional interpretation of ordinary yuv420p video.
         source_range = input_range if input_range in {"tv", "pc"} else "tv"
-        return (
+        filters = [
             f"scale={inner_w}:{inner_h}:force_original_aspect_ratio=decrease:"
-            f"in_range={source_range}:out_range={source_range},"
-            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,"
-            f"setsar=1,fps={int(fps)},"
-            f"scale={target_w}:{target_h}:in_range={source_range}:out_range={output_range},"
-            f"format=yuv420p,"
-            f"setparams=range={output_range}"
-        )
+            f"in_range={source_range}:out_range={source_range}",
+            f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black",
+            "setsar=1",
+            f"fps={int(fps)}",
+            f"scale={target_w}:{target_h}:in_range={source_range}:out_range={output_range}",
+            "format=yuv420p",
+        ]
+        if requested_color_space == "bt709":
+            if source_matrix is not None:
+                # Conversión real de matriz (BT.601→BT.709) con la matriz
+                # declarada de la fuente; `fast=1` mantiene la transferencia y
+                # evita un shift de gamma no deseado. Sin matriz conocida la
+                # política ya habría fallado cerrado antes de llegar aquí.
+                filters.append(f"colorspace=iall={source_matrix}:all=bt709:fast=1")
+            # setparams sobre el frame es lo que hace que el encoder escriba el
+            # VUI completo (matriz, primarios y transferencia).
+            filters.append(
+                f"setparams=range={output_range}:color_primaries=bt709:"
+                "color_trc=bt709:colorspace=bt709"
+            )
+        else:
+            filters.append(f"setparams=range={output_range}")
+        return ",".join(filters)
 
     expected_duration_sec = 0.0
     applied_cuts: list[dict[str, Any]] = []
     probed_sources: dict[Path, dict[str, Any]] = {}
+    # A22: matriz de color declarada por fuente (cached por path); None si la
+    # fuente ya es bt709 y no hace falta el filtro `colorspace`.
+    source_matrices: dict[Path, str | None] = {}
     # M3-SCR-018: cachear la resolución de fuente por asset preferido para no volver a
     # escanear los assets del proyecto en cada corte (el ffprobe caro ya se memoiza en
     # probed_sources; esto evita repetir list_assets/get_asset por corte).
@@ -255,6 +359,10 @@ def execute_edl_ffmpeg(
                     raise RuntimeError(
                         f"El video fuente del corte #{idx + 1} no pudo verificarse con ffprobe."
                     )
+                if requested_color_space == "bt709":
+                    source_matrices[src_path] = _resolve_bt709_source_matrix(
+                        cut_aid, probed_sources[src_path]
+                    )
             src_has_audio = bool(probed_sources[src_path].get("has_audio"))
             if src_has_audio:
                 any_has_audio = True
@@ -266,7 +374,10 @@ def execute_edl_ffmpeg(
             cut_dur = round(out_sec - in_sec, 3)
 
             seg_path = tmp_dir / f"seg_{idx:03d}.mp4"
-            vf_chain = _vf_chain(probed_sources[src_path].get("color_range"))
+            vf_chain = _vf_chain(
+                probed_sources[src_path].get("color_range"),
+                source_matrices.get(src_path),
+            )
             if src_has_audio:
                 cmd_cut = [
                     ffmpeg_bin,
@@ -289,6 +400,7 @@ def execute_edl_ffmpeg(
                     "yuv420p",
                     "-color_range",
                     output_range,
+                    *vui_args,
                     "-bsf:v",
                     f"h264_metadata=video_full_range_flag={full_range_flag}",
                     "-c:a",
@@ -334,6 +446,7 @@ def execute_edl_ffmpeg(
                     "yuv420p",
                     "-color_range",
                     output_range,
+                    *vui_args,
                     "-bsf:v",
                     f"h264_metadata=video_full_range_flag={full_range_flag}",
                     "-c:a",
@@ -365,6 +478,7 @@ def execute_edl_ffmpeg(
                     "yuv420p",
                     "-color_range",
                     output_range,
+                    *vui_args,
                     "-bsf:v",
                     f"h264_metadata=video_full_range_flag={full_range_flag}",
                     "-an",
@@ -469,6 +583,41 @@ def execute_edl_ffmpeg(
                 "El MP4 renderizado no coincide con el rango de color solicitado: "
                 f"esperado {expected_range}, obtenido {probed_range!r}."
             )
+        if requested_color_space == "bt709":
+            # A22: la entrega BT.709 se verifica contra el probe real; no basta
+            # con haber escrito los tags (podría ser un reetiquetado sin
+            # conversión). La conversión real la garantiza el fail-closed por
+            # fuente + `colorspace` con la matriz declarada.
+            probed_tags = (
+                probe_info.get("color_space"),
+                probe_info.get("color_transfer"),
+                probe_info.get("color_primaries"),
+            )
+            if probed_tags != ("bt709", "bt709", "bt709"):
+                raise RuntimeError(
+                    "El MP4 renderizado no verifica la política de color BT.709: "
+                    "probe real (color_space, color_transfer, color_primaries) = "
+                    f"{probed_tags!r}, esperado ('bt709', 'bt709', 'bt709')."
+                )
+
+    # A22: evidencia de color de las fuentes usadas (dedup por path, primer
+    # asset_id que la usó) y valores solicitados vs sondeados de la salida.
+    source_color_metadata: list[dict[str, Any]] = []
+    if requested_color_space == "bt709":
+        seen_source_paths: set[Path] = set()
+        for cut_aid, src_path in resolved_sources.values():
+            if src_path in seen_source_paths:
+                continue
+            seen_source_paths.add(src_path)
+            source_info = probed_sources[src_path]
+            source_color_metadata.append(
+                {
+                    "asset_id": cut_aid,
+                    "color_space": source_info.get("color_space"),
+                    "color_transfer": source_info.get("color_transfer"),
+                    "color_primaries": source_info.get("color_primaries"),
+                }
+            )
 
     aspect_slug = resolved_aspect.replace(":", "x")
     edl_ver = int(edl_record["version"])
@@ -497,6 +646,11 @@ def execute_edl_ffmpeg(
             "fps": int(fps),
             "color_range": color_range,
             "picture_inset_percent": float(picture_inset_percent),
+            **(
+                {"color_space": requested_color_space}
+                if requested_color_space is not None
+                else {}
+            ),
         },
     )
 
@@ -529,6 +683,20 @@ def execute_edl_ffmpeg(
             "color_range": color_range,
             "probed_color_range": probe_info.get("color_range"),
             "picture_inset_percent": float(picture_inset_percent),
+            # A22: con la política de color activa se exponen el valor
+            # solicitado, los tags realmente sondeados en la salida y la
+            # evidencia de color de cada fuente (raw ffprobe; None = sin tag).
+            **(
+                {
+                    "color_space": requested_color_space,
+                    "probed_color_space": probe_info.get("color_space"),
+                    "probed_color_transfer": probe_info.get("color_transfer"),
+                    "probed_color_primaries": probe_info.get("color_primaries"),
+                    "source_color_metadata": source_color_metadata,
+                }
+                if requested_color_space is not None
+                else {}
+            ),
             # M1.7: llegar aquí implica probe_ok=True (si no, se lanzó RuntimeError antes);
             # se conserva el campo para consumidores que distingan render verificado.
             "probe_ok": True,
