@@ -48,7 +48,7 @@ CATALOG_FIELDS: tuple[str, ...] = (
     "citation",
 )
 CATALOG_FIELD_ALIASES: dict[str, set[str]] = {
-    "title": {"title", "name", "project", "repo", "repository"},
+    "title": {"title", "name", "project", "repo", "repository", "engine"},
     "url": {"url", "link", "href", "source_url"},
     "canonical_url": {"canonical_url", "canonical"},
     "description": {"description", "summary", "abstract", "notes", "resource_description"},
