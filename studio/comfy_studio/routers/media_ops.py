@@ -380,6 +380,7 @@ def register_routes(app: FastAPI) -> None:
                     cuts=cuts_dicts,
                     fps=body.fps,
                     color_range=body.color_range,
+                    color_space=body.color_space,
                     picture_inset_percent=body.picture_inset_percent,
                     ffmpeg_timeout_s=active_cfg.studio_ffmpeg_timeout_s,
                     ffprobe_timeout_s=active_cfg.studio_ffprobe_timeout_s,

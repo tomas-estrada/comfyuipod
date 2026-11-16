@@ -1606,8 +1606,32 @@ jobs:
           echo "::error::No se pudo publicar requirements.lock después de dos acciones de upload-artifact; se cancela la promoción."
           exit 1
 
-      - name: Promover imagen verificada a latest / semver (ALTA-01)
+      - name: Gate estricto A07 del manifiesto de engines antes de promover
+        id: a07_release_gate
+        # Solo en la rama por defecto: los builds candidatos de PR no se
+        # bloquean por la evidencia A07 todavía pendiente. `--check` (usado
+        # en el job validate) sigue siendo estructural/advisory. Bloqueos A07
+        # saltan la promoción con un aviso, manteniendo verde el CI de main;
+        # incoherencias reales siguen fallando el job.
         if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          if python3 scripts/check_engines_manifest.py --require-release-ready; then
+            echo "release_ready=true" >> "$GITHUB_OUTPUT"
+          else
+            gate_status=$?
+            if [ "$gate_status" -eq 2 ]; then
+              echo "release_ready=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::A07 release evidence is incomplete; candidate verified, but promotion to latest/semver is skipped."
+            else
+              echo "::error::A07 manifest coherence validation failed (exit ${gate_status})."
+              exit "$gate_status"
+            fi
+          fi
+
+      - name: Promover imagen verificada a latest / semver (ALTA-01)
+        if: >-
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+          steps.a07_release_gate.outputs.release_ready == 'true'
         run: |
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           while IFS= read -r target_tag; do

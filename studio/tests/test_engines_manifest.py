@@ -850,3 +850,265 @@ def test_production_memory_engine_has_locked_cpu_entrypoint_and_test() -> None:
     for source_path, expected_hash in lock.get("integration_source_sha256", {}).items():
         actual_hash = hashlib.sha256((REPO_ROOT / source_path).read_bytes()).hexdigest()
         assert actual_hash == expected_hash, source_path
+
+
+# ---------------------------------------------------------------------------
+# Modo estricto de release (--require-release-ready): A07 gate de promoción.
+# ---------------------------------------------------------------------------
+
+
+def _strict_blocker_manifest() -> dict:
+    """Manifiesto estructuralmente coherente con bloqueos A07 sin tocar disco.
+
+    Un engine build_selected sin evidencia genera bloqueos sin acceder al
+    sistema de archivos ni a Git: los locks/revision/evidencia faltantes se
+    detectan antes de cualquier resolución de rutas.
+    """
+    return {
+        "counts": {"engines": 1},
+        "engines": [
+            {
+                "id": "pending-engine",
+                "disposition": "required",
+                "build_selected": True,
+                "terms_review": "reviewed",
+                "lock_required_before_build": True,
+                "code_revision": None,
+            }
+        ],
+    }
+
+
+def _write_manifest(path: Path, manifest: dict) -> Path:
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return path
+
+
+def test_strict_mode_fails_on_coherent_manifest_with_blockers(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """--require-release-ready falla (exit 2) cuando hay bloqueos A07."""
+    mod = _load_module()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    manifest_path = _write_manifest(tmp_path / "engines.json", _strict_blocker_manifest())
+
+    code = mod.main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--capabilities",
+            str(tmp_path / "no-capabilities.json"),
+            "--require-release-ready",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 2
+    assert "RELEASE NO LISTA" in out
+    assert "pending-engine" in out
+
+
+def test_strict_mode_exit_1_on_coherence_problems(tmp_path: Path, monkeypatch) -> None:
+    """Incoherencias reales fallan en modo estricto con exit 1 (no 2)."""
+    mod = _load_module()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    manifest = _strict_blocker_manifest()
+    manifest["counts"]["engines"] = 99  # incoherencia de contadores
+    manifest_path = _write_manifest(tmp_path / "engines.json", manifest)
+
+    code = mod.main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--capabilities",
+            str(tmp_path / "no-capabilities.json"),
+            "--require-release-ready",
+        ]
+    )
+
+    assert code == 1
+
+
+def test_strict_mode_prefers_coherence_problems_over_blockers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Cuando hay incoherencias Y bloqueos, el exit code distingue: 1."""
+    mod = _load_module()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    manifest = _strict_blocker_manifest()
+    manifest["engines"].append(
+        {
+            "id": "pending-engine",
+            "disposition": "alternative",
+        }
+    )
+    manifest_path = _write_manifest(tmp_path / "engines.json", manifest)
+
+    code = mod.main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--capabilities",
+            str(tmp_path / "no-capabilities.json"),
+            "--require-release-ready",
+        ]
+    )
+
+    assert code == 1
+
+
+def test_check_mode_keeps_structural_only_semantics(tmp_path: Path, monkeypatch, capsys) -> None:
+    """--check (sin modo estricto) NO falla por bloqueos de release: 0."""
+    mod = _load_module()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    manifest_path = _write_manifest(tmp_path / "engines.json", _strict_blocker_manifest())
+
+    code = mod.main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--capabilities",
+            str(tmp_path / "no-capabilities.json"),
+            "--json",
+            "--check",
+        ]
+    )
+    out = capsys.readouterr().out
+    report = json.loads(out)
+
+    assert code == 0, "--check debe seguir siendo estructural (bloqueos no invalidan)"
+    assert report["coherent"] is True
+    assert report["release_ready"] is False
+    assert report["release_blockers"], "los bloqueos deben seguir visibles en el informe"
+
+
+def test_strict_mode_json_report_is_release_ready_false(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """El informe JSON en modo estricto expone release_ready=false y contadores."""
+    mod = _load_module()
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    manifest_path = _write_manifest(tmp_path / "engines.json", _strict_blocker_manifest())
+
+    code = mod.main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--capabilities",
+            str(tmp_path / "no-capabilities.json"),
+            "--json",
+            "--require-release-ready",
+        ]
+    )
+    out = capsys.readouterr().out
+    report = json.loads(out)
+
+    assert code == 2
+    assert report["coherent"] is True
+    assert report["release_ready"] is False
+    assert report["selected_engines_with_blockers"] == 1
+    assert report["release_blockers_by_engine"]["pending-engine"] >= 4
+
+
+def test_strict_mode_succeeds_on_fixture_with_complete_evidence(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """Un fixture con TODA la evidencia A07 requerida pasa el modo estricto."""
+    mod = _load_module()
+    lock_path = tmp_path / "requirements.lock"
+    lock_path.write_text("package==1.2.3 --hash=sha256:abc\n", encoding="utf-8")
+    entrypoint_path = tmp_path / "src" / "engine.py"
+    entrypoint_path.parent.mkdir()
+    entrypoint_path.write_text("def run(): return True\n", encoding="utf-8")
+    test_path = tmp_path / "tests" / "test_engine.py"
+    test_path.parent.mkdir()
+    test_path.write_text("def test_run(): assert True\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "add",
+            "requirements.lock",
+            "src/engine.py",
+            "tests/test_engine.py",
+        ],
+        check=True,
+    )
+    manifest = {
+        "counts": {"engines": 1},
+        "engines": [
+            {
+                "id": "complete-engine",
+                "disposition": "required",
+                "build_selected": True,
+                "terms_review": "reviewed",
+                "lock_required_before_build": True,
+                "code_revision": "a" * 40,
+                "dependency_lock_hashes": {
+                    "requirements.lock": hashlib.sha256(lock_path.read_bytes()).hexdigest()
+                },
+                "redistribution_decision": "allowed",
+                "notices_reviewed": True,
+                "implementation_status": "implemented",
+                "evidence_entrypoint": "src/engine.py",
+                "evidence_test": "tests/test_engine.py",
+            }
+        ],
+    }
+    monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+    manifest_path = _write_manifest(tmp_path / "engines.json", manifest)
+
+    code = mod.main(
+        [
+            "--manifest",
+            str(manifest_path),
+            "--capabilities",
+            str(tmp_path / "no-capabilities.json"),
+            "--require-release-ready",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0, f"el fixture completo debe ser release-ready; salida: {out}"
+    assert "RELEASE LISTA" in out
+
+
+def test_report_counts_selected_engines_with_blockers() -> None:
+    """El resumen cuenta engines seleccionados con bloqueos, no bloqueos sueltos."""
+    mod = _load_module()
+    manifest = {
+        "engines": [
+            {
+                "id": "selected-pending",
+                "disposition": "required",
+                "build_selected": True,
+                "terms_review": "ok",
+                "lock_required_before_build": True,
+                "code_revision": None,
+            },
+            {"id": "not-selected", "disposition": "conditional"},
+        ]
+    }
+    problems, blockers = mod.validate(manifest, set(), require_git_tracked=False)
+    report = mod.build_report(manifest, problems, blockers)
+
+    assert problems == []
+    assert report["selected_engines_with_blockers"] == 1
+    assert report["release_blockers_by_engine"]["selected-pending"] >= 4
+    assert "not-selected" not in report["release_blockers_by_engine"]
+
+
+def test_real_manifest_is_not_asserted_release_ready() -> None:
+    """El gate estricto sobre el manifiesto REAL debe fallar mientras queden
+    bloqueos A07; esta prueba documenta el estado, no cierra A07."""
+    mod = _load_module()
+    manifest = mod.load_json(mod.DEFAULT_MANIFEST)
+    cap_ids = mod._capability_ids(mod.DEFAULT_CAPS)
+    problems, blockers = mod.validate(manifest, cap_ids)
+    report = mod.build_report(manifest, problems, blockers)
+
+    assert report["coherent"] is True
+    assert report["release_ready"] is False
+    assert len(blockers) > 200, "los bloqueos A07 pendientes deben seguir visibles"
