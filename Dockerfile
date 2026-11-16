@@ -576,6 +576,7 @@ COPY scripts/build_llm_server.py /usr/local/bin/build_llm_server.py
 COPY scripts/smoke_blender_cpu.py /tmp/smoke_blender_cpu.py
 COPY scripts/smoke_blender_physics.py /tmp/smoke_blender_physics.py
 COPY scripts/smoke_mitsuba_cpu_fit.py /tmp/smoke_mitsuba_cpu_fit.py
+COPY scripts/smoke_otio_export.py /tmp/smoke_otio_export.py
 
 # Código de aplicación (studio/panel): capa separada para no rehacer el warmup.
 RUN python3 /usr/local/bin/build_llm_server.py --lock /tmp/llm-server.lock.json --supplemental-license /tmp/llama-cpp-notices.md && \
@@ -593,6 +594,8 @@ RUN python3 /usr/local/bin/build_llm_server.py --lock /tmp/llm-server.lock.json 
         /etc/comfyui/panel/app.js && \
     python3 -m venv /opt/venvs/studio && \
     /opt/venvs/studio/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    /opt/venvs/studio/bin/pip install --no-cache-dir --require-hashes \
+        -r /opt/studio/locks/opentimelineio-cp312-linux-amd64.lock && \
     /opt/venvs/studio/bin/pip install --no-cache-dir /opt/studio && \
     /opt/venvs/studio/bin/pip install --no-cache-dir --require-hashes \
         -r /opt/studio/locks/mitsuba-cp312-linux-amd64.lock && \
@@ -601,7 +604,8 @@ RUN python3 /usr/local/bin/build_llm_server.py --lock /tmp/llm-server.lock.json 
     /opt/venvs/studio/bin/python /tmp/smoke_blender_cpu.py && \
     /opt/venvs/studio/bin/python /tmp/smoke_blender_physics.py && \
     /opt/venvs/studio/bin/python /tmp/smoke_mitsuba_cpu_fit.py && \
-    rm -f /tmp/smoke_blender_cpu.py /tmp/smoke_blender_physics.py /tmp/smoke_mitsuba_cpu_fit.py
+    /opt/venvs/studio/bin/python /tmp/smoke_otio_export.py && \
+    rm -f /tmp/smoke_blender_cpu.py /tmp/smoke_blender_physics.py /tmp/smoke_mitsuba_cpu_fit.py /tmp/smoke_otio_export.py
 
 EXPOSE 8188
 

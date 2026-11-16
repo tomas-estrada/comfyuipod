@@ -36,7 +36,7 @@
     "studio/comfy_studio/orchestration/state.py": "8a18431f342f4059e2776859ab4de54ca8aa46a41a8b0de09a121b1976bd112d",
     "studio/comfy_studio/routers/productions.py": "641712f592d3d3fa75a57fedae2ad889d64a4855bd040e44b833a5f8fd765be9",
     "studio/comfy_studio/webutil.py": "5b5adab0aba236dfdbdc816a0d5e4cafbbdcfcffd960766646adc8b8526c3d3f",
-    "studio/pyproject.toml": "0131d62134e151bfa53c348977d7b1593f652bd9fda2c9153b1c7ce285eb1ead"
+    "studio/pyproject.toml": "52cdcf22677d08b001f8e4bb3a8eb29ceccd3712a02f5aeac6180f1373ed40d0"
   },
   "verification_test": {
     "path": "studio/tests/test_mission_compiler.py",

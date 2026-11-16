@@ -517,25 +517,35 @@ def transcribe_project_asset(
             },
             timeout_s=300.0,
         )
-        payload = require_real_payload(resp, "asr_transcribe")
+        try:
+            payload = require_real_payload(resp, "asr_transcribe")
+        except RuntimeError as exc:
+            missing_reason = (resp.payload or {}).get("missing_reason")
+            if missing_reason:
+                raise RuntimeError(f"{exc} Detalle: {missing_reason}") from exc
+            raise
+        parsed = parse_asr_payload(payload)
+        backend = str(payload.get("backend") or "faster-whisper")
+        model = str(payload.get("model") or "large-v3")
+        compute_config = {
+            "diarization": None,
+            "asr": {"backend": backend, "model": model, "simulated": False},
+        }
+        saved = store.save_transcription(
+            project_id,
+            asset_id=resolved_aid,
+            language=parsed["language"],
+            segments=parsed["segments"],
+            words=parsed["words"],
+            diarized=any(bool(segment.get("speaker")) for segment in parsed["segments"]),
+            backend=backend,
+            compute_config=compute_config,
+        )
         return {
-            "asset_id": resolved_aid,
-            "language": payload.get("language", language),
-            "text": payload.get("text", ""),
-            "segments": payload.get("segments", []),
-            "words": payload.get("words", []),
+            **saved,
             "duration_sec": float(payload.get("duration_sec") or 0.0),
-            "backend": payload.get("backend", "faster-whisper"),
-            "model": payload.get("model", "large-v3"),
-            "simulated": bool(payload.get("simulated", False)),
-            "simulation_notice": SIMULATED_ML_NOTICE,
-            "compute_config": {
-                "diarization": None,
-                "asr": {
-                    "backend": payload.get("backend", "faster-whisper"),
-                    "model": payload.get("model", "large-v3"),
-                },
-            },
+            "model": model,
+            "simulated": False,
         }
 
     compute_cfg = resolve_asr_compute_config(

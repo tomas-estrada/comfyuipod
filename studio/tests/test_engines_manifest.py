@@ -768,19 +768,23 @@ def test_verified_public_engines_have_code_revision() -> None:
 
 
 def test_lock_opentimelineio_tiene_lock_fijado() -> None:
-    """El engine opentimelineio tiene su code_revision fijado a la release oficial."""
+    """El engine opentimelineio usa el commit inmutable de la release oficial."""
     mod = _load_module()
     manifest = mod.load_json(mod.DEFAULT_MANIFEST)
     by_id = {e["id"]: e for e in manifest["engines"]}
-    assert by_id["opentimelineio"]["code_revision"] == "v0.18.1"
+    revision = by_id["opentimelineio"]["code_revision"]
+    assert revision == "44236713c1db295a6ffc66189ae98dbdfd0cb9c4"
+    assert len(revision) == 40
 
 
 def test_lock_opencolorio_tiene_lock_fijado() -> None:
-    """El engine opencolorio tiene su code_revision fijado a la release oficial."""
+    """El engine opencolorio usa el commit inmutable de la release oficial."""
     mod = _load_module()
     manifest = mod.load_json(mod.DEFAULT_MANIFEST)
     by_id = {e["id"]: e for e in manifest["engines"]}
-    assert by_id["opencolorio"]["code_revision"] == "v2.6.0"
+    revision = by_id["opencolorio"]["code_revision"]
+    assert revision == "10a43ec1df03d072ca9a9e2fb3f26e454b0900d8"
+    assert len(revision) == 40
 
 
 def test_lock_remotion_tiene_lock_fijado() -> None:
@@ -841,5 +845,8 @@ def test_production_memory_engine_has_locked_cpu_entrypoint_and_test() -> None:
     assert engine["dependency_lock_hashes"] == {lock_path: expected_lock_hash}
 
     for source_path, expected_hash in lock["internal_source_sha256"].items():
+        actual_hash = hashlib.sha256((REPO_ROOT / source_path).read_bytes()).hexdigest()
+        assert actual_hash == expected_hash, source_path
+    for source_path, expected_hash in lock.get("integration_source_sha256", {}).items():
         actual_hash = hashlib.sha256((REPO_ROOT / source_path).read_bytes()).hexdigest()
         assert actual_hash == expected_hash, source_path

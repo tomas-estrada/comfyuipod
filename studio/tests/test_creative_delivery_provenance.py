@@ -388,6 +388,60 @@ def test_edl_summary_exposes_render_url_and_counts() -> None:
     assert edl["render_url"] == f"/studio/api/projects/{PROJECT_ID}/edl/1/render"
 
 
+def test_edl_delivery_contains_valid_otio_and_digest() -> None:
+    otio = pytest.importorskip("opentimelineio")
+    import hashlib
+    import json
+
+    from comfy_studio.edl.otio_export import edl_to_otio_text
+
+    doc = {
+        "schema": "comfy_studio.edl.v1",
+        "title": "Short cut",
+        "fps": 24,
+        "source_asset_id": "source-1",
+        "cuts": [{"in_sec": 1.0, "out_sec": 2.0}],
+    }
+    store = FakeStore(
+        edls=[
+            _edl(
+                1,
+                cuts=doc["cuts"],
+                source_asset_id="source-1",
+                fps=24,
+                title="Short cut",
+            )
+        ]
+    )
+
+    package = build_delivery_package(store, PROJECT_ID, _brief_row())
+    otio_entry = package["edl"]["otio"]
+    document = json.loads(otio_entry["content"])
+    parsed_timeline = otio.adapters.read_from_string(otio_entry["content"])
+    assert isinstance(parsed_timeline, otio.schema.Timeline)
+    assert len(parsed_timeline.tracks[0]) == 1
+    assert otio_entry["sha256"] == hashlib.sha256(
+        otio_entry["content"].encode("utf-8")
+    ).hexdigest()
+    track_clip = document["tracks"]["children"][0]["children"][0]
+    assert track_clip["source_range"]["start_time"]["value"] == 24
+    media_reference = track_clip["media_references"]["DEFAULT_MEDIA"]
+    assert media_reference["target_url"].endswith("/assets/source-1/file")
+    assert edl_to_otio_text(doc, project_id=PROJECT_ID) == otio_entry["content"]
+
+
+def test_otio_export_rejects_unmapped_transitions() -> None:
+    pytest.importorskip("opentimelineio")
+    from comfy_studio.edl.otio_export import edl_to_otio_text
+
+    doc = {
+        "source_asset_id": "source-1",
+        "cuts": [{"in_sec": 0.0, "out_sec": 1.0, "transition": "crossfade"}],
+    }
+    with pytest.raises(ValueError, match="no exporta transition"):
+        edl_to_otio_text(doc, project_id=PROJECT_ID)
+
+
 def test_subtitles_linked_through_edl_sources() -> None:
     """Los subtítulos solo salen de transcripciones de assets que usa el EDL."""
     store = FakeStore(

@@ -62,7 +62,7 @@ function createRun(ctx, event) {
 				parent_run_id: parent?.parent_run_id ?? null,
 				role: parent ? 'subagent' : event.agent ?? 'primary',
 				allowed_tools: [...TOOL_ALLOWLIST].filter(name => name !== 'subagent' || event.agent === 'build' || event.agent === 'free-builder').sort(),
-				max_iterations: Math.min(parent?.remaining_llm_calls ?? positiveInteger('COMFYUIPOD_AGENT_MAX_TURNS', 12), positiveInteger('COMFYUIPOD_AGENT_MAX_TURNS', 12)),
+				max_iterations: Math.min(parent?.remaining_llm_calls ?? positiveInteger('COMFYUIPOD_AGENT_MAX_TURNS', 24), positiveInteger('COMFYUIPOD_AGENT_MAX_TURNS', 24)),
 				max_llm_calls: group.remaining_llm_calls,
 				max_context_messages: null,
 				max_context_chars: null,

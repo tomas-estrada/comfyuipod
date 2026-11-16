@@ -9,14 +9,14 @@
   },
   "agents": {
     "build": {
-      "steps": 12,
+      "steps": 24,
       "permissions": [
         {"action": "subagent", "resource": "*", "effect": "deny"},
         {"action": "subagent", "resource": "harnessed-builder", "effect": "allow"}
       ]
     },
     "free-builder": {
-      "steps": 12,
+      "steps": 24,
       "permissions": [
         {"action": "subagent", "resource": "*", "effect": "deny"},
         {"action": "subagent", "resource": "harnessed-builder", "effect": "allow"}
@@ -24,7 +24,7 @@
     },
     "harnessed-builder": {
       "mode": "subagent",
-      "steps": 12,
+      "steps": 24,
       "permissions": [
         {"action": "subagent", "resource": "*", "effect": "deny"}
       ]
