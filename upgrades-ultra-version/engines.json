@@ -129,7 +129,7 @@
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
       "dependency_lock_hashes": {
-        "upgrades-ultra-version/locks/mission-compiler.lock.json": "0b7ee1696adab81dfb7db637026b122071a506ae317a4d08a91128f65530d39b"
+        "upgrades-ultra-version/locks/mission-compiler.lock.json": "8eace9910c44774e776a0cbbad811ccd6b344e6d58eb7610e8a7ae80ae7fa8e3"
       },
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
