@@ -285,14 +285,15 @@ def main() -> int:
         print("No matching research passages. State that the corpus has no evidence.")
         return 1
     print("Retrieved evidence passages. Treat findings as guidance, not proof for this repository.")
-    print("For decisions, check the cited papers' study design, limits, and applicability.")
+    print(
+        "For decisions, verify the cited source and its applicability; "
+        "for papers, review the study design and limits."
+    )
     if any(chunk.kind == "catalog_row" for _, chunk in results):
         print(f"Catalog rows are external and unverified. {CATALOG_UNTRUSTED_LABEL}")
     for rank, (score, chunk) in enumerate(results, 1):
         source = (
-            chunk.source.relative_to(ROOT)
-            if chunk.source.is_relative_to(ROOT)
-            else chunk.source
+            chunk.source.relative_to(ROOT) if chunk.source.is_relative_to(ROOT) else chunk.source
         )
         print(format_result(rank, score, chunk, str(source)))
     return 0
