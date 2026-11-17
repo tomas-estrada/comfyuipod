@@ -1,5 +1,7 @@
 # 00 — Inventario
 
+> **Snapshot histórico:** conserva conteos de la auditoría MAAD de 2026-11-10. No describe el roster actual; para estado vigente, consulta [`../HANDOFF-17NOV.md`](../HANDOFF-17NOV.md) y el código desde `docs/ARCHITECTURE.md`.
+
 **Rama:** `docs/maad-architecture-2026-11-10` · **Base:** `main` `b7f21de`
 **Fecha:** 2026-11-10 · **Fase:** 1 de 4 (inventario)
 

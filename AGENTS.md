@@ -1,12 +1,16 @@
 # ComfyUIPod Agent Conventions
 
-## Project Structure- `comfyctl/` — Rust supervisor, status server, strict checks (S1..S17 + S13b/S13c), triage, redaction
+> **Current handoff:** [`docs/HANDOFF-17NOV.md`](docs/HANDOFF-17NOV.md) records the verified repository baseline, unfinished work, documentation audit, and continuation steps. Its snapshot is dated; recheck `main` and CI before implementation.
+
+## Project Structure
+
+- `comfyctl/` — Rust supervisor, status server, strict checks (S1..S17 + S13b/S13c), triage, redaction
 - `studio/comfy_studio/` — Python FastAPI service (`comfy_studio`), package layout:
   - `app.py` / `server.py` / `webutil.py` — app assembly, single-worker CLI entry, shared HTTP/upload/auth helpers
-  - `routers/` — 14 route modules under `/studio/api/*` (core, projects, assets, jobs, templates, chat, perception, media_ops, brief, ads, review_pins, montage, productions)
-  - `agent/` — LLM agent loop, OpenAI-compatible client, 54-tool belt, roles, budgets, memory
-  - `templates/` — 19 curated workflow templates + structural/semantic validator
-  - `engines/` — 16 engines behind a uniform list/install/verify/run contract, install gate
+  - `routers/` — route modules for `/studio/api/*`; the current routes include core, projects, assets/3D, audio, face, motion, raster layers, relighting, spatial memory, jobs, templates, chat, perception, media operations, ads, montage, review pins, and productions
+  - `agent/` — LLM loop, OpenAI-compatible client, tool definitions, roles, budgets, and memory; inspect the live tool registry rather than relying on a copied count
+  - `templates/` — curated workflow JSON plus structural/semantic validator; the current catalog is exposed by the registry/API
+  - `engines/` — registry and engine contracts (`list`/`install`/`verify`/`run`), preparedness checks, and adapters; the current registered roster is returned by `build_default_registry()`
   - `orchestration/` — production graph, planner, executor, evaluator, SQLite checkpointer
   - `creative/` — project understanding, creative brief, review, delivery
   - `ads/` — `ad_studio` engine (script → storyboard → variants + QA)
@@ -146,6 +150,8 @@ nginx -t -c config/nginx.conf
 | tools/mac/     | Bash/Python     | Agent 1    |
 
 ## Active Agents
-1. Implementer: writes code, runs tests, submits changes
-2. Scrutiny Auditor: reviews changes, runs full validation, files findings (governed by cadence rules above)
-3. Reviewer: final merge gate, CI integration
+The following are **review-cycle roles**, not a statement that processes are currently running:
+
+1. Implementer: writes code, runs tests, submits changes.
+2. Scrutiny auditor: reviews changes, runs full validation, and files material findings under the cadence rules above.
+3. Reviewer: checks the final diff, required CI, and integration state.

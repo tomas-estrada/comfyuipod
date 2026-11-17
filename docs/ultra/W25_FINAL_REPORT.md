@@ -3,7 +3,7 @@
 > **Registro histórico de cierre W25.** Su estado refleja el corte pre-GPU y no
 > es el estado actual del proyecto. W26 ejecutó una demo SDXL limitada; el nivel
 > global sigue parcial. Consulta [resultados W26](W26_GPU_RESULTS.md) y contrasta
-> el `main` actual (`5850191`), ya que `status.json` aún apunta a `f5c29dc`.
+> el baseline de aplicación capturado en [`HANDOFF-17NOV.md`](../HANDOFF-17NOV.md). Este archivo conserva evidencia W25 fechada y no sustituye el estado actual.
 
 Estado al cierre de W25: **BLOCKED_PRE_GPU** (arquitectura y contratos completos;
 faltaban integración L2 con engines reales y la campaña GPU W26).

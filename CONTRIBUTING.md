@@ -4,9 +4,10 @@ Thanks for considering a contribution. ComfyUIPod packages ComfyUI and Comfy Stu
 
 ## Start with the current project state
 
+- Read the dated [HANDOFF-17NOV](docs/HANDOFF-17NOV.md) for the latest verified snapshot and outstanding acceptance. It is a handoff, not a live status endpoint: verify the current `main` SHA, open PRs, and CI before acting.
 - Read the [project overview](README.md), [architecture and resource policy](docs/POLITICA_ARQUITECTURA_RECURSOS.md), and [agent/developer conventions](AGENTS.md).
 - The default offer preference in `studio/comfy_studio/hardware_profile.py` is one RTX PRO 6000 Blackwell with 96 GB VRAM and 128 GB host RAM; 256 GB is another search preference, not a fixed runtime tier. Vast.ai offers may have intermediate capacities (such as 200 GB). At runtime `hardware_detect.effective_profile` uses the measured physical/cgroup RAM limit, then applies the operational reserve. The 32 GB consumer GPU profile is retained for compatibility. These settings do not prove that every workflow runs on every matching offer.
-- The [W26 GPU report](docs/ultra/W26_GPU_RESULTS.md) records one measured SDXL image-generation run on a candidate image built from `f5c29dc`. This checkout is newer (`5850191`): the run is useful evidence for that recipe, not validation of the current image or of all video, speech, and 3D workflows.
+- The [W26 GPU report](docs/ultra/W26_GPU_RESULTS.md) records one measured SDXL image-generation run on an older candidate image (`sha-f5c29dc`). The current application baseline at the handoff snapshot is `b612fbe`; that historical run does not validate the current image or other video, speech, and 3D workflows.
 - Startup currently downloads only assets classified as `bootstrap` (the checked-in manifests contain none). Task and optional models are acquired when needed. Use `scripts/storage_requirement.py` for derived disk sizing rather than copying a number from an older report.
 
 ## Make a reviewable change

@@ -1,5 +1,7 @@
 # ComfyUIPod Ultra — inicio para el agente
 
+> **Continuación:** consulta [`HANDOFF-17NOV`](../docs/HANDOFF-17NOV.md) para el baseline verificado del 17 de noviembre, los blockers actuales y el siguiente orden de trabajo. Este paquete de investigación fue preparado el 2026-11-05; sus snapshots de repo/CI no son estado vivo.
+
 Esta carpeta es la extensión persistente del goal. Contiene investigación, decisiones, contratos, prioridades y aceptación para desarrollar Ultra en este repositorio. No es por sí sola una implementación terminada ni un catálogo de modelos para descargar. Para recibir código y onboarding, empieza por el [README raíz](../README.md) y [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Goal corto
@@ -78,4 +80,4 @@ python3 upgrades-ultra-version/validate_spec.py
 
 En Windows, si Python se invoca mediante el launcher, usar `py upgrades-ultra-version/validate_spec.py`. Este validador comprueba IDs/referencias/DAG y contenido del plan; no certifica implementación ni resultados GPU.
 
-Paquete de investigación preparado el 2026-11-05 UTC. La demo W26 es un evento posterior y separado; el registro y el snapshot de esta carpeta no sustituyen la evidencia del [reporte W26](../docs/ultra/W26_GPU_RESULTS.md). `docs/ultra/status.json` todavía apunta a `f5c29dc` y no refleja el `main` actual (`5850191`).
+Paquete de investigación preparado el 2026-11-05 UTC. La demo W26 es un evento posterior y separado; el registro y el snapshot de esta carpeta no sustituyen la evidencia del [reporte W26](../docs/ultra/W26_GPU_RESULTS.md). [`snapshot.json`](snapshot.json) conserva el SHA de la investigación original; el estado actual está en [`docs/HANDOFF-17NOV.md`](../docs/HANDOFF-17NOV.md) y [`docs/ultra/status.json`](../docs/ultra/status.json).

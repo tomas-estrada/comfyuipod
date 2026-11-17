@@ -1,7 +1,6 @@
 # Diagramas de arquitectura — cómo se hacen y cómo se validan
 
-**Rama:** `fix/maad-diagram-legibility` · **Base:** `main` `f07a4ac`
-**Fecha:** 2026-11-10
+**Registro de proceso:** rama `fix/maad-diagram-legibility`, base `main` `f07a4ac`, 2026-11-10. No describe las ramas actuales. Para el estado vigente, consulta [`../HANDOFF-17NOV.md`](../HANDOFF-17NOV.md).
 
 Este directorio contiene la documentación de arquitectura generada en la pasada
 MAAD. Este README existe por un motivo concreto: **la primera versión de los dos

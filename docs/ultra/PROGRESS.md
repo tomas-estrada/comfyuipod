@@ -1,9 +1,11 @@
 # ComfyUIPod Ultra — registro de progreso (pre-GPU)
 
+> **Último snapshot revisado:** 2026-11-17, baseline de aplicación `b612fbe7369dd20d66d8933095f23882ade7a2af`; workflow main [44033581865](https://github.com/tomas-estrada/comfyuipod/actions/runs/44033581865) pasó sus tres jobs. El A07 actual sigue en 228 blockers para 46/57 engines seleccionados; el proyecto no está listo para producción. Consulta [`HANDOFF-17NOV.md`](../HANDOFF-17NOV.md) y [`status.json`](status.json) para el estado y plan de continuación. El resto de este archivo es el registro histórico del lote W01.
+
 Registro histórico de progreso anterior a la demo W26; la tabla de paquetes de
 abajo no se ha reconciliado con cada cambio posterior. Para el estado actual,
 consulta [W26_GPU_RESULTS.md](W26_GPU_RESULTS.md), el código y la CI de `main`.
-`status.json` aún apunta a `f5c29dc`, no al `main` actual (`5850191`).
+Este registro histórico no es un estado vivo; el snapshot vigente está indicado arriba.
 
 Baseline histórica: `b54195f`, PR #62 integrada. El estado de entonces era
 **Ultra pre-GPU**; después se ejecutó una demo GPU W26 acotada. No implica que
