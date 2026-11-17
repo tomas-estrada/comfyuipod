@@ -279,6 +279,8 @@ def _expected_artifact_names(demo_id: str) -> set[str]:
         return {_D01_REPORT_ARTIFACT}
     if demo_id == "D02":
         return set(_D02_ALL_ARTIFACTS)
+    if demo_id == "D03":
+        return {_D03_REPORT_ARTIFACT}
     if demo_id == "D05":
         return {
             "D05_delivery_package.zip",
@@ -297,13 +299,7 @@ def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
     if demo_id == "D01":
         return _check_d01_vehicle_cameras(data)
     if demo_id == "D03":
-        parts = {part["id"] for part in data["parts"]}
-        joints = data["joints"]
-        valid = all(j["parent"] in parts and j["child"] in parts and j["parent"] != j["child"]
-                    for j in joints)
-        return {"joint_graph_valid": valid, "parts": len(parts),
-                "heldout_views_present": bool(data["heldout_views"]),
-                "heldout_view_count": len(data["heldout_views"])}
+        return _check_d03_articulated_product(data)
     if demo_id == "D04":
         refs = data["identity_reference_ids"]
         consistent = len(refs) >= 2 and len(set(refs)) == 1
@@ -1311,6 +1307,638 @@ def _write_d02_measurement_report(
     return path
 
 
+_D03_FIXTURE_SCHEMA = "comfy_studio.demo_fixture.d03.v2"
+_D03_REPORT_ARTIFACT = "D03_articulated_measurement.json"
+_D03_REPORT_SCHEMA = "comfy_studio.d03_articulated_measurement.v1"
+_D03_EVIDENCE_SCOPE = "synthetic_cpu_only"
+_D03_WORLD_UP = (0.0, 0.0, 1.0)
+_D03_MAX_PARTS = 64
+_D03_MAX_JOINTS = 64
+_D03_MAX_VIEWS = 64
+_D03_MAX_ANGLE_DEG = 180.0
+_D03Mat = tuple[tuple[float, float, float], ...]
+
+
+def _d03_finite(value: Any, name: str) -> float:
+    """Strict finite scalar: no bool/int coercion surprises."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
+        raise DemoError(f"D03: {name} malformado")
+    return float(value)
+
+
+def _d03_finite_list(value: Any, length: int, name: str) -> list[float]:
+    """Strict finite-number list: exact length, no bool/int coercion surprises."""
+    if (
+        not isinstance(value, list)
+        or len(value) != length
+        or any(
+            isinstance(component, bool)
+            or not isinstance(component, (int, float))
+            or not math.isfinite(component)
+            for component in value
+        )
+    ):
+        raise DemoError(f"D03: {name} malformado")
+    return [float(component) for component in value]
+
+
+def _d03_mat_vec(
+    mat: _D03Mat, vec: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (
+        mat[0][0] * vec[0] + mat[0][1] * vec[1] + mat[0][2] * vec[2],
+        mat[1][0] * vec[0] + mat[1][1] * vec[1] + mat[1][2] * vec[2],
+        mat[2][0] * vec[0] + mat[2][1] * vec[1] + mat[2][2] * vec[2],
+    )
+
+
+def _d03_mat_mat(a: _D03Mat, b: _D03Mat) -> _D03Mat:
+    return tuple(
+        tuple(
+            a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j] for j in range(3)
+        )
+        for i in range(3)
+    )
+
+
+def _d03_rodrigues(
+    axis: tuple[float, float, float], angle_deg: float, name: str
+) -> _D03Mat:
+    """Rotation matrix for one hinge: Rodrigues' formula on a normalized axis."""
+    norm = math.sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2])
+    if not math.isfinite(norm) or norm <= 1e-12:
+        raise DemoError(f"D03: eje de {name} degenerado")
+    x, y, z = axis[0] / norm, axis[1] / norm, axis[2] / norm
+    radians = math.radians(angle_deg)
+    cos_a, sin_a = math.cos(radians), math.sin(radians)
+    one_minus_cos = 1.0 - cos_a
+    return (
+        (cos_a + x * x * one_minus_cos, x * y * one_minus_cos - z * sin_a,
+         x * z * one_minus_cos + y * sin_a),
+        (y * x * one_minus_cos + z * sin_a, cos_a + y * y * one_minus_cos,
+         y * z * one_minus_cos - x * sin_a),
+        (z * x * one_minus_cos - y * sin_a, z * y * one_minus_cos + x * sin_a,
+         cos_a + z * z * one_minus_cos),
+    )
+
+
+def _d03_sub(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _d03_cross(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
+def _d03_dot(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _d03_normalize(
+    a: tuple[float, float, float], name: str
+) -> tuple[float, float, float]:
+    norm = math.sqrt(_d03_dot(a, a))
+    if not math.isfinite(norm) or norm <= 1e-12:
+        raise DemoError(f"D03: vector {name} degenerado")
+    return (a[0] / norm, a[1] / norm, a[2] / norm)
+
+
+def _d03_camera_basis(
+    position: tuple[float, float, float], look_at: tuple[float, float, float]
+) -> tuple[tuple[float, float, float], ...]:
+    """Deterministic look-at basis: right = forward x world_up, up = right x forward."""
+    forward = _d03_normalize(_d03_sub(look_at, position), "forward")
+    right = _d03_normalize(_d03_cross(forward, _D03_WORLD_UP), "right")
+    up = _d03_cross(right, forward)
+    return (right, up, forward)
+
+
+def _d03_project(
+    point: tuple[float, float, float],
+    position: tuple[float, float, float],
+    basis: tuple[tuple[float, float, float], ...],
+    intrinsics: tuple[float, float, float, float],
+) -> tuple[float, float, float] | None:
+    """Pinhole projection (u, v, depth); None when the point is behind the camera."""
+    right, up, forward = basis
+    delta = _d03_sub(point, position)
+    depth = _d03_dot(delta, forward)
+    if depth <= 1e-9:
+        return None
+    fx, fy, cx, cy = intrinsics
+    u = fx * _d03_dot(delta, right) / depth + cx
+    v = fy * _d03_dot(delta, up) / depth + cy
+    return (u, v, depth)
+
+
+@dataclass(slots=True)
+class _D03Part:
+    part_id: str
+    material: str
+    asset_id: str
+    local_center: tuple[float, float, float]
+
+
+@dataclass(slots=True)
+class _D03Joint:
+    parent: str
+    child: str
+    axis: tuple[float, float, float]
+    origin: tuple[float, float, float]
+
+
+@dataclass(slots=True)
+class _D03View:
+    view_id: str
+    split: str
+    position: tuple[float, float, float]
+    look_at: tuple[float, float, float]
+    intrinsics: tuple[float, float, float, float]
+    image_size: tuple[int, int]
+
+
+@dataclass(slots=True)
+class _D03Scene:
+    """Parsed D03 scene: typed part/joint tree, angles, views and declared truth."""
+
+    root_part: str
+    parts: list[_D03Part]
+    joints: list[_D03Joint]
+    angles_deg: dict[str, float]
+    views: list[_D03View]
+    ground_truth_transforms: dict[str, tuple[tuple[float, float, float], _D03Mat]]
+    heldout_ground_truth_coverage: dict[str, list[str]]
+    max_translation_error: float
+    max_rotation_error: float
+    min_material_count: int
+    min_asset_count: int
+
+
+def _d03_positive_int(value: Any, name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise DemoError(f"D03: {name} malformado")
+    return value
+
+
+def _d03_nonempty_str(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise DemoError(f"D03: {name} malformado")
+    return value
+
+
+def _d03_parse_part(raw: Any) -> _D03Part:
+    if not isinstance(raw, dict):
+        raise DemoError("D03: parte malformada")
+    part_id = raw.get("id")
+    if not isinstance(part_id, str) or not part_id:
+        raise DemoError(f"D03: parte malformada: {part_id!r}")
+    center = _d03_finite_list(raw.get("local_center"), 3, f"parte {part_id} local_center")
+    return _D03Part(
+        part_id=part_id,
+        material=_d03_nonempty_str(raw.get("material"), f"parte {part_id} material"),
+        asset_id=_d03_nonempty_str(raw.get("asset_id"), f"parte {part_id} asset_id"),
+        local_center=(center[0], center[1], center[2]),
+    )
+
+
+def _d03_parse_joint(raw: Any) -> _D03Joint:
+    if not isinstance(raw, dict):
+        raise DemoError("D03: junta malformada")
+    parent = raw.get("parent")
+    child = raw.get("child")
+    if (
+        not isinstance(parent, str)
+        or not parent
+        or not isinstance(child, str)
+        or not child
+        or parent == child
+    ):
+        raise DemoError(f"D03: junta malformada: {parent!r} -> {child!r}")
+    if raw.get("type") != "hinge":
+        raise DemoError(f"D03: junta {child} con tipo no soportado")
+    axis = _d03_finite_list(raw.get("axis"), 3, f"junta {child} axis")
+    origin = _d03_finite_list(raw.get("origin"), 3, f"junta {child} origin")
+    if math.sqrt(_d03_dot((axis[0], axis[1], axis[2]), (axis[0], axis[1], axis[2]))) <= 1e-12:
+        raise DemoError(f"D03: eje de {child} degenerado")
+    return _D03Joint(parent, child, (axis[0], axis[1], axis[2]), (origin[0], origin[1], origin[2]))
+
+
+def _d03_parse_view(raw: Any) -> _D03View:
+    if not isinstance(raw, dict):
+        raise DemoError("D03: vista malformada")
+    view_id = raw.get("id")
+    if not isinstance(view_id, str) or not view_id:
+        raise DemoError(f"D03: vista malformada: {view_id!r}")
+    split = raw.get("split")
+    if split not in ("train", "heldout"):
+        raise DemoError(f"D03: vista {view_id} con split inválido")
+    position = _d03_finite_list(raw.get("position"), 3, f"vista {view_id} position")
+    look_at = _d03_finite_list(raw.get("look_at"), 3, f"vista {view_id} look_at")
+    if tuple(position) == tuple(look_at):
+        raise DemoError(f"D03: vista {view_id} con posición igual al objetivo")
+    intrinsics = _d03_finite_list(raw.get("intrinsics"), 4, f"vista {view_id} intrinsics")
+    if intrinsics[0] <= 0.0 or intrinsics[1] <= 0.0:
+        raise DemoError(f"D03: vista {view_id} con foco no positivo")
+    width_raw, height_raw = raw.get("image_size") or [None, None]
+    width = _d03_positive_int(width_raw, f"vista {view_id} ancho")
+    height = _d03_positive_int(height_raw, f"vista {view_id} alto")
+    return _D03View(
+        view_id, split, (position[0], position[1], position[2]),
+        (look_at[0], look_at[1], look_at[2]),
+        (intrinsics[0], intrinsics[1], intrinsics[2], intrinsics[3]),
+        (width, height),
+    )
+
+
+def _d03_parse_ground_truth(
+    data: dict[str, Any], root_part: str, part_ids: set[str], heldout_view_ids: set[str]
+) -> tuple[
+    dict[str, tuple[tuple[float, float, float], _D03Mat]],
+    dict[str, list[str]],
+    float,
+    float,
+]:
+    """Validate the independently declared held-out ground truth block."""
+    truth = data.get("heldout_ground_truth")
+    if not isinstance(truth, dict):
+        raise DemoError("D03: heldout_ground_truth ausente")
+    max_translation_error = _d03_finite(
+        truth.get("max_translation_error"), "max_translation_error"
+    )
+    max_rotation_error = _d03_finite(truth.get("max_rotation_error"), "max_rotation_error")
+    if max_translation_error <= 0.0 or max_rotation_error <= 0.0:
+        raise DemoError("D03: tolerancias de ground truth no positivas")
+
+    raw_transforms = truth.get("part_transforms")
+    expected_parts = part_ids - {root_part}
+    if not isinstance(raw_transforms, dict) or set(raw_transforms) != expected_parts:
+        raise DemoError("D03: part_transforms no cubre exactamente las partes articuladas")
+    transforms: dict[str, tuple[tuple[float, float, float], _D03Mat]] = {}
+    for part_id, entry in raw_transforms.items():
+        if not isinstance(entry, dict):
+            raise DemoError(f"D03: transform de {part_id} malformado")
+        translation = _d03_finite_list(entry.get("translation"), 3, f"GT {part_id} translation")
+        matrix = entry.get("rotation_matrix")
+        if not isinstance(matrix, list) or len(matrix) != 3:
+            raise DemoError(f"D03: GT {part_id} rotation_matrix malformada")
+        rows = []
+        for row in matrix:
+            components = _d03_finite_list(row, 3, f"GT {part_id} rotation_matrix")
+            rows.append((components[0], components[1], components[2]))
+        transforms[part_id] = (
+            (translation[0], translation[1], translation[2]),
+            (rows[0], rows[1], rows[2]),
+        )
+
+    raw_coverage = truth.get("heldout_view_coverage")
+    if not isinstance(raw_coverage, dict) or set(raw_coverage) != heldout_view_ids:
+        raise DemoError("D03: heldout_view_coverage no cubre exactamente las vistas heldout")
+    coverage: dict[str, list[str]] = {}
+    for view_id, part_list in raw_coverage.items():
+        if (
+            not isinstance(part_list, list)
+            or not part_list
+            or any(not isinstance(part, str) or part not in part_ids for part in part_list)
+            or len(set(part_list)) != len(part_list)
+        ):
+            raise DemoError(f"D03: cobertura de {view_id} malformada")
+        coverage[view_id] = list(part_list)
+    return transforms, coverage, max_translation_error, max_rotation_error
+
+
+def _d03_parse_fixture(data: dict[str, Any]) -> _D03Scene:
+    """Validate the strict D03 v2 scene; malformed input raises DemoError."""
+    if not isinstance(data, dict) or data.get("schema") != _D03_FIXTURE_SCHEMA:
+        raise DemoError("D03: esquema de fixture no reconocido")
+    root_part = _d03_nonempty_str(data.get("root_part"), "root_part")
+    min_material_count = _d03_positive_int(data.get("min_material_count"), "min_material_count")
+    min_asset_count = _d03_positive_int(data.get("min_asset_count"), "min_asset_count")
+
+    raw_parts = data.get("parts")
+    if not isinstance(raw_parts, list) or not 1 <= len(raw_parts) <= _D03_MAX_PARTS:
+        raise DemoError("D03: parts ausente o fuera de rango")
+    parts = [_d03_parse_part(raw) for raw in raw_parts]
+    part_ids = {part.part_id for part in parts}
+    if len(part_ids) != len(parts):
+        raise DemoError("D03: partes con ids duplicados")
+    if root_part not in part_ids:
+        raise DemoError("D03: root_part no está entre las partes")
+
+    raw_joints = data.get("joints")
+    if not isinstance(raw_joints, list) or not 1 <= len(raw_joints) <= _D03_MAX_JOINTS:
+        raise DemoError("D03: joints ausente o fuera de rango")
+    joints = [_d03_parse_joint(raw) for raw in raw_joints]
+    joint_children = [joint.child for joint in joints]
+    if len(set(joint_children)) != len(joint_children):
+        raise DemoError("D03: una parte tiene más de una junta padre")
+    for joint in joints:
+        if joint.parent not in part_ids or joint.child not in part_ids:
+            raise DemoError(
+                "D03: junta referencia partes desconocidas: "
+                f"{joint.parent}->{joint.child}"
+            )
+    # Tree check: walking children from the root must reach every part exactly once.
+    children: dict[str, list[_D03Joint]] = {}
+    for joint in joints:
+        children.setdefault(joint.parent, []).append(joint)
+    reached: list[str] = [root_part]
+    frontier = [root_part]
+    while frontier:
+        current = frontier.pop()
+        for joint in children.get(current, []):
+            reached.append(joint.child)
+            frontier.append(joint.child)
+    if len(reached) != len(part_ids) or set(reached) != part_ids:
+        raise DemoError("D03: el grafo de juntas no es un árbol con raíz root_part")
+
+    raw_angles = data.get("joint_angles_deg")
+    if not isinstance(raw_angles, dict) or set(raw_angles) != set(joint_children):
+        raise DemoError("D03: joint_angles_deg no cubre exactamente las juntas")
+    angles_deg = {
+        child: _d03_finite(angle, f"ángulo de {child}") for child, angle in raw_angles.items()
+    }
+    if any(abs(angle) > _D03_MAX_ANGLE_DEG for angle in angles_deg.values()):
+        raise DemoError("D03: ángulo de junta fuera de rango")
+
+    raw_views = data.get("views")
+    if not isinstance(raw_views, list) or not 2 <= len(raw_views) <= _D03_MAX_VIEWS:
+        raise DemoError("D03: views ausente o fuera de rango")
+    views = [_d03_parse_view(raw) for raw in raw_views]
+    view_ids = {view.view_id for view in views}
+    if len(view_ids) != len(views):
+        raise DemoError("D03: vistas con ids duplicados")
+    if not any(view.split == "train" for view in views):
+        raise DemoError("D03: falta al menos una vista train")
+    heldout_views = [view for view in views if view.split == "heldout"]
+    if not heldout_views:
+        raise DemoError("D03: falta al menos una vista heldout")
+
+    truth_transforms, truth_coverage, max_t_err, max_r_err = _d03_parse_ground_truth(
+        data, root_part, part_ids, {view.view_id for view in heldout_views}
+    )
+    return _D03Scene(
+        root_part=root_part,
+        parts=parts,
+        joints=joints,
+        angles_deg=angles_deg,
+        views=views,
+        ground_truth_transforms=truth_transforms,
+        heldout_ground_truth_coverage=truth_coverage,
+        max_translation_error=max_t_err,
+        max_rotation_error=max_r_err,
+        min_material_count=min_material_count,
+        min_asset_count=min_asset_count,
+    )
+
+
+def _d03_forward_kinematics(
+    scene: _D03Scene,
+) -> dict[str, tuple[tuple[float, float, float], _D03Mat]]:
+    """Deterministic forward kinematics: parent chain of hinge rotations."""
+    children: dict[str, list[_D03Joint]] = {}
+    for joint in scene.joints:
+        children.setdefault(joint.parent, []).append(joint)
+    identity: _D03Mat = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    transforms: dict[str, tuple[tuple[float, float, float], _D03Mat]] = {
+        scene.root_part: ((0.0, 0.0, 0.0), identity)
+    }
+    frontier = [scene.root_part]
+    while frontier:
+        parent = frontier.pop()
+        t_parent, r_parent = transforms[parent]
+        for joint in children.get(parent, []):
+            offset = _d03_mat_vec(r_parent, joint.origin)
+            t_child = (
+                t_parent[0] + offset[0], t_parent[1] + offset[1], t_parent[2] + offset[2]
+            )
+            r_child = _d03_mat_mat(
+                r_parent,
+                _d03_rodrigues(joint.axis, scene.angles_deg[joint.child], joint.child),
+            )
+            transforms[joint.child] = (t_child, r_child)
+            frontier.append(joint.child)
+    return transforms
+
+
+def _d03_measure_scene(scene: _D03Scene) -> dict[str, Any]:
+    """Measure FK transforms and view coverage against the declared ground truth.
+
+    Part transforms are recomputed from the declared joint axes, origins and
+    angles and compared with the independently specified held-out ground truth.
+    Coverage recomputes part-center projections per calibrated view; held-out
+    views are compared with the declared held-out coverage. No render, GPU or
+    model-quality measurement is performed.
+    """
+    transforms = _d03_forward_kinematics(scene)
+    transform_errors: dict[str, dict[str, float]] = {}
+    for part_id, (translation, rotation) in sorted(transforms.items()):
+        if part_id == scene.root_part:
+            continue
+        gt_translation, gt_rotation = scene.ground_truth_transforms[part_id]
+        translation_error = math.sqrt(
+            sum((translation[k] - gt_translation[k]) ** 2 for k in range(3))
+        )
+        rotation_error = max(
+            abs(rotation[i][j] - gt_rotation[i][j]) for i in range(3) for j in range(3)
+        )
+        transform_errors[part_id] = {
+            "translation_error": round(translation_error, 12),
+            "rotation_error": round(rotation_error, 12),
+        }
+    transforms_match = all(
+        error["translation_error"] <= scene.max_translation_error
+        and error["rotation_error"] <= scene.max_rotation_error
+        for error in transform_errors.values()
+    )
+
+    views_report: dict[str, dict[str, Any]] = {}
+    for view in scene.views:
+        basis = _d03_camera_basis(view.position, view.look_at)
+        width, height = view.image_size
+        covered: list[str] = []
+        detail: dict[str, dict[str, Any]] = {}
+        for part in scene.parts:
+            local = _d03_mat_vec(transforms[part.part_id][1], part.local_center)
+            world = tuple(
+                transforms[part.part_id][0][k] + local[k] for k in range(3)
+            )
+            projected = _d03_project(world, view.position, basis, view.intrinsics)
+            if projected is None:
+                covered_flag = False
+                uv: list[float] | None = None
+                depth: float | None = None
+            else:
+                u, v, depth_value = projected
+                covered_flag = 0.0 <= u < width and 0.0 <= v < height
+                uv = [round(u, 6), round(v, 6)]
+                depth = round(depth_value, 6)
+            if covered_flag:
+                covered.append(part.part_id)
+            detail[part.part_id] = {
+                "world_center": [round(value, 9) for value in world],
+                "projected_uv": uv,
+                "depth": depth,
+                "covered": covered_flag,
+            }
+        views_report[view.view_id] = {
+            "split": view.split,
+            "covered_parts": sorted(covered),
+            "coverage": round(len(covered) / len(scene.parts), 6),
+            "parts": detail,
+        }
+
+    heldout_views = [view for view in scene.views if view.split == "heldout"]
+    coverage_match = all(
+        views_report[view.view_id]["covered_parts"]
+        == sorted(scene.heldout_ground_truth_coverage[view.view_id])
+        for view in heldout_views
+    )
+    materials = {part.material for part in scene.parts}
+    assets = {part.asset_id for part in scene.parts}
+    heldout_coverage_mean = round(
+        sum(views_report[view.view_id]["coverage"] for view in heldout_views)
+        / len(heldout_views),
+        6,
+    )
+    return {
+        "joint_graph_valid": True,  # el parser exige un árbol con raíz root_part
+        "transforms_match": transforms_match,
+        "coverage_match": coverage_match,
+        "transform_errors": transform_errors,
+        "views": views_report,
+        "heldout_view_count": len(heldout_views),
+        "train_view_count": len(scene.views) - len(heldout_views),
+        "heldout_coverage_mean": heldout_coverage_mean,
+        "material_count": len(materials),
+        "asset_count": len(assets),
+        "material_variation_present": len(materials) >= scene.min_material_count,
+        "asset_variation_present": len(assets) >= scene.min_asset_count,
+        "part_count": len(scene.parts),
+        "joint_count": len(scene.joints),
+    }
+
+
+def _check_d03_articulated_product(data: dict[str, Any]) -> dict[str, Any]:
+    """Run D03's typed fixture checks over the synthetic CPU scene.
+
+    Forward kinematics recomputed from the declared joint graph is compared
+    against the independently declared held-out ground truth (part transforms
+    and per-view coverage of part centers), and material/asset variation is
+    measured. Synthetic CPU-only evidence: no render, no GPU, no neural
+    reconstruction or material-transfer quality claim.
+    """
+    measurement = _d03_measure_scene(_d03_parse_fixture(data))
+    return {
+        "joint_graph_valid": measurement["joint_graph_valid"],
+        "heldout_views_present": measurement["heldout_view_count"] > 0,
+        "fk_transforms_match_ground_truth": measurement["transforms_match"],
+        "heldout_coverage_matches_ground_truth": measurement["coverage_match"],
+        "material_variation_present": measurement["material_variation_present"],
+        "asset_variation_present": measurement["asset_variation_present"],
+        "part_count": measurement["part_count"],
+        "joint_count": measurement["joint_count"],
+        "train_view_count": measurement["train_view_count"],
+        "heldout_view_count": measurement["heldout_view_count"],
+        "heldout_coverage_mean": measurement["heldout_coverage_mean"],
+        "material_count": measurement["material_count"],
+        "asset_count": measurement["asset_count"],
+    }
+
+
+def _write_d03_articulated_report(
+    fixture: Path, data: dict[str, Any], out_dir: Path
+) -> Path:
+    """Write the D03 articulated measurement report (synthetic CPU evidence only).
+
+    Contents: fixture SHA-256, joint tree and angles, per-view calibrated
+    coverage of part centers, FK-vs-ground-truth transform errors, held-out
+    coverage comparison, asset/material variation counts, explicit
+    ``evidence_scope: synthetic_cpu_only`` and ``gpu_used: false``. It makes no
+    GPU, render or model-quality claim.
+    """
+    scene = _d03_parse_fixture(data)
+    measurement = _d03_measure_scene(scene)
+    report = {
+        "schema": _D03_REPORT_SCHEMA,
+        "evidence_scope": _D03_EVIDENCE_SCOPE,
+        "gpu_used": False,
+        "scope": (
+            "synthetic CPU kinematics and coverage evidence only: deterministic "
+            "forward kinematics and part-center projections against declared "
+            "ground truth; no render, no GPU, no reconstruction or "
+            "material-transfer quality claim"
+        ),
+        "fixture_sha256": _sha256(fixture),
+        "ground_truth_declaration": (
+            "independently specified in the fixture: transforms and held-out "
+            "coverage were declared without running this runner"
+        ),
+        "root_part": scene.root_part,
+        "parts": [
+            {"id": part.part_id, "material": part.material, "asset_id": part.asset_id}
+            for part in scene.parts
+        ],
+        "joints": [
+            {"parent": joint.parent, "child": joint.child, "axis": list(joint.axis),
+             "origin": list(joint.origin)}
+            for joint in scene.joints
+        ],
+        "joint_angles_deg": dict(sorted(scene.angles_deg.items())),
+        "fk_vs_ground_truth": {
+            "max_translation_error": scene.max_translation_error,
+            "max_rotation_error": scene.max_rotation_error,
+            "per_part_errors": measurement["transform_errors"],
+            "transforms_match_ground_truth": measurement["transforms_match"],
+        },
+        "views": [
+            {
+                "id": view.view_id,
+                "split": view.split,
+                "position": list(view.position),
+                "look_at": list(view.look_at),
+                "intrinsics": list(view.intrinsics),
+                "image_size": list(view.image_size),
+                "covered_parts": measurement["views"][view.view_id]["covered_parts"],
+                "coverage": measurement["views"][view.view_id]["coverage"],
+                "parts": measurement["views"][view.view_id]["parts"],
+            }
+            for view in scene.views
+        ],
+        "heldout_ground_truth_coverage": {
+            view_id: sorted(parts)
+            for view_id, parts in sorted(scene.heldout_ground_truth_coverage.items())
+        },
+        "heldout_coverage_matches_ground_truth": measurement["coverage_match"],
+        "heldout_aggregate": {
+            "view_count": measurement["heldout_view_count"],
+            "coverage_mean": measurement["heldout_coverage_mean"],
+        },
+        "variation": {
+            "material_count": measurement["material_count"],
+            "asset_count": measurement["asset_count"],
+            "material_variation_present": measurement["material_variation_present"],
+            "asset_variation_present": measurement["asset_variation_present"],
+        },
+    }
+    path = out_dir / _D03_REPORT_ARTIFACT
+    path.write_text(
+        json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
 
 def _png_fixture(path: Path, seed: int) -> None:
     """Write a tiny valid RGB PNG without adding an imaging dependency."""
@@ -1950,6 +2578,8 @@ def run_demo(
         )
     elif demo_id == "D01":
         measurement_report = _write_d01_reprojection_report(fixture, fixture_data, out_dir)
+    elif demo_id == "D03":
+        measurement_report = _write_d03_articulated_report(fixture, fixture_data, out_dir)
     elif demo_id == "D05":
         if source_video is None:
             artifact, render_checks = _render_d05(fixture_data, out_dir)
@@ -1982,7 +2612,12 @@ def run_demo(
                 "FFmpeg delivery and editable package; CPU/toolchain evidence only, no model "
                 "quality or capability proof"
                 if source_video is not None
-                else "fixture consistency/toolchain only; no model quality or capability proof"
+                else (
+                    "synthetic CPU kinematics and calibrated-view coverage only; no render, GPU, "
+                    "reconstruction or material-transfer quality claim"
+                    if demo_id == "D03"
+                    else "fixture consistency/toolchain only; no model quality or capability proof"
+                )
             )
             )
         ),

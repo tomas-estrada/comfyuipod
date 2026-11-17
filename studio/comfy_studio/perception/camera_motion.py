@@ -3,6 +3,17 @@
 This is a deterministic block-matching heuristic, not optical flow or a
 real-footage quality guarantee. It reports only broad per-shot labels and keeps
 ambiguous or textureless footage unknown.
+
+Camera-wide discrimination: a camera move (pan/zoom) displaces textured
+evidence across most of the sampled block grid, while a moving foreground
+subject only lights up the blocks it covers. Each frame pair therefore must
+show coherent block vectors over ``MIN_FIELD_COVERAGE`` of the grid before a
+pan/zoom label is allowed, across ``MIN_FIELD_PAIR_SUPPORT`` of the motion
+bearing pairs. Footage whose motion evidence is localized (subject against a
+flat sky, a large moving subject) is reported as ``unknown`` with low
+confidence instead of a confident camera move. The tradeoff is documented and
+accepted: textured-but-partial pans (flat sky above a textured landscape) also
+stay unknown rather than risk calling subject motion a camera move.
 """
 
 from __future__ import annotations
@@ -24,6 +35,8 @@ BLOCK_STEP = 8
 SEARCH_RADIUS = 3
 MIN_TEXTURE_VARIANCE = 30.0
 MIN_BLOCKS = 8
+MIN_FIELD_COVERAGE = 0.6
+MIN_FIELD_PAIR_SUPPORT = 0.6
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,14 +137,16 @@ def estimate_camera_motion(
     if not valid:
         return CameraMotionEstimate("unknown", 0.0, len(frames), 0)
 
-    vectors: list[tuple[float, float, float, float]] = []
-    for first, second in zip(frames, frames[1:], strict=False):
-        vectors.extend(_block_vectors(first, second, width, height))
+    vectors: list[tuple[float, float, float, float, int]] = []
+    for pair_index, (first, second) in enumerate(zip(frames, frames[1:], strict=False)):
+        for dx, dy, x, y in _block_vectors(first, second, width, height):
+            vectors.append((dx, dy, x, y, pair_index))
     if len(vectors) < MIN_BLOCKS:
         return CameraMotionEstimate("unknown", 0.0, len(frames), len(vectors))
 
     total = len(vectors)
-    stationary = sum(math.hypot(dx, dy) <= 0.75 for dx, dy, _, _ in vectors)
+    motion_pairs = {vector[4] for vector in vectors}
+    stationary = sum(math.hypot(dx, dy) <= 0.75 for dx, dy, _, _, _ in vectors)
     stationary_support = stationary / total
     if stationary_support >= 0.62:
         return CameraMotionEstimate("static", stationary_support, len(frames), total)
@@ -141,13 +156,13 @@ def estimate_camera_motion(
     median_magnitude = math.hypot(median_dx, median_dy)
     translation_inliers = sum(
         abs(dx - median_dx) <= 1.0 and abs(dy - median_dy) <= 1.0
-        for dx, dy, _, _ in vectors
+        for dx, dy, _, _, _ in vectors
     )
     translation_support = translation_inliers / total
 
     horizontal_vectors: list[bool] = []
     vertical_vectors: list[bool] = []
-    for dx, dy, x, y in vectors:
+    for dx, dy, x, y, _ in vectors:
         radius_x = x - (width - 1) / 2
         radius_y = y - (height - 1) / 2
         if abs(radius_x) >= width * 0.15 and abs(dx) >= 0.8:
@@ -167,17 +182,72 @@ def estimate_camera_motion(
         else 0.0
     )
     zoom_support = min(horizontal_zoom_support, vertical_zoom_support)
-    if zoom_support >= 0.62:
+
+    cell_total = _grid_cells(width, height)
+    motion_points: dict[int, list[tuple[float, float]]] = {}
+    translation_points: dict[int, list[tuple[float, float]]] = {}
+    for dx, dy, x, y, pair in vectors:
+        motion_points.setdefault(pair, []).append((x, y))
+        if abs(dx - median_dx) <= 1.0 and abs(dy - median_dy) <= 1.0:
+            translation_points.setdefault(pair, []).append((x, y))
+    pan_field_support = _field_support(
+        translation_points, len(motion_pairs), cell_total
+    )
+    zoom_field_support = _field_support(motion_points, len(motion_pairs), cell_total)
+
+    if zoom_support >= 0.62 and zoom_field_support >= MIN_FIELD_PAIR_SUPPORT:
         return CameraMotionEstimate("zoom", zoom_support, len(frames), total)
-    if median_magnitude >= 0.8 and translation_support >= 0.6:
+    if (
+        median_magnitude >= 0.8
+        and translation_support >= 0.6
+        and pan_field_support >= MIN_FIELD_PAIR_SUPPORT
+    ):
         return CameraMotionEstimate("pan", translation_support, len(frames), total)
 
+    # Motion evidence exists but is too sparse or localized to blame the camera;
+    # scale the moving-motion confidence by how much of the frame it covered so
+    # an "unknown" never carries a deceptively high confidence.
+    moving_support = max(
+        translation_support * pan_field_support,
+        zoom_support * zoom_field_support,
+    )
     return CameraMotionEstimate(
         "unknown",
-        max(stationary_support, translation_support, zoom_support),
+        max(stationary_support, moving_support),
         len(frames),
         total,
     )
+
+
+def _grid_cells(width: int, height: int) -> int:
+    """Number of block positions the sampler can visit for this frame size."""
+    max_x = width - BLOCK_SIZE - SEARCH_RADIUS
+    max_y = height - BLOCK_SIZE - SEARCH_RADIUS
+    if max_x < SEARCH_RADIUS or max_y < SEARCH_RADIUS:
+        return 0
+    columns = (max_x - SEARCH_RADIUS) // BLOCK_STEP + 1
+    rows = (max_y - SEARCH_RADIUS) // BLOCK_STEP + 1
+    return columns * rows
+
+
+def _field_support(
+    points_by_pair: dict[int, list[tuple[float, float]]],
+    motion_pair_count: int,
+    cell_total: int,
+) -> float:
+    """Fraction of motion-bearing pairs whose points cover most of the grid.
+
+    ``0.0`` means the motion evidence never spread beyond a localized region,
+    ``1.0`` means every motion-bearing pair saw camera-wide coverage.
+    """
+    if motion_pair_count <= 0 or cell_total <= 0:
+        return 0.0
+    covered = sum(
+        1
+        for points in points_by_pair.values()
+        if len(points) / cell_total >= MIN_FIELD_COVERAGE
+    )
+    return covered / motion_pair_count
 
 
 def _block_vectors(

@@ -1,48 +1,43 @@
 # Capability Closure Audit and Agent Brief
 
-Audit baseline: `main` at `81f5bf39bb048f586ea3c25a045e568af85c07da` (2026-11-16).
+Snapshot date: 2026-11-17 UTC. Authoritative main SHA: `a1f847df6d270aed512a725b4705cc2a2089b768`.
 
-## Current decision
+## Decision
 
-The project is **not ready for production closure**. The current main workflow passed on run [43796325868](https://github.com/tomas-estrada/comfyuipod/actions/runs/43796325868), and PR #405 passed on run [43783405523](https://github.com/tomas-estrada/comfyuipod/actions/runs/43783405523). Those runs establish software and candidate-image checks, not capability completion or target-GPU performance.
+The project is **not production-ready**. PR #408 is merged and post-merge workflow [43983976860](https://github.com/tomas-estrada/comfyuipod/actions/runs/43983976860) passed all three jobs: repository/Python/panel checks, Rust checks, candidate build and both full-stack smoke paths. Candidate `ghcr.io/tomas-estrada/comfyuipod:sha-a1f847d` has manifest digest `sha256:76ebe67fdb7d98d7a78ee5280b4dda7c11d10a33202b0f2e7e5ede1c98c4a9b7`. It is not promoted to `latest`.
 
-The current manifest checker reports 88 engines, 57 selected, no structural coherence problems, 228 release blockers, and `release_ready: false`. The blockers affect 46 selected engines. A plain `--check` currently exits successfully despite the blockers, and CI does not yet make readiness a required production-promotion condition. This is a gate defect, not evidence that the blockers can be waived.
+The A07 gate is active. In the main workflow it reported 233 blockers across 48 of 57 selected engines and skipped `latest`/semver promotion. The same-commit local checker reports 228 blockers across 46 engines. This disagreement is an open correctness issue; establish which manifest/input differs and make the check deterministic before using the number as a closure target. Do not conceal or “fix” the discrepancy with metadata edits or by shrinking the selected roster.
 
-The capability ledger and `status.json` are stale relative to this main SHA. Recent merges #404 and #405 add CPU evidence for sound design, delivery, ASR and related flows; they do not close all non-GPU acceptance. Preserve partial capability levels until the specified acceptance evidence exists. The only acceptable final state for this goal is that all non-GPU evidence and release gates are closed; target-hardware measurements may remain explicitly identified as the only outstanding items.
+PR #408 adds bounded CPU evidence for A19 temporal-scene, causal audio and BT.709 EDL delivery, and establishes the release-promotion guard. These changes do not satisfy all capability acceptance. A green repository CI is not proof of real provider connectivity, model quality, authorized-media quality, broad holdout evaluation, all engine adapter readiness, or target-GPU performance. The only acceptable end state for this goal is that all documented non-GPU criteria are verified closed and real-GPU measurements are the sole remaining gap.
 
-## Required working rules
+## Active workstreams
 
-- Use an isolated branch/worktree per independent change and the repository agent harness for delegated work.
-- Read `AGENTS.md`, relevant acceptance criteria, and the internal RAG before implementation. Treat external catalogs as leads, then verify against source, tests and pinned dependencies.
-- Prefer production-route CPU integration fixtures and real artifacts. A fake collaborator, manifest declaration, synthetic fixture, or passing unit test alone does not prove engine integration or perceptual quality.
-- Keep GPU measurements, held-out quality, real provider behavior, and commercial/license decisions distinct. Never fabricate measurements, consent, redistributability, or evidence.
-- Run the focused suite while developing, then integrate all compatible changes and run the broad repository/CI-equivalent checks together. Recheck the exact final commit and workflow before reporting completion.
-- Do not promote a release image while strict A07 readiness is false. Candidate PR builds must remain available so fixes can be validated.
+Current local integration branch: `codex/closure-ledger-refresh-20261117`, based on main `a1f847df6d270aed512a725b4705cc2a2089b768`. Three independent changes are integrated locally and pass focused CPU checks; they are not yet committed, published, or CI-verified. The previous delegation status in this document was stale and has been replaced with this actual state.
 
-## Parallel work tracks
-
-| Track | Scope | Acceptance evidence |
+| Workstream | Scope | Integration evidence |
 |---|---|---|
-| A07 release gate | Manifest checker CLI, CI workflow and promotion job only | Strict readiness mode fails on a coherent manifest with blockers and passes a clean fixture; promotion is gated while PR candidate builds remain usable; current 228 blockers remain visible and are not “fixed” by metadata-only edits. |
-| Temporal scene | Project-scoped temporal-scene storage/routes/tests | A production-path CPU fixture records known object/pose/camera observations, separates train and held-out frames, persists/reloads, exercises reframe/retime, and compares A→B→A against a no-memory baseline. Unknown/inferred values stay explicitly inferred. |
-| Causal audio | `scene_sound` render/route/tests | Real synthetic WAV fixtures pass through project route and FFmpeg; deleting one declared cause removes only its stem, preserves unrelated events, and emitted sample rate/clipping/loudness/true-peak values come from rendered bytes. |
-| Delivery policy | EDL/Remotion schema and focused tests | Trace one undeclared or dropped policy end-to-end (color primaries/transfer or title-safe area); verify the final artifact using ffprobe and decoded pixels. Color range is not a color-space conversion. |
+| Workstream | Local change | Evidence and limit |
+|---|---|---|
+| Production planner | Persistent mission spend, idempotent attempt accounting, remaining mission cap, typed budget terminal state and v2 checkpoint migration | Six focused tests pass; configured-provider behavior and full production-route acceptance remain open |
+| Audiovisual CPU | Camera-motion estimator now gates confidence on field coverage and rejects ambiguous dominant subject motion | 34 focused tests pass on deterministic synthetic clips; real-footage holdout accuracy remains open |
+| 3D/motion CPU | D03 articulated-product fixture adds FK/projection, held-out coverage, independent synthetic ground truth and a report artifact | 53 demo tests pass; synthetic CPU evidence only, no render/GPU/general reconstruction claim |
+| A07 release gate | Updated mission-compiler lock hashes for the two modified orchestration source files | Local checker remains 228 blockers/46 engines. CI on main `a1f847d` reported 233/48; the five-blocker mismatch remains unresolved |
 
-The current delegated work is scoped to these four tracks. Do not overlap edits across tracks; report the branch, commit, harness run ID, exact tests and known limits.
+Integrated validation on this branch: 279 related Python tests passed, 1 skipped; Ruff passed, `git diff --check` passed. No PR CI or candidate image has run for this branch. Do not raise capability levels from synthetic fixtures where acceptance requires real-world or held-out data. Agent reviews attempted via `scripts/cmd-agent` could not connect to the model API; local review remains necessary.
 
-## Remaining closure sequence after this tranche
+## Required closure order
 
-1. Review each branch and harness log; reject metadata-only claims and unproven behavior.
-2. Integrate the isolated commits on a branch based on the current `main`, preserving #404/#405 and all newer main code.
-3. Rebaseline the capability ledger and machine-readable status to the verified SHA, workflow, blocker count and artifact digests; leave uncertainty explicit.
-4. Use one broad validation pass covering Python/Studio, Rust, repository validation, candidate build, full-stack and Studio-profile smoke. Fix all failures before opening/updating the PR.
-5. Continue A00–A28, active capabilities, D01–D05, and every selected-engine blocker from the acceptance documents. The ledger must show criterion-level evidence, not only an item status.
-6. Only when every non-GPU criterion is proven should the report say GPU measurement is the sole remaining class. Revalidate current main and image provenance after merge; do not claim production-ready GPU quality without real target-hardware results.
+1. Reconcile the A07 CI/local blocker-count mismatch on the exact same commit and source inputs.
+2. Resolve all selected engine blockers with authentic pins, dependency locks, notices, redistribution decisions, actual adapters and image inventory evidence. Preserve the selected roster unless an explicit product decision changes it; never claim support from metadata alone.
+3. Close the durable production plan/execution path, project memory/retrieval and provider contract/error/privacy behavior through the configured LangGraph runtime.
+4. Close media ingest, reference analysis, semantic retrieval, ASR/audio provenance, temporal scene, 3D camera/geometry, physics/rig/motion and D01-D05 CPU acceptance to the exact criteria in `upgrades-ultra-version/acceptance.md`.
+5. Complete authorized real-media holdouts where the acceptance requires them. Synthetic deterministic fixtures cannot replace those results.
+6. Refresh `CAPABILITY_EVIDENCE.md` and `status.json` only from merged code and current CI/image evidence. Keep `latest` promotion gated while A07 is blocked.
+7. Only after every non-GPU gap is closed should the report say target-GPU measurements are the sole remaining work. Then run the authorized target-hardware plan and capture immutable image digest, telemetry, artifacts, seeds, holdouts, and failure/cost records.
 
-## Current baseline facts to preserve
+## Current hard limits
 
-- Main SHA: `81f5bf39bb048f586ea3c25a045e568af85c07da`.
-- Manifest: 88 total / 57 selected / 228 release blockers / 46 affected selected engines / coherent / not release-ready.
-- Latest main workflow evidence: run `43796325868` successful. Latest cited merged PR evidence: #405, run `43783405523` successful.
-- Do not assume that the historical `candidate_image_current` entry in `status.json` describes this SHA; obtain the current run's candidate and promoted image digests before recording them.
-- No GPU run or paid Modal audit is authorized or needed for this closure tranche.
+- No target-GPU run was part of PR #408 or workflow 43983976860.
+- No new image was promoted to `latest`; the A07 warning is the expected release gate outcome.
+- Historical GPU/profile results remain attached to their original images and do not transfer to this candidate.
+- No paid Modal run or external provider/API call is implied or authorized by local contracts/tests.
