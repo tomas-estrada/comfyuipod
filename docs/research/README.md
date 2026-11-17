@@ -19,6 +19,12 @@ The ComfyUI and Blender link catalogs supplied on 2026-11-12 are preserved in
 The data-quality limits are recorded in
 [`catalogs/link-catalog-data-quality.md`](catalogs/link-catalog-data-quality.md).
 
+The user-supplied Open Engine Registry v8 workbook is preserved with a
+row-normalized CSV export for RAG lookup. It is discovery evidence, not a
+project-approved engine manifest or a verification of capability, licensing,
+or current availability. See
+[`catalogs/open-engine-registry-v8.0-data-quality.md`](catalogs/open-engine-registry-v8.0-data-quality.md).
+
 From the repository root:
 
 ```bash
