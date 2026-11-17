@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -30,6 +31,19 @@ def _rpc(client: TestClient, method: str, params: dict | None = None, req_id: in
 
 def _call_tool(client: TestClient, name: str, arguments: dict | None = None):
     return _rpc(client, "tools/call", {"name": name, "arguments": arguments or {}})
+
+
+def _approve_and_wait(client: TestClient, production_id: str) -> dict:
+    accepted = client.post(f"/studio/api/productions/{production_id}/approve")
+    assert accepted.status_code == 202, accepted.text
+    assert accepted.json()["job_id"] == production_id
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        status = client.get(f"/studio/api/productions/{production_id}/status").json()
+        if status["phase"] in {"done", "simulated", "failed", "cancelled", "halted"}:
+            return {**status, "status": status}
+        time.sleep(0.01)
+    raise AssertionError(f"production {production_id} did not reach a terminal phase")
 
 
 # --------------------------------------------------------------------------
@@ -68,9 +82,7 @@ def test_stub_approval_does_not_claim_a_real_render(client: TestClient) -> None:
         "/studio/api/productions", json={"idea": "playa al amanecer"}
     ).json()["production_id"]
 
-    resp = client.post(f"/studio/api/productions/{pid}/approve")
-    assert resp.status_code == 200
-    body = resp.json()
+    body = _approve_and_wait(client, pid)
     # con stubs deterministas el lazo no debe afirmar que produjo un reel real.
     assert body["phase"] == "simulated"
     assert body["final_output_path"] is None
@@ -157,12 +169,10 @@ def test_normal_studio_project_flow_publishes_cpu_video_artifact(
     production_id = planned.json()["production_id"]
     assert planned.json()["phase"] == "awaiting_approval"
 
-    approved = client.post(f"/studio/api/productions/{production_id}/approve")
-    assert approved.status_code == 200, approved.text
-    result = approved.json()
+    result = _approve_and_wait(client, production_id)
     assert result["phase"] == "done"
     assert result["status"]["artifact_ready"] is True
-    assert len(result["output_asset_ids"]) == 2
+    assert len(result["status"]["output_asset_ids"]) == 2
 
     gallery = client.get(f"/studio/api/projects/{project_id}/assets?category=outputs")
     assert gallery.status_code == 200
@@ -340,9 +350,8 @@ def test_studio_profile_defaults_to_real_backend_through_production_api(
     assert layer.engine == "comfyui"
     app.state.production_service.checkpointer.save(state)
 
-    approved = client.post(f"/studio/api/productions/{production_id}/approve")
-    assert approved.status_code == 200, approved.text
-    assert approved.json()["phase"] == "done", [
+    approved = _approve_and_wait(client, production_id)
+    assert approved["phase"] == "done", [
         (s.status, s.error, [(ly.engine, ly.params) for ly in s.layers])
         for s in app.state.production_service.checkpointer.load(production_id).all_shots()
     ]
