@@ -14,6 +14,42 @@ def _texture(seed: int = 7) -> bytes:
     return random.Random(seed).randbytes(WIDTH * HEIGHT)
 
 
+def _patch_texture(seed: int, width: int, height: int) -> bytes:
+    return random.Random(seed).randbytes(width * height)
+
+
+def _compose(
+    background: bytes,
+    patch: bytes,
+    patch_x: int,
+    patch_y: int,
+    patch_w: int,
+    patch_h: int,
+) -> bytes:
+    """Overlay a patch onto a background frame at a fixed position."""
+    result = bytearray(background)
+    for row in range(patch_h):
+        for col in range(patch_w):
+            result[(patch_y + row) * WIDTH + patch_x + col] = patch[row * patch_w + col]
+    return bytes(result)
+
+
+def _subject_clip(
+    background: bytes,
+    subject: bytes,
+    start_x: int,
+    step_x: int,
+    frame_count: int,
+    subject_w: int,
+    subject_h: int,
+) -> list[bytes]:
+    """Deterministic clip: static background, subject translating horizontally."""
+    return [
+        _compose(background, subject, start_x + step_x * index, 9, subject_w, subject_h)
+        for index in range(frame_count)
+    ]
+
+
 def _shift(frame: bytes, dx: int, dy: int) -> bytes:
     result = bytearray(WIDTH * HEIGHT)
     for y in range(HEIGHT):
@@ -90,3 +126,79 @@ def test_single_frame_is_unknown() -> None:
     estimate = estimate_camera_motion([_texture()], WIDTH, HEIGHT)
 
     assert estimate.move == "unknown"
+
+
+def test_synthetic_clip_static_camera_with_moving_subject_is_not_camera_move() -> None:
+    """Ground truth: camera static, textured subject translating across frame."""
+    background = _texture(11)
+    subject = _patch_texture(12, 16, 22)
+    frames = _subject_clip(background, subject, 20, -2, 5, 16, 22)
+
+    estimate = estimate_camera_motion(frames, WIDTH, HEIGHT)
+
+    assert estimate.move in {"static", "unknown"}
+    assert estimate.to_dict()["origin"] != "inferred" or estimate.move == "static"
+
+
+def test_synthetic_clip_flat_background_subject_motion_stays_unknown() -> None:
+    """Ground truth: flat background, only the subject carries motion evidence.
+
+    A subject-sized field cannot confirm a camera move, so the estimator must
+    report uncertainty instead of a confident pan.
+    """
+    background = bytes([127]) * (WIDTH * HEIGHT)
+    subject = _patch_texture(12, 16, 22)
+    frames = _subject_clip(background, subject, 20, -2, 5, 16, 22)
+
+    estimate = estimate_camera_motion(frames, WIDTH, HEIGHT)
+
+    assert estimate.move == "unknown"
+    assert estimate.confidence <= 0.5
+
+
+def test_synthetic_clip_camera_pan_is_detected_across_frames() -> None:
+    """Ground truth: whole frame translating (2, -1) per pair, no subject."""
+    base = _texture(11)
+    frames = [_shift(base, 2 * index, -index) for index in range(5)]
+
+    estimate = estimate_camera_motion(frames, WIDTH, HEIGHT)
+
+    assert estimate.move == "pan"
+    assert estimate.confidence >= 0.6
+
+
+def test_synthetic_clip_pan_with_counter_moving_subject_still_reports_pan() -> None:
+    """Ground truth: camera pans while a smaller subject moves the other way.
+
+    Background evidence dominates spatially, so the camera move must win.
+    """
+    base = _texture(11)
+    subject = _patch_texture(12, 16, 22)
+    frames = [
+        _compose(_shift(base, 2 * index, -index), subject, 20 - 2 * index, 9, 16, 22)
+        for index in range(5)
+    ]
+
+    estimate = estimate_camera_motion(frames, WIDTH, HEIGHT)
+
+    assert estimate.move == "pan"
+    assert estimate.confidence >= 0.6
+
+
+def test_synthetic_clip_partially_textured_pan_stays_conservative() -> None:
+    """Ground truth: camera pans, but texture (and thus evidence) is lower-half only.
+
+    Evidence covers half the grid; the estimator refuses a confident camera
+    label from a partial field and reports unknown instead.
+    """
+    base = _texture(11)
+    mixed = bytearray(bytes([127]) * (WIDTH * HEIGHT))
+    for y in range(HEIGHT // 2, HEIGHT):
+        for x in range(WIDTH):
+            mixed[y * WIDTH + x] = base[y * WIDTH + x]
+    frames = [_shift(bytes(mixed), 2 * index, -index) for index in range(5)]
+
+    estimate = estimate_camera_motion(frames, WIDTH, HEIGHT)
+
+    assert estimate.move == "unknown"
+    assert estimate.confidence <= 0.5

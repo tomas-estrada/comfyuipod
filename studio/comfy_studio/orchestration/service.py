@@ -59,7 +59,14 @@ _TERMINAL_PHASES = frozenset({"done", "simulated", "failed", "cancelled", "halte
 
 
 def _terminal_reason(state: ProductionState) -> str | None:
-    """Última razón terminal tipada del log (p.ej. 'ambiguous_purpose'), o None."""
+    """Razón terminal tipada PERSISTIDA del estado, o la del plan legacy.
+
+    `state.terminal_reason` la fija `mark_terminal_failure` (p.ej.
+    'budget_exhausted') y viaja en el checkpoint. Un checkpoint previo solo
+    lleva la razón en el log (`plan_rejected`): se conserva ese fallback.
+    """
+    if state.terminal_reason:
+        return state.terminal_reason
     for entry in reversed(state.log):
         if entry.get("kind") == "plan_rejected":
             reason = str(entry.get("reason") or "")
@@ -854,7 +861,9 @@ class ProductionService:
         # P1: solo hay gasto contable si algún runner lo REPORTÓ. Los
         # adaptadores de motor actuales no producen `cost_usd`: exponer 0.0
         # sería afirmar un gasto que no se midió -> None (desconocido).
-        spend_reported = any(s.spend_reported for s in shots)
+        spend_reported = bool(state.spend_reported) or any(
+            s.spend_reported for s in shots
+        )
         return {
             "production_id": state.id,
             "phase": state.phase,
@@ -863,13 +872,20 @@ class ProductionService:
             "shots_total": len(shots),
             "shots_accepted": accepted,
             "shots_by_status": by_status,
-            # gasto REPORTADO acumulado de ejecución sobre todos los shots (P1):
+            "cost_cap_usd": state.cost_cap_usd if state.cost_cap_usd > 0 else None,
+            # gasto REPORTADO acumulado de ejecución (P1): el hecho de la
+            # misión lo mantiene el executor en `state.cost_spent_usd` y
             # sobrevive a los escalones de replan y a los reinicios del pod.
+            # Un checkpoint previo (sin el campo) cae al agregado por shots.
             # Límite inferior si solo reportan algunos runners.
             "cost_spent_usd": (
-                round(sum(s.cost_spent_usd for s in shots), 6)
-                if spend_reported
-                else None
+                round(state.cost_spent_usd, 6)
+                if state.spend_reported
+                else (
+                    round(sum(s.cost_spent_usd for s in shots), 6)
+                    if spend_reported
+                    else None
+                )
             ),
             "spend_reported": spend_reported,
             "terminal_reason": _terminal_reason(state),

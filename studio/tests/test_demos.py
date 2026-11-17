@@ -107,11 +107,33 @@ def test_cpu_demo_runner_writes_hashed_fixture_evidence(tmp_path: Path, demo_id:
     assert manifest["inputs"][0]["sha256"]
     if demo_id == "D02":
         assert manifest["claim_scope"].startswith("synthetic CPU pixel/audio fixture")
+    elif demo_id == "D03":
+        assert manifest["claim_scope"].startswith("synthetic CPU kinematics")
+        report = json.loads(
+            (manifest_path.parent / "D03_articulated_measurement.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["evidence_scope"] == "synthetic_cpu_only"
+        assert report["gpu_used"] is False
+        assert report["fk_vs_ground_truth"]["transforms_match_ground_truth"] is True
+        assert report["heldout_coverage_matches_ground_truth"] is True
+        assert report["variation"]["material_variation_present"] is True
     else:
         assert manifest["claim_scope"].startswith("fixture consistency")
     assert all(stage["status"] == ("pending_gpu" if stage["neural"] else "done")
                for stage in manifest["stages"])
     assert all(stage["pending_reason"] for stage in manifest["stages"] if stage["neural"])
+
+
+def test_d03_independent_ground_truth_rejects_wrong_joint_transform() -> None:
+    demo = next(item for item in demo_catalog() if item.demo_id == "D03")
+    _, fixture = demos_module._load_fixture(demo)
+    fixture["heldout_ground_truth"]["part_transforms"]["lid"]["translation"][0] += 0.01
+
+    checks = demos_module._check_d03_articulated_product(fixture)
+
+    assert checks["fk_transforms_match_ground_truth"] is False
 
 
 def test_demo_resume_rebuilds_manifest_missing_result(

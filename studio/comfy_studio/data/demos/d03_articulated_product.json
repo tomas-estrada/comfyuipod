@@ -1,10 +1,60 @@
 {
-  "schema": "comfy_studio.demo_fixture.d03.v1",
-  "fixture_kind": "synthetic part/joint graph metadata",
-  "parts": [{"id": "body"}, {"id": "lid"}, {"id": "handle"}],
-  "joints": [
-    {"parent": "body", "child": "lid", "type": "hinge", "axis": [1, 0, 0]},
-    {"parent": "lid", "child": "handle", "type": "hinge", "axis": [0, 1, 0]}
+  "schema": "comfy_studio.demo_fixture.d03.v2",
+  "fixture_kind": "synthetic articulated product: part/joint tree, joint angles, calibrated views and independently declared held-out ground truth",
+  "root_part": "body",
+  "parts": [
+    {"id": "body", "material": "anodized_aluminum", "asset_id": "asset_body_mk2", "local_center": [0.0, 0.0, 0.1]},
+    {"id": "lid", "material": "brushed_steel", "asset_id": "asset_lid_mk2", "local_center": [0.0, 0.0, 0.06]},
+    {"id": "handle", "material": "matte_polymer", "asset_id": "asset_handle_mk1", "local_center": [0.02, 0.0, 0.0]},
+    {"id": "spout", "material": "clear_glass", "asset_id": "asset_spout_mk1", "local_center": [0.0, 0.0, 0.05]}
   ],
-  "heldout_views": ["front_heldout", "top_heldout"]
+  "joints": [
+    {"parent": "body", "child": "lid", "type": "hinge", "axis": [1, 0, 0], "origin": [0.0, 0.0, 0.12]},
+    {"parent": "lid", "child": "handle", "type": "hinge", "axis": [0, 1, 0], "origin": [0.05, 0.0, 0.02]},
+    {"parent": "body", "child": "spout", "type": "hinge", "axis": [0, 1, 0], "origin": [0.08, 0.0, 0.1]}
+  ],
+  "joint_angles_deg": {"lid": 30.0, "handle": -15.0, "spout": 10.0},
+  "min_material_count": 3,
+  "min_asset_count": 4,
+  "views": [
+    {"id": "front_train", "split": "train",
+     "position": [0.9, -0.4, 0.35], "look_at": [0.05, 0.0, 0.22],
+     "intrinsics": [640.0, 640.0, 320.0, 240.0], "image_size": [640, 480]},
+    {"id": "three_quarter_train", "split": "train",
+     "position": [0.55, 0.85, 0.3], "look_at": [0.05, 0.0, 0.22],
+     "intrinsics": [700.0, 700.0, 320.0, 240.0], "image_size": [640, 480]},
+    {"id": "front_heldout", "split": "heldout",
+     "position": [0.9, 0.4, 0.35], "look_at": [0.05, 0.0, 0.22],
+     "intrinsics": [620.0, 620.0, 320.0, 240.0], "image_size": [640, 480]},
+    {"id": "top_heldout", "split": "heldout",
+     "position": [0.1, 0.15, 1.05], "look_at": [0.05, 0.0, 0.22],
+     "intrinsics": [220.0, 220.0, 110.0, 80.0], "image_size": [220, 160]},
+    {"id": "low_rear_heldout", "split": "heldout",
+     "position": [0.3, -0.3, 0.35], "look_at": [0.0, -0.03, 0.171961524227],
+     "intrinsics": [650.0, 650.0, 110.0, 80.0], "image_size": [220, 160]}
+  ],
+  "heldout_ground_truth": {
+    "declared_independently": "part transforms were computed by hand from the declared joint axes, origins and angles; held-out coverage was derived from the declared cameras, not from the runner",
+    "max_translation_error": 1e-06,
+    "max_rotation_error": 1e-06,
+    "part_transforms": {
+      "lid": {
+        "translation": [0.0, 0.0, 0.12],
+        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 0.866025403784, -0.5], [0.0, 0.5, 0.866025403784]]
+      },
+      "handle": {
+        "translation": [0.05, -0.01, 0.137320508076],
+        "rotation_matrix": [[0.965925826289, 0.0, -0.258819045103], [-0.129409522551, 0.866025403784, -0.482962913145], [0.224143868042, 0.5, 0.836516303738]]
+      },
+      "spout": {
+        "translation": [0.08, 0.0, 0.1],
+        "rotation_matrix": [[0.984807753012, 0.0, 0.173648177667], [0.0, 1.0, 0.0], [-0.173648177667, 0.0, 0.984807753012]]
+      }
+    },
+    "heldout_view_coverage": {
+      "front_heldout": ["body", "handle", "lid", "spout"],
+      "top_heldout": ["body", "handle", "lid", "spout"],
+      "low_rear_heldout": ["body", "handle", "lid"]
+    }
+  }
 }

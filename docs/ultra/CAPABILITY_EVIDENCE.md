@@ -1,13 +1,16 @@
-# Current working candidate — 2026-11-16
+# Current main snapshot — 2026-11-17
 
-Main remains `81f5bf39bb048f586ea3c25a045e568af85c07da`; its workflow [43796325868](https://github.com/tomas-estrada/comfyuipod/actions/runs/43796325868) passed. The integrated candidate branch `codex/remaining-capability-closure-20261116` is at `6ce3d77` and has no branch CI or candidate image yet. Do not associate the historical image digests below with this candidate.
+Main is `a1f847df6d270aed512a725b4705cc2a2089b768` after squash merge [PR #408](https://github.com/tomas-estrada/comfyuipod/pull/408). Post-merge workflow [43983976860](https://github.com/tomas-estrada/comfyuipod/actions/runs/43983976860) completed all three jobs successfully: CI-01/CI-03 including the Studio/panel suite, Rust lint/tests/dependency audit, candidate build, full-stack E2E and `MODEL_PROFILE=studio` E2E.
 
-- A07 now has a strict `--require-release-ready` mode and a default-branch promotion gate. The coherent manifest still has 228 blockers affecting 46 of 57 selected engines. Ordinary checks remain usable for incremental PR development; readiness is still false, and image promotion is skipped while blockers exist.
-- A19 adds production-path CPU acceptance evidence for persistence/reload, reframe/retime, held-out observations and A→B→A comparison against a no-memory baseline. It does not establish neural 4D reconstruction or target-GPU quality.
-- Causal audio adds real WAV/FFmpeg render evidence for selective causal deletion, preservation of unrelated stems, rerendered silence, and metrics measured from output bytes. This remains synthetic CPU fixture evidence.
-- EDL delivery adds an explicit BT.709 policy with matrix conversion and output verification. Legacy requests retain their prior path. The conversion is not HDR tone mapping or gamut conversion; unknown source matrix fails closed when BT.709 is explicitly applied.
-- Full local suite on the preceding integration revision: 3,156 passed, 7 skipped, 6 failed. Two candidate regressions were corrected: the test video now carries explicit BT.709 metadata, and the mission-compiler integration-source hash lock now matches the changed `webutil.py`. The targeted regression rerun passed 37 tests. Four known host/baseline failures remain locally (three LangGraph-dependent cases because LangGraph is unavailable in this host environment; one Codex harness configuration test because `.codex/hooks.json` is absent). Branch CI is the next authoritative check.
-- No release-ready state, new image digest, external provider result, or target-GPU result is claimed.
+The verified candidate is `ghcr.io/tomas-estrada/comfyuipod:sha-a1f847d@sha256:76ebe67fdb7d98d7a78ee5280b4dda7c11d10a33202b0f2e7e5ede1c98c4a9b7`. It passed both smoke tests. The strict A07 gate ran; it reported 233 blockers in 48 of 57 selected engines and skipped promotion to `latest`/semver. It did not publish a new latest digest. A direct same-commit local run of `scripts/check_engines_manifest.py --json` reports 228 blockers and 46 affected selected engines. Resolve this 5-blocker discrepancy before treating either count as the reconciled baseline.
+
+PR #408 adds a strict release gate, A19 CPU acceptance evidence for temporal-scene persistence/reframe/retime and provenance, causal-audio delete/rerender evidence, and an explicit BT.709 EDL path with matrix conversion and output verification. These are partial CPU/product-path improvements. They do not close all non-GPU acceptance for A00-A28, active capabilities, D01-D05, or the selected engine roster. In particular, synthetic CPU evidence does not establish real-media quality or GPU performance. The project is **not yet production-ready**; target-GPU measurements are not the only remaining work.
+
+## Candidate branch evidence (not yet merged)
+
+Branch `codex/closure-ledger-refresh-20261117`, based on main `a1f847df`, combines three bounded CPU changes: (1) mission-spend persistence, idempotent replan accounting, mission-level spend caps and an explicit budget-exhausted terminal state; (2) conservative camera-motion confidence gating; and (3) a synthetic articulated-product D03 fixture with forward kinematics, camera projection, held-out coverage and independent ground truth. The integrated related suite passes 279 tests with 1 skipped; Ruff and `git diff --check` pass. These results are local and branch-only: PR CI and a candidate image have not run.
+
+The planner changes modify files covered by `mission-compiler.lock.json`; its integration hashes and manifest lock hash were refreshed and verified. The local manifest checker then reports 228 blockers across 46 of 57 selected engines. Main CI on `a1f847df` reported 233 across 48; the mismatch remains unresolved. Synthetic camera and D03 fixtures do not establish real-media quality, general 3D reconstruction, provider behavior, or GPU performance.
 
 # Capability evidence snapshot
 

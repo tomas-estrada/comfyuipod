@@ -16,7 +16,11 @@ from __future__ import annotations
 from threading import Event
 from typing import Any, Protocol
 
-from comfy_studio.orchestration.state import ProductionState, ShotStatus
+from comfy_studio.orchestration.state import (
+    ProductionState,
+    ProductionTerminalReason,
+    ShotStatus,
+)
 
 #: cuántas veces reintentar el ensamblaje antes de fallar en claro.
 _MAX_ASSEMBLE_ATTEMPTS = 2
@@ -76,6 +80,24 @@ def assemble_reel(
     ]
 
     if not clips:
+        budget_failed = [
+            shot for shot in state.all_shots()
+            if shot.status == ShotStatus.FAILED and shot.budget_exhausted
+        ]
+        if budget_failed:
+            state.record(
+                "assemble",
+                clips=0,
+                output=None,
+                note="presupuesto agotado sin shots aceptados",
+            )
+            state.mark_terminal_failure(
+                str(ProductionTerminalReason.BUDGET_EXHAUSTED),
+                shots=[shot.id for shot in budget_failed],
+                cost_cap_usd=state.cost_cap_usd,
+                cost_spent_usd=state.cost_spent_usd,
+            )
+            return state
         state.phase = "done"
         state.record("assemble", clips=0, output=None, note="sin shots aceptados")
         return state

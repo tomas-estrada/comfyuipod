@@ -30,6 +30,8 @@ from comfy_studio.orchestration.failures import (
 from comfy_studio.orchestration.lineage import LineageGraph
 from comfy_studio.orchestration.state import (
     ProductionState,
+    ProductionTerminalReason,
+    ReplanTier,
     Shot,
     ShotStatus,
 )
@@ -72,7 +74,8 @@ class EngineRunner(Protocol):
         """Ejecuta una capa en `engine`; devuelve resultado tipado como dict.
 
         El resultado PUEDE incluir `'cost_usd'`: el gasto real del run, que el
-        executor acumula en `shot.cost_spent_usd` y marca `spend_reported` (P1).
+        executor acumula en `shot.cost_spent_usd` y en el gasto de la MISIÓN
+        (`state.cost_spent_usd`), marcando `spend_reported` en ambos (P1).
         Los adaptadores de motor actuales NO lo producen — mientras ningún
         runner lo reporte, el accounting de gasto se expone como desconocido.
         Ausente o no numérico se trata como 0; nunca rompe el run.
@@ -115,6 +118,169 @@ class StubEngineRunner:
 
 class CyclicDependencyError(RuntimeError):
     """Los `depends_on` de los shots forman un ciclo (no ordenable)."""
+
+
+def _mission_budget_exhausted(state: ProductionState) -> bool:
+    """True si el presupuesto REPORTADO de la misión está agotado (P1).
+
+    Solo se puede gated por presupuesto cuando algún runner REPORTA gasto
+    (`spend_reported`): sin medición, `cost_spent_usd` es un límite inferior
+    vacío, no un hecho, y excluir intentos por 0.0 sería fail-closed injusto.
+    Un cap de misión 0 significa «sin tope definido» (comportamiento legacy),
+    nunca agotado.
+    """
+    return (
+        state.cost_cap_usd > 0
+        and state.spend_reported
+        and state.cost_spent_usd >= state.cost_cap_usd
+    )
+
+
+def _remaining_attempt_cap(state: ProductionState, shot: Shot) -> float | None:
+    """Runner allowance bounded by both the shot and mission budgets."""
+    caps: list[float] = []
+    if shot.cost_cap_usd > 0:
+        caps.append(shot.cost_cap_usd - shot.cost_spent_usd)
+    if state.cost_cap_usd > 0:
+        caps.append(state.cost_cap_usd - state.cost_spent_usd)
+    if not caps:
+        return None
+    return round(max(0.0, min(caps)), 6)
+
+
+def _mark_mission_budget_exhausted(
+    state: ProductionState, shot: Shot, *, trigger: str
+) -> None:
+    """Termina la PRODUCCIÓN por presupuesto de misión agotado (P1).
+
+    Con el restante de misión en 0 no hay receta siguiente factible que
+    comprar: ningún intento adicional (de este shot ni de ningún otro) puede
+    producir nada. Termina tipado con `budget_exhausted` vía
+    `mark_terminal_failure` en vez de girar hasta un `max_steps` inespecífico;
+    la razón viaja en el checkpoint.
+    """
+    fields = dict(
+        shot=shot.id,
+        trigger=trigger,
+        cost_cap_usd=state.cost_cap_usd,
+        cost_spent_usd=state.cost_spent_usd,
+    )
+    state.record("mission_budget_exhausted", **fields)
+    state.mark_terminal_failure(
+        str(ProductionTerminalReason.BUDGET_EXHAUSTED), **fields
+    )
+
+
+def _record_budget_exhausted(
+    state: ProductionState, shot: Shot, layer: Any, tier: ReplanTier | None
+) -> None:
+    """Marca el shot cuando su escalera se agota POR PRESUPUESTO (P1).
+
+    `tier is None` = local→template→global agotada y presupuesto remanente del
+    shot en 0: no queda receta siguiente factible. El shot queda FAILED con
+    `budget_exhausted` PERSISTIDO en el checkpoint — el ensamblador distingue
+    este fallo de uno de calidad y no maquilla la producción como `done` sin
+    clips (termina `failed`/`budget_exhausted`).
+    """
+    if tier is None:
+        shot.budget_exhausted = True
+    state.record(
+        "budget_exhausted",
+        shot=shot.id,
+        layer=layer.kind,
+        engine=layer.engine,
+        tier=str(tier) if tier else None,
+        ladder_exhausted=tier is None,
+        cost_cap_usd=shot.cost_cap_usd,
+        cost_spent_usd=shot.cost_spent_usd,
+    )
+
+
+def _mission_spend_seen(state: ProductionState) -> list[str]:
+    """Claves de intentos ya contabilizados en el gasto de la misión.
+
+    Vive en `state.metadata` para VIAJAR en el checkpoint: un replay tras
+    corte que re-obtenga el resultado deduplicado del runner no vuelve a
+    sumar el mismo intento (no-double-count).
+    """
+    seen = state.metadata.get("_mission_spend_accounted")
+    if not isinstance(seen, list):
+        seen = []
+        state.metadata["_mission_spend_accounted"] = seen
+    return seen
+
+
+def _account_attempt_spend(
+    state: ProductionState,
+    shot: Shot,
+    layer: Any,
+    run_key: str,
+    attempt_no: int,
+    result: dict[str, Any],
+) -> float | None:
+    """Acumula el gasto REPORTADO de UN intento de capa, una sola vez.
+
+    Devuelve el gasto contabilizado; None si el runner no reportó un coste
+    finito no negativo, o si el intento ya estaba contabilizado (replay tras
+    corte). Acumula en `shot.cost_spent_usd` (gasto del shot entre escalones)
+    y en `state.cost_spent_usd` (gasto de la MISIÓN: todos los shots, todos
+    los escalones); fija `spend_reported` en ambos — es un hecho medido. Los
+    replans/reintentos NUNCA reinician ninguno de los dos: el gasto consumido
+    es pasado.
+    """
+    try:
+        spent = float(result["cost_usd"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(spent) or spent < 0:
+        return None
+    # identidad del intento: identidad de op (idempotency_key) + ordinal de
+    # reintento in-place (los reintentos transient comparten run_key).
+    attempt_key = f"{run_key}#{attempt_no}"
+    seen = _mission_spend_seen(state)
+    if attempt_key in seen:
+        return None
+    seen.append(attempt_key)
+    shot.cost_spent_usd = round(shot.cost_spent_usd + spent, 6)
+    shot.spend_reported = True
+    state.cost_spent_usd = round(state.cost_spent_usd + spent, 6)
+    state.spend_reported = True
+    state.record(
+        "layer_spend",
+        shot=shot.id,
+        layer=layer.kind,
+        engine=layer.engine,
+        tier=str(shot.replan_tier) if shot.replan_tier else None,
+        spent_usd=spent,
+        cumulative_usd=shot.cost_spent_usd,
+        mission_cumulative_usd=state.cost_spent_usd,
+    )
+    return spent
+
+
+def _restore_attempt_ordinal(
+    active: Any, shot: Shot, layer_index: int, run_key: str
+) -> int:
+    """Ordinal de reintento in-place PERSISTIDO para esta capa, o 0.
+
+    La identidad del intento es `run_key#ordinal`; el ordinal vive en
+    `_active_layer`, que viaja en el checkpoint. Sin restaurarlo, un replay
+    tras corte reiniciaría el ordinal a 0 y colisionaría con el intento ya
+    contabilizado: el gasto del intento en vuelo se perdería (under-count).
+    Con él, la identidad es estable y el accounting es exacto.
+    """
+    if not isinstance(active, dict):
+        return 0
+    if (
+        active.get("shot_id") != shot.id
+        or active.get("layer_index") != layer_index
+        or active.get("idempotency_key") != run_key
+    ):
+        return 0
+    try:
+        return max(0, int(active.get("transient_retries", 0)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _artifact_problem(path: str | None) -> str | None:
@@ -398,10 +564,17 @@ def execute_next_shot(
                 f"{state.id}\0{shot.id}\0{layer_index}\0{shot.replan_attempts}"
             )
             run_key = "prod_" + hashlib.sha256(key_material.encode()).hexdigest()[:40]
+            # identidad de intento estable: retomar el ordinal de reintento
+            # persistido ANTES de sobrescribir `_active_layer` (replay tras
+            # corte a mitad de los reintentos in-place).
+            transient_retries = _restore_attempt_ordinal(
+                state.metadata.get("_active_layer"), shot, layer_index, run_key
+            )
             state.metadata["_active_layer"] = {
                 "shot_id": shot.id,
                 "layer_index": layer_index,
                 "idempotency_key": run_key,
+                "transient_retries": transient_retries,
             }
             if checkpoint is not None:
                 checkpoint(state)
@@ -424,31 +597,29 @@ def execute_next_shot(
                 job["project_id"] = project_id
             if layer.template_id:
                 job["template_id"] = layer.template_id
+            # P1 (misión): sin presupuesto RESTANTE de misión no hay receta
+            # siguiente factible que comprar — ni para este shot ni para
+            # ningún otro. Termina tipado ANTES de invocar cualquier runner
+            # (fail-closed, igual que el gate de shot: 0 como cost_cap es
+            # ambiguo aguas abajo).
+            if _mission_budget_exhausted(state):
+                _mark_mission_budget_exhausted(
+                    state, shot, trigger="layer_dispatch"
+                )
+                return state
             # P1: el gasto es CUMULATIVO entre intentos. El cap que se arma en
             # cada intento es el RESTANTE (cap - gastado), no el original: un
             # shot que ya gastó en escalones previos no puede volver a disponer
             # del cap completo. Sin cap (0) sigue siendo None = sin tope.
-            if shot.cost_cap_usd > 0:
-                # fail-closed ANTES de invocar cualquier runner: agotado el cap
-                # no se llama al runner ni con cost_cap=0, porque 0 puede ser
-                # interpretado aguas abajo como "sin tope" (P1). Solo se puede
-                # gated por presupuesto cuando el runner REPORTA gasto.
-                if shot.cost_spent_usd >= shot.cost_cap_usd:
-                    tier = shot.escalate_replan()
-                    invalidate_shot_lineage(state, shot)
-                    state.record(
-                        "budget_exhausted",
-                        shot=shot.id,
-                        layer=layer.kind,
-                        engine=layer.engine,
-                        tier=str(tier) if tier else None,
-                        cost_cap_usd=shot.cost_cap_usd,
-                        cost_spent_usd=shot.cost_spent_usd,
-                    )
-                    return state
-                cost_cap = round(shot.cost_cap_usd - shot.cost_spent_usd, 6)
-            else:
-                cost_cap = None
+            # fail-closed ANTES de invocar cualquier runner: agotado el cap
+            # de shot no se llama con cost_cap=0, porque 0 puede interpretarse
+            # como "sin tope" (P1).
+            if shot.cost_cap_usd > 0 and shot.cost_spent_usd >= shot.cost_cap_usd:
+                tier = shot.escalate_replan()
+                invalidate_shot_lineage(state, shot)
+                _record_budget_exhausted(state, shot, layer, tier)
+                return state
+            cost_cap = _remaining_attempt_cap(state, shot)
             # Fallos TRANSIENT se reintentan in-place (misma identidad de op,
             # la operación nunca completó) con presupuesto acotado; agotado,
             # escala la escalera como cualquier otro fallo. INVALID_PARAMETERS
@@ -461,8 +632,7 @@ def execute_next_shot(
                 # can report spend on a transient failure; passing the original
                 # cap again would let the next attempt exceed the cumulative
                 # shot budget.
-                if shot.cost_cap_usd > 0:
-                    cost_cap = round(shot.cost_cap_usd - shot.cost_spent_usd, 6)
+                cost_cap = _remaining_attempt_cap(state, shot)
                 result = run.run_layer(
                     layer.engine,
                     job,
@@ -470,23 +640,18 @@ def execute_next_shot(
                     cancel_event=cancel_event,
                 )
                 # el accounting es honesto: un run fallido también puede haber
-                # consumido gasto; se acumula si el runner lo reporta.
-                try:
-                    spent = float(result["cost_usd"])
-                except (KeyError, TypeError, ValueError):
-                    spent = None
-                if spent is not None and math.isfinite(spent) and spent >= 0:
-                    shot.cost_spent_usd = round(shot.cost_spent_usd + spent, 6)
-                    shot.spend_reported = True
-                    state.record(
-                        "layer_spend",
-                        shot=shot.id,
-                        layer=layer.kind,
-                        engine=layer.engine,
-                        tier=str(shot.replan_tier) if shot.replan_tier else None,
-                        spent_usd=spent,
-                        cumulative_usd=shot.cost_spent_usd,
-                    )
+                # consumido gasto; se acumula si el runner lo reporta. P1: el
+                # mismo intento se contabiliza UNA sola vez en shot y MISIÓN;
+                # un replay tras corte que re-obtenga el resultado deduplicado
+                # del runner no lo vuelve a sumar.
+                spent = _account_attempt_spend(
+                    state, shot, layer, run_key, transient_retries, result
+                )
+                if spent is not None and checkpoint is not None:
+                    # persistir el gasto contabilizado ANTES de decidir el
+                    # siguiente paso (reintento in-place / escalón): un corte
+                    # aquí no puede perder ni duplicar el gasto del intento.
+                    checkpoint(state)
                 if result.get("ok", False):
                     break
                 failure_kind = classify_runner_failure(result)
@@ -516,17 +681,22 @@ def execute_next_shot(
                     if shot.cost_cap_usd > 0 and shot.cost_spent_usd >= shot.cost_cap_usd:
                         tier = shot.escalate_replan()
                         invalidate_shot_lineage(state, shot)
-                        state.record(
-                            "budget_exhausted",
-                            shot=shot.id,
-                            layer=layer.kind,
-                            engine=layer.engine,
-                            tier=str(tier) if tier else None,
-                            cost_cap_usd=shot.cost_cap_usd,
-                            cost_spent_usd=shot.cost_spent_usd,
+                        _record_budget_exhausted(state, shot, layer, tier)
+                        return state
+                    if _mission_budget_exhausted(state):
+                        # el gasto del intento fallido agotó la MISIÓN: no hay
+                        # receta siguiente factible que financiar el reintento.
+                        _mark_mission_budget_exhausted(
+                            state, shot, trigger="transient_retry"
                         )
                         return state
                     transient_retries += 1
+                    # persistir el ordinal del PRÓXIMO intento antes de
+                    # re-invocar: un corte antes de su accounting no pierde la
+                    # identidad del intento en vuelo (ni gasto ni duplicado).
+                    active_layer = state.metadata.get("_active_layer")
+                    if isinstance(active_layer, dict):
+                        active_layer["transient_retries"] = transient_retries
                     state.record(
                         "layer_transient_retry",
                         shot=shot.id,
@@ -536,6 +706,8 @@ def execute_next_shot(
                         max_retries=MAX_TRANSIENT_RETRIES,
                         failure_kind=str(failure_kind),
                     )
+                    if checkpoint is not None:
+                        checkpoint(state)
                     continue
                 shot.error = str(result.get("error", "fallo de capa sin detalle"))[:500]
                 # un fallo de ejecución escala el replan igual que un fallo de
