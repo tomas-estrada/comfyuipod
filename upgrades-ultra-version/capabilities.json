@@ -98,7 +98,7 @@
       "sources": [
         "S43"
       ],
-      "status": "specified_not_implemented_by_this_package",
+      "status": "implemented_pre_gpu; gpu_validation_pending",
       "gpu_evidence": "pending_separate_authorization"
     },
     {
@@ -142,37 +142,10 @@
         "P08"
       ],
       "behavior": "Navegar y volver a zonas generadas manteniendo anclas, poses e historial separado de geografía observada.",
-      "acceptance": "Secuencia A→B→A: comparar retorno con anclas, registrar deriva y cobertura; mundo ficticio nunca contamina el atlas real.",
+      "acceptance": "Secuencia A→B→A: comparar retorno con anclas, registrar deriva y cobertura; un mundo ficticio nunca se presenta como geografía observada.",
       "sources": [
         "S03",
         "S04"
-      ],
-      "status": "specified_not_implemented_by_this_package",
-      "gpu_evidence": "pending_separate_authorization"
-    },
-    {
-      "id": "C07",
-      "name": "Lugares reales del Aburrá",
-      "mandatory": true,
-      "pre_gpu_required": "code_integrated_cpu_contracts_and_real_entrypoints; no GPU performance claims",
-      "engines": [
-        "atlas-offline",
-        "map-anything",
-        "depth-anything3"
-      ],
-      "work_items": [
-        "W09",
-        "W11"
-      ],
-      "programs": [
-        "P08"
-      ],
-      "behavior": "Resolver municipio/lugar/vista y usar evidencia local, geometría y calibración.",
-      "acceptance": "Offline, lugar nombrado contradice selección previa; rumbo inverso, nombre repetido y vista inexistente se rechazan o replanifican.",
-      "sources": [
-        "S05",
-        "S06",
-        "N11"
       ],
       "status": "specified_not_implemented_by_this_package",
       "gpu_evidence": "pending_separate_authorization"
@@ -627,7 +600,7 @@
         "S34",
         "N25"
       ],
-      "status": "specified_not_implemented_by_this_package",
+      "status": "implemented_pre_gpu; gpu_validation_pending",
       "gpu_evidence": "pending_separate_authorization"
     },
     {
@@ -649,7 +622,7 @@
       "sources": [
         "S35"
       ],
-      "status": "specified_not_implemented_by_this_package",
+      "status": "implemented_pre_gpu; gpu_validation_pending",
       "gpu_evidence": "pending_separate_authorization"
     },
     {

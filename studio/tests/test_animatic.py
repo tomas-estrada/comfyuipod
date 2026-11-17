@@ -10,6 +10,7 @@ import pytest
 from comfy_studio.animatic import (
     AnimaticError,
     check_animatic_preflight,
+    encode_camera_trajectory_frames,
     interpolate_camera_at,
     render_animatic,
     sample_camera_path,
@@ -108,7 +109,9 @@ def test_render_camera_animatic_tool_is_registered_with_clear_scope() -> None:
 
     spec = create_default_tool_belt().get("render_camera_animatic")
     assert spec is not None
-    assert "no renderiza una escena 3d" in (spec.description or "").lower()
+    description = (spec.description or "").lower()
+    assert "sin asset_id" in description and "glb" in description
+    assert "blender cycles cpu" in description
 
 
 @pytest.mark.skipif(_NEEDS_FFMPEG, reason="requiere ffmpeg/ffprobe")
@@ -138,3 +141,47 @@ def test_render_animatic_preflight_blocks_bad_plan(tmp_path: Path) -> None:
 def test_render_animatic_rejects_excessive_dimensions(tmp_path: Path) -> None:
     with pytest.raises(AnimaticError, match="dimensiones"):
         render_animatic(_plan(), tmp_path / "bad.mp4", width=8192, height=8192)
+
+
+@pytest.mark.skipif(_NEEDS_FFMPEG, reason="requiere ffmpeg/ffprobe")
+def test_encode_camera_trajectory_frames_probes_frame_count_and_dimensions(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image
+
+    render_dir = tmp_path / "renders"
+    render_dir.mkdir()
+    for index, color in enumerate(((220, 40, 30), (30, 80, 220)), start=1):
+        Image.new("RGB", (320, 180), color).save(render_dir / f"render_{index:04d}.png")
+
+    result = encode_camera_trajectory_frames(
+        [render_dir / "render_0001.png", render_dir / "render_0002.png"],
+        tmp_path / "camera.mp4",
+        fps=2,
+        width=320,
+        height=180,
+    )
+    assert result["probe_ok"] is True
+    assert result["frame_count"] == 2
+    assert result["width"] == 320 and result["height"] == 180
+    assert result["has_video"] is True and result["has_audio"] is False
+    assert result["duration_s"] == pytest.approx(1.0, abs=0.1)
+
+
+@pytest.mark.skipif(_NEEDS_FFMPEG, reason="requiere ffmpeg/ffprobe")
+def test_encode_camera_trajectory_frames_rejects_corrupt_or_wrong_size_png(
+    tmp_path: Path,
+) -> None:
+    render_dir = tmp_path / "renders"
+    render_dir.mkdir()
+    (render_dir / "render_0001.png").write_bytes(b"not a png")
+    (render_dir / "render_0002.png").write_bytes(b"not a png")
+
+    with pytest.raises(AnimaticError, match="PNG de cámara inválido"):
+        encode_camera_trajectory_frames(
+            [render_dir / "render_0001.png", render_dir / "render_0002.png"],
+            tmp_path / "camera.mp4",
+            fps=2,
+            width=320,
+            height=180,
+        )

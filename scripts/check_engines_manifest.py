@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validador del manifiesto de engines (plan Ultra, W07 / acceptance A07).
 
-`upgrades-ultra-version/engines.json` declara 88 engines con su disposición
+`upgrades-ultra-version/engines.json` declara 89 engines con su disposición
 (required/alternative/conditional/excluded/reference_only), revisión de código,
 lock exigido antes de build, revisión de licencia (`terms_review`) y gate de
 release. Este script es un **release gate de coherencia**: no construye nada ni
@@ -23,13 +23,23 @@ y decisión de redistribución por componente»):
 
 Devuelve 0 si todo cuadra; con `--check` sale distinto de 0 ante el primer
 incumplimiento, para CI. `--json` emite el informe estructurado.
+
+**Modo estricto de release (`--require-release-ready`)**: gate de promoción
+A07. Falla con exit 1 ante cualquier incoherencia de coherencia y con exit 2
+ante CUALQUIER bloqueo de release A07 (evidencia pendiente). Es el modo que
+exige el workflow antes de promover una imagen candidata a `latest`: el
+manifiesto debe estar coherente Y sin bloqueos. `--check` conserva su
+semántica estructural (solo falla por incoherencias) para el desarrollo
+incremental y para PRs candidatos.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -50,7 +60,16 @@ ALLOWED_DISPOSITIONS = {
 
 def load_json(path: Path) -> Any:
     with open(path, encoding="utf-8-sig") as handle:
-        return json.load(handle)
+        return json.load(handle, object_pairs_hook=_unique_object_pairs)
+
+
+def _unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
 
 
 def _capability_ids(caps_path: Path) -> set[str]:
@@ -67,8 +86,174 @@ def _capability_ids(caps_path: Path) -> set[str]:
     return out
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _source_lock_blockers(
+    engine_id: str, lock: dict[str, Any], *, repo_root: Path
+) -> list[str]:
+    """Validate pinned/internal code at its Git revision and integration/test hashes at HEAD."""
+    blockers: list[str] = []
+    revision = str(lock.get("source_revision") or "")
+
+    # Los mapas de fuentes fijadas a la revisión (pinned/internas) se validan con
+    # la misma regla: ruta relativa segura, SHA-256 de 64 hex y rederivación vía
+    # `git show <source_revision>:<ruta>`, que además comprueba que la ruta está
+    # versionada en esa revisión.
+    pinned_maps: list[tuple[str, Any]] = [
+        ("pinned_source_sha256", lock.get("pinned_source_sha256")),
+        ("internal_source_sha256", lock.get("internal_source_sha256")),
+    ]
+    has_pinned_sources = any(bool(mapping) for _, mapping in pinned_maps)
+    if has_pinned_sources and not COMMIT_SHA_RE.fullmatch(revision):
+        blockers.append(f"{engine_id}: source lock requiere source_revision SHA inmutable")
+
+    for field_name, pinned_sources in pinned_maps:
+        if pinned_sources is None:
+            continue
+        if not isinstance(pinned_sources, dict):
+            blockers.append(f"{engine_id}: {field_name} debe ser un objeto")
+            continue
+        for source_name, expected_hash in pinned_sources.items():
+            relative = Path(str(source_name))
+            if relative.is_absolute() or ".." in relative.parts:
+                blockers.append(
+                    f"{engine_id}: {field_name} contiene ruta inválida {source_name}"
+                )
+                continue
+            if not re.fullmatch(r"[0-9a-f]{64}", str(expected_hash), re.IGNORECASE):
+                blockers.append(
+                    f"{engine_id}: {field_name} contiene SHA-256 inválido para {source_name}"
+                )
+                continue
+            if not COMMIT_SHA_RE.fullmatch(revision):
+                # No se puede consultar un ref mutable o vacío; la falta de
+                # revisión ya quedó registrada como bloqueo arriba.
+                continue
+            result = subprocess.run(
+                ["git", "-C", str(repo_root), "show", f"{revision}:{relative.as_posix()}"],
+                check=False,
+                capture_output=True,
+            )
+            actual_hash = hashlib.sha256(result.stdout).hexdigest().casefold()
+            if result.returncode != 0:
+                blockers.append(
+                    f"{engine_id}: {source_name} no existe en source_revision {revision}"
+                )
+            elif actual_hash != str(expected_hash).casefold():
+                blockers.append(
+                    f"{engine_id}: SHA-256 de {source_name} "
+                    f"no coincide con source_revision {revision}"
+                )
+
+    integration_sources = lock.get("integration_source_sha256") or {}
+    if not isinstance(integration_sources, dict):
+        blockers.append(f"{engine_id}: integration_source_sha256 debe ser un objeto")
+        integration_sources = {}
+    for source_name, expected_hash in integration_sources.items():
+        relative = Path(str(source_name))
+        if relative.is_absolute() or ".." in relative.parts:
+            blockers.append(f"{engine_id}: integration source contiene ruta inválida {source_name}")
+            continue
+        try:
+            actual_hash = _sha256_file(repo_root / relative)
+        except OSError:
+            blockers.append(f"{engine_id}: integration source {source_name} no es legible")
+            continue
+        if actual_hash.casefold() != str(expected_hash).casefold():
+            blockers.append(
+                f"{engine_id}: SHA-256 no coincide para integration source {source_name}"
+            )
+
+    verification_test = lock.get("verification_test")
+    if verification_test is not None:
+        if not isinstance(verification_test, dict):
+            blockers.append(f"{engine_id}: verification_test debe ser un objeto")
+        else:
+            test_path = str(verification_test.get("path") or "")
+            expected_hash = str(verification_test.get("sha256") or "")
+            relative = Path(test_path)
+            if relative.is_absolute() or ".." in relative.parts or not test_path:
+                blockers.append(f"{engine_id}: verification_test contiene ruta inválida")
+            elif not re.fullmatch(r"[0-9a-f]{64}", expected_hash, re.IGNORECASE):
+                blockers.append(f"{engine_id}: verification_test contiene SHA-256 inválido")
+            else:
+                try:
+                    actual_hash = _sha256_file(repo_root / relative)
+                except OSError:
+                    blockers.append(f"{engine_id}: verification_test {test_path} no es legible")
+                else:
+                    if actual_hash.casefold() != expected_hash.casefold():
+                        blockers.append(f"{engine_id}: SHA-256 no coincide para verification_test")
+    return blockers
+
+
+def _implementation_evidence_blocker(
+    engine_id: str,
+    label: str,
+    value: Any,
+    *,
+    repo_root: Path,
+    tracked_paths: set[str] | None,
+    require_git_tracked: bool,
+) -> str | None:
+    """Require implementation evidence to be a real, tracked repository file."""
+    if not isinstance(value, str) or not value.strip():
+        return f"{engine_id}: A07 requiere evidence_{label} (ruta de archivo versionada)"
+    relative_path = Path(value)
+    if relative_path.is_absolute():
+        return f"{engine_id}: evidence_{label} {value} fuera de la raíz del repositorio"
+    try:
+        resolved_path = (repo_root / relative_path).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return f"{engine_id}: evidence_{label} {value} no existe o tiene una ruta inválida"
+    if not resolved_path.is_relative_to(repo_root):
+        return f"{engine_id}: evidence_{label} {value} fuera de la raíz del repositorio"
+    if not resolved_path.is_file():
+        return f"{engine_id}: evidence_{label} {value} no es un archivo"
+    if require_git_tracked:
+        if tracked_paths is None:
+            return (
+                f"{engine_id}: no se pudo comprobar el versionado Git de "
+                f"evidence_{label} {value}"
+            )
+        if value not in tracked_paths:
+            return f"{engine_id}: evidence_{label} {value} no está versionado"
+        resolved_name = resolved_path.relative_to(repo_root).as_posix()
+        if resolved_name not in tracked_paths:
+            return f"{engine_id}: target de evidence_{label} {resolved_name} no está versionado"
+    return None
+
+
+def _git_tracked_paths(repo_root: Path) -> set[str] | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "-z"],
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return {
+        raw_path.decode("utf-8", errors="surrogateescape")
+        for raw_path in result.stdout.split(b"\0")
+        if raw_path
+    }
+
+
 def validate(
-    manifest: dict[str, Any], cap_ids: set[str]
+    manifest: dict[str, Any],
+    cap_ids: set[str],
+    *,
+    repo_root: Path | None = None,
+    require_git_tracked: bool | None = None,
 ) -> tuple[list[str], list[str]]:
     """Devuelve (incumplimientos, release_blockers).
 
@@ -83,6 +268,10 @@ def validate(
     """
     problems: list[str] = []
     blockers: list[str] = []
+    evidence_root = (repo_root or REPO_ROOT).resolve()
+    if require_git_tracked is None:
+        require_git_tracked = True
+    tracked_paths = _git_tracked_paths(evidence_root) if require_git_tracked else None
     engines = manifest.get("engines", [])
 
     # 1. Contadores.
@@ -125,6 +314,70 @@ def validate(
                 for value in hashes.values()
             ):
                 blockers.append(f"{eid}: A07 requiere hashes SHA-256 de dependency locks")
+            else:
+                for lock_name, expected_hash in hashes.items():
+                    if not isinstance(lock_name, str) or not lock_name.strip():
+                        blockers.append(f"{eid}: nombre de dependency lock inválido")
+                        continue
+                    lock_path = Path(lock_name)
+                    if lock_path.is_absolute():
+                        blockers.append(
+                            f"{eid}: dependency lock {lock_name} fuera de la raíz del repositorio"
+                        )
+                        continue
+                    try:
+                        resolved_lock = (evidence_root / lock_path).resolve(strict=True)
+                    except (OSError, RuntimeError, ValueError):
+                        blockers.append(
+                            f"{eid}: lock file {lock_name} no existe, no es accesible "
+                            "o tiene una ruta inválida"
+                        )
+                        continue
+                    if not resolved_lock.is_relative_to(evidence_root):
+                        blockers.append(
+                            f"{eid}: dependency lock {lock_name} fuera de la raíz del repositorio"
+                        )
+                        continue
+                    if not resolved_lock.is_file():
+                        blockers.append(f"{eid}: lock file {lock_name} no es un archivo")
+                        continue
+                    if require_git_tracked:
+                        if tracked_paths is None:
+                            blockers.append(
+                                f"{eid}: no se pudo comprobar el versionado Git de {lock_name}"
+                            )
+                            continue
+                        if lock_name not in tracked_paths:
+                            blockers.append(
+                                f"{eid}: lock file {lock_name} no está versionado"
+                            )
+                            continue
+                        resolved_name = resolved_lock.relative_to(evidence_root).as_posix()
+                        if resolved_name not in tracked_paths:
+                            blockers.append(
+                                f"{eid}: target de lock {resolved_name} no está versionado"
+                            )
+                            continue
+                    try:
+                        actual_hash = _sha256_file(resolved_lock)
+                    except OSError:
+                        blockers.append(f"{eid}: lock file {lock_name} no es legible")
+                        continue
+                    if actual_hash.casefold() != str(expected_hash).casefold():
+                        blockers.append(
+                            f"{eid}: SHA-256 no coincide para dependency lock {lock_name}"
+                        )
+                    elif resolved_lock.suffix.casefold() == ".json":
+                        try:
+                            lock_data = load_json(resolved_lock)
+                        except (OSError, ValueError):
+                            lock_data = None
+                        if isinstance(lock_data, dict):
+                            blockers.extend(
+                                _source_lock_blockers(
+                                    eid, lock_data, repo_root=evidence_root
+                                )
+                            )
 
             if eng.get("redistribution_decision") not in {"allowed", "conditional", "blocked"}:
                 blockers.append(f"{eid}: A07 requiere decisión explícita de redistribución")
@@ -134,6 +387,18 @@ def validate(
                 blockers.append(
                     f"{eid}: adapter/entrypoint real aún no está declarado implementado"
                 )
+            else:
+                for field_name in ("entrypoint", "test"):
+                    evidence_blocker = _implementation_evidence_blocker(
+                        eid,
+                        field_name,
+                        eng.get(f"evidence_{field_name}"),
+                        repo_root=evidence_root,
+                        tracked_paths=tracked_paths,
+                        require_git_tracked=require_git_tracked,
+                    )
+                    if evidence_blocker:
+                        blockers.append(evidence_blocker)
 
         # 5. excluded / reference_only no se hornean.
         if dispo in {"excluded", "reference_only"} and selected:
@@ -154,18 +419,32 @@ def build_report(
     engines = manifest.get("engines", [])
     dispo_counts: dict[str, int] = {}
     selected = 0
+    selected_ids: set[str] = set()
     for eng in engines:
         dispo_counts[eng.get("disposition", "?")] = (
             dispo_counts.get(eng.get("disposition", "?"), 0) + 1
         )
         if eng.get("build_selected"):
             selected += 1
+            selected_ids.add(str(eng.get("id")))
+    # Resumen útil para el gate estricto: bloqueos por engine y cuántos de los
+    # engines seleccionados quedan pendientes (los no seleccionados nunca
+    # generan bloqueos A07).
+    blockers_by_engine: dict[str, int] = {}
+    for blocker in blockers:
+        eid = blocker.split(":", 1)[0]
+        blockers_by_engine[eid] = blockers_by_engine.get(eid, 0) + 1
+    selected_engines_with_blockers = sum(
+        1 for eid in blockers_by_engine if eid in selected_ids
+    )
     return {
         "total_engines": len(engines),
         "build_selected": selected,
         "dispositions": dispo_counts,
         "problems": problems,
         "release_blockers": blockers,
+        "release_blockers_by_engine": blockers_by_engine,
+        "selected_engines_with_blockers": selected_engines_with_blockers,
         "a07_evidence_scope": (
             "Manifest declarations only; image inventory, offline boot and runtime "
             "probes require separate CI evidence."
@@ -175,6 +454,35 @@ def build_report(
     }
 
 
+def _print_strict_summary(report: dict[str, Any]) -> None:
+    """Resumen útil del gate estricto: cuántos engines seleccionados quedan."""
+    blockers = report["release_blockers"]
+    if report["coherent"] and not blockers:
+        print("RELEASE LISTA: manifiesto coherente y sin bloqueos de release A07")
+        return
+    selected = report["build_selected"]
+    pending = report["selected_engines_with_blockers"]
+    if not report["coherent"]:
+        print(
+            "RELEASE NO LISTA: "
+            f"{len(report['problems'])} incoherencias de manifiesto "
+            f"y {len(blockers)} bloqueos de release"
+        )
+        return
+    print(
+        f"RELEASE NO LISTA: {len(blockers)} bloqueos A07 en "
+        f"{pending} de {selected} engines seleccionados"
+    )
+    ranked = sorted(
+        report["release_blockers_by_engine"].items(),
+        key=lambda item: (-item[1], item[0]),
+    )
+    for eid, count in ranked[:10]:
+        print(f"  - {eid}: {count} bloqueos")
+    if len(ranked) > 10:
+        print(f"  ... y {len(ranked) - 10} engines más con bloqueos")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -182,6 +490,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="informe JSON")
     parser.add_argument(
         "--check", action="store_true", help="exit != 0 ante incumplimientos (CI)"
+    )
+    parser.add_argument(
+        "--require-release-ready",
+        action="store_true",
+        help=(
+            "modo estricto A07: exit 1 ante incoherencias, exit 2 ante cualquier "
+            "bloqueo de release; gate de promoción a latest"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -207,9 +523,19 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  - {b}")
             if len(blockers) > 5:
                 print(f"  ... y {len(blockers) - 5} más")
+        if args.require_release_ready:
+            _print_strict_summary(report)
 
     # --check falla SOLO por incoherencias reales; missing A07 evidence remains
     # a visible release blocker until the evidence is supplied and verified.
+    # El modo estricto (--require-release-ready) es el gate de promoción A07:
+    # falla ante incoherencias (exit 1) O ante cualquier bloqueo (exit 2).
+    if args.require_release_ready:
+        if problems:
+            return 1
+        if blockers:
+            return 2
+        return 0
     if args.check and problems:
         return 1
     return 0

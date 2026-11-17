@@ -10,8 +10,10 @@ Expone cuatro operaciones (los tools del agente de la fase 17):
   - `plan_production(idea, cost_cap)` → planifica (barato) y deja la producción en
     AWAITING_APPROVAL; devuelve el plan para que el humano lo revise.
   - `get_plan(production_id)` → el plan actual (estado serializado).
-  - `approve_plan(production_id)` → el humano aprueba; corre el lazo caro
-    (ejecución+evaluación+replan+ensamblaje) y devuelve el resultado.
+  - `approve_plan(production_id)` → el humano aprueba; reclama el snapshot con CAS
+    (una sola ejecución), ENCOLA el lazo caro en el worker de fondo y devuelve el
+    cuerpo 202 de inmediato (`status_url`/`cancel_url`); el estado terminal y sus
+    artefactos se consultan por `production_status` (o `wait_for_terminal`).
   - `production_status(production_id)` → fase, progreso de shots, reel final.
 
 Criterio: servicio PURO (tipado, sin FastAPI dentro). La ruta HTTP y los tools MCP
@@ -23,16 +25,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from typing import Any
 
 from comfy_studio.engines.storyboard_gate import StoryboardGate, StoryboardState
+from comfy_studio.mission_compiler import MissionCompilation, compile_mission
 from comfy_studio.orchestration.checkpointer import ProductionCheckpointer
 from comfy_studio.orchestration.conductor import Collaborators, build_production_graph
 from comfy_studio.orchestration.planner import plan_production as _plan
 from comfy_studio.orchestration.recipe_binding import bind_recipes
-from comfy_studio.orchestration.state import ProductionState, ShotStatus
+from comfy_studio.orchestration.reference_selection import compile_project_references
+from comfy_studio.orchestration.state import Layer, ProductionState, Sequence, Shot, ShotStatus
 from comfy_studio.progress import ProgressBroker
 
 
@@ -52,12 +58,23 @@ class ProductionAlreadyTerminalError(RuntimeError):
     """La producción ya terminó (done/simulated/failed/cancelled/halted)."""
 
 
+class ProductionQueueFullError(RuntimeError):
+    """La cola de ejecuciones en segundo plano alcanzó su límite."""
+
+
 #: fases terminales: no admiten edición de plan ni cancelación.
 _TERMINAL_PHASES = frozenset({"done", "simulated", "failed", "cancelled", "halted"})
 
 
 def _terminal_reason(state: ProductionState) -> str | None:
-    """Última razón terminal tipada del log (p.ej. 'ambiguous_purpose'), o None."""
+    """Razón terminal tipada PERSISTIDA del estado, o la del plan legacy.
+
+    `state.terminal_reason` la fija `mark_terminal_failure` (p.ej.
+    'budget_exhausted') y viaja en el checkpoint. Un checkpoint previo solo
+    lleva la razón en el log (`plan_rejected`): se conserva ese fallback.
+    """
+    if state.terminal_reason:
+        return state.terminal_reason
     for entry in reversed(state.log):
         if entry.get("kind") == "plan_rejected":
             reason = str(entry.get("reason") or "")
@@ -67,6 +84,88 @@ def _terminal_reason(state: ProductionState) -> str | None:
 
 def _gate_key(production_id: str) -> str:
     return f"__gate__{production_id}"
+
+
+def _plan_response(state: ProductionState) -> dict[str, Any]:
+    response = {
+        "production_id": state.id,
+        "phase": state.phase,
+        "plan": state.to_dict(),
+    }
+    gate = state.metadata.get("storyboard_gate") or {}
+    if gate.get("state"):
+        response["storyboard_state"] = gate["state"]
+    return response
+
+
+def _mission_constraint_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _apply_mission_compilation(
+    state: ProductionState,
+    compilation: MissionCompilation,
+) -> None:
+    """Project the transient compiled DAG into ProductionState's existing graph."""
+    constraints = [item.to_dict() for item in compilation.constraints]
+    shots: list[Shot] = []
+    for task in compilation.tasks:
+        prompt = task.description
+        if constraints:
+            rendered_constraints = "; ".join(
+                f"{item['key']}={_mission_constraint_json(item['value'])}" for item in constraints
+            )
+            prompt = f"{prompt}\nRestricciones explícitas: {rendered_constraints}"
+        shot = Shot(
+            id=task.task_id,
+            description=task.description[:500],
+            duration_s=task.duration_s,
+            acceptance={"vbench_min": 0.55, "semantic_min": 0.6},
+            depends_on=list(task.depends_on),
+        )
+        shot.layers.append(
+            Layer(
+                kind="gen",
+                engine="comfyui",
+                params={
+                    "prompt": prompt,
+                    "capability": "video.text_to_video",
+                    "mission_task_id": task.task_id,
+                    "source_refs": list(task.source_refs),
+                },
+            )
+        )
+        shots.append(shot)
+    state.sequences = [
+        Sequence(
+            id=f"seq-{compilation.idempotency_key[:12]}",
+            title="secuencia de misión",
+            shots=shots,
+        )
+    ]
+    if shots and compilation.cost_cap_usd > 0:
+        per_shot = compilation.cost_cap_usd / len(shots)
+        for index, shot in enumerate(shots):
+            shot.cost_cap_usd = (
+                compilation.cost_cap_usd - per_shot * (len(shots) - 1)
+                if index == len(shots) - 1
+                else per_shot
+            )
+    receipt = compilation.receipt()
+    state.metadata["mission_compilation"] = receipt
+    state.record(
+        "mission_compiled",
+        schema=receipt["schema"],
+        idempotency_key=receipt["idempotency_key"],
+        graph_sha256=receipt["graph_sha256"],
+        tasks=len(shots),
+    )
 
 
 class ProductionService:
@@ -79,7 +178,6 @@ class ProductionService:
         collaborators: Collaborators | None = None,
         store: Any | None = None,
         broker: ProgressBroker | None = None,
-        atlas_service: Any | None = None,
         resource_vram_budget_mb: int | None = None,
     ) -> None:
         self.checkpointer = checkpointer or ProductionCheckpointer()
@@ -88,8 +186,12 @@ class ProductionService:
         self._fully_wired = all(
             getattr(self.collaborators, name) is not None
             for name in (
-                "planner", "runner", "evaluator", "reselect_template",
-                "replan_shot", "assembler",
+                "planner",
+                "runner",
+                "evaluator",
+                "reselect_template",
+                "replan_shot",
+                "assembler",
             )
         )
         # Proyecto de la galería donde se registran las salidas (None = sin
@@ -107,47 +209,11 @@ class ProductionService:
         self._cancel_requested: set[str] = set()
         self._cancel_events: dict[str, Event] = {}
         self._runtime_id = uuid.uuid4().hex
-        # Atlas georreferenciado: registra producciones que usaron el atlas
-        # (lugar/vista/ref/cámara quedan en el catálogo, recuperables).
-        self._atlas = atlas_service
-
-    def _record_atlas_production(self, state: ProductionState) -> None:
-        """Registra en el atlas la producción si usó lugar/vista (metadata['atlas']).
-
-        Recuperable tras reiniciar: queda en catalog.db (tabla productions) con
-        versión del atlas, cámara y referencias exactas. Nunca falla la producción
-        si el atlas no está disponible.
-        """
-        atlas_ctx = (state.metadata or {}).get("atlas")
-        if not atlas_ctx or self._atlas is None:
-            return
-        try:
-            from comfy_studio.atlas.models import ProductionRecord
-
-            if not self._atlas.available():
-                return
-            self._atlas.store.record_production(ProductionRecord(
-                prod_id=state.id,
-                atlas_version=self._atlas.atlas_version(),
-                place_id=atlas_ctx.get("place_id"),
-                view_id=atlas_ctx.get("view_id"),
-                scenario_id=atlas_ctx.get("scenario_id"),
-                camera=dict(atlas_ctx.get("camera") or {}),
-                params={
-                    "idea": state.idea[:500],
-                    "phase": state.phase,
-                    "ref_id": atlas_ctx.get("ref_id"),
-                    "background_path": atlas_ctx.get("background_path"),
-                    "limitations": atlas_ctx.get("limitations") or [],
-                },
-                result={
-                    "status": state.phase,
-                    "final_output_path": state.final_output_path,
-                },
-            ))
-            state.record("atlas_production_recorded", place_id=atlas_ctx.get("place_id"))
-        except Exception:  # noqa: BLE001
-            pass
+        self._approval_lock = threading.Lock()
+        self._approval_jobs: set[str] = set()
+        self._approval_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="studio-production"
+        )
 
     def _publish(self, event_type: str, data: dict[str, Any]) -> None:
         """Publica un evento de producción en el bus SSE (thread-safe si hay loop)."""
@@ -160,11 +226,42 @@ class ProductionService:
         self,
         idea: str,
         *,
-        cost_cap_usd: float = 0.0,
+        cost_cap_usd: float | None = None,
         project_id: str | None = None,
+        brief: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Planifica (barato) y deja la producción esperando aprobación humana."""
-        state = ProductionState(idea=idea, cost_cap_usd=cost_cap_usd)
+        compilation: MissionCompilation | None = None
+        if brief is not None:
+            compilation = compile_mission(
+                brief,
+                cost_cap_usd=cost_cap_usd,
+            )
+            brief_project_id = brief.get("project_id")
+            if project_id and brief_project_id and brief_project_id != project_id:
+                raise ValueError("El brief pertenece a otro proyecto")
+            project_id = project_id or brief_project_id
+            base_production_id = f"prod_{compilation.idempotency_key[:32]}"
+            production_id = base_production_id
+            retry = 0
+            existing = self.checkpointer.load(production_id)
+            while existing is not None:
+                if existing.phase != "cancelled":
+                    return _plan_response(existing)
+                retry += 1
+                production_id = f"{base_production_id}_r{retry}"
+                existing = self.checkpointer.load(production_id)
+            state = ProductionState(
+                idea=str(brief.get("prompt") or idea),
+                id=production_id,
+                cost_cap_usd=compilation.cost_cap_usd,
+            )
+            _apply_mission_compilation(state, compilation)
+        else:
+            state = ProductionState(
+                idea=idea,
+                cost_cap_usd=0.0 if cost_cap_usd is None else cost_cap_usd,
+            )
         if project_id:
             # fail-closed: un proyecto inexistente se rechaza al planificar,
             # no al aprobar (cuando ya se gastó la aprobación humana).
@@ -173,7 +270,29 @@ class ProductionService:
             state.metadata["project_id"] = project_id
         state.metadata["execution_mode"] = "real" if self._fully_wired else "simulated"
         state.metadata["simulated"] = not self._fully_wired
-        _plan(state, self.collaborators.planner)
+        project_assets: list[dict[str, Any]] = []
+        planner_context: dict[str, Any] = {}
+        has_project_catalog = bool(project_id and self.store is not None)
+        if has_project_catalog:
+            project_assets = self.store.list_assets(project_id, kind="image")
+            catalog = []
+            for asset in project_assets:
+                metadata = asset.get("metadata") or {}
+                tags = metadata.get("tags") or []
+                if isinstance(tags, str):
+                    tags = [tags]
+                catalog.append(
+                    {
+                        "asset_id": str(asset["id"]),
+                        "filename": str(
+                            asset.get("original_filename") or asset.get("filename") or ""
+                        ),
+                        "tags": [str(tag) for tag in tags],
+                        "description": str(metadata.get("description") or ""),
+                    }
+                )
+            planner_context["project_reference_catalog"] = catalog
+        _plan(state, self.collaborators.planner, extra_context=planner_context)
         if state.phase == "failed":
             # P1: plan imposible (propósito ambiguo sin hipótesis que preservar)
             # termina con razón tipada: no hay puerta ni aprobación que sufrir,
@@ -185,6 +304,15 @@ class ProductionService:
                 "terminal_reason": _terminal_reason(state),
                 "plan": state.to_dict(),
             }
+        contains_explicit_reference = any(
+            layer.params.get("reference_asset_ids") or layer.params.get("image_asset_id")
+            for shot in state.all_shots()
+            for layer in shot.layers
+        )
+        if has_project_catalog or contains_explicit_reference:
+            reference_summary = compile_project_references(state, project_assets)
+            state.metadata["project_reference_selection"] = reference_summary
+            state.record("project_references_compiled", **reference_summary)
         if self.resource_vram_budget_mb is not None:
             binding = bind_recipes(
                 state,
@@ -244,7 +372,6 @@ class ProductionService:
             if state is None:
                 continue
             self._ensure_artifact_semantics(state)
-            self._record_atlas_production(state)
             if project_id and state.metadata.get("project_id") != project_id:
                 continue
             out.append(self._status_dict(state))
@@ -277,9 +404,7 @@ class ProductionService:
             for edit in shots:
                 shot = by_id.get(str(edit.get("id") or ""))
                 if shot is None:
-                    raise LookupError(
-                        f"shot {edit.get('id')!r} no existe en la producción"
-                    )
+                    raise LookupError(f"shot {edit.get('id')!r} no existe en la producción")
                 if edit.get("remove"):
                     for seq in state.sequences:
                         if shot in seq.shots:
@@ -347,7 +472,61 @@ class ProductionService:
         return self._status_dict(state)
 
     def approve_plan(self, production_id: str) -> dict[str, Any]:
-        """El humano aprueba; corre el lazo caro y devuelve el resultado."""
+        """Approve and execute inline for internal callers and compatibility."""
+        return self._approve_plan(production_id, background=False)
+
+    def approve_plan_background(self, production_id: str) -> dict[str, Any]:
+        """Persist approval, then enqueue its graph in the bounded process worker."""
+        state = self._load(production_id)
+        if state.phase in _TERMINAL_PHASES or state.phase == "executing":
+            with self._approval_lock:
+                already_queued = production_id in self._approval_jobs
+            if already_queued:
+                return self._background_ack(production_id, already_in_progress=True)
+            if state.phase in _TERMINAL_PHASES:
+                return self._approve_plan(production_id, background=False)
+        with self._approval_lock:
+            already_queued = production_id in self._approval_jobs
+            queue_full = len(self._approval_jobs) >= 8
+            if not already_queued and not queue_full:
+                self._approval_jobs.add(production_id)
+        if already_queued:
+            return self._background_ack(production_id, already_in_progress=True)
+        if queue_full:
+            raise ProductionQueueFullError("la cola de producciones está llena")
+        try:
+            result = self._approve_plan(production_id, background=True)
+        except BaseException:
+            with self._approval_lock:
+                self._approval_jobs.discard(production_id)
+            raise
+        if result.get("already_in_progress"):
+            with self._approval_lock:
+                if production_id not in self._cancel_events:
+                    self._approval_jobs.discard(production_id)
+            return self._background_ack(production_id, already_in_progress=True)
+        return result
+
+    def resume_interrupted_approvals(self, *, limit: int = 8) -> list[str]:
+        """Requeue durable approvals left executing by a previous Studio process."""
+        resumed: list[str] = []
+        for production_id in self.checkpointer.list_ids(limit=10000):
+            if len(resumed) >= limit:
+                break
+            state = self.checkpointer.load(production_id)
+            if state is None or state.phase != "executing":
+                continue
+            try:
+                self.approve_plan_background(production_id)
+            except ProductionQueueFullError:
+                break
+            except (ProductionNotFoundError, ProductionAlreadyTerminalError):
+                continue
+            resumed.append(production_id)
+        return resumed
+
+    def _approve_plan(self, production_id: str, *, background: bool) -> dict[str, Any]:
+        """Claim the durable state and execute inline or dispatch the worker."""
         state = self._load(production_id)
         expected_state_json = json.dumps(state.to_dict(), ensure_ascii=False)
         if state.phase == "executing":
@@ -398,13 +577,11 @@ class ProductionService:
                 raise ProductionAlreadyTerminalError(
                     f"la producción ya está en fase {latest.phase}"
                 )
-            return self._run_approved_graph(state, production_id)
+            return self._dispatch_approved_graph(state, production_id, background)
         # una producción cancelada por el humano no se puede aprobar (fail-closed);
         # el resto de fases terminales (done/failed) mantienen el approve idempotente.
         if state.phase == "cancelled":
-            raise ProductionNotApprovedError(
-                "la producción fue cancelada; no se puede aprobar"
-            )
+            raise ProductionNotApprovedError("la producción fue cancelada; no se puede aprobar")
         if state.phase in _TERMINAL_PHASES:
             if state.phase in ("done", "simulated"):
                 registered = state.metadata.get("output_asset_ids") or []
@@ -421,11 +598,17 @@ class ProductionService:
                     "output_asset_ids": registered,
                     "status": self._status_dict(state),
                 }
-            raise ProductionAlreadyTerminalError(
-                f"la producción ya es terminal ({state.phase})"
-            )
+            raise ProductionAlreadyTerminalError(f"la producción ya es terminal ({state.phase})")
         binding = state.metadata.get("recipe_binding")
-        if isinstance(binding, dict) and int(binding.get("unresolved", 0) or 0) > 0:
+        unresolved_layers = [
+            layer
+            for shot in state.all_shots()
+            for layer in shot.layers
+            if layer.params.get("recipe_unresolved")
+        ]
+        if unresolved_layers or (
+            isinstance(binding, dict) and int(binding.get("unresolved", 0) or 0) > 0
+        ):
             raise ProductionNotApprovedError(
                 "el plan contiene capas de generación sin receta admitida; "
                 "edita el plan o aumenta el presupuesto de recursos antes de aprobar"
@@ -446,9 +629,7 @@ class ProductionService:
             if gate.state is StoryboardState.AWAITING_APPROVAL:
                 gate.approve()
             else:
-                raise ProductionNotApprovedError(
-                    f"storyboard no aprobable desde {gate.state}"
-                )
+                raise ProductionNotApprovedError(f"storyboard no aprobable desde {gate.state}")
         self._gates[production_id] = gate
         state.metadata["storyboard_gate"] = gate.to_dict()
         state.storyboard_approved = True
@@ -480,30 +661,69 @@ class ProductionService:
                     "status": self._status_dict(latest),
                 }
             if latest.phase == "cancelled":
-                raise ProductionNotApprovedError(
-                    "la producción fue cancelada; no se puede aprobar"
-                )
+                raise ProductionNotApprovedError("la producción fue cancelada; no se puede aprobar")
             if latest.phase == "awaiting_approval":
                 raise ProductionNotApprovedError(
                     "el plan cambió durante la aprobación; vuelve a intentarlo"
                 )
-            raise ProductionAlreadyTerminalError(
-                f"la producción ya está en fase {latest.phase}"
-            )
+            raise ProductionAlreadyTerminalError(f"la producción ya está en fase {latest.phase}")
 
-        return self._run_approved_graph(state, production_id)
+        return self._dispatch_approved_graph(state, production_id, background)
 
-    def _run_approved_graph(
-        self, state: ProductionState, production_id: str
+    def _dispatch_approved_graph(
+        self, state: ProductionState, production_id: str, background: bool
     ) -> dict[str, Any]:
+        if not background:
+            return self._run_approved_graph(state, production_id)
+        try:
+            future = self._approval_executor.submit(self._run_approved_graph, state, production_id)
+        except BaseException:
+            with self._approval_lock:
+                self._approval_jobs.discard(production_id)
+            raise
+
+        def finish(future: Any) -> None:
+            try:
+                future.result()
+            except BaseException as exc:
+                failed = self.checkpointer.load(production_id)
+                if failed is not None and failed.phase == "executing":
+                    failed.phase = "failed"
+                    failed.metadata.pop("execution_runtime_id", None)
+                    failed.metadata["terminal_reason"] = type(exc).__name__
+                    failed.record("production_failed", error=type(exc).__name__)
+                    self.checkpointer.save(failed)
+                    self._publish("production_finished", self._status_dict(failed))
+            finally:
+                with self._approval_lock:
+                    self._approval_jobs.discard(production_id)
+
+        future.add_done_callback(finish)
+        return self._background_ack(production_id, already_in_progress=False)
+
+    def _background_ack(self, production_id: str, *, already_in_progress: bool) -> dict[str, Any]:
+        status = self.production_status(production_id)
+        if already_in_progress and status["phase"] == "awaiting_approval":
+            # A competing request can observe the in-memory queue reservation
+            # just before the winner's durable CAS becomes visible.
+            status["phase"] = "executing"
+            status["complete"] = False
+        return {
+            "production_id": production_id,
+            "job_id": production_id,
+            "phase": status["phase"],
+            "already_in_progress": already_in_progress,
+            "status_url": f"/studio/api/productions/{production_id}/status",
+            "cancel_url": f"/studio/api/productions/{production_id}/cancel",
+            "status": status,
+        }
+
+    def _run_approved_graph(self, state: ProductionState, production_id: str) -> dict[str, Any]:
         """Run or resume the checkpointed graph and persist its terminal result."""
         # correr el lazo caro (ejecución + evaluación + replan + ensamblaje).
         cancel_event = Event()
         self._cancel_events[production_id] = cancel_event
-        if (
-            production_id in self._cancel_requested
-            or state.metadata.get("cancel_requested")
-        ):
+        if production_id in self._cancel_requested or state.metadata.get("cancel_requested"):
             cancel_event.set()
         graph = build_production_graph(
             checkpointer=self.checkpointer,
@@ -512,9 +732,7 @@ class ProductionService:
         )
         if self.broker is not None:
             # progreso en vivo por SSE: un evento por paso persistido del grafo.
-            graph.on_step = lambda st: self._publish(
-                "production_step", self._status_dict(st)
-            )
+            graph.on_step = lambda st: self._publish("production_step", self._status_dict(st))
         # cancelación cooperativa en proceso: `cancel_production` durante la
         # ejecución sólo persiste el flag; el hook es lo que detiene el lazo.
         graph.should_cancel = cancel_event.is_set
@@ -569,7 +787,27 @@ class ProductionService:
 
     def production_status(self, production_id: str) -> dict[str, Any]:
         state = self._load(production_id)
-        return self._status_dict(state)
+        # The graph can persist its terminal node before gallery registration
+        # and final artifact metadata are committed. Keep polling clients in
+        # the active state until that finalization worker has exited.
+        with self._approval_lock:
+            finalizing = production_id in self._approval_jobs
+        if (
+            not finalizing
+            and state.phase == "done"
+            and state.metadata.get("project_id")
+            and self.store is not None
+            and "output_asset_ids" not in state.metadata
+        ):
+            # Recover the idempotent gallery write if the process stopped after
+            # the graph checkpointed `done` but before finalization was saved.
+            self._register_outputs_in_gallery(state)
+            self.checkpointer.save(state)
+        status = self._status_dict(state)
+        if finalizing and state.phase in _TERMINAL_PHASES:
+            status["phase"] = "executing"
+            status["complete"] = False
+        return status
 
     # -- helpers -------------------------------------------------------------
 
@@ -584,9 +822,16 @@ class ProductionService:
         """
         if state.metadata.get("simulated"):
             state.metadata["output_asset_ids"] = []
+            state.record("gallery_registration_skipped", reason="simulated")
             return []
         project_id = state.metadata.get("project_id")
         if not project_id or self.store is None:
+            state.record(
+                "gallery_registration_skipped",
+                reason="missing_project_or_store",
+                has_project_id=bool(project_id),
+                has_store=self.store is not None,
+            )
             return []
         from pathlib import Path
 
@@ -607,9 +852,7 @@ class ProductionService:
                 continue
             path = Path(shot.output_path)
             if not path.is_file():
-                state.record(
-                    "gallery_skip", shot=shot.id, reason="output inexistente"
-                )
+                state.record("gallery_skip", shot=shot.id, reason="output inexistente")
                 continue
             try:
                 asset = self.store.save_upload(
@@ -630,9 +873,7 @@ class ProductionService:
                     },
                 )
             except Exception as exc:  # noqa: BLE001
-                state.record(
-                    "gallery_error", shot=shot.id, error=str(exc)[:300]
-                )
+                state.record("gallery_error", shot=shot.id, error=str(exc)[:300])
                 continue
             registered.append(str(asset["id"]))
         # reel final
@@ -670,6 +911,7 @@ class ProductionService:
         if state.phase != "done":
             return
         if state.metadata.get("simulated"):
+            # Stub outputs are not probed deliverables; never publish their path.
             state.final_output_path = None
             state.phase = "simulated"
             state.record(
@@ -709,10 +951,7 @@ class ProductionService:
         """Migrate old `done` checkpoints before exposing a path or status."""
         if state.phase != "done" or state.metadata.get("artifact_verified"):
             return
-        if (
-            state.metadata.get("execution_mode") == "real"
-            and not state.metadata.get("simulated")
-        ):
+        if state.metadata.get("execution_mode") == "real" and not state.metadata.get("simulated"):
             self._finalize_artifact_status(state)
         else:
             state.phase = "simulated"
@@ -742,7 +981,9 @@ class ProductionService:
         # P1: solo hay gasto contable si algún runner lo REPORTÓ. Los
         # adaptadores de motor actuales no producen `cost_usd`: exponer 0.0
         # sería afirmar un gasto que no se midió -> None (desconocido).
-        spend_reported = any(s.spend_reported for s in shots)
+        spend_reported = bool(state.spend_reported) or any(
+            s.spend_reported for s in shots
+        )
         return {
             "production_id": state.id,
             "phase": state.phase,
@@ -751,13 +992,20 @@ class ProductionService:
             "shots_total": len(shots),
             "shots_accepted": accepted,
             "shots_by_status": by_status,
-            # gasto REPORTADO acumulado de ejecución sobre todos los shots (P1):
+            "cost_cap_usd": state.cost_cap_usd if state.cost_cap_usd > 0 else None,
+            # gasto REPORTADO acumulado de ejecución (P1): el hecho de la
+            # misión lo mantiene el executor en `state.cost_spent_usd` y
             # sobrevive a los escalones de replan y a los reinicios del pod.
+            # Un checkpoint previo (sin el campo) cae al agregado por shots.
             # Límite inferior si solo reportan algunos runners.
             "cost_spent_usd": (
-                round(sum(s.cost_spent_usd for s in shots), 6)
-                if spend_reported
-                else None
+                round(state.cost_spent_usd, 6)
+                if state.spend_reported
+                else (
+                    round(sum(s.cost_spent_usd for s in shots), 6)
+                    if spend_reported
+                    else None
+                )
             ),
             "spend_reported": spend_reported,
             "terminal_reason": _terminal_reason(state),

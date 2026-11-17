@@ -89,11 +89,13 @@ jobs:
       - name: Checkout del repositorio
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # A07 checks re-derive first-party source locks from immutable commits.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Ejecutar ShellCheck sobre scripts Bash (§9.1)
         run: |
-          shellcheck scripts/start.sh scripts/download-models.sh tools/mac/comfy
+          shellcheck scripts/start.sh scripts/download-models.sh scripts/install_ci_ffmpeg.sh tools/mac/comfy
 
       - name: Renderizar los diagramas PlantUML y fallar si no son legibles (MAAD)
         # Un .puml que "parsea" pero nadie ha visto es inutil: la sintaxis puede
@@ -292,11 +294,13 @@ jobs:
           base = sum(1 for m in models if not m.get("opt_in"))
           animate = sum(1 for m in models if m.get("opt_in") == "STUDIO_INCLUDE_ANIMATE")
           three_d = sum(1 for m in models if m.get("opt_in") == "STUDIO_INCLUDE_3D")
-          print(base, base + animate, base + three_d)
+          qwen_layered = sum(1 for m in models if m.get("opt_in") == "STUDIO_INCLUDE_QWEN_LAYERED")
+          music = sum(1 for m in models if m.get("opt_in") == "STUDIO_INCLUDE_MUSIC")
+          print(base, base + animate, base + three_d, base + qwen_layered, base + music)
           PYEOF
           )"
-          read -r plan_base plan_animate plan_3d <<< "${plan_counts//$'\r'/}"
-          echo "[INFO] Recuentos derivados del manifest: base=${plan_base} animate=${plan_animate} 3d=${plan_3d}"
+          read -r plan_base plan_animate plan_3d plan_qwen_layered plan_music <<< "${plan_counts//$'\r'/}"
+          echo "[INFO] Recuentos derivados del manifest: base=${plan_base} animate=${plan_animate} 3d=${plan_3d} qwen_layered=${plan_qwen_layered} music=${plan_music}"
           mkdir -p "$tmp_root/studio_data" "$tmp_root/studio_app/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints"
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio \
             bash scripts/download-models.sh --phase2 > "$tmp_root/dl_studio.log" 2>"$tmp_root/dl_studio.err" || { cat "$tmp_root/dl_studio.log"; cat "$tmp_root/dl_studio.err"; exit 1; }
@@ -304,7 +308,7 @@ jobs:
           grep -q "PLAN FASE 2: 8 archivos (studio)" "$tmp_root/dl_studio.log"
           grep -q "FASE 2 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
           grep -q "INICIANDO FASE 3 (Estudio de Vídeo — Perfil: studio)" "$tmp_root/dl_studio.log"
-          grep -q "PLAN FASE 3: ${plan_base} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0)" "$tmp_root/dl_studio.log"
+          grep -q "PLAN FASE 3: ${plan_base} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=0, STUDIO_INCLUDE_MUSIC=0)" "$tmp_root/dl_studio.log"
           grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_studio.log"
           grep -q "FASE 3 COMPLETADA (Perfil: studio)\." "$tmp_root/dl_studio.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors" ]
@@ -313,6 +317,7 @@ jobs:
           [ -s "$tmp_root/studio_data/models/whisper/faster-whisper-large-v3/model.bin" ]
           [ -s "$tmp_root/studio_data/models/whisper/aligners/wav2vec2-large-xlsr-53-spanish/pytorch_model.bin" ]
           [ -s "$tmp_root/studio_data/models/clip/clip-vit-large-patch14/pytorch_model.bin" ]
+          [ ! -e "$tmp_root/studio_data/models/checkpoints/ace_step_1.5_turbo_aio.safetensors" ]
           [ -s "$tmp_root/studio_data/models/ipadapter/ip-adapter_sdxl_vit-h.safetensors" ]
           [ -s "$tmp_root/studio_data/models/funasr/campplus/campplus_cn_common.bin" ]
           [ -s "$tmp_root/studio_data/indextts/checkpoints/gpt.pth" ]
@@ -344,7 +349,7 @@ jobs:
 
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_ANIMATE=1 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_anim.log" 2>"$tmp_root/dl_studio_anim.err" || { cat "$tmp_root/dl_studio_anim.log"; cat "$tmp_root/dl_studio_anim.err"; exit 1; }
-          grep -q "PLAN FASE 3: ${plan_animate} archivos (studio, STUDIO_INCLUDE_ANIMATE=1, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0)" "$tmp_root/dl_studio_anim.log"
+          grep -q "PLAN FASE 3: ${plan_animate} archivos (studio, STUDIO_INCLUDE_ANIMATE=1, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=0, STUDIO_INCLUDE_MUSIC=0)" "$tmp_root/dl_studio_anim.log"
           grep -q "SKIP (ya existe): wan2.2_ti2v_5B_fp16.safetensors" "$tmp_root/dl_studio_anim.log"
           grep -q "INICIO: wan2.2_animate_14B_int8_convrot.safetensors" "$tmp_root/dl_studio_anim.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors" ]
@@ -356,7 +361,7 @@ jobs:
           plan_minimax="$((plan_base + 6))"
           COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_MINIMAX=1 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_mmx.log" 2>"$tmp_root/dl_studio_mmx.err" || { cat "$tmp_root/dl_studio_mmx.log"; cat "$tmp_root/dl_studio_mmx.err"; exit 1; }
-          grep -q "PLAN FASE 3: ${plan_minimax} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=1)" "$tmp_root/dl_studio_mmx.log"
+          grep -q "PLAN FASE 3: ${plan_minimax} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=1, STUDIO_INCLUDE_QWEN_LAYERED=0, STUDIO_INCLUDE_MUSIC=0)" "$tmp_root/dl_studio_mmx.log"
           grep -q "INICIO: minimax_h3_ref2va_pruned_int8_convrot.safetensors" "$tmp_root/dl_studio_mmx.log"
           grep -q "INICIO: qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors" "$tmp_root/dl_studio_mmx.log"
           [ -s "$tmp_root/studio_data/models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors" ]
@@ -367,13 +372,34 @@ jobs:
           [ -s "$tmp_root/studio_data/models/diffusion_models/Minimax-h3_Singularity_ref2va_v2_pruned_int8.safetensors" ]
           echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=studio + STUDIO_INCLUDE_MINIMAX=1: 6 archivos H3) verificado en seco (S-01)"
 
+          # C28: el grupo Qwen Layered es opt-in, usa artefactos oficiales FP8 fijados y
+          # no añade 30 GB al perfil base. Validar el recuento y los tres destinos.
+          COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_QWEN_LAYERED=1 \
+            bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_qwen_layered.log" 2>"$tmp_root/dl_studio_qwen_layered.err" || { cat "$tmp_root/dl_studio_qwen_layered.log"; cat "$tmp_root/dl_studio_qwen_layered.err"; exit 1; }
+          grep -q "PLAN FASE 3: ${plan_qwen_layered} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=1, STUDIO_INCLUDE_MUSIC=0)" "$tmp_root/dl_studio_qwen_layered.log"
+          grep -q "INICIO: qwen_image_layered_fp8mixed.safetensors" "$tmp_root/dl_studio_qwen_layered.log"
+          grep -q "INICIO: qwen_image_layered_vae.safetensors" "$tmp_root/dl_studio_qwen_layered.log"
+          grep -q "INICIO: qwen_2.5_vl_7b_fp8_scaled.safetensors" "$tmp_root/dl_studio_qwen_layered.log"
+          [ -s "$tmp_root/studio_data/models/diffusion_models/qwen_image_layered_fp8mixed.safetensors" ]
+          [ -s "$tmp_root/studio_data/models/vae/qwen_image_layered_vae.safetensors" ]
+          [ -s "$tmp_root/studio_data/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors" ]
+          echo "[OK] download-models.sh Fase 3 (STUDIO_INCLUDE_QWEN_LAYERED=1: tres archivos C28) verificado en seco"
+
+          # C26: ACE-Step is optional and must be absent from the default Studio plan.
+          COMFY_DATA_DIR="$tmp_root/studio_data" COMFY_APP_DIR="$tmp_root/studio_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=studio STUDIO_INCLUDE_MUSIC=1 \
+            bash scripts/download-models.sh --phase3 > "$tmp_root/dl_studio_music.log" 2>"$tmp_root/dl_studio_music.err" || { cat "$tmp_root/dl_studio_music.log"; cat "$tmp_root/dl_studio_music.err"; exit 1; }
+          grep -q "PLAN FASE 3: ${plan_music} archivos (studio, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=0, STUDIO_INCLUDE_MUSIC=1)" "$tmp_root/dl_studio_music.log"
+          grep -q "INICIO: ace_step_1.5_turbo_aio.safetensors" "$tmp_root/dl_studio_music.log"
+          [ -s "$tmp_root/studio_data/models/checkpoints/ace_step_1.5_turbo_aio.safetensors" ]
+          echo "[OK] download-models.sh Fase 3 (STUDIO_INCLUDE_MUSIC=1: ACE-Step opt-in C26) verificado en seco"
+
           # VAL-UNREAL-003 (M3-D): el perfil 'unreal' implica STUDIO_INCLUDE_3D=1 (Hunyuan3D 2.1:
           # PLAN FASE 3 = base + 1 3D archivos, destino models/checkpoints/hunyuan_3d_v2.1.safetensors)
           # y la renuncia explícita STUDIO_INCLUDE_3D=0 devuelve el plan a la base sin descargar el 3D.
           mkdir -p "$tmp_root/unreal_data" "$tmp_root/unreal_app"
           COMFY_DATA_DIR="$tmp_root/unreal_data" COMFY_APP_DIR="$tmp_root/unreal_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=unreal \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_unreal.log" 2>"$tmp_root/dl_unreal.err" || { cat "$tmp_root/dl_unreal.log"; cat "$tmp_root/dl_unreal.err"; exit 1; }
-          grep -q "PLAN FASE 3: ${plan_3d} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=1, STUDIO_INCLUDE_MINIMAX=0)" "$tmp_root/dl_unreal.log"
+          grep -q "PLAN FASE 3: ${plan_3d} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=1, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=0, STUDIO_INCLUDE_MUSIC=0)" "$tmp_root/dl_unreal.log"
           grep -q "INICIO: hunyuan_3d_v2.1.safetensors" "$tmp_root/dl_unreal.log"
           grep -q "RESUMEN FASE 3: Todos los modelos se descargaron correctamente (0 fallos)\." "$tmp_root/dl_unreal.log"
           grep -q "FASE 3 COMPLETADA (Perfil: unreal)\." "$tmp_root/dl_unreal.log"
@@ -381,7 +407,7 @@ jobs:
           mkdir -p "$tmp_root/unreal_optout_data" "$tmp_root/unreal_optout_app"
           COMFY_DATA_DIR="$tmp_root/unreal_optout_data" COMFY_APP_DIR="$tmp_root/unreal_optout_app" HF_CLI="$tmp_root/bin/fake-hf" MODEL_PROFILE=unreal STUDIO_INCLUDE_3D=0 \
             bash scripts/download-models.sh --phase3 > "$tmp_root/dl_unreal_optout.log" 2>"$tmp_root/dl_unreal_optout.err" || { cat "$tmp_root/dl_unreal_optout.log"; cat "$tmp_root/dl_unreal_optout.err"; exit 1; }
-          grep -q "PLAN FASE 3: ${plan_base} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0)" "$tmp_root/dl_unreal_optout.log"
+          grep -q "PLAN FASE 3: ${plan_base} archivos (unreal, STUDIO_INCLUDE_ANIMATE=0, STUDIO_INCLUDE_3D=0, STUDIO_INCLUDE_MINIMAX=0, STUDIO_INCLUDE_QWEN_LAYERED=0, STUDIO_INCLUDE_MUSIC=0)" "$tmp_root/dl_unreal_optout.log"
           [ ! -e "$tmp_root/unreal_optout_data/models/checkpoints/hunyuan_3d_v2.1.safetensors" ]
           echo "[OK] download-models.sh Fase 3 (MODEL_PROFILE=unreal: Hunyuan3D 2.1 implícito + renuncia STUDIO_INCLUDE_3D=0) verificado en seco (VAL-UNREAL-003)"
 
@@ -465,10 +491,7 @@ jobs:
 
       - name: Instalar ffmpeg/ffprobe para los tests de percepción M3 (VAL-PERC-001/002/003/006)
         timeout-minutes: 15
-        uses: FedericoCarboni/setup-ffmpeg@8073ccb51e517ed576e6871c7f2360c6de4ebb7c
-        with:
-          ffmpeg-version: 7.0.2
-          linking-type: static
+        run: bash scripts/install_ci_ffmpeg.sh
 
       - name: Verificar ffmpeg/ffprobe
         run: |
@@ -484,6 +507,12 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Instalar Remotion fijado y Chromium para aceptación D05
+        run: |
+          set -euo pipefail
+          npm ci --prefix studio/remotion --no-audit --no-fund --loglevel=error
+          npx --prefix studio/remotion remotion browser ensure
+
       - name: Validar paquete comfy_studio, panel web y plantillas (ruff + pytest + templates)
         env:
           # Alinea el entorno del runner con la invocación local de la suite (AGENTS.md):
@@ -493,11 +522,14 @@ jobs:
           STUDIO_STUB_COMFYUI: "1"
           STUDIO_ORCH_REAL_ENGINES: "0"
           STUDIO_STUB_BLENDER: "1"
+          COMFYUIPOD_REQUIRE_D05_EVIDENCE: "1"
+          STUDIO_GLTF_VALIDATOR_DIR: ${{ github.workspace }}/studio/gltf-validator
         run: |
           set -euo pipefail
           python3 -m venv /tmp/studio-ci-venv
           /tmp/studio-ci-venv/bin/pip install --no-cache-dir --upgrade pip
           /tmp/studio-ci-venv/bin/pip install --no-cache-dir -e "./studio[dev]"
+          npm ci --prefix studio/gltf-validator --ignore-scripts --no-audit --no-fund --loglevel=error
           /tmp/studio-ci-venv/bin/ruff check studio panel scripts config/probes
           /tmp/studio-ci-venv/bin/pytest studio/tests -q
           # Panel: tests deterministas del SPA (Node + DOM mínimo, sin navegador ni red).
@@ -512,9 +544,6 @@ jobs:
               exit 1
             fi
           done
-          # Atlas: el bundle commiteado debe estar integro (archivos+hashes+licencias+OSM).
-          /tmp/studio-ci-venv/bin/python -m comfy_studio.atlas verify-bundle --root atlas
-          /tmp/studio-ci-venv/bin/python -m comfy_studio.atlas stats --root atlas | head -n 5
           rm -rf /tmp/studio-ci-venv
 
       - name: Smoke test de arranque del studio-server (M7-OPS-006)
@@ -554,7 +583,7 @@ jobs:
             exit 1
           fi
           python3 -c "import json; d=json.load(open('/tmp/smoke-health.json')); assert d['status']=='ok', d; print('health ok:', d['status'], '| edge_auth:', d['edge_auth'], '| comfyui:', d['comfyui'])"
-          curl -fsS --max-time 5 http://127.0.0.1:18199/studio/api/templates | python3 -c "import json,sys; d=json.load(sys.stdin); n=len(d['templates']); print('templates:', n); assert n == 17, n"
+          curl -fsS --max-time 5 http://127.0.0.1:18199/studio/api/templates | python3 -c "import json,sys; d=json.load(sys.stdin); n=len(d['templates']); print('templates:', n); assert n == 19, n"
           curl -fsS --max-time 5 http://127.0.0.1:18199/studio/api/mcp/health | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['status']=='ok', d; print('mcp health ok:', d['server'], d['version'])"
           echo "studio-server smoke OK"
 
@@ -782,6 +811,9 @@ jobs:
       - name: Checkout del repositorio
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # A07 rederives pinned first-party sources from historical source_revision commits.
+          # A shallow checkout reports false release blockers when those commits are absent.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Configurar Docker Buildx
@@ -1231,18 +1263,6 @@ jobs:
           timeout 300 docker run --rm --entrypoint /usr/local/bin/comfyctl "${CANDIDATE_TAG}" diag | grep -q "\[DIAG\] resumen:"
           echo "[OK] Paso 14: Paridad de esquemas congelados, 11 cabeceras de /report.md y comfyctl diag verificada"
 
-      - name: Smoke Test del atlas dentro de la imagen candidata (bloquea promoción si falta algo)
-        # El bundle del atlas debe estar físicamente en /opt/studio-atlas y ser
-        # verificable (archivos+sha256+licencias+OSM) ANTES de promover a latest.
-        run: |
-          set -euo pipefail
-          CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
-          echo "Verificando atlas en: ${CANDIDATE_TAG}"
-          timeout 900 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
-            -m comfy_studio.atlas verify-bundle --root /opt/studio-atlas
-          timeout 300 docker run --rm --entrypoint /opt/venvs/studio/bin/python "${CANDIDATE_TAG}" \
-            -m comfy_studio.atlas serve-check --root /opt/studio-atlas
-
       - name: Smoke Test E2E con MODEL_PROFILE=studio y ComfyUI simulado (VAL-PROFILE-001 / VAL-PROFILE-005 / VAL-SERVER-002 / VAL-CROSS-003)
         run: |
           set -euo pipefail
@@ -1384,6 +1404,8 @@ jobs:
           # sin sus pesos se declaran unavailable con reason, el resto disponibles.
           assert unavailable == {
             "hunyuan3d_image_to_3d",
+            "qwen_image_layered",
+            "ace_step_music",
             "wan_animate",
             "wan_animate_cont",
             "minimax_r2v",
@@ -1640,8 +1662,32 @@ jobs:
           echo "::error::No se pudo publicar requirements.lock después de dos acciones de upload-artifact; se cancela la promoción."
           exit 1
 
-      - name: Promover imagen verificada a latest / semver (ALTA-01)
+      - name: Gate estricto A07 del manifiesto de engines antes de promover
+        id: a07_release_gate
+        # Solo en la rama por defecto: los builds candidatos de PR no se
+        # bloquean por la evidencia A07 todavía pendiente. `--check` (usado
+        # en el job validate) sigue siendo estructural/advisory. Bloqueos A07
+        # saltan la promoción con un aviso, manteniendo verde el CI de main;
+        # incoherencias reales siguen fallando el job.
         if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          if python3 scripts/check_engines_manifest.py --require-release-ready; then
+            echo "release_ready=true" >> "$GITHUB_OUTPUT"
+          else
+            gate_status=$?
+            if [ "$gate_status" -eq 2 ]; then
+              echo "release_ready=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::A07 release evidence is incomplete; candidate verified, but promotion to latest/semver is skipped."
+            else
+              echo "::error::A07 manifest coherence validation failed (exit ${gate_status})."
+              exit "$gate_status"
+            fi
+          fi
+
+      - name: Promover imagen verificada a latest / semver (ALTA-01)
+        if: >-
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+          steps.a07_release_gate.outputs.release_ready == 'true'
         run: |
           CANDIDATE_TAG="${{ fromJSON(steps.meta_candidate.outputs.json).tags[0] }}"
           while IFS= read -r target_tag; do

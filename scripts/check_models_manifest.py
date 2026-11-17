@@ -52,6 +52,7 @@ REQUIRED_CATEGORIES = {
     "ipadapter_sdxl",
     "campplus",
     "animate_opt_in",
+    "music_opt_in",
 }
 
 # M3-D: flags opt-in válidos por entrada del manifiesto
@@ -59,6 +60,8 @@ VALID_OPT_IN_FLAGS = frozenset({
     "STUDIO_INCLUDE_ANIMATE",
     "STUDIO_INCLUDE_3D",
     "STUDIO_INCLUDE_MINIMAX",
+    "STUDIO_INCLUDE_QWEN_LAYERED",
+    "STUDIO_INCLUDE_MUSIC",
 })
 
 # Manifiestos conocidos: `studio` (Fase 3, vídeo/voz) y `core` (Fases 1/2).

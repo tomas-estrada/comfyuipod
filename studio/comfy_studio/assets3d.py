@@ -274,7 +274,7 @@ class Asset3D:
     def coverage_report(self) -> dict[str, Any]:
         """Qué parte del activo es observada vs. inferida — para no engañar.
 
-        Un consumidor (render, atlas strict_exact) usa esto para rechazar
+        Un consumidor (render o strict_exact) usa esto para rechazar
         presentar una cara oculta inferida como observación factual.
         """
         total = len(self.parts)

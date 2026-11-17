@@ -360,23 +360,34 @@
       "id": "S28",
       "kind": "primary_source",
       "urls": [
-        "https://opentimelineio.readthedocs.io/en/latest/"
+        "https://github.com/AcademySoftwareFoundation/OpenTimelineIO/releases/tag/v0.18.1",
+        "https://github.com/AcademySoftwareFoundation/OpenTimelineIO/blob/v0.18.1/LICENSE.txt",
+        "https://opentimelineio.readthedocs.io/en/v0.18.1/tutorials/quickstart.html",
+        "https://opentimelineio.readthedocs.io/en/v0.18.1/tutorials/otio-serialized-schema.html"
       ],
       "label": "S28. OpenTimelineIO:",
-      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "verification": "exa_review_of_official_v0.18.1_release_license_quickstart_and_serialized_schema; git_tag_resolved_to_44236713c1db295a6ffc66189ae98dbdfd0cb9c4",
       "gpu_measured_here": false,
-      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution",
+      "checked_at_utc": "2026-11-15",
+      "limitation": "Core .otio serialization does not include legacy edit-format adapters after v0.16; OpenTimelineIO-Plugins and adapter packages are separate. Timeline interchange does not guarantee round-trip preservation of unsupported effects."
     },
     {
       "id": "S29",
       "kind": "primary_source",
       "urls": [
-        "https://opencolorio.readthedocs.io/en/latest/"
+        "https://github.com/AcademySoftwareFoundation/OpenColorIO/releases/tag/v2.6.0",
+        "https://github.com/AcademySoftwareFoundation/OpenColorIO/blob/v2.6.0/LICENSE",
+        "https://opencolorio.readthedocs.io/en/v2.6.0/guides/developing/developing.html",
+        "https://opencolorio.readthedocs.io/en/v2.6.0/api/processors.html",
+        "https://opencolorio.readthedocs.io/en/v2.6.0/quick_start/installation.html"
       ],
       "label": "S29. OpenColorIO:",
-      "verification": "inherited_from_user_research_framework; freshness_not_assumed",
+      "verification": "exa_review_of_official_v2.6.0_release_license_cpu_processor_and_pypi_installation; git_tag_resolved_to_10a43ec1df03d072ca9a9e2fb3f26e454b0900d8",
       "gpu_measured_here": false,
-      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution"
+      "verification_scope": "previous research framework provided by user; this packet does not certify fresh execution",
+      "checked_at_utc": "2026-11-15",
+      "limitation": "CPUProcessor applies configured color transforms; selecting correct spaces and a pinned config remains an application responsibility. Documentation and metadata alone do not prove pixel conversion or GPU performance."
     },
     {
       "id": "S30",
@@ -1000,19 +1011,6 @@
       "gpu_measured_here": false
     },
     {
-      "id": "R02",
-      "label": "Atlas PR#63",
-      "urls": [
-        "https://github.com/tomas-estrada/comfyuipod/pull/63",
-        "https://github.com/tomas-estrada/comfyuipod/tree/c12618815c5e7181bbb69e4ce9d249a0075fd3c4"
-      ],
-      "kind": "primary_source",
-      "checked_at_utc": "2026-11-05",
-      "verification": "read_metadata_manifest_service_acquire_and_adapters",
-      "limitation": "Counts are manifest declarations, not independent visual audit.",
-      "gpu_measured_here": false
-    },
-    {
       "id": "R03",
       "label": "CI de main revisada",
       "urls": [
@@ -1298,12 +1296,15 @@
       "id": "K22",
       "label": "WhisperX: ASR/alineación/diarización",
       "urls": [
-        "https://github.com/m-bain/whisperX"
+        "https://github.com/m-bain/whisperX/releases/tag/v3.8.6",
+        "https://github.com/m-bain/whisperX/commit/3ccc17b8de34f305300f8a3fd3c9f76ba820c0d0",
+        "https://raw.githubusercontent.com/m-bain/whisperX/v3.8.6/LICENSE",
+        "https://pypi.org/project/whisperx/3.8.6/"
       ],
       "kind": "primary_source",
-      "checked_at_utc": "2026-11-05",
-      "verification": "read_official_readme",
-      "limitation": "Diarization can require separate gated model terms; no hidden runtime code install.",
+      "checked_at_utc": "2026-11-15",
+      "verification": "official_v3.8.6_release_commit_pyproject_license_and_pypi_dependency_metadata_reviewed_with_exa",
+      "limitation": "The exact source commit and BSD-2-Clause code license are verified; bundled notices, transitive dependency licenses, model and alignment assets, and production image inclusion are separate evidence. This does not establish transcription quality or GPU execution.",
       "gpu_measured_here": false
     },
     {
@@ -1328,7 +1329,20 @@
       "kind": "primary_source",
       "checked_at_utc": "2026-11-07",
       "verification": "official_repository_and_license_referenced_by_engines_json",
-      "limitation": "The repository and code license do not certify the project's llama-server build pin, model quality, hardware performance, or runtime integration.",
+      "limitation": "The code pin and build configuration are locally verified, but image CI, generated Unicode table attribution, model quality, hardware performance, and supervised runtime remain separate evidence gates.",
+      "gpu_measured_here": false
+    },
+    {
+      "id": "R02",
+      "label": "Fuente histórica retirada",
+      "urls": [
+        "https://github.com/tomas-estrada/comfyuipod/pull/63",
+        "https://github.com/tomas-estrada/comfyuipod/tree/c12618815c5e7181bbb69e4ce9d249a0075fd3c4"
+      ],
+      "kind": "primary_source",
+      "checked_at_utc": "2026-11-05",
+      "verification": "retired_scope_reference_retained_for_manifest_integrity",
+      "limitation": "No demuestra soporte ni aceptación del producto actual.",
       "gpu_measured_here": false
     }
   ]

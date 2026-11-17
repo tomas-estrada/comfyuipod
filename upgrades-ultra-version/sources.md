@@ -9,8 +9,8 @@ El marco anterior está incluido como contexto histórico; `GOAL.md` y los anexo
 - **R00. ComfyUIPod: main y árbol de partida.** <https://github.com/tomas-estrada/comfyuipod/tree/b54195f0976d6c57b0ee04962e3059219db55d57>
   Alcance: read_repository_files_and_tree. Límite: No GPU execution; baseline source snapshot.
 
-- **R02. Atlas PR#63.** <https://github.com/tomas-estrada/comfyuipod/pull/63> · <https://github.com/tomas-estrada/comfyuipod/tree/c12618815c5e7181bbb69e4ce9d249a0075fd3c4>
-  Alcance: read_metadata_manifest_service_acquire_and_adapters. Límite: Counts are manifest declarations, not independent visual audit.
+- **R02. Fuente histórica retirada.** <https://github.com/tomas-estrada/comfyuipod/pull/63> · <https://github.com/tomas-estrada/comfyuipod/tree/c12618815c5e7181bbb69e4ce9d249a0075fd3c4>
+  Retained only because the unchanged engine manifest references this source ID; it is not evidence of current product support.
 
 - **R03. CI de main revisada.** <https://github.com/tomas-estrada/comfyuipod/actions/runs/41964177024>
   Alcance: read_workflow_run. Límite: Success applies to baseline SHA, not a future Ultra release.

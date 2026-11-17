@@ -1,0 +1,30 @@
+{
+  "schema": "ultra.engine-artifact-lock/1",
+  "engine_id": "ffmpeg",
+  "package": {
+    "name": "ffmpeg",
+    "version": "7:6.1.1-3ubuntu5",
+    "upstream_version": "6.1.1",
+    "debian_revision": "3ubuntu5",
+    "architecture": "amd64",
+    "distribution": "Ubuntu 24.04 LTS (noble)",
+    "component": "universe",
+    "filename": "ffmpeg_6.1.1-3ubuntu5_amd64.deb",
+    "url": "https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/ffmpeg_6.1.1-3ubuntu5_amd64.deb",
+    "sha256": "1a23baace5f2688a47e28119aedae6993cd638e6279a7227dfc52d9a337a1c17"
+  },
+  "copyright": {
+    "url": "https://changelogs.ubuntu.com/changelogs/pool/universe/f/ffmpeg/ffmpeg_6.1.1-3ubuntu5/copyright",
+    "sha256": "2be0250f940dc7137c2fb48abdfa3aa09c5900c7e3614127306f0774309d182f"
+  },
+  "base_image": {
+    "reference": "nvidia/cuda:12.8.0-runtime-ubuntu24.04",
+    "digest": "sha256:44e43f0e0bcca1fc6fdc775e6002c67834bf78d39eb1fd76825240fc79ba4a49"
+  },
+  "license": {
+    "binary_default_state": "GPL-2+ (most upstream source is LGPL-2.1+; the default Ubuntu binary packages use GPL components, no nonfree libraries)",
+    "source_offer": "Whoever redistributes the image must fulfill the corresponding-source offer for the GPL-2+ binary; this repository does not claim to fulfill that source offer by itself."
+  },
+  "redistribution_review": "conditional",
+  "review_scope": "The verified Ubuntu 24.04 amd64 ffmpeg .deb bytes are the package installed in the image. This lock does not pin transitive apt dependencies; they are resolved from the signed Ubuntu archive. No engine rows, weights, models or other artifacts are covered."
+}

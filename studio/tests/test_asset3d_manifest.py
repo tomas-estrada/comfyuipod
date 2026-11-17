@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import socket
 import struct
+import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +17,7 @@ from fastapi.testclient import TestClient
 from comfy_studio.agent.tools import (
     ROLE_TOOL_SUBSETS,
     ToolContext,
+    ToolExecutionError,
     create_default_tool_belt,
 )
 from comfy_studio.asset3d_manifest import get_asset3d_manifest, save_asset3d_manifest
@@ -28,7 +33,7 @@ from comfy_studio.assets3d import (
 from comfy_studio.projects import ProjectStore
 
 
-def _glb() -> bytes:
+def _glb(*, position_min: list[float] | None = None, buffer_uri: str | None = None) -> bytes:
     document = {
         "asset": {"version": "2.0"},
         "scene": 0,
@@ -46,12 +51,14 @@ def _glb() -> bytes:
                 "componentType": 5126,
                 "count": 3,
                 "type": "VEC3",
-                "min": [-1, -1, -1],
+                "min": position_min if position_min is not None else [-1, -1, -1],
                 "max": [1, 1, 1],
             }
         ],
         "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962}],
-        "buffers": [{"byteLength": 36}],
+        "buffers": [
+            {"byteLength": 36, **({"uri": buffer_uri} if buffer_uri else {})}
+        ],
         "materials": [{"name": "paint"}],
     }
     json_chunk = json.dumps(document, separators=(",", ":")).encode("utf-8")
@@ -128,6 +135,13 @@ def test_glb_manifest_reopens_same_asset_for_three_views_and_parts(
     asset = _save_glb(store, project["id"])
 
     record = save_asset3d_manifest(store, project["id"], asset["id"], _manifest(asset["id"]))
+    validation = record["gltf_validation"]
+    assert validation["validator"] == "Khronos glTF-Validator"
+    assert validation["version"] == "2.0.0-dev.3.10"
+    assert validation["num_errors"] == 0
+    assert validation["asset_sha256"] == record["model_sha256"]
+    assert "timestamp" not in validation
+    assert str(store.get_asset_path(project["id"], asset["id"])) not in str(validation)
     reopened = get_asset3d_manifest(store, project["id"], asset["id"])
     assert reopened == record
     model = Asset3D.from_dict(record["manifest"])
@@ -137,6 +151,247 @@ def test_glb_manifest_reopens_same_asset_for_three_views_and_parts(
     assert model.parts[1].transform[2][3] == 0.5
     assert model.parts[1].provenance is Provenance.INFERRED
     assert model.has_inferred_geometry() is True
+
+
+def test_khronos_validator_rejects_standards_error_before_manifest_save(
+    studio_data_dir: Path,
+) -> None:
+    store = ProjectStore(studio_data_dir)
+    project = store.create_project("GLB inválido")
+    asset = _save_glb(store, project["id"], _glb(position_min=[0]))
+
+    with pytest.raises(Asset3DError, match="Khronos glTF-Validator encontró"):
+        save_asset3d_manifest(store, project["id"], asset["id"], _manifest(asset["id"]))
+    assert store.get_meta(project["id"], f"asset3d_manifest:{asset['id']}") is None
+
+
+def test_khronos_validator_does_not_fetch_external_glb_resources(
+    studio_data_dir: Path,
+) -> None:
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        server.settimeout(0.25)
+        host, port = server.getsockname()
+        received: list[bool] = []
+
+        def accept_probe() -> None:
+            try:
+                connection, _ = server.accept()
+            except TimeoutError:
+                return
+            else:
+                received.append(True)
+                connection.close()
+
+        probe = threading.Thread(target=accept_probe)
+        probe.start()
+        store = ProjectStore(studio_data_dir)
+        project = store.create_project("GLB con recurso externo")
+        asset = _save_glb(
+            store,
+            project["id"],
+            _glb(buffer_uri=f"http://{host}:{port}/must-not-fetch.bin"),
+        )
+        with pytest.raises(Asset3DError, match="Khronos glTF-Validator encontró"):
+            save_asset3d_manifest(store, project["id"], asset["id"], _manifest(asset["id"]))
+        probe.join(timeout=1)
+        assert not probe.is_alive()
+        assert received == []
+
+
+def test_manifest_persists_bounded_khronos_warning_report(
+    studio_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from comfy_studio import asset3d_manifest
+
+    def warning_report(*_args, **kwargs):
+        return {
+            "validator": "Khronos glTF-Validator",
+            "version": "2.0.0-dev.3.10",
+            "num_errors": 0,
+            "num_warnings": 1,
+            "num_infos": 0,
+            "num_hints": 0,
+            "messages": [{"code": "EXAMPLE_WARNING", "message": "fixture"}],
+            "asset_sha256": kwargs["asset_sha256"],
+        }
+
+    monkeypatch.setattr(asset3d_manifest, "validate_glb", warning_report)
+    store = ProjectStore(studio_data_dir)
+    project = store.create_project("GLB con advertencia")
+    asset = _save_glb(store, project["id"])
+
+    record = save_asset3d_manifest(store, project["id"], asset["id"], _manifest(asset["id"]))
+
+    assert record["gltf_validation"]["num_warnings"] == 1
+    assert record["gltf_validation"]["messages"][0]["code"] == "EXAMPLE_WARNING"
+
+
+def test_gltf_validator_rejects_asset_path_outside_project(tmp_path: Path) -> None:
+    from comfy_studio.gltf_validation import validate_glb
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    external_glb = tmp_path / "outside.glb"
+    external_glb.write_bytes(_glb())
+
+    with pytest.raises(Asset3DError, match="dentro del proyecto"):
+        validate_glb(external_glb, project_root=project_root, asset_sha256="a" * 64)
+
+
+def test_gltf_validator_enforces_configured_asset_size_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from comfy_studio import gltf_validation
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    glb_path = project_root / "asset.glb"
+    glb_path.write_bytes(_glb())
+    monkeypatch.setattr(gltf_validation, "MAX_GLTF_ASSET_BYTES", 32)
+
+    with pytest.raises(Asset3DError, match="512 MiB"):
+        gltf_validation.validate_glb(
+            glb_path,
+            project_root=project_root,
+            asset_sha256=hashlib.sha256(glb_path.read_bytes()).hexdigest(),
+        )
+
+
+def test_gltf_validator_timeout_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from comfy_studio import gltf_validation
+
+    validator_dir = tmp_path / "validator"
+    (validator_dir / "node_modules" / "gltf-validator").mkdir(parents=True)
+    (validator_dir / "validate.cjs").write_text("// pinned helper\n")
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    glb_path = project_root / "asset.glb"
+    glb_path.write_bytes(_glb())
+    monkeypatch.setattr(gltf_validation, "_validator_dir", lambda: validator_dir)
+    monkeypatch.setattr(gltf_validation.shutil, "which", lambda _name: "/usr/bin/node")
+
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired("node", 30)
+
+    monkeypatch.setattr(gltf_validation.subprocess, "run", timeout)
+    with pytest.raises(Asset3DError, match="excedió el límite de 30 segundos"):
+        gltf_validation.validate_glb(
+            glb_path,
+            project_root=project_root,
+            asset_sha256="a" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    ("stdout", "message"),
+    [
+        (b"not-json", "JSON válido"),
+        (b"x" * (256 * 1024 + 1), "supera el límite de 256 KiB"),
+    ],
+)
+def test_gltf_validator_rejects_malformed_or_oversized_reports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: bytes,
+    message: str,
+) -> None:
+    from comfy_studio import gltf_validation
+
+    validator_dir = tmp_path / "validator"
+    (validator_dir / "node_modules" / "gltf-validator").mkdir(parents=True)
+    (validator_dir / "validate.cjs").write_text("// pinned helper\n")
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    glb_path = project_root / "asset.glb"
+    glb_path.write_bytes(_glb())
+    monkeypatch.setattr(gltf_validation, "_validator_dir", lambda: validator_dir)
+    monkeypatch.setattr(gltf_validation.shutil, "which", lambda _name: "/usr/bin/node")
+    monkeypatch.setattr(
+        gltf_validation.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["node"], returncode=0, stdout=stdout, stderr=b""
+        ),
+    )
+
+    with pytest.raises(Asset3DError, match=message):
+        gltf_validation.validate_glb(
+            glb_path,
+            project_root=project_root,
+            asset_sha256=hashlib.sha256(glb_path.read_bytes()).hexdigest(),
+        )
+
+
+def test_gltf_validator_rechecks_asset_hash_after_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from comfy_studio import gltf_validation
+
+    validator_dir = tmp_path / "validator"
+    (validator_dir / "node_modules" / "gltf-validator").mkdir(parents=True)
+    (validator_dir / "validate.cjs").write_text("// pinned helper\n")
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    glb_path = project_root / "asset.glb"
+    glb_path.write_bytes(_glb())
+    original_sha256 = hashlib.sha256(glb_path.read_bytes()).hexdigest()
+    monkeypatch.setattr(gltf_validation, "_validator_dir", lambda: validator_dir)
+    monkeypatch.setattr(gltf_validation.shutil, "which", lambda _name: "/usr/bin/node")
+
+    def mutate_during_validation(*_args, **_kwargs):
+        glb_path.write_bytes(_glb(position_min=[0]))
+        report = {
+            "validator": "Khronos glTF-Validator",
+            "version": "2.0.0-dev.3.10",
+            "num_errors": 0,
+            "num_warnings": 0,
+            "num_infos": 0,
+            "num_hints": 0,
+            "messages": [],
+        }
+        return subprocess.CompletedProcess(
+            args=["node"], returncode=0, stdout=json.dumps(report).encode(), stderr=b""
+        )
+
+    monkeypatch.setattr(gltf_validation.subprocess, "run", mutate_during_validation)
+
+    with pytest.raises(Asset3DError, match="cambió durante la validación"):
+        gltf_validation.validate_glb(
+            glb_path,
+            project_root=project_root,
+            asset_sha256=original_sha256,
+        )
+
+
+def test_khronos_validator_fails_closed_when_package_is_absent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from comfy_studio import gltf_validation
+
+    missing_validator_dir = tmp_path / "empty-validator"
+    missing_validator_dir.mkdir()
+    (missing_validator_dir / "validate.cjs").write_text("// installed wrapper\n")
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    glb_path = project_dir / "asset.glb"
+    glb_path.write_bytes(_glb())
+    monkeypatch.setattr(gltf_validation, "_validator_dir", lambda: missing_validator_dir)
+
+    with pytest.raises(Asset3DError, match="no está instalado"):
+        gltf_validation.validate_glb(
+            glb_path,
+            project_root=project_dir,
+            asset_sha256="a" * 64,
+        )
 
 
 def test_glb_hash_change_invalidates_manifest(studio_data_dir: Path) -> None:
@@ -315,6 +570,103 @@ async def test_artist3d_renders_and_persists_manifest_camera_previews(
         "rear",
     ]
     assert all(preview["metadata"]["source_sha256"] for preview in result["previews"])
+
+
+@pytest.mark.anyio
+async def test_artist3d_renders_camera_animatic_from_owned_manifest_glb(
+    studio_data_dir: Path,
+    studio_config,
+    stub_comfyui_transport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import Image
+
+    from comfy_studio.comfyui_client import ComfyUIClient
+    from comfy_studio.engines import EngineResult
+    from comfy_studio.engines.blender import BlenderEngine
+    from comfy_studio.progress import ProgressBroker
+
+    store = ProjectStore(studio_data_dir)
+    project_id = store.create_project("Animatic GLB")["id"]
+    asset = _save_glb(store, project_id)
+    save_asset3d_manifest(store, project_id, asset["id"], _manifest(asset["id"]))
+    broker = ProgressBroker()
+    comfyui_client = ComfyUIClient(
+        base_url=studio_config.studio_comfyui_url,
+        transport=stub_comfyui_transport,
+        store=store,
+        broker=broker,
+        redactor=studio_config.redactor(),
+    )
+    allowed = frozenset(ROLE_TOOL_SUBSETS["artist3d"])
+    context = ToolContext(
+        project_id=project_id,
+        store=store,
+        comfyui_client=comfyui_client,
+        broker=broker,
+        config=studio_config,
+        allowed_tools=allowed,
+    )
+    jobs: list[dict[str, Any]] = []
+    belt = create_default_tool_belt().restricted_to(allowed)
+    args = {
+        "shot_id": "shot-01",
+        "keyframes": [
+            {"t": 0, "position": [0, -4, 0], "target": [0, 0, 0]},
+            {"t": 1, "position": [0, -3, 0.5], "target": [0, 0, 0]},
+        ],
+        "duration_s": 1, "fps": 2, "width": 320, "height": 180,
+    }
+    foreign_project_id = store.create_project("Otro proyecto")["id"]
+    foreign_id = _save_glb(store, foreign_project_id)["id"]
+    with pytest.raises(ToolExecutionError, match="GLB 3D del proyecto actual"):
+        await belt.execute("render_camera_animatic", {**args, "asset_id": foreign_id}, context)
+    unregistered = _save_glb(store, project_id)["id"]
+    with pytest.raises(ToolExecutionError, match="manifiesto 3D"):
+        await belt.execute("render_camera_animatic", {**args, "asset_id": unregistered}, context)
+    assert not jobs
+
+    async def fake_render(self, spec):
+        del self
+        jobs.append(spec.job)
+        output_dir = Path(spec.job["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        outputs = []
+        for index in range(spec.job["frames"]):
+            path = output_dir / f"render_{index + 1:04d}.png"
+            Image.new("RGB", (320, 180), (35, 75, 115)).save(path)
+            outputs.append(str(path))
+        return EngineResult(
+            ok=True, engine="blender", verb="run", payload={"outputs": outputs}
+        )
+
+    def fake_encode(frames, output_path, *, fps, width, height):
+        Path(output_path).write_bytes(b"fake-mp4")
+        return {
+            "output": str(output_path), "probe_ok": True, "frame_count": len(frames),
+            "duration_s": len(frames) / fps, "fps": fps, "width": width,
+            "height": height,
+        }
+
+    monkeypatch.setattr(BlenderEngine, "run", fake_render)
+    monkeypatch.setattr(
+        "comfy_studio.animatic.encode_camera_trajectory_frames", fake_encode
+    )
+    result = await belt.execute(
+        "render_camera_animatic", {**args, "asset_id": asset["id"]}, context
+    )
+    assert result["status"] == "generated"
+    assert jobs[0]["engine"] == "cycles" and jobs[0]["device"] == "cpu"
+    assert jobs[0]["camera_trajectory"][0]["frame"] == 1
+    assert len(jobs[0]["camera_trajectory"]) == 2
+    output = result["output_asset"]
+    assert output["metadata"]["synthetic"] is False
+    assert output["metadata"]["source_asset_id"] == asset["id"]
+    assert output["metadata"]["source_asset_sha256"] == get_asset3d_manifest(
+        store, project_id, asset["id"]
+    )["model_sha256"]
+    assert output["metadata"]["manifest_sha256"]
+    assert output["metadata"]["quality_claim"] is False
 
 
 @pytest.mark.anyio

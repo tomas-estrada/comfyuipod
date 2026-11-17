@@ -12,6 +12,7 @@
 *.ini text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+docs/research/datasets/*.csv binary
 *.pdf binary
 Dockerfile text eol=lf
 tools/mac/comfy text eol=lf

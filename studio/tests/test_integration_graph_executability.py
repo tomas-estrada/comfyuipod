@@ -30,6 +30,7 @@ import pytest
 
 from comfy_studio.orchestration import (
     ProductionCheckpointer,
+    ProductionNotApprovedError,
     ProductionService,
 )
 
@@ -133,3 +134,22 @@ def test_aprobar_sobrevive_al_reinicio_del_pod(checkpointer: ProductionCheckpoin
     status = svc2.production_status(production_id)
     assert status["phase"] == out["phase"]
     assert status["complete"] is True
+
+
+def test_recipe_unresolved_layer_blocks_approval_even_if_summary_is_stale(
+    checkpointer: ProductionCheckpointer,
+) -> None:
+    svc = ProductionService(checkpointer=checkpointer, resource_vram_budget_mb=90 * 1024)
+    planned = svc.plan_production("imagen con receta no implementada")
+    production_id = planned["production_id"]
+    state = checkpointer.load(production_id)
+    assert state is not None and state.all_shots()
+    layer = next(layer for shot in state.all_shots() for layer in shot.layers)
+    layer.params["recipe_unresolved"] = "workflow requerido no implementado"
+    state.metadata["recipe_binding"] = {"unresolved": 0, "bound": 0}
+    checkpointer.save(state)
+
+    with pytest.raises(ProductionNotApprovedError, match="sin receta"):
+        svc.approve_plan(production_id)
+
+    assert checkpointer.load(production_id).phase == "awaiting_approval"

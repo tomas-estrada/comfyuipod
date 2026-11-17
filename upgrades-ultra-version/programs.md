@@ -84,19 +84,18 @@ Capacidades: C04, C06, C14, C17, C22, C23, C28. Trabajo: W17, W22.
 - **Outputs:** Memoria de shots, mapas de anclas/cámaras, referencias elegidas por modelo, clip por plano y métricas de drift.
 - **Experimento y controles:** Ablaciones sin memoria y con simple keyframe previo; comparación con negativos parecidos pero incorrectos. Separar drift de identidad, color, geometría y hechos del lugar.
 - **Aceptación:** Producto y lugar tienen IDs y fuentes estables entre tres planos. Se respetan límites de referencias del motor. Volver a A usa anclas verificables, no solo parecido global del embedding.
-- **Límite que no se puede ocultar:** Mundo generado permanece ficticio. HoloCine/ShotStream/WorldCrafter son comparadores condicionados, no reemplazos automáticos de una referencia exacta.
+- **Límite que no se puede ocultar:** Mundo generado permanece ficticio. HoloCine/ShotStream/WorldCrafter son comparadores condicionados.
 
-## P08. Lugares verificables y adquisición activa
+## P08. Animatics y ensayo virtual
 
-Capacidades: C07, C08. Trabajo: W09, W11.
+Capacidades: C08. Trabajo: W11.
 
-- **Ruta elegida:** Atlas offline del mismo GHCR + Commons/OSM/KartaView permitidos + MapAnything/DA3 + geometría y coverage del estudio.
-- **Hipótesis:** Seleccionar vistas por cobertura y buscar la siguiente observación útil aumenta fidelidad de fondos frente a generar una ciudad por nombre.
-- **Inputs:** Lugar/municipio/coords opcionales, vista real, cámara deseada y referencias con fechas/licencias.
-- **Outputs:** Mapa observado/inferido, calibración/solape, candidatos de cámara, atlas bundle inmutable y gaps/next-best-view justificados.
-- **Experimento y controles:** Nombres ambiguos, rumbo 0/180, vista explícita incompatible, municipio equivocado, imágenes sin EXIF y cambios de fachada. Reconstrucción de anclas con vistas heldout; contraste visual y reproyección.
-- **Aceptación:** Bundle funciona sin red; cada vista usada existe y coincide con su hash. Strict_exact rechaza cámara sin evidencia suficiente. Imagen de un parque distinto dentro de 150 m no pasa solo por cercanía.
-- **Límite que no se puede ocultar:** Meta de 200 lugares no permite fotos irrelevantes. Sin material suficiente no existe obligación de inventar una reconstrucción total; registrar bloqueo cuantificado y conservar ruta de cámara observada.
+- **Ruta elegida:** cámara, geometría sintética y proxies de escena existentes en el estudio.
+- **Hipótesis:** validar encuadre y trayectoria sobre una escena controlada antes del render reduce errores de cámara.
+- **Inputs:** escena sintética, objetivos de plano, obstáculos, cámara y trayectoria deseada.
+- **Outputs:** trayectoria de cámara, proxy render y medidas de encuadre, visibilidad y colisión.
+- **Experimento y controles:** comparar trayectorias conocidas con el proxy y medir reproyección, encuadre y colisiones.
+- **Aceptación:** convención de ejes probada con fixture conocido; ningún camino atraviesa geometría sólida sin declararlo como efecto ficticio.
 
 ## P09. Rodaje de vehículos con dinámica
 
@@ -142,7 +141,7 @@ Capacidades: C16, C27. Trabajo: W14, W19.
 - **Hipótesis:** Separar voz, actuación facial y render permite cambiar encuadre/luz sin rehacer identidad o sincronía.
 - **Inputs:** Texto/audio y actor/voz autorizados, rig/morph targets y referencias por hablante.
 - **Outputs:** Stems/texto/alineación, blendshapes/poses temporales editables, identidad persistente y render.
-- **Experimento y controles:** Nombres del Aburrá, cifras y dos hablantes; cambiar voz, cámara o luz por separado. Medir timing labial, turnos, ASR/lexicon e identidad con positivos/negativos.
+- **Experimento y controles:** Topónimos del brief, cifras y dos hablantes; contrastar los datos de lugar con fuentes consultadas por el agente y cambiar voz, cámara o luz por separado. Medir timing labial, turnos, ASR/lexicon e identidad con positivos/negativos.
 - **Aceptación:** La actuación facial puede reabrirse y cambiarse sin regenerar audio. Mapeo de morphs verificado; no simular compatibilidad universal. Target inicial de sincronía: retraso dentro de dos frames al fps declarado, sujeto a protocolo validado.
 - **Límite que no se puede ocultar:** Gates de FLAME/Audio2Emotion se respetan. El fallback de rig manual es una ruta funcional distinta y se identifica; no acredita recuperación neural de una persona.
 

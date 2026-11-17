@@ -6,6 +6,8 @@ hablante; ASR como indicador. Puro CPU.
 
 from __future__ import annotations
 
+import unicodedata
+
 import pytest
 
 from comfy_studio.voice import (
@@ -52,6 +54,27 @@ def test_lexicon_is_correctable() -> None:
     lex = _paisa_lexicon()
     lex.add("Envigado", "/en.bi.ˈɣa.ðo/")  # corrección
     assert lex.entries["envigado"] == "/en.bi.ˈɣa.ðo/"
+
+
+def test_lexicon_matches_accented_place_names_across_unicode_normalization() -> None:
+    """A21: composed and decomposed forms of a Spanish name count as one entry."""
+    place_nfc = "Itagüí"
+    place_nfd = unicodedata.normalize("NFD", place_nfc)
+    lex = PronunciationLexicon(locale="es-CO-paisa", approved_variant=True)
+    lex.add(f"  {place_nfc}  ", "/itaˈɣwi/")
+
+    assert lex.covers(place_nfd)
+    assert lex.coverage([place_nfd, f" {place_nfd} "]) == 1.0
+    assert_approved_variant(lex, [place_nfd])
+
+    restored = PronunciationLexicon.from_dict(
+        {
+            "locale": "es-CO-paisa",
+            "entries": {place_nfd: "/itaˈɣwi/"},
+            "approved_variant": True,
+        }
+    )
+    assert restored.covers(place_nfc)
 
 
 def test_voice_assets_round_trip_and_reject_invalid_times() -> None:

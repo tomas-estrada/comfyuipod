@@ -1,5 +1,7 @@
 # ComfyUIPod Ultra — inicio para el agente
 
+> **Continuación:** consulta [`HANDOFF-17NOV`](../docs/HANDOFF-17NOV.md) para el baseline verificado del 17 de noviembre, los blockers actuales y el siguiente orden de trabajo. Este paquete de investigación fue preparado el 2026-11-05; sus snapshots de repo/CI no son estado vivo.
+
 Esta carpeta es la extensión persistente del goal. Contiene investigación, decisiones, contratos, prioridades y aceptación para desarrollar Ultra en este repositorio. No es por sí sola una implementación terminada ni un catálogo de modelos para descargar. Para recibir código y onboarding, empieza por el [README raíz](../README.md) y [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Goal corto
@@ -21,12 +23,12 @@ Usar el texto de [GOAL.md](GOAL.md). Tiene aproximadamente 1.200 caracteres. [MI
 | [GOAL.md](GOAL.md) | Mandato breve para el agente |
 | [MISSION.md](MISSION.md) | Autorización/scope, principios y cierre |
 | [requirements.md](requirements.md) | Qué debe hacer el estudio y qué no cuenta como terminado |
-| [design.md](design.md) | Contratos, DAG, scheduler, motores, atlas, UI, datos y memoria |
+| [design.md](design.md) | Contratos, DAG, scheduler, motores, UI, datos y memoria |
 | [research.md](research.md) | Evidencia actual del repo, defectos y decisiones técnicas |
-| [capabilities.json](capabilities.json) | C01–C34: función, ruta, prueba y relación con trabajo/programas |
+| [capabilities.json](capabilities.json) | Capacidades activas: función, ruta, prueba y relación con trabajo/programas |
 | [programs.md](programs.md) | P01–P14: hipótesis, input/output, experimentos y límites |
 | [engines.json](engines.json) | Selección de rutas, alternativas N01–N30, licencias y compatibilidad |
-| [backlog.json](backlog.json) | W00–W26: dependencias, entregables, aceptación y budget por ítem |
+| [backlog.json](backlog.json) | 26 paquetes activos: dependencias, entregables, aceptación y budget por ítem |
 | [tasks.md](tasks.md) | Cómo avanzar, coordinar, reanudar y evitar iteraciones sin cierre |
 | [acceptance.md](acceptance.md) | A00–A29 y cinco demostraciones D01–D05 |
 | [runner-guide.md](runner-guide.md) | Adaptación a CrewAI o Kiro Crew sin confundirlos con el runtime del estudio |
@@ -34,21 +36,24 @@ Usar el texto de [GOAL.md](GOAL.md). Tiene aproximadamente 1.200 caracteres. [MI
 | [snapshot.json](snapshot.json) | SHA/PR/CI consultados; volver a verificar antes de editar |
 | [contexto/Marco_Anterior.md](contexto/Marco_Anterior.md) | Marco previo completo como referencia histórica |
 
-La misión contiene 34 objetivos funcionales, 14 programas y 30 opciones adicionales. No son 64 motores distintos obligatorios. engines.json incluye además plataformas/servicios propios y alternativas; sus números no se convierten en downloads al boot.
+La misión contiene 33 objetivos funcionales activos, 14 programas y 30 opciones adicionales. No son motores distintos que deban instalarse todos. engines.json incluye además plataformas/servicios propios y alternativas; sus números no se convierten en downloads al boot.
 
 Para que una ruta marcada `build_selected` cuente como preparada para A07,
 `scripts/check_engines_manifest.py` reporta como bloqueos los SHA de código
 inmutables, hashes SHA-256 de locks, decisión explícita de redistribución,
-revisión de notices y estado de implementación del adapter. Ese informe evalúa
-declaraciones del manifiesto; inventario de la imagen, boot offline y probes de
-runtime requieren evidencia separada de CI. Un manifiesto coherente no implica
-que el release esté listo.
+revisión de notices, estado de implementación del adapter y rutas versionadas
+de evidencia para su entrypoint y prueba. El checker verifica que esas rutas
+existan dentro del repositorio y estén versionadas; la revisión humana confirma
+que demuestran el comportamiento reclamado. Ese informe evalúa declaraciones
+del manifiesto; inventario de la imagen, boot offline y probes de runtime
+requieren evidencia separada de CI. Un manifiesto coherente no implica que el
+release esté listo.
 
 ## Reglas de lectura y ejecución
 
 - GOAL/MISSION y anexos actuales prevalecen sobre premisas antiguas del marco histórico.
 - Un usuario, una imagen/pod Linux, perfil RTX PRO 6000 Blackwell 96 GB y perfiles host RAM128/256 separados; la compatibilidad de una GPU no equivale a validación de todas las recetas.
-- Motores preparados en build; pesos/LoRA/VAE/encoders bajo demanda. Atlas base físicamente dentro de la misma imagen GHCR.
+- Motores preparados en build; pesos/LoRA/VAE/encoders bajo demanda.
 - Disco derivado de componentes/uso reales; 180/200GB no es cap ni mínimo universal.
 - Una autoridad de producción y lease global de GPU; extender la API/orquestación existente.
 - Proxies para trabajar, entregables finales4K y proyectos editables.
@@ -75,4 +80,4 @@ python3 upgrades-ultra-version/validate_spec.py
 
 En Windows, si Python se invoca mediante el launcher, usar `py upgrades-ultra-version/validate_spec.py`. Este validador comprueba IDs/referencias/DAG y contenido del plan; no certifica implementación ni resultados GPU.
 
-Paquete de investigación preparado el 2026-11-05 UTC. La demo W26 es un evento posterior y separado; el registro y el snapshot de esta carpeta no sustituyen la evidencia del [reporte W26](../docs/ultra/W26_GPU_RESULTS.md). `docs/ultra/status.json` todavía apunta a `f5c29dc` y no refleja el `main` actual (`5850191`).
+Paquete de investigación preparado el 2026-11-05 UTC. La demo W26 es un evento posterior y separado; el registro y el snapshot de esta carpeta no sustituyen la evidencia del [reporte W26](../docs/ultra/W26_GPU_RESULTS.md). [`snapshot.json`](snapshot.json) conserva el SHA de la investigación original; el estado actual está en [`docs/HANDOFF-17NOV.md`](../docs/HANDOFF-17NOV.md) y [`docs/ultra/status.json`](../docs/ultra/status.json).

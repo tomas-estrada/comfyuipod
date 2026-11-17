@@ -7,9 +7,12 @@ de pago. Distingue observado/inferido/adaptado; no promete viralidad. Puro CPU.
 from __future__ import annotations
 
 import hashlib
+import random
+import socket
 import struct
 import subprocess
 from pathlib import Path
+from urllib import request as urllib_request
 
 import pytest
 
@@ -130,6 +133,15 @@ def test_missing_camera_evidence_is_not_reported_as_static() -> None:
     recipe = derive_recipe(ReferenceAnalysis(reference_id="ref", cuts=[Cut(0.0, 1.0)]))
     shot = next(step for step in recipe.steps if step.kind == "shot")
     assert shot.detail["camera_move"] == "unknown"
+    assert shot.detail["camera_move_origin"] == "unknown"
+
+
+def test_camera_move_recipe_records_inferred_origin_and_evidence() -> None:
+    shot = next(step for step in derive_recipe(_analysis()).steps if step.kind == "shot")
+
+    assert shot.detail["camera_move"] == "pan"
+    assert shot.detail["camera_move_origin"] == "inferred"
+    assert shot.detail["camera_move_evidence"]["move"] == "pan"
 
 
 def test_derived_recipe_preserves_inferred_cut_provenance() -> None:
@@ -190,6 +202,8 @@ def test_reference_asset_analysis_extracts_real_local_video(tmp_path: Path, clie
     assert analysis.cuts[0].start_s == 0
     assert analysis.source == "own_library"
     assert analysis.camera_moves == ["unknown"] * len(analysis.cuts)
+    assert len(analysis.camera_move_evidence) == len(analysis.cuts)
+    assert all(item["method"] == "sparse-block-match-v1" for item in analysis.camera_move_evidence)
     assert analysis.limitations
 
     api_project = client.post("/studio/api/projects", json={"name": "API reference"})
@@ -209,6 +223,7 @@ def test_reference_asset_analysis_extracts_real_local_video(tmp_path: Path, clie
     payload = response.json()
     assert len(payload["analysis"]["cuts"]) >= 2
     assert payload["analysis"]["cuts"][0]["origin"] == "observed"
+    assert len(payload["analysis"]["camera_move_evidence"]) == len(payload["analysis"]["cuts"])
     assert payload["analysis"]["media_sha256"] == hashlib.sha256(
         video_path.read_bytes()
     ).hexdigest()
@@ -219,3 +234,188 @@ def test_reference_asset_analysis_extracts_real_local_video(tmp_path: Path, clie
         f"/studio/api/projects/{api_project_id}/assets/missing/inspiration/analyze"
     )
     assert missing.status_code == 404
+
+
+def test_reference_analysis_estimates_global_camera_pan_from_local_video(tmp_path: Path) -> None:
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("ffmpeg is required for local reference extraction")
+    background = tmp_path / "textured-background.pgm"
+    rng = random.Random(19)
+    pixels = bytes(rng.randrange(256) for _ in range(160 * 90))
+    background.write_bytes(b"P5\n160 90\n255\n" + pixels)
+    video_path = tmp_path / "camera-pan.mp4"
+    generated = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-v",
+            "error",
+            "-loop",
+            "1",
+            "-framerate",
+            "12",
+            "-i",
+            str(background),
+            "-vf",
+            "crop=64:36:x='20+20*t':y=20,format=yuv420p",
+            "-t",
+            "4",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            str(video_path),
+        ],
+        check=False,
+        capture_output=True,
+        timeout=30,
+    )
+    assert generated.returncode == 0, generated.stderr.decode(errors="replace")
+
+    store = ProjectStore(tmp_path / "studio")
+    project = store.create_project(name="camera motion")
+    asset = store.save_upload(
+        project["id"],
+        filename="camera-pan.mp4",
+        content_type="video/mp4",
+        data=video_path.read_bytes(),
+        max_upload_bytes=10_000_000,
+    )
+    with pytest.raises(ValueError, match="reserved"):
+        store.update_asset_metadata(
+            project["id"],
+            asset["id"],
+            metadata={"inspiration_analysis_cache_v1": {"analysis": {}}},
+        )
+
+    analysis = analyze_reference_asset(store, project["id"], asset["id"])
+
+    assert "pan" in analysis.camera_moves
+    assert len(analysis.camera_moves) == len(analysis.cuts)
+    assert len(analysis.camera_move_evidence) == len(analysis.cuts)
+    assert all(
+        item["origin"] == "inferred"
+        for move, item in zip(analysis.camera_moves, analysis.camera_move_evidence, strict=True)
+        if move != "unknown"
+    )
+
+
+def test_cached_reference_survives_missing_media_without_network(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("ffmpeg is required for local reference extraction")
+    video_path = tmp_path / "cached-reference.mp4"
+    generated = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=64x48:d=1:r=10",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(video_path),
+        ],
+        check=False,
+        capture_output=True,
+        timeout=30,
+    )
+    assert generated.returncode == 0, generated.stderr.decode(errors="replace")
+    store = ProjectStore(tmp_path / "studio")
+    project = store.create_project(name="cached reference")
+    asset = store.save_upload(
+        project["id"],
+        filename="cached-reference.mp4",
+        content_type="video/mp4",
+        data=video_path.read_bytes(),
+        max_upload_bytes=10_000_000,
+    )
+
+    attempted: list[str] = []
+
+    def deny_network(*_args, **_kwargs):
+        attempted.append("network")
+        raise AssertionError("reference analysis attempted network access")
+
+    monkeypatch.setattr(socket.socket, "connect", deny_network)
+    monkeypatch.setattr(socket, "create_connection", deny_network)
+    monkeypatch.setattr(urllib_request, "urlopen", deny_network)
+    first = analyze_reference_asset(store, project["id"], asset["id"])
+    cached_path = store.get_asset_path(project["id"], asset["id"])
+    assert cached_path is not None
+    cached_path.unlink()
+
+    import comfy_studio.perception.keyframes as keyframes
+
+    def unexpected_reanalysis(*_args, **_kwargs):
+        raise AssertionError("a valid cached analysis should bypass media probing")
+
+    monkeypatch.setattr(keyframes, "probe_media_info", unexpected_reanalysis)
+    second = analyze_reference_asset(store, project["id"], asset["id"])
+
+    assert second.to_dict() == first.to_dict()
+    assert second.media_sha256 == first.media_sha256
+    assert attempted == []
+    with pytest.raises(LookupError):
+        analyze_reference_asset(
+            store,
+            project["id"],
+            asset["id"],
+            interval_sec=1.5,
+        )
+
+
+def test_cached_reference_recomputes_when_source_bytes_change(tmp_path: Path) -> None:
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("ffmpeg is required for local reference extraction")
+    video_path = tmp_path / "changing-reference.mp4"
+    generated = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=64x48:d=1:r=10",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(video_path),
+        ],
+        check=False,
+        capture_output=True,
+        timeout=30,
+    )
+    assert generated.returncode == 0, generated.stderr.decode(errors="replace")
+    store = ProjectStore(tmp_path / "studio")
+    project = store.create_project(name="changing reference")
+    asset = store.save_upload(
+        project["id"],
+        filename="changing-reference.mp4",
+        content_type="video/mp4",
+        data=video_path.read_bytes(),
+        max_upload_bytes=10_000_000,
+    )
+
+    first = analyze_reference_asset(store, project["id"], asset["id"])
+    source_path = store.get_asset_path(project["id"], asset["id"])
+    assert source_path is not None
+    with source_path.open("ab") as source:
+        source.write(b"changed-source")
+
+    second = analyze_reference_asset(store, project["id"], asset["id"])
+
+    assert second.media_sha256 != first.media_sha256

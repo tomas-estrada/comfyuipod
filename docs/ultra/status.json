@@ -2,11 +2,11 @@
   "schema": "ultra-status/1",
   "goal_revision": "upgrades-ultra-version @ PR#64 (merged)",
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
-  "main_sha": "6e6aa63",
+  "main_sha": "b612fbe7369dd20d66d8933095f23882ade7a2af",
   "stage": "gpu_partial_L3",
   "overall": "GPU_L3_PARTIAL",
-  "overall_note": "Backlog Ultra W00-W25 completo a nivel contrato L1 (cero mocks). W26: campana GPU acotada EJECUTADA (0.59 USD) con la imagen candidata por digest en RTX PRO 6000 Blackwell 96GB / RAM 503GB. Evidencia L3 REAL: generacion SDXL 1024x1024 en 24.6s, pico VRAM medido 7684MB (vs 18000 estimado), imagen verificada, pod destruido (0 instancias). Falta para L4/Ultra validada: D01-D05 completas (video/voz/3D), baselines/holdouts, y arreglar 2 hallazgos de ops (entrypoint no auto-arranca; require_disk_space falso negativo en overlay). Ver docs/ultra/W26_GPU_RESULTS.md.",
-  "updated_utc": "2026-11-11T04:25:31Z",
+  "overall_note": "Main is b612fbe7369dd20d66d8933095f23882ade7a2af after PR #413 and PR #414. Main workflow 44033581865 passed all three jobs and built verified candidate ghcr.io/tomas-estrada/comfyuipod:sha-b612fbe@sha256:e321fab21694bceb5b39a2027598a7daf77f300e51322c1ae739e8cd454ff996 (config sha256:ef07b50043e03cdb14ff6200c59f2e675d1895bfcd02240935f5b1c965ae152c). The strict A07 gate and same-SHA local checker both report 228 blockers across 46/57 selected engines; the manifest is coherent but release_ready=false, so latest/semver promotion was skipped. The earlier 233/48 report is historical to 38b0527. Non-GPU acceptance remains open; no current-image target-GPU revalidation was performed.",
+  "updated_utc": "2026-11-17T11:06:21Z",
   "merged": {
     "W00": "done",
     "W01": "#65",
@@ -17,7 +17,6 @@
     "W06": "#82",
     "W07": "#70",
     "W08": "#74,#76",
-    "W09_atlas": "#63 (+fix #78)",
     "W10": "#81",
     "W11": "#84",
     "W12": "#85",
@@ -36,34 +35,45 @@
     "W25": "#100",
     "capabilities_doc": "#94,#98"
   },
-  "capability_coverage": "C01-C34 completas a nivel contrato L1 (modulo+contrato+unit tests, sin mocks ni wrappers vacios). C07 (atlas) a L2 parcial por estar fisicamente horneado offline en la imagen. Elevacion a L2 (adapter+engine real por capacidad) y L3/L4 (GPU) = trabajo restante.",
-  "pending_capabilities": [],
+  "capability_coverage": "PR #408 adds the A07 promotion gate, A19 temporal-scene CPU evidence, causal-audio deletion/rerender evidence, and BT.709 EDL conversion/verification. PR #409 adds persistent mission-spend accounting and budget terminal behavior, conservative camera-motion confidence gating, and synthetic D03 articulated-product evidence. All are partial CPU/integration evidence; they do not close all A00-A28, active capability, D01-D05, selected-engine A07, real-media, or provider acceptance. PR #413 adds a durable approved-production queue. PR #414 indexes the Open Engine Registry workbook in the local builder RAG; it improves discovery and does not implement the selected engines blocked by A07.",
+  "pending_capabilities": [
+    "Complete all applicable acceptance criteria for every active capability without elevating levels from partial evidence",
+    "Resolve 228 current A07 blockers across 46 of 57 selected engines through authentic source pins, dependency locks, redistribution decisions, notices, actual adapters and image inventory evidence; preserve the selected roster",
+    "Close durable production execution, project memory/retrieval and provider/privacy behavior through the configured LangGraph runtime",
+    "Complete CPU product-path acceptance and required authorized real-media holdouts for A00-A28, active capabilities and D01-D05; synthetic fixtures do not replace real-media criteria",
+    "Configured-provider connectivity and model behavior remain unverified; no paid provider request is implied by contract tests",
+    "Only after all non-GPU criteria close: target-GPU recipe runs, quality/holdout baselines and current-image revalidation"
+  ],
   "candidate_image_current": {
-    "main_sha": "f5c29dc",
-    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-f5c29dc",
-    "latest_manifest_digest": "sha256:0eddf85db32ed141da0e77ae636c226a73f5b1e232f646e55c92385affb2b53f",
-    "promoted_to_latest": true,
-    "build_run": "42005385668",
-    "smoke": "unit + full-stack E2E + MODEL_PROFILE=studio E2E verde; job 'Build Candidate, Smoke-Test & Promote to Latest' conclusion=success; imagen copiada a :latest",
-    "contains": "W00-W25 completos (infra + 34 capacidades + atlas offline + director/investigador/UI client + demos + reporte final) a nivel contrato L1",
-    "note": "Imagen candidata reproducible para el SHA final de main. Digest real se fija cuando el build GHCR termina en verde. Base para validacion GPU (W26), NO Ultra validada."
+    "main_sha": "b612fbe7369dd20d66d8933095f23882ade7a2af",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-b612fbe",
+    "candidate_manifest_digest": "sha256:e321fab21694bceb5b39a2027598a7daf77f300e51322c1ae739e8cd454ff996",
+    "config_digest": "sha256:ef07b50043e03cdb14ff6200c59f2e675d1895bfcd02240935f5b1c965ae152c",
+    "latest_manifest_digest": null,
+    "promoted_to_latest": false,
+    "build_run": "44033581865",
+    "smoke": "passed: all three main workflow jobs; CI-01/CI-03 with Studio/panel tests, Rust lint/tests/dependency audit, candidate build, full-stack E2E, and MODEL_PROFILE=studio E2E",
+    "contains": "main b612fbe, including PR #413 durable production approval queue and PR #414 Open Engine Registry RAG",
+    "a07_ci_report": "228 blockers across 46 of 57 selected engines; current local checker reports the same; coherent=true, release_ready=false, latest/semver promotion skipped",
+    "note": "Candidate digest verified from Buildx output. No target-GPU revalidation; documented non-GPU acceptance remains open."
   },
   "candidate_image_previous": {
-    "main_sha": "71822b7",
-    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-71822b7",
-    "latest_manifest_digest": "sha256:ee60b4e67c594fa713b58988b3b95ac2b74bac1351399c02ab609ff71cfaa6bd",
+    "main_sha": "fd444c7706a0455b5bd3af1c801b26341661741c",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-fd444c7",
+    "candidate_manifest_digest": "sha256:c3a54db9b23d6bc277a3027132b745e17f22fb80eede0a81a7848515a1cc34f5",
+    "latest_manifest_digest": "sha256:a9f862358ff7d20320d5aba6945a1385bb96609a4d49c46a835a04182330451e",
     "promoted_to_latest": true,
-    "build_run": "41999904964",
-    "smoke": "unit + full-stack E2E + MODEL_PROFILE=studio E2E verde (16m28s)",
-    "contains": "W00-W20 (infra + ruta esencial de capacidades + atlas offline + cara + 4D) a nivel contrato L1",
-    "note": "Imagen candidata previa con digest real verificable."
+    "build_run": "43271938341",
+    "smoke": "passed: 2,840 Python tests, repository validation, Rust, candidate build, full-stack E2E, MODEL_PROFILE=studio E2E, requirements-lock upload and image promotion",
+    "contains": "main fd444c7 including PR #338 staging optimizer, #340 repair-frame provenance, #343 bounded C02 camera-motion estimator, and #344 GitHub integration research; CAPABILITY_EVIDENCE.md remains partial and A07 release_ready=false",
+    "note": "Candidate and latest manifest digests are verified from GHCR. No target-GPU measurement was run on this image; W26 evidence remains tied to its previous image digest."
   },
   "sub_items_pending": [
-    "completar la evidencia A07 para las 58 rutas build_selected de engines.json",
-    "protocolo describe/execute/cancel/unload uniforme por engine",
-    "enganchar av_recipes->seleccion en el planner/executor real",
-    "LangGraph real ejecutando la ruta efectiva en la imagen",
-    "provider profiles (A06)"
+    "A07: workflow reports 233 release blockers across 48 of 57 selected engines; same-commit local checker reports 228; reconcile and resolve with real component evidence",
+    "Production planner/executor must select and run real av_recipes through the configured LangGraph path",
+    "Complete all non-GPU capability gaps and D01-D05 acceptance in CAPABILITY_EVIDENCE.md and acceptance.md",
+    "A06 provider connectivity/model behavior remains unverified",
+    "Only after non-GPU closure: target-GPU recipe execution, baselines/holdouts, and current-main image revalidation"
   ],
   "gpu_campaign_W26": {
     "status": "demo_acotada_ejecutada_L3",
@@ -79,17 +89,105 @@
       "D01-D05 completas (video/voz/3D)",
       "baselines/holdouts",
       "perfiles 128 y 256 por separado"
-    ]
+    ],
+    "current_main_revalidation": "Main b612fbe software/image CI passed in workflow 44033581865; target-GPU revalidation on this current main image was not performed",
+    "current_main_image": "ghcr.io/tomas-estrada/comfyuipod:sha-b612fbe@sha256:e321fab21694bceb5b39a2027598a7daf77f300e51322c1ae739e8cd454ff996"
   },
   "ops_findings_W26": [
-    "entrypoint de la imagen no auto-arranca el servicio en vast: hubo que lanzar /start.sh a mano (onstart.log 0 bytes).",
-    "require_disk_space en download-models.sh da falso 'sin espacio' con el overlay de vast (259GB libres reales); bloquea la adquisicion de pesos por el camino normal. Release-blocker de ops."
+    "Historical W26 finding: Vast did not auto-start the service in that run. PR #108 added an idempotent start guard and an ENTRYPOINT regression; reproduction on the current main image remains part of real-pod revalidation.",
+    "Historical W26 finding: require_disk_space misread free space. PR #105 resolved missing staging paths to the nearest existing ancestor; follow-up commit ec3a5b7 corrected df block-to-byte conversion and added regression coverage. Current-main CI passes; live acquisition revalidation remains for the real-pod campaign."
   ],
   "blockers": [],
   "known_env_issues": [
     "pytest studio/tests en main: 1046 passed, 1 skipped, 7 failed SOLO en Windows; en CI Linux (autoridad) el job 'Validar paquete comfy_studio ... pytest' pasa (run 42005385668 success).",
-    "Los 7 fallos son sensibles al entorno POSIX: 3x test_mac_helper (fixture limpia os.environ -> sin SYSTEMROOT en Windows), 2x test_m5_capture3d (setenv PATH='' rompe el lanzamiento de subprocess en Windows), 2x test_atlas_* (lanzan scripts/storage_requirement.py como subprocess bajo entorno despojado). storage_requirement.py --profile studio --json ejecutado directo produce JSON valido.",
+    "Los 7 fallos son sensibles al entorno POSIX: 3x test_mac_helper (fixture limpia os.environ -> sin SYSTEMROOT en Windows), 2x test_m5_capture3d (setenv PATH='' rompe el lanzamiento de subprocess en Windows). storage_requirement.py --profile studio --json ejecutado directo produce JSON valido.",
     "test_gpu_lease multiproceso y tests POSIX son sensibles a Windows; verificados en CI Linux."
   ],
-  "notes": "No GPU rentada, no APIs facturadas. CI Linux es la autoridad. 108 PRs mergeados verificados por API (#58,#63,#64 integrados; #65-#101; #102-#125,#127-#137,#139-#147,#149-#174,#178,#182; #126 cerrado sin mergear; abiertos #138,#148,#175,#176,#177,#179,#180,#181,#183). Backlog Ultra W00-W25 cerrado a nivel contrato L1. W26 (GPU) fuera de fase por diseno. candidate_image_*: bloques con digests reales verificados en su momento, sin tocar (nuevo digest solo cuando un build de main termine verde). ruff check studio scripts config/probes: All checks passed."
+  "notes": "Main b612fbe; workflow 44033581865 passed all three jobs and built the verified candidate image. A07 matches locally at 228 blockers/46 engines and prevents promotion. This supersedes the current-main summary from 38b0527; the 38b0527 record remains historical below. Non-GPU acceptance is still open, and target-GPU revalidation was not performed.",
+  "integration_candidate": {
+    "branch": "codex/non-gpu-integration-20261115",
+    "head_sha": "54e29b7",
+    "base_main_sha": "d7504cf794c372cde79a8df1b5a83613d333033f",
+    "includes": "Consolidated PR work #394–#403: C23–C30 and D01/D02/D05 evidence plus A07 manifest updates",
+    "local_validation": "3,147 passed, 3 skipped in the full Studio/panel suite; repository CI not yet run on this branch",
+    "a07": "88 engines, 57 selected, 234 blockers, coherent=true, release_ready=false",
+    "candidate_image_built": false,
+    "target_gpu_evidence": false
+  },
+  "candidate_image_pre_a07_gate": {
+    "main_sha": "3d5b93e38c3a838e1e71c35cfe1a716d1768ff73",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-3d5b93e",
+    "candidate_manifest_digest": "sha256:02d198ca858e162362d51669ec19910d5c6ce0bfe370665f75ad714bd2d7de3c",
+    "latest_manifest_digest": "sha256:c8e76463125ef210258b5ec5fd4e20b8188b83e29b97dd650d8449e2e8f7994f",
+    "promoted_to_latest": true,
+    "build_run": "43587693820",
+    "smoke": "passed: 3,126 Python tests, 3 skipped, Rust and repository validation, candidate build, full-stack E2E, MODEL_PROFILE=studio E2E, requirements-lock artifact upload, and image promotion",
+    "contains": "main 3d5b93e3 with merged PRs #358, #369, #371, #376, #377, and #378; CAPABILITY_EVIDENCE.md records partial CPU paths and A07 remains blocked",
+    "note": "Candidate and latest digests verified from workflow 43587693820. No target-GPU validation was run. W26 evidence remains tied to its historical image/recipe."
+  },
+  "main_candidate_a1f847d": {
+    "branch": "main",
+    "head_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
+    "base_main_sha": "81f5bf39bb048f586ea3c25a045e568af85c07da",
+    "merged_pr": "#408",
+    "includes": "A07 release promotion gate, A19 temporal scene acceptance, causal audio acceptance, BT.709 EDL conversion/verification, corrected mission-compiler integration lock",
+    "local_validation": "PR CI and post-merge workflow 43983976860 passed all three jobs including the full Studio/panel suite, Rust, candidate image build and two smoke tests. Local full-suite run before final corrections: 3156 passed, 7 skipped, 6 failed; two branch-specific failures were fixed and scoped rerun passed 37; four host/baseline failures remained locally.",
+    "a07": "CI gate output 233 blockers across 48/57 selected; local same-commit checker output 228; coherent, release_ready=false; latest promotion skipped",
+    "candidate_image": "ghcr.io/tomas-estrada/comfyuipod:sha-a1f847d@sha256:76ebe67fdb7d98d7a78ee5280b4dda7c11d10a33202b0f2e7e5ede1c98c4a9b7",
+    "candidate_image_built": true,
+    "promoted_to_latest": false,
+    "target_gpu_evidence": false
+  },
+  "candidate_image_a1f847d": {
+    "main_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-a1f847d",
+    "candidate_manifest_digest": "sha256:76ebe67fdb7d98d7a78ee5280b4dda7c11d10a33202b0f2e7e5ede1c98c4a9b7",
+    "config_digest": "sha256:fc85982109c7ccadfc44abcda953062a0a3707960745a19d1317dfffb064f86c",
+    "latest_manifest_digest": null,
+    "promoted_to_latest": false,
+    "build_run": "43983976860",
+    "smoke": "passed: repository validation and Python/panel suite, Rust fmt/Clippy/tests/dependency audit, candidate image build, full-stack E2E, MODEL_PROFILE=studio E2E, and requirements-lock artifact upload; strict A07 gate ran and skipped latest/semver promotion",
+    "contains": "main a1f847df, merged PR #408: strict A07 promotion gate, A19 temporal-scene CPU acceptance, causal audio acceptance, and BT.709 EDL delivery policy",
+    "a07_ci_report": "233 release blockers across 48 of 57 selected engines; the same-commit local checker reports 228 and the discrepancy remains under investigation",
+    "note": "Candidate digest is verified from Buildx output. Promotion was skipped, so this run does not provide a new latest digest. No target-GPU validation was run."
+  },
+  "pr_409_merged_work": {
+    "includes": "Production mission spend/cap terminal semantics and migration; conservative camera-motion confidence gate; D03 articulated-product synthetic CPU ground truth and report; refreshed mission-compiler source lock; closure evidence docs",
+    "local_validation": "279 related Python tests passed, 1 skipped across mission-budget, camera-motion, inspiration, engine-reference, demos, A07 manifest, orchestration, mission compiler, production memory/restart and D05 API suites; Ruff and git diff --check passed. PR and post-merge main CI passed.",
+    "a07": "Main CI on 38b0527 reports 233 blockers across 48/57 selected; same-commit local checker reports 228 blockers across 46/57. Discrepancy remains unresolved.",
+    "candidate_image_built": true,
+    "target_gpu_evidence": false,
+    "status": "merged as PR #409",
+    "merged_sha": "38b05270787f956c5c9a7b0690e9dc8cd58ba415",
+    "pr_ci_and_main_image_ci": "passed; main workflow 44008741469",
+    "candidate_image": "ghcr.io/tomas-estrada/comfyuipod:sha-38b0527@sha256:315f52b4f3c5544b75c9245d89d4d28a326042cdeb8c1381757b77a53f6c62ca"
+  },
+  "main_candidate_38b0527": {
+    "branch": "main",
+    "head_sha": "38b05270787f956c5c9a7b0690e9dc8cd58ba415",
+    "base_main_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
+    "merged_pr": "#409",
+    "includes": "PR #408 A07/A19/audio/EDL work plus PR #409 persistent mission spend/cap terminal semantics, camera-motion confidence gating, synthetic D03 articulated-product evidence, and mission-compiler lock refresh",
+    "local_validation": "279 related Python tests passed, 1 skipped; Ruff and git diff --check passed. Post-merge main workflow 44008741469 passed all three jobs, including candidate build and both smoke tests.",
+    "a07": "CI: 233 blockers across 48/57 selected; same-commit local: 228 blockers across 46/57; discrepancy unresolved, release_ready=false, latest/semver promotion skipped",
+    "candidate_image": "ghcr.io/tomas-estrada/comfyuipod:sha-38b0527@sha256:315f52b4f3c5544b75c9245d89d4d28a326042cdeb8c1381757b77a53f6c62ca",
+    "config_digest": "sha256:42d0218ecdf4dec90577475b4cebbf35c92b0a00475c79eef76b9204e7177b54",
+    "candidate_image_built": true,
+    "promoted_to_latest": false,
+    "target_gpu_evidence": false
+  },
+  "main_candidate_b612fbe": {
+    "branch": "main",
+    "head_sha": "b612fbe7369dd20d66d8933095f23882ade7a2af",
+    "base_main_sha": "b29cee8e964fea034ac7cd33a7f84a493a307fb1",
+    "merged_prs": "#413,#414",
+    "includes": "PR #413 durable approved-production queue; PR #414 Open Engine Registry workbook import and local RAG integration",
+    "workflow": "44033581865 passed Rust, CI-01/CI-03, candidate build, full-stack E2E, and MODEL_PROFILE=studio E2E",
+    "a07": "228 blockers across 46/57 selected; local and CI results match; coherent=true; release_ready=false; promotion skipped",
+    "candidate_image": "ghcr.io/tomas-estrada/comfyuipod:sha-b612fbe@sha256:e321fab21694bceb5b39a2027598a7daf77f300e51322c1ae739e8cd454ff996",
+    "config_digest": "sha256:ef07b50043e03cdb14ff6200c59f2e675d1895bfcd02240935f5b1c965ae152c",
+    "candidate_image_built": true,
+    "promoted_to_latest": false,
+    "target_gpu_evidence": false
+  }
 }

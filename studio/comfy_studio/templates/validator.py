@@ -15,7 +15,7 @@ BUILTIN_CONTEXT_PLACEHOLDERS: frozenset[str] = frozenset(
 )
 
 TERMINAL_OUTPUT_CLASSES: frozenset[str] = frozenset(
-    {"SaveImage", "VHS_VideoCombine", "SaveGLB"}
+    {"SaveImage", "VHS_VideoCombine", "SaveGLB", "SaveAudioAdvanced"}
 )
 
 VALID_PARAM_TYPES: frozenset[str] = frozenset(
@@ -42,6 +42,36 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
     },
     "VAELoader": {
         "required_inputs": ("vae_name",),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "VAEEncode": {
+        "required_inputs": ("pixels", "vae"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "ReferenceLatent": {
+        "required_inputs": ("conditioning", "latent"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "EmptyQwenImageLayeredLatentImage": {
+        "required_inputs": ("width", "height", "layers", "batch_size"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "GetImageSize": {
+        "required_inputs": ("image",),
+        "optional_inputs": (),
+        "outputs": 3,
+    },
+    "LatentCut": {
+        "required_inputs": ("samples", "dim", "index", "amount"),
+        "optional_inputs": (),
+        "outputs": 1,
+    },
+    "LatentCutToBatch": {
+        "required_inputs": ("samples", "dim", "slice_size"),
         "optional_inputs": (),
         "outputs": 1,
     },
@@ -310,6 +340,25 @@ KNOWN_NODE_SPECS: dict[str, dict[str, Any]] = {
         "optional_inputs": (),
         "outputs": 1,  # AUDIO
     },
+    "TextEncodeAceStepAudio1.5": {
+        "required_inputs": (
+            "clip", "tags", "lyrics", "seed", "bpm", "duration",
+            "timesignature", "language", "keyscale", "generate_audio_codes",
+            "cfg_scale", "temperature", "top_p", "top_k", "min_p",
+        ),
+        "optional_inputs": (),
+        "outputs": 1,  # CONDITIONING
+    },
+    "EmptyAceStep1.5LatentAudio": {
+        "required_inputs": ("seconds", "batch_size"),
+        "optional_inputs": (),
+        "outputs": 1,  # LATENT
+    },
+    "SaveAudioAdvanced": {
+        "required_inputs": ("audio", "filename_prefix", "format"),
+        "optional_inputs": (),
+        "outputs": 1,  # AUDIO (also an output node)
+    },
     "LatentSyncNode": {
         "required_inputs": (
             "images",
@@ -480,11 +529,9 @@ def _validate_parameter_declarations(
                         f"({default_val}) > max ({max_v})."
                     )
 
-    if require_prompt and (
-        "prompt" not in parameters or not parameters["prompt"].get("required")
-    ):
+    if require_prompt and "prompt" not in parameters:
         raise TemplateValidationError(
-            f"Plantilla {template_id!r}: debe declarar 'prompt' como parámetro obligatorio."
+            f"Plantilla {template_id!r}: debe declarar el parámetro 'prompt'."
         )
 
     return parameters
@@ -546,9 +593,10 @@ def validate_template_definition(raw_def: dict[str, Any]) -> dict[str, Any]:
                 f"Plantilla {template_id!r}: falta el campo requerido {req_top!r}."
             )
 
-    if raw_def["output_kind"] not in ("video", "image", "model3d"):
+    if raw_def["output_kind"] not in ("video", "image", "model3d", "audio"):
         raise TemplateValidationError(
-            f"Plantilla {template_id!r}: 'output_kind' debe ser 'video', 'image' o 'model3d'."
+            f"Plantilla {template_id!r}: 'output_kind' debe ser 'video', 'image', "
+            "'model3d' o 'audio'."
         )
 
     docs = raw_def["docs"]
@@ -680,7 +728,7 @@ def validate_template_definition(raw_def: dict[str, Any]) -> dict[str, Any]:
     if not terminal_nodes:
         raise TemplateValidationError(
             f"Plantilla {template_id!r}: el workflow debe incluir al menos un nodo "
-            "de salida (SaveImage o VHS_VideoCombine)."
+            "de salida (SaveImage, VHS_VideoCombine, SaveGLB o SaveAudioAdvanced)."
         )
 
     for term_id, term_node in terminal_nodes:

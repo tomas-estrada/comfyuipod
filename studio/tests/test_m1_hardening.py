@@ -157,14 +157,20 @@ def test_config_parses_new_timeout_and_ceiling_env(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("STUDIO_FFPROBE_TIMEOUT_S", "45")
     monkeypatch.setenv("STUDIO_UPLOAD_MAX_TOTAL_MB", "64")
     monkeypatch.setenv("STUDIO_RECOVERY_DRAIN_S", "3")
+    monkeypatch.setenv("STUDIO_INGEST_MAX_ASSETS", "240")
+    monkeypatch.setenv("STUDIO_INGEST_MAX_TOTAL_BYTES", "987654321")
     cfg = StudioConfig.from_env()
     assert cfg.studio_ffmpeg_timeout_s == 120.0
     assert cfg.studio_ffprobe_timeout_s == 45.0
     assert cfg.upload_max_total_bytes == 64 * 1024 * 1024
     assert cfg.studio_recovery_drain_s == 3.0
+    assert cfg.studio_ingest_max_assets == 240
+    assert cfg.studio_ingest_max_total_bytes == 987654321
     public = cfg.to_public_dict()
     assert public["STUDIO_FFMPEG_TIMEOUT_S"] == "120.0"
     assert public["STUDIO_UPLOAD_MAX_TOTAL_MB"] == "64"
+    assert public["STUDIO_INGEST_MAX_ASSETS"] == "240"
+    assert public["STUDIO_INGEST_MAX_TOTAL_BYTES"] == "987654321"
 
 
 def test_config_ignores_non_positive_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -298,13 +304,6 @@ def test_parallel_safe_defaults_to_serial_and_readonly_tools_opt_in() -> None:
         "plan_long_render",
         "list_identities",
         "list_review_pins",
-        # atlas: sólo lectura (M-atlas)
-        "atlas_stats",
-        "atlas_search_places",
-        "atlas_resolve_place",
-        "atlas_place_detail",
-        "atlas_select_view",
-        "atlas_verify",
         # Lecturas puras añadidas por el resolvedor de capacidades: consultan
         # manifiestos y disco, nunca mutan.
         "list_capabilities",

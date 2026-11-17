@@ -50,6 +50,18 @@ def register_routes(app: FastAPI) -> None:
             if model_inventory
             else None
         )
+        integrity_states = (
+            "verified",
+            "present_unverified",
+            "corrupt",
+            "staging",
+            "missing",
+            "unavailable",
+        )
+        asset_integrity = {
+            state: sum(item.get("integrity_state") == state for item in model_inventory)
+            for state in integrity_states
+        }
         payload = {
             "status": "ok",
             "server": "ok",
@@ -97,6 +109,9 @@ def register_routes(app: FastAPI) -> None:
                 "required_ok": (not missing_bootstrap) if missing_bootstrap is not None else None,
                 "required_missing": missing_bootstrap or [],
             },
+            # Conteo barato del estado de integridad de los activos. El detalle
+            # por archivo, incluido el motivo y la ruta, vive en /status.
+            "asset_integrity": asset_integrity,
             # M5-F7: estado por motor del roster (ready/stub/unwired) para que el
             # strict-check del supervisor observe cada motor, no solo que el studio vive.
             "engines": health_report(build_default_registry()),

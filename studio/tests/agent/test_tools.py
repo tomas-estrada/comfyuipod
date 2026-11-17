@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from comfy_studio.agent.tools import (
+    ROLE_TOOL_SUBSETS,
     RenderTemplateParams,
     ToolContext,
     ToolExecutionError,
@@ -18,6 +19,7 @@ from comfy_studio.comfyui_client import ComfyUIClient
 from comfy_studio.config import StudioConfig
 from comfy_studio.progress import ProgressBroker
 from comfy_studio.projects import ProjectStore
+from comfy_studio.spatial_memory import synthetic_round_trip_fixture
 from comfy_studio.stubs.comfyui import ComfyUIStubState
 
 
@@ -64,6 +66,261 @@ def test_tool_belt_v1_schemas_are_valid_openai_functions() -> None:
         params = fn["parameters"]
         assert params["type"] == "object"
         assert "properties" in params
+
+
+def test_temporal_scene_sampling_is_artist3d_only() -> None:
+    belt = create_default_tool_belt()
+    assert "sample_temporal_scene" in belt.restricted_to(
+        ROLE_TOOL_SUBSETS["artist3d"]
+    ).list_names()
+    assert "sample_temporal_scene" not in belt.restricted_to(
+        ROLE_TOOL_SUBSETS["director"]
+    ).list_names()
+    assert "sample_temporal_scene" not in belt.restricted_to(
+        ROLE_TOOL_SUBSETS["editor"]
+    ).list_names()
+
+
+def test_spatial_anchor_memory_tools_are_artist3d_only() -> None:
+    belt = create_default_tool_belt()
+    for name in ("remember_spatial_anchor", "recall_spatial_anchor"):
+        assert name in belt.restricted_to(ROLE_TOOL_SUBSETS["artist3d"]).list_names()
+        assert name not in belt.restricted_to(ROLE_TOOL_SUBSETS["director"]).list_names()
+        assert name not in belt.restricted_to(ROLE_TOOL_SUBSETS["editor"]).list_names()
+
+
+def test_production_memory_tools_are_available_to_each_creative_role() -> None:
+    belt = create_default_tool_belt()
+    names = {
+        "remember_production_memory",
+        "retrieve_production_memory",
+        "list_production_memory",
+        "correct_production_memory",
+        "forget_production_memory",
+    }
+
+    for role in ("director", "editor", "artist3d"):
+        assert names <= set(belt.restricted_to(ROLE_TOOL_SUBSETS[role]).list_names())
+
+
+@pytest.mark.anyio
+async def test_production_memory_tools_persist_project_scoped_corrections_and_confirm_delete(
+    tool_context: ToolContext,
+) -> None:
+    belt = create_default_tool_belt().restricted_to(ROLE_TOOL_SUBSETS["director"])
+    remembered = await belt.execute(
+        "remember_production_memory",
+        {
+            "kind": "recipe",
+            "key": "warm-product-reveal",
+            "content": {"summary": "Warm light, then a slow product reveal"},
+            "tags": ["lighting", "product", "audience:beauty", "format:16:9"],
+            "source_refs": ["brief:version-2"],
+        },
+        tool_context,
+    )
+    assert remembered["version"] == 1
+    assert remembered["project_id"] == tool_context.project_id
+
+    matches = await belt.execute(
+        "retrieve_production_memory", {"query": "warm product lighting"}, tool_context
+    )
+    assert [item["memory_id"] for item in matches["records"]] == [remembered["memory_id"]]
+    incompatible = await belt.execute(
+        "retrieve_production_memory",
+        {"query": "warm product lighting", "tags": ["audience:families"]},
+        tool_context,
+    )
+    assert incompatible["records"] == []
+
+    other_id = tool_context.store.create_project("Other private project")["id"]
+    original_id = tool_context.project_id
+    tool_context.project_id = other_id
+    other_record = await belt.execute(
+        "remember_production_memory",
+        {
+            "kind": "recipe",
+            "key": "warm-product-reveal",
+            "content": {"summary": "Cool cyan light for young families"},
+            "tags": ["family", "cyan", "audience:families", "format:9:16"],
+        },
+        tool_context,
+    )
+    other_project_matches = await belt.execute(
+        "retrieve_production_memory", {"query": "warm product lighting"}, tool_context
+    )
+    assert [item["memory_id"] for item in other_project_matches["records"]] == [
+        other_record["memory_id"]
+    ]
+    assert other_project_matches["records"][0]["project_id"] == other_id
+    other_matches = await belt.execute(
+        "retrieve_production_memory",
+        {
+            "query": "warm product lighting",
+            "tags": ["audience:families", "format:9:16"],
+        },
+        tool_context,
+    )
+    assert [item["memory_id"] for item in other_matches["records"]] == [
+        other_record["memory_id"]
+    ]
+    tool_context.project_id = original_id
+    assert remembered["source_refs"] == ["brief:version-2"]
+    own_matches = await belt.execute(
+        "retrieve_production_memory", {"query": "warm product lighting"}, tool_context
+    )
+    assert [item["memory_id"] for item in own_matches["records"]] == [
+        remembered["memory_id"]
+    ]
+
+    corrected = await belt.execute(
+        "correct_production_memory",
+        {
+            "memory_id": remembered["memory_id"],
+            "content": {"summary": "Warm key light, reveal only after the logo"},
+            "reason": "Approved creative direction changed",
+        },
+        tool_context,
+    )
+    assert corrected["version"] == 2
+    assert corrected["correction_reason"] == "Approved creative direction changed"
+
+    unconfirmed = await belt.execute(
+        "forget_production_memory",
+        {"memory_id": remembered["memory_id"], "confirm": False},
+        tool_context,
+    )
+    assert unconfirmed["requires_confirmation"] is True
+    assert len((await belt.execute("list_production_memory", {}, tool_context))["records"]) == 1
+
+    deleted = await belt.execute(
+        "forget_production_memory",
+        {"memory_id": remembered["memory_id"], "confirm": True},
+        tool_context,
+    )
+    assert deleted["deleted"] is True
+    assert (await belt.execute("list_production_memory", {}, tool_context))["records"] == []
+
+
+@pytest.mark.anyio
+async def test_production_memory_tools_redact_credentials_before_persisting_or_returning(
+    tool_context: ToolContext,
+) -> None:
+    secret = "sk-test-secret"
+    tool_context.config.studio_llm_key = secret
+    belt = create_default_tool_belt().restricted_to(ROLE_TOOL_SUBSETS["director"])
+
+    stored = await belt.execute(
+        "remember_production_memory",
+        {
+            "kind": "decision",
+            "key": "credential note",
+            "content": {"summary": f"Never repeat {secret}"},
+            "source_refs": [f"Bearer {secret}"],
+        },
+        tool_context,
+    )
+    recalled = await belt.execute(
+        "retrieve_production_memory", {"query": "credential note"}, tool_context
+    )
+
+    serialized = str({"stored": stored, "recalled": recalled})
+    assert secret not in serialized
+    assert secret not in str(
+        tool_context.store.get_meta(tool_context.project_id, "production_memory_v1")
+    )
+
+
+@pytest.mark.anyio
+async def test_artist3d_spatial_anchor_memory_persists_visits_and_reports_drift(
+    tool_context: ToolContext,
+) -> None:
+    artist_belt = create_default_tool_belt().restricted_to(
+        ROLE_TOOL_SUBSETS["artist3d"]
+    )
+    for shot_id, position in (
+        ("shot-a", [1.0, 2.0, 3.0]),
+        ("shot-b", [8.0, 2.0, 3.0]),
+        ("shot-a-return", [1.0, 2.0, 3.0]),
+    ):
+        result = await artist_belt.execute(
+            "remember_spatial_anchor",
+            {"anchor_id": "bridge", "shot_id": shot_id, "position": position},
+            tool_context,
+        )
+        assert result["provenance"] == "inferred"
+        assert result["evidence_claim"] is False
+
+    recalled = await artist_belt.execute(
+        "recall_spatial_anchor", {"anchor_id": "bridge"}, tool_context
+    )
+    assert [visit["shot_id"] for visit in recalled["visits"]] == [
+        "shot-a",
+        "shot-b",
+        "shot-a-return",
+    ]
+    assert recalled["round_trip"] == {
+        "anchor_id": "bridge",
+        "shots": ["shot-a", "shot-b", "shot-a-return"],
+        "drift": 0.0,
+        "returned": True,
+    }
+    assert recalled["evidence_claim"] is False
+
+
+@pytest.mark.anyio
+async def test_artist3d_tool_cannot_write_to_an_observed_spatial_anchor(
+    tool_context: ToolContext,
+) -> None:
+    from comfy_studio.spatial_memory import Anchor, Provenance, SpatialMemory
+
+    memory = SpatialMemory()
+    memory.register(Anchor("surveyed", Provenance.OBSERVED))
+    tool_context.store.set_meta(
+        tool_context.project_id, "ultra_spatial_memory_v1", memory.to_dict()
+    )
+    artist_belt = create_default_tool_belt().restricted_to(
+        ROLE_TOOL_SUBSETS["artist3d"]
+    )
+    with pytest.raises(ToolExecutionError, match="observada"):
+        await artist_belt.execute(
+            "remember_spatial_anchor",
+            {"anchor_id": "surveyed", "shot_id": "shot-a", "position": [0, 0, 0]},
+            tool_context,
+        )
+
+
+@pytest.mark.anyio
+async def test_artist3d_temporal_scene_sample_preserves_synthetic_provenance(
+    tool_context: ToolContext,
+) -> None:
+    tool_context.store.set_meta(
+        tool_context.project_id,
+        "ultra_temporal_scene_v1",
+        synthetic_round_trip_fixture().to_dict(),
+    )
+    artist_belt = create_default_tool_belt().restricted_to(
+        ROLE_TOOL_SUBSETS["artist3d"]
+    )
+    result = await artist_belt.execute(
+        "sample_temporal_scene",
+        {"entity_id": "mesa", "entity_kind": "object", "time_s": 0.5},
+        tool_context,
+    )
+    assert result["sample"]["position"] == pytest.approx([1.0, 0.0, 0.0])
+    assert result["provenance"] == "synthetic"
+    assert result["source_kind"] == "synthetic"
+    assert result["evidence_claim"] is False
+
+    director_belt = create_default_tool_belt().restricted_to(
+        ROLE_TOOL_SUBSETS["director"]
+    )
+    with pytest.raises(ToolExecutionError, match="no registrada"):
+        await director_belt.execute(
+            "sample_temporal_scene",
+            {"entity_id": "mesa", "entity_kind": "object", "time_s": 0.5},
+            tool_context,
+        )
 
 
 @pytest.mark.anyio

@@ -20,14 +20,17 @@ from comfy_studio.engines import EngineResult, EngineRunSpec
 from comfy_studio.orchestration import (
     EngineAssembler,
     EngineRunnerAdapter,
+    Layer,
     LLMPlannerAdapter,
     ProductionCheckpointer,
     ProductionState,
     QaShotEvaluator,
+    Sequence,
     Shot,
     ShotStatus,
     build_production_graph,
     build_server_collaborators,
+    execute_next_shot,
     plan_production,
 )
 from comfy_studio.orchestration.adapters import _confine_one
@@ -184,11 +187,155 @@ def test_engine_runner_dispatches_async_engine():
     assert eng.runs == 1
 
 
+def test_engine_runner_resolves_project_image_asset_before_rendering(tmp_path):
+    from comfy_studio.projects import ProjectStore
+    from comfy_studio.templates.registry import TemplateRegistry
+
+    store = ProjectStore(tmp_path / "studio")
+    project = store.create_project("Referencia del proyecto")
+    asset = store.save_upload(
+        project["id"],
+        filename="perro.png",
+        content_type="image/png",
+        data=b"fake-png-image-bytes",
+        max_upload_bytes=1024,
+        metadata={"tags": ["perro", "parque"]},
+    )
+    input_dir = tmp_path / "comfyui-input"
+    engine = _GraphCapturingEngine()
+    runner = EngineRunnerAdapter(
+        {"comfyui": engine},
+        template_registry=TemplateRegistry(),
+        project_store=store,
+        comfyui_input_dir=str(input_dir),
+        data_root=tmp_path / "studio",
+    )
+
+    result = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "gen",
+            "project_id": project["id"],
+            "template_id": "wan_i2v",
+            "image_asset_id": asset["id"],
+            "prompt": "perro corriendo por el parque",
+        },
+    )
+
+    assert result["ok"] is True, result
+    assert engine.last_job is not None
+    reference = engine.last_job["project_reference"]
+    staged_image = input_dir / reference["filename"]
+    assert staged_image.read_bytes() == b"fake-png-image-bytes"
+    assert reference["asset_id"] == asset["id"]
+    assert len(reference["sha256"]) == 64
+    load_image = next(
+        node for node in engine.last_job["graph"].values()
+        if node["class_type"] == "LoadImage"
+    )
+    assert load_image["inputs"]["image"] == reference["filename"]
+
+
+def test_engine_runner_rejects_missing_project_image_asset(tmp_path):
+    from comfy_studio.projects import ProjectStore
+
+    store = ProjectStore(tmp_path / "studio")
+    project = store.create_project("Referencia ausente")
+    engine = _GraphCapturingEngine()
+    runner = EngineRunnerAdapter(
+        {"comfyui": engine},
+        project_store=store,
+        comfyui_input_dir=str(tmp_path / "comfyui-input"),
+        data_root=tmp_path / "studio",
+    )
+    result = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "gen",
+            "project_id": project["id"],
+            "template_id": "wan_i2v",
+            "image_asset_id": "missing-image",
+            "prompt": "perro corriendo",
+        },
+    )
+    assert result["ok"] is False
+    assert "no existe" in result["error"]
+    assert engine.last_job is None
+
+
 def test_engine_runner_unknown_engine_is_typed_failure():
     runner = EngineRunnerAdapter({"comfyui": _SyncEngine()})
     res = runner.run_layer("nope", {"kind": "gen"})
     assert res["ok"] is False
     assert "no disponible" in res["error"]
+
+
+def test_engine_runner_rejects_unimplemented_recipe_before_dispatch():
+    eng = _SyncEngine("comfyui")
+    runner = EngineRunnerAdapter({"comfyui": eng})
+    res = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "image",
+            "recipe_id": "qwen_image_1024",
+            "recipe_engine": "qwen-image21",
+            "template_id": "sdxl_image",
+        },
+    )
+    assert res["ok"] is False
+    assert "no implementada" in res["error"]
+    assert eng.runs == 0
+
+
+def test_engine_runner_rejects_unresolved_recipe_before_default_template():
+    eng = _GraphCapturingEngine()
+    reg = _FakeRegistry()
+    runner = EngineRunnerAdapter({"comfyui": eng}, template_registry=reg)
+    res = runner.run_layer(
+        "comfyui",
+        {"kind": "gen", "recipe_unresolved": "no existe workflow compatible"},
+    )
+    assert res["ok"] is False
+    assert "sin resolver" in res["error"]
+    assert reg.calls == []
+    assert eng.last_job is None
+
+
+def test_engine_runner_rejects_recipe_template_mismatch_before_dispatch():
+    eng = _SyncEngine("comfyui")
+    runner = EngineRunnerAdapter({"comfyui": eng})
+    res = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "gen",
+            "recipe_id": "wan22_t2v_480p",
+            "recipe_engine": "wan22",
+            "template_id": "wan_i2v",
+        },
+    )
+    assert res["ok"] is False
+    assert "incompatible" in res["error"]
+    assert eng.runs == 0
+
+
+def test_engine_runner_rejects_prebuilt_graph_for_recipe_bound_job():
+    eng = _GraphCapturingEngine()
+    reg = _FakeRegistry()
+    runner = EngineRunnerAdapter({"comfyui": eng}, template_registry=reg)
+    res = runner.run_layer(
+        "comfyui",
+        {
+            "kind": "gen",
+            "recipe_id": "wan22_t2v_480p",
+            "recipe_engine": "wan22",
+            "template_id": "wan_t2v",
+            "graph": {"evil": {"class_type": "UnrelatedWorkflow", "inputs": {}}},
+        },
+    )
+    assert res["ok"] is False
+    assert "grafo" in res["error"]
+    assert reg.calls == []
+    assert eng.last_job is None
 
 
 def test_engine_runner_engine_failure_is_typed():
@@ -258,6 +405,49 @@ def test_engine_runner_respects_explicit_template_id():
     assert reg.calls[0][0] == "wan_i2v"
 
 
+def test_executor_discards_planner_supplied_comfy_graph_before_template_resolution():
+    """Model output is data: it cannot bypass the verified template path with
+    an executable ComfyUI graph supplied in a layer's params."""
+    eng = _GraphCapturingEngine()
+    reg = _FakeRegistry()
+    runner = EngineRunnerAdapter({"comfyui": eng}, template_registry=reg)
+    state = ProductionState(idea="un plano seguro")
+    state.sequences = [
+        Sequence(
+            title="sequence",
+            shots=[
+                Shot(
+                    description="shot",
+                    layers=[
+                        Layer(
+                            kind="gen",
+                            engine="comfyui",
+                            template_id="wan_t2v",
+                            params={
+                                "prompt": "un plano seguro",
+                                "graph": {
+                                    "evil": {
+                                        "class_type": "UntrustedNode",
+                                        "inputs": {"command": "unsafe"},
+                                    }
+                                },
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+    ]
+
+    result = execute_next_shot(state, runner)
+
+    assert result.all_shots()[0].status == ShotStatus.EVALUATING
+    assert reg.calls == [("wan_t2v", {"prompt": "un plano seguro"})]
+    assert eng.last_job is not None
+    assert "evil" not in eng.last_job["graph"]
+    assert eng.last_job["graph"]["1"]["class_type"] == "T2V"
+
+
 def test_engine_runner_keeps_existing_graph_untouched():
     """Si el job ya trae `graph`, no se toca el registro."""
     eng = _GraphCapturingEngine()
@@ -319,6 +509,28 @@ def test_assembler_editor_failure_is_typed():
     res = asm.assemble("prod_1", [{"path": "/out/a.mp4"}])
     assert res["ok"] is False
     assert res["error"] == "boom"
+
+
+def test_assembler_editor_failure_without_error_uses_stderr_tail():
+    """Regresión D05: un editor que falla sin `error` tipado pero con cola de
+    stderr debe exponer ese stderr como diagnóstico, no un error vacío."""
+
+    class _StderrTailEditor:
+        name = "bad"
+
+        def run(self, spec: EngineRunSpec) -> EngineResult:
+            return EngineResult(
+                ok=False,
+                engine=self.name,
+                verb="run",
+                error=None,
+                stderr_tail="Remotion executable missing",
+            )
+
+    asm = EngineAssembler(_StderrTailEditor())
+    res = asm.assemble("prod_1", [{"path": "/out/a.mp4"}])
+    assert res["ok"] is False
+    assert "Remotion executable missing" in res["error"]
 
 
 class _TimelineStrictEditor:

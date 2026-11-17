@@ -254,17 +254,6 @@ def build_default_registry() -> EngineRegistry:
     )
     reg.register(
         EngineEntry(
-            "atlas-offline",
-            EngineTier.WARM,
-            wired=True,
-            note=(
-                "Bundle del atlas del Aburrá: catálogo + archivos + licencias + OSM "
-                "(atlas/packaging.py; CPU)"
-            ),
-        )
-    )
-    reg.register(
-        EngineEntry(
             "scene-optimizer",
             EngineTier.WARM,
             wired=True,
@@ -291,8 +280,10 @@ def build_default_registry() -> EngineRegistry:
             EngineTier.WARM,
             wired=True,
             note=(
-                "LLM local OpenAI-compatible (llama-server v0.9.0); "
-                "binario horneado pinned, modelo .gguf en runtime"
+                "LLM local OpenAI-compatible; llama-server CPU está incluido en la "
+                "imagen; el proceso no se supervisa y los pesos .gguf no incluidos "
+                "deben configurarse en runtime; se admite STUDIO_LLM_SERVER_BIN "
+                "para reemplazar el binario"
             ),
         )
     )
@@ -304,7 +295,6 @@ def build_default_registry() -> EngineRegistry:
 #: La resolución es perezosa (import bajo demanda, sin efectos laterales).
 ENGINE_CLASSES: dict[str, str] = {
     "ad_studio": "comfy_studio.engines.ad_studio:AdStudioEngine",
-    "atlas-offline": "comfy_studio.engines.atlas_offline:AtlasOfflineEngine",
     "audio": "comfy_studio.engines.audio:AudioEngine",
     "blender": "comfy_studio.engines.blender:BlenderEngine",
     "capture3d": "comfy_studio.engines.capture3d:Capture3dEngine",

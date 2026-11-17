@@ -15,14 +15,14 @@ El goal no necesita convertirse en un único contexto gigante. El conductor mant
 
 ## Cómo interpretar backlog.json
 
-Hay 27 paquetes W00–W26. W00–W25 registran el desarrollo integrado; W26 ya tiene una demo GPU SDXL limitada, documentada en `docs/ultra/W26_GPU_RESULTS.md`. D01–D05 completas, holdouts y una repetición en el `main` actual siguen pendientes. Las dependencias son del plan del proyecto, no órdenes de despachar todos los ítems a la vez.
+Hay 26 paquetes activos en el mapa W00–W26. Los paquetes históricos W00–W25 registran el desarrollo integrado; W26 ya tiene una demo GPU SDXL limitada, documentada en `docs/ultra/W26_GPU_RESULTS.md`. D01–D05 completas, holdouts y una repetición en el `main` actual siguen pendientes. Las dependencias son del plan del proyecto, no órdenes de despachar todos los ítems a la vez.
 
 Un paquete grande puede necesitar varias PRs secuenciales. Antes de despacharlo, dividirlo en trabajo independiente/afirmable de 30–90 minutos activos. Si dos pasos dependen de la salida del anterior, mantenerlos en el mismo ítem o en rondas sucesivas. Nunca usar ocho workers sobre el mismo contrato central.
 
 Orden de rondas orientativo, subordinado al DAG real:
 - Baseline → integridad → recursos.
 - Scheduler y contratos; después fábrica de engines/build representativo.
-- Ingesta/evaluación, generación base, atlas y activos geométricos según dependencias.
+- Ingesta/evaluación, generación base y activos geométricos según dependencias.
 - Referencias, cámara, física, movimiento, audio, capas y luz.
 - Cara, memoria/4D y acabado; después UI y director integrado.
 - Investigador y demostraciones finales; release candidato con estado de evidencia explícito. W26 ya ejecutó una demo SDXL; faltan D01–D05, holdouts y repetición en una imagen del `main` actual.

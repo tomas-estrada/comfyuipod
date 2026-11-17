@@ -195,6 +195,7 @@ class ComfyUIEngine:
             engine=self.name,
             verb="run",
             payload={"outputs": outputs, "count": len(outputs)},
+            simulated=bool(getattr(result, "simulated", False)),
         )
 
 

@@ -182,8 +182,8 @@ def test_execution_validated_only_after_a_real_run() -> None:
 def test_probe_never_touches_the_network_or_gpu() -> None:
     """La sonda completa corre sin red y sin GPU: solo stat/which/find_spec."""
     report = probe_all(env={"PATH": "/usr/bin:/bin", "COMFY_DATA_DIR": "/nonexistent"})
-    assert len(report.engines) == 21
-    assert sum(report.counts().values()) == 21
+    assert len(report.engines) == 20
+    assert sum(report.counts().values()) == 20
     assert set(report.counts()) == {
         "ready",
         "weights_missing",
@@ -208,20 +208,25 @@ def test_blender_declares_that_no_binary_is_baked() -> None:
     assert prep.state == "not_installed"
 
 
+def test_llm_server_prep_does_not_claim_binary_is_baked() -> None:
+    spec = build_default_prep_specs()["llm_server"]
+    assert "pesos .gguf no incluidos" in spec.note
+
+
 def test_health_report_exposes_both_views() -> None:
     reg = build_default_registry()
     rep = health_report(reg)
     blob = json.dumps(rep)
     # La vista antigua (cableado) se conserva intacta. El reparto ready/stub
     # depende del entorno (CI activa STUDIO_STUB_*), así que no se fija un
-    # literal: lo invariante es que cubre los 21 motores y ninguno queda
+    # literal: lo invariante es que cubre los 20 motores y ninguno queda
     # sin cablear.
     assert rep["counts"]["unwired"] == 0
-    assert sum(rep["counts"].values()) == len(rep["engines"]) == 21
-    assert rep["counts"]["ready"] + rep["counts"]["stub"] == 21
+    assert sum(rep["counts"].values()) == len(rep["engines"]) == 20
+    assert rep["counts"]["ready"] + rep["counts"]["stub"] == 20
     # La nueva (preparación) llega además por motor y agregada.
     assert "preparedness" in rep
-    assert len(rep["preparedness"]["engines"]) == 21
+    assert len(rep["preparedness"]["engines"]) == 20
     assert all("prep" in e for e in rep["engines"])
     assert '"preparedness"' in blob
 

@@ -213,6 +213,22 @@ def _approve(stack: SimpleNamespace, production_id: str) -> httpx.Response:
     )
 
 
+def _wait_for_terminal(stack: SimpleNamespace, production_id: str) -> dict:
+    deadline = time.monotonic() + 30
+    status = {}
+    while time.monotonic() < deadline:
+        response = httpx.get(
+            f"{stack.base_url}/studio/api/productions/{production_id}/status",
+            timeout=_REQUEST_TIMEOUT_S,
+        )
+        assert response.status_code == 200, response.text
+        status = response.json()
+        if status["phase"] in {"done", "simulated", "failed", "cancelled", "halted"}:
+            return status
+        time.sleep(0.02)
+    raise AssertionError(f"production {production_id} stayed active: {status}")
+
+
 def _count_log(log: list[dict], kind: str) -> int:
     return sum(1 for entry in log if entry.get("kind") == kind)
 
@@ -247,7 +263,7 @@ def test_dos_aprobaciones_simultaneas_reclaman_el_lazo_una_sola_vez(
         responses = [f.result(timeout=60) for f in futures]
 
     # 1) Ninguna llamada muere: 409/500 aquí significaría carrera mal resuelta.
-    assert [r.status_code for r in responses] == [200, 200], [r.text for r in responses]
+    assert all(r.status_code in (200, 202) for r in responses), [r.text for r in responses]
     bodies = [r.json() for r in responses]
 
     # 2) Formas coherentes: quien compite ve la ejecución en curso (executing +
@@ -259,7 +275,7 @@ def test_dos_aprobaciones_simultaneas_reclaman_el_lazo_una_sola_vez(
     finished = [b for b in bodies if not b.get("already_in_progress")]
     assert len(finished) >= 1
     for body in finished:
-        assert body["phase"] in ("simulated", "done"), body
+        assert body["phase"] in ("executing", "simulated", "done"), body
 
     # 3) El checkpoint persistido: UN solo `approved` (el grafo fue reclamado
     #    una vez) y como mucho un `execute` por shot (ningún shot corrió dos veces).
@@ -271,10 +287,16 @@ def test_dos_aprobaciones_simultaneas_reclaman_el_lazo_una_sola_vez(
     assert set(executed) <= set(shot_ids)
 
     # 4) Estado final terminal y honesto (simulación no afirma artefacto).
-    status = httpx.get(
-        f"{live_approve_stack.base_url}/studio/api/productions/{production_id}/status",
-        timeout=_REQUEST_TIMEOUT_S,
-    ).json()
+    deadline = time.monotonic() + 30
+    status = {}
+    while time.monotonic() < deadline:
+        status = httpx.get(
+            f"{live_approve_stack.base_url}/studio/api/productions/{production_id}/status",
+            timeout=_REQUEST_TIMEOUT_S,
+        ).json()
+        if status["phase"] in ("simulated", "done", "failed", "cancelled", "halted"):
+            break
+        time.sleep(0.02)
     assert status["phase"] in ("simulated", "done")
     assert status["complete"] is True
     assert status["storyboard_approved"] is True
@@ -284,7 +306,17 @@ def test_dos_aprobaciones_simultaneas_reclaman_el_lazo_una_sola_vez(
 def test_reaprobar_tras_el_terminal_es_replay_sin_efectos(live_approve_stack) -> None:
     """La tercera aprobación no vuelve a correr el lazo: el log no crece ni un evento."""
     production_id = _create_production(live_approve_stack, "replay idempotente")["production_id"]
-    first = _approve(live_approve_stack, production_id).json()
+    first_response = _approve(live_approve_stack, production_id)
+    assert first_response.status_code in (200, 202)
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        first = httpx.get(
+            f"{live_approve_stack.base_url}/studio/api/productions/{production_id}/status",
+            timeout=_REQUEST_TIMEOUT_S,
+        ).json()
+        if first["phase"] in ("simulated", "done", "failed", "cancelled", "halted"):
+            break
+        time.sleep(0.02)
     assert first["phase"] in ("simulated", "done")
     log_before = _get_plan(live_approve_stack, production_id)["log"]
 
@@ -303,7 +335,9 @@ def test_reaprobar_tras_el_terminal_es_replay_sin_efectos(live_approve_stack) ->
 def test_plan_y_cancelacion_bloqueados_tras_terminar(live_approve_stack) -> None:
     """Cerrada la puerta, no se reabre: editar el plan o cancelar un terminal es 409."""
     production_id = _create_production(live_approve_stack, "guards de estado")["production_id"]
-    _approve(live_approve_stack, production_id)
+    approved = _approve(live_approve_stack, production_id)
+    assert approved.status_code in (200, 202)
+    assert _wait_for_terminal(live_approve_stack, production_id)["phase"] in ("simulated", "done")
 
     patch = httpx.patch(
         f"{live_approve_stack.base_url}/studio/api/productions/{production_id}/plan",
@@ -341,10 +375,14 @@ def test_checkpoint_sqlite_del_servidor_queda_en_una_fila_terminal(
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(_fire), pool.submit(_fire)]
         results = [f.result(timeout=60) for f in futures]
-    assert all(r.status_code == 200 for r in results)
+    assert all(r.status_code in (200, 202) for r in results)
 
     cp = ProductionCheckpointer(db_path=live_approve_stack.checkpoint_db)
+    deadline = time.monotonic() + 30
     state = cp.load(production_id)
+    while state is not None and state.phase == "executing" and time.monotonic() < deadline:
+        time.sleep(0.02)
+        state = cp.load(production_id)
     assert state is not None
     assert state.phase in ("simulated", "done")
     assert state.storyboard_approved is True

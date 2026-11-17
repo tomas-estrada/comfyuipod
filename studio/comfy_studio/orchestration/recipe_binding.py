@@ -25,8 +25,8 @@ from comfy_studio.orchestration.state import ProductionState
 _GEN_KINDS = {"gen", "generate", "t2v", "i2v", "image"}
 
 #: resolución/frames por defecto si el shot no los declara (caso nominal).
-DEFAULT_WIDTH = 1280
-DEFAULT_HEIGHT = 720
+DEFAULT_WIDTH = 832
+DEFAULT_HEIGHT = 480
 DEFAULT_FRAMES = 81
 
 
@@ -77,7 +77,7 @@ def bind_recipes(
                 matching = [
                     recipe
                     for recipe in recipes_for(capability)
-                    if recipe.template_id == layer.template_id
+                    if recipe.runtime_supported and recipe.template_id == layer.template_id
                 ]
                 if not matching:
                     layer.params["recipe_unresolved"] = (
@@ -91,27 +91,20 @@ def bind_recipes(
                         for recipe in matching
                         if recipe.fits_request(width=width, height=height, frames=frames)[0]
                         and recipe.fits_budget(vram_budget_mb)[0]
-                        and (not layer.engine or recipe.engine == layer.engine)
+                        and layer.engine in ("", "comfyui", recipe.engine)
                     ),
                     None,
                 )
-                if selected is None:
-                    selected = next(
-                        (
-                            recipe
-                            for recipe in matching
-                            if recipe.fits_request(width=width, height=height, frames=frames)[0]
-                            and recipe.fits_budget(vram_budget_mb)[0]
-                        ),
-                        None,
-                    )
                 if selected is None:
                     layer.params["recipe_unresolved"] = (
                         "la plantilla explícita excede límites de receta o presupuesto VRAM"
                     )
                     summary["unresolved"] += 1
                     continue
+                layer.params.pop("recipe_unresolved", None)
                 layer.params["recipe_id"] = selected.recipe_id
+                layer.params["recipe_engine"] = selected.engine
+                layer.engine = "comfyui"
                 layer.params["lease_vram_mb"] = int(
                     selected.est_vram_mb * VRAM_SAFETY_FACTOR
                 )
@@ -129,9 +122,14 @@ def bind_recipes(
                 summary["unresolved"] += 1
                 continue
             recipe = result.selected
+            layer.params.pop("recipe_unresolved", None)
             layer.template_id = recipe.template_id
-            layer.engine = recipe.engine
+            # `Layer.engine` dispatches to the runtime adapter registered by the
+            # app. Model-family identity stays in recipe metadata; aliases such
+            # as `wan22` are not adapter names.
+            layer.engine = "comfyui"
             layer.params["recipe_id"] = recipe.recipe_id
+            layer.params["recipe_engine"] = recipe.engine
             # Carry the same conservative estimate used at selection into the
             # runtime lease admission. This is still an estimate, not a GPU
             # measurement; the lease separately caps it to detected hardware.

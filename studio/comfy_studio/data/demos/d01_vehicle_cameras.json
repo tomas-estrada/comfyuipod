@@ -1,16 +1,71 @@
 {
-  "schema": "comfy_studio.demo_fixture.d01.v1",
-  "fixture_kind": "synthetic calibrated landmarks and protected-logo mask",
+  "schema": "comfy_studio.demo_fixture.d01.v2",
+  "fixture_kind": "synthetic calibrated 3D landmarks, camera route and box occluders",
+  "world_up": [0.0, 0.0, 1.0],
   "max_reprojection_rmse_px": 0.01,
-  "cameras": [
-    {"id": "cam_front", "intrinsics": [800, 800, 640, 360], "points": [
-      {"xyz": [0.0, 0.0, 4.0], "uv": [640, 360]},
-      {"xyz": [0.5, 0.25, 5.0], "uv": [720, 400]}
-    ]},
-    {"id": "cam_side_heldout", "intrinsics": [900, 900, 640, 360], "points": [
-      {"xyz": [-0.4, 0.2, 4.0], "uv": [550, 405]},
-      {"xyz": [0.2, -0.2, 3.0], "uv": [700, 300]}
-    ]}
+  "landmarks": [
+    {"id": "hood_front", "xyz": [2.0, 0.0, 0.7]},
+    {"id": "roof_rear", "xyz": [-1.0, 0.0, 1.4]},
+    {"id": "wheel_fl", "xyz": [1.4, -0.9, 0.3]},
+    {"id": "wheel_rr", "xyz": [-1.3, 0.9, 0.3]},
+    {"id": "mirror_left", "xyz": [0.8, -1.0, 1.0]},
+    {"id": "taillight_right", "xyz": [-1.8, 0.8, 0.9]}
+  ],
+  "views": [
+    {"id": "cam_train_a", "split": "train", "position": [5.0, -4.0, 1.5], "look_at": [0.0, 0.0, 0.8],
+     "intrinsics": [800.0, 800.0, 640.0, 360.0], "image_size": [1280, 720],
+     "observations": {
+       "hood_front": [843.997, 316.058],
+       "roof_rear": [570.127, 436.205],
+       "wheel_fl": [668.337, 248.339],
+       "wheel_rr": [629.154, 327.695],
+       "mirror_left": [596.564, 369.74],
+       "taillight_right": [591.972, 389.452]
+     }},
+    {"id": "cam_train_b", "split": "train", "position": [-5.0, -4.0, 1.5], "look_at": [0.0, 0.0, 0.8],
+     "intrinsics": [800.0, 800.0, 640.0, 360.0], "image_size": [1280, 720],
+     "observations": {
+       "hood_front": [764.867, 367.027],
+       "roof_rear": [550.755, 433.086],
+       "wheel_fl": [819.667, 309.958],
+       "wheel_rr": [439.532, 287.712],
+       "mirror_left": [799.591, 384.776],
+       "taillight_right": [386.957, 360.14]
+     }},
+    {"id": "cam_train_c", "split": "train", "position": [0.0, -6.0, 1.6], "look_at": [0.0, 0.0, 0.8],
+     "intrinsics": [800.0, 800.0, 640.0, 360.0], "image_size": [1280, 720],
+     "observations": {
+       "hood_front": [903.752, 346.928],
+       "roof_rear": [506.082, 439.646],
+       "wheel_fl": [854.269, 265.942],
+       "wheel_rr": [491.668, 317.022],
+       "mirror_left": [767.099, 370.499],
+       "taillight_right": [429.254, 383.985]
+     }},
+    {"id": "cam_heldout_a", "split": "heldout", "position": [6.0, 3.0, 1.8], "look_at": [0.0, 0.0, 0.8],
+     "intrinsics": [800.0, 800.0, 640.0, 360.0], "image_size": [1280, 720],
+     "observations": {
+       "hood_front": [497.682, 302.295],
+       "roof_rear": [687.209, 436.566],
+       "wheel_fl": [449.685, 277.572],
+       "wheel_rr": [785.779, 319.785],
+       "mirror_left": [485.585, 379.515],
+       "taillight_right": [791.937, 388.332]
+     }},
+    {"id": "cam_heldout_b", "split": "heldout", "position": [-4.0, 5.0, 2.0], "look_at": [0.0, 0.0, 0.8],
+     "intrinsics": [800.0, 800.0, 640.0, 360.0], "image_size": [1280, 720],
+     "observations": {
+       "hood_front": [479.017, 373.591],
+       "roof_rear": [747.891, 425.583],
+       "wheel_fl": [587.923, 340.298],
+       "wheel_rr": [710.798, 239.558],
+       "mirror_left": [640.0, 404.72],
+       "taillight_right": [791.696, 322.502]
+     }}
+  ],
+  "occluders": [
+    {"id": "wall_a", "min": [0.4, -0.2, 0.0], "max": [0.6, 2.0, 2.0]},
+    {"id": "crate_b", "min": [-2.6, -1.0, 0.0], "max": [-2.2, 0.0, 1.2]}
   ],
   "logo_mask_before": [0, 1, 1, 0, 0, 1],
   "logo_mask_after": [0, 1, 1, 0, 0, 1]

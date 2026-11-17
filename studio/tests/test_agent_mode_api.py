@@ -63,9 +63,9 @@ def test_list_productions_empty_and_filtered_by_project(client: TestClient) -> N
     ids = {p["production_id"] for p in all_prods}
     assert {other, mine} <= ids
 
-    filtered = client.get(
-        "/studio/api/productions", params={"project_id": project_id}
-    ).json()["productions"]
+    filtered = client.get("/studio/api/productions", params={"project_id": project_id}).json()[
+        "productions"
+    ]
     assert [p["production_id"] for p in filtered] == [mine]
     assert filtered[0]["project_id"] == project_id
     assert filtered[0]["phase"] == "awaiting_approval"
@@ -127,17 +127,13 @@ def test_patch_plan_rejects_unknown_shot_and_empty_plan(client: TestClient) -> N
 def test_patch_plan_after_approve_is_409(client: TestClient) -> None:
     pid = _plan(client)
     approved = client.post(f"/studio/api/productions/{pid}/approve")
-    assert approved.status_code == 200
-    resp = client.patch(
-        f"/studio/api/productions/{pid}/plan", json={"idea": "cambio tardío"}
-    )
+    assert approved.status_code == 202
+    resp = client.patch(f"/studio/api/productions/{pid}/plan", json={"idea": "cambio tardío"})
     assert resp.status_code == 409
 
 
 def test_patch_plan_unknown_production_is_404(client: TestClient) -> None:
-    resp = client.patch(
-        "/studio/api/productions/prod_nope/plan", json={"idea": "x"}
-    )
+    resp = client.patch("/studio/api/productions/prod_nope/plan", json={"idea": "x"})
     assert resp.status_code == 404
 
 
@@ -165,7 +161,19 @@ def test_cancel_awaiting_approval_is_terminal_and_blocks_approve(
 
 def test_cancel_after_done_is_409(client: TestClient) -> None:
     pid = _plan(client)
-    assert client.post(f"/studio/api/productions/{pid}/approve").status_code == 200
+    approved = client.post(f"/studio/api/productions/{pid}/approve")
+    assert approved.status_code == 202
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if client.get(f"/studio/api/productions/{pid}/status").json()["phase"] in {
+            "done",
+            "simulated",
+            "failed",
+            "cancelled",
+            "halted",
+        }:
+            break
+        time.sleep(0.01)
     resp = client.post(f"/studio/api/productions/{pid}/cancel")
     assert resp.status_code == 409
 
@@ -218,9 +226,7 @@ def test_cancel_during_execution_reaches_in_flight_graph(tmp_path, monkeypatch) 
     graph.add_node("work", blocking_node)
     graph.set_entry("work")
     graph.set_router(lambda st: END if st.phase == "cancelled" else "work")
-    monkeypatch.setattr(
-        service_module, "build_production_graph", lambda **_kw: graph
-    )
+    monkeypatch.setattr(service_module, "build_production_graph", lambda **_kw: graph)
 
     runner = threading.Thread(target=service.approve_plan, args=(pid,))
     runner.start()

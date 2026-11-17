@@ -7,11 +7,18 @@ Puro CPU.
 from __future__ import annotations
 
 import json
+import math
 import shutil
+import struct
+import subprocess
+import wave
+from collections.abc import Callable
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
+from comfy_studio import demos as demos_module
 from comfy_studio.demos import (
     Demo,
     DemoError,
@@ -91,17 +98,59 @@ def test_demo_serialization_reports_cpu_and_gpu_counts() -> None:
     assert len(data["stages"]) == 5
 
 
-@pytest.mark.parametrize("demo_id", ["D01", "D02", "D03", "D04"])
+@pytest.mark.parametrize("demo_id", ["D02", "D03", "D04"])
 def test_cpu_demo_runner_writes_hashed_fixture_evidence(tmp_path: Path, demo_id: str) -> None:
     result = run_demo(demo_id, tmp_path)
     assert result["result"] == "cpu_fixture_checks_passed"
     manifest_path = Path(result["manifest"])
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["inputs"][0]["sha256"]
-    assert manifest["claim_scope"].startswith("fixture consistency")
+    if demo_id == "D02":
+        assert manifest["claim_scope"].startswith("synthetic CPU pixel/audio fixture")
+    elif demo_id == "D03":
+        assert manifest["claim_scope"].startswith("synthetic CPU kinematics")
+        report = json.loads(
+            (manifest_path.parent / "D03_articulated_measurement.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["evidence_scope"] == "synthetic_cpu_only"
+        assert report["gpu_used"] is False
+        assert report["fk_vs_ground_truth"]["transforms_match_ground_truth"] is True
+        assert report["heldout_coverage_matches_ground_truth"] is True
+        assert report["variation"]["material_variation_present"] is True
+    else:
+        assert manifest["claim_scope"].startswith("fixture consistency")
     assert all(stage["status"] == ("pending_gpu" if stage["neural"] else "done")
                for stage in manifest["stages"])
     assert all(stage["pending_reason"] for stage in manifest["stages"] if stage["neural"])
+
+
+def test_d03_independent_ground_truth_rejects_wrong_joint_transform() -> None:
+    demo = next(item for item in demo_catalog() if item.demo_id == "D03")
+    _, fixture = demos_module._load_fixture(demo)
+    fixture["heldout_ground_truth"]["part_transforms"]["lid"]["translation"][0] += 0.01
+
+    checks = demos_module._check_d03_articulated_product(fixture)
+
+    assert checks["fk_transforms_match_ground_truth"] is False
+
+
+def test_demo_resume_rebuilds_manifest_missing_result(
+    tmp_path: Path,
+) -> None:
+    first = run_demo("D02", tmp_path)
+    manifest_path = Path(first["manifest"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["result"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    resumed = run_demo("D02", tmp_path, resume=True)
+
+    assert resumed["result"] == "cpu_fixture_checks_passed"
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["result"] == (
+        "cpu_fixture_checks_passed"
+    )
 
 
 def test_pending_gpu_stage_requires_explanation() -> None:
@@ -130,7 +179,7 @@ def test_d05_runner_encodes_and_probes_exact_4k_fixture(tmp_path: Path) -> None:
     assert result["checks"]["budget"]["within_budget"] is True
     assert result["checks"]["brief_to_edl"]["cuts"] >= 1
     assert result["checks"]["editable_roundtrip"]["title_edit_preserved_clips"] is True
-    assert result["checks"]["editable_roundtrip"]["credits_verified"] is True
+    assert result["checks"]["editable_roundtrip"]["credit_metadata_retained"] is True
     assert result["checks"]["ffmpeg_encode"]["dimensions_verified"] == {
         "16:9": True,
         "9:16": True,
@@ -144,6 +193,10 @@ def test_d05_runner_encodes_and_probes_exact_4k_fixture(tmp_path: Path) -> None:
         "9:16": True,
     }
     manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    fingerprint = manifest["execution_fingerprint"]
+    assert len(fingerprint["runner_sha256"]) == 64
+    assert fingerprint["python_version"]
+    assert set(fingerprint["tool_versions"]) == {"ffmpeg", "ffprobe"}
     assert manifest["checks"]["ffmpeg_encode"]["quality_claim"] is False
     assert manifest["checkpoints"][-1]["status"] == "done"
     inventory = json.loads(
@@ -169,18 +222,77 @@ def test_d05_runner_encodes_and_probes_exact_4k_fixture(tmp_path: Path) -> None:
     assert resumed["resumed"] is True
 
 
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="real FFmpeg/ffprobe binaries required",
+)
+def test_d05_accepts_project_owned_source_video_and_user_evidence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    assert ffmpeg is not None
+    source = tmp_path / "mi-video.mp4"
+    completed = subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+         "testsrc2=size=96x64:rate=8:duration=1", "-an", "-c:v", "libx264",
+         "-pix_fmt", "yuv420p", str(source)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    source_sha = demos_module._sha256(source)
+
+    assert demos_module.main([
+        "--demo", "D05", "--output-root", str(tmp_path / "runs"),
+        "--source-video", str(source), "--brief", "amanecer en el bosque",
+        "--transcript", "amanecer en el bosque", "--transcript-start", "0",
+        "--transcript-end", "1", "--source-license", "CC BY 4.0, footage by test author",
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["result"] == "cpu_real_input_flow_completed"
+    assert result["checks"]["asset_inventory"]["source_sha256"] == source_sha
+    assert result["checks"]["ffmpeg_encode"]["real_project_source"] is True
+    assert result["checks"]["brief_to_edl"]["evidence_mode"] == "user-provided transcript"
+    assert result["checks"]["editable_roundtrip"]["credit_metadata_retained"] is True
+    assert result["checks"]["editable_roundtrip"]["rights_verified"] is False
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    source_input = next(row for row in manifest["inputs"] if row["kind"] == "project_source_video")
+    assert source_input["sha256"] == source_sha
+    assert source_input["path"] == source.name
+    assert not Path(source_input["path"]).is_absolute()
+    inventory = json.loads(
+        Path(result["manifest"]).parent.joinpath("D05_asset_inventory.json").read_text()
+    )
+    assert inventory["mode"] == "user_project_source"
+    assert (
+        inventory["source"]["caller_asserted_rights_label"]
+        == "CC BY 4.0, footage by test author"
+    )
+    assert inventory["source"]["rights_verified"] is False
+    with ZipFile(Path(result["manifest"]).parent / "D05_delivery_package.zip") as archive:
+        delivery = json.loads(archive.read("delivery-manifest.json"))
+    assert delivery["rights_assertion"] == {
+        "caller_asserted_label": "CC BY 4.0, footage by test author",
+        "rights_verified": False,
+    }
+    project = json.loads(
+        Path(result["manifest"]).parent.joinpath("editable_project.json").read_text()
+    )
+    assert project["clips"][0]["license"] == "CC BY 4.0, footage by test author"
+    assert project["clips"][0]["source_asset_id"]
+
+
 def test_runner_rejects_unknown_demo(tmp_path: Path) -> None:
     with pytest.raises(DemoError, match="desconocida"):
         run_demo("D99", tmp_path)
 
 
 def test_resume_reuses_verified_run_and_cleanup_is_scoped(tmp_path: Path) -> None:
-    first = run_demo("D01", tmp_path)
-    resumed = run_demo("D01", tmp_path, resume=True)
+    first = run_demo("D02", tmp_path)
+    resumed = run_demo("D02", tmp_path, resume=True)
     assert resumed["resumed"] is True
     assert resumed["manifest"] == first["manifest"]
-    assert clean_demo_output("D01", tmp_path) is True
-    assert clean_demo_output("D01", tmp_path) is False
+    assert clean_demo_output("D02", tmp_path) is True
+    assert clean_demo_output("D02", tmp_path) is False
     assert not Path(first["manifest"]).exists()
 
 
@@ -191,9 +303,9 @@ def test_cleanup_refuses_symlinked_demo_directory(tmp_path: Path, symlink_or_ski
     protected.write_text("keep", encoding="utf-8")
     output_root = tmp_path / "runs"
     output_root.mkdir()
-    symlink_or_skip(output_root / "D01", outside)
+    symlink_or_skip(output_root / "D02", outside)
     with pytest.raises(DemoError, match="symlink"):
-        clean_demo_output("D01", output_root)
+        clean_demo_output("D02", output_root)
     assert protected.read_text(encoding="utf-8") == "keep"
 
 
@@ -204,9 +316,9 @@ def test_runner_refuses_symlinked_demo_directory(
     outside.mkdir()
     output_root = tmp_path / "runs"
     output_root.mkdir()
-    symlink_or_skip(output_root / "D01", outside)
+    symlink_or_skip(output_root / "D02", outside)
     with pytest.raises(DemoError, match="output symlink"):
-        run_demo("D01", output_root)
+        run_demo("D02", output_root)
     assert list(outside.iterdir()) == []
 
 
@@ -216,10 +328,10 @@ def test_runner_refuses_symlinked_manifest_and_d05_artifacts(
     outside = tmp_path / "protected.json"
     outside.write_text("protected", encoding="utf-8")
     output_root = tmp_path / "runs"
-    (output_root / "D01").mkdir(parents=True)
-    symlink_or_skip(output_root / "D01" / "run_manifest.json", outside, directory=False)
+    (output_root / "D02").mkdir(parents=True)
+    symlink_or_skip(output_root / "D02" / "run_manifest.json", outside, directory=False)
     with pytest.raises(DemoError, match="output symlink"):
-        run_demo("D01", output_root)
+        run_demo("D02", output_root)
     assert outside.read_text(encoding="utf-8") == "protected"
 
     (output_root / "D05").mkdir()
@@ -227,4 +339,400 @@ def test_runner_refuses_symlinked_manifest_and_d05_artifacts(
     with pytest.raises(DemoError, match="output symlink"):
         run_demo("D05", output_root)
     assert outside.read_text(encoding="utf-8") == "protected"
+
+
+@pytest.mark.parametrize(
+    ("demo_id", "artifact_name"),
+    [("D02", "run_manifest.json"), ("D05", "D05_master_16x9.mp4")],
+)
+def test_runner_refuses_hardlinked_output_files(
+    tmp_path: Path, demo_id: str, artifact_name: str
+) -> None:
+    outside = tmp_path / "protected.json"
+    outside.write_text("protected", encoding="utf-8")
+    output_root = tmp_path / "runs"
+    demo_dir = output_root / demo_id
+    demo_dir.mkdir(parents=True)
+    try:
+        (demo_dir / artifact_name).hardlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"hardlinks unavailable: {exc}")
+
+    with pytest.raises(DemoError, match="hard-linked output"):
+        demos_module._prepare_demo_output(demo_id, output_root)
+    assert outside.read_text(encoding="utf-8") == "protected"
+
+
+def test_d05_resume_rejects_empty_artifact_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+
+    def fake_render(data: dict[str, object], out_dir: Path) -> tuple[Path, dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        names = (
+            "D05_delivery_package.zip",
+            "D05_master_16x9.mp4",
+            "D05_master_9x16.mp4",
+            "D05_asset_inventory.json",
+            "editable_project.json",
+        )
+        for name in names:
+            (out_dir / name).write_bytes(name.encode("utf-8"))
+        return out_dir / names[0], {}
+
+    monkeypatch.setattr(demos_module, "_render_d05", fake_render)
+    first = run_demo("D05", tmp_path)
+    manifest_path = Path(first["manifest"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"] = []
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    resumed = run_demo("D05", tmp_path, resume=True)
+
+    assert calls == 2
+    assert resumed["resumed"] is False
+    assert len(resumed["artifacts"]) == 5
+
+
+def test_resume_rejects_changed_execution_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_fingerprint = {"runner_sha256": "a" * 64, "tools": {}}
+    current_fingerprint = {"runner_sha256": "b" * 64, "tools": {}}
+    fingerprints = [first_fingerprint, current_fingerprint]
+
+    def fingerprint(demo_id: str) -> dict[str, object]:
+        return fingerprints.pop(0)
+
+    monkeypatch.setattr(demos_module, "_execution_fingerprint", fingerprint)
+    first = run_demo("D02", tmp_path)
+    resumed = run_demo("D02", tmp_path, resume=True)
+
+    assert resumed["resumed"] is False
+    manifest = json.loads(Path(first["manifest"]).read_text(encoding="utf-8"))
+    assert manifest["execution_fingerprint"] == current_fingerprint
+
+
+_D02_INVARIANTS = (
+    "actor_removed",
+    "shadow_removed",
+    "reflection_removed",
+    "intact_pixels_invariant",
+    "actor_sound_removed",
+    "ambient_sound_preserved",
+)
+
+
+def _d02_fixture_data() -> dict:
+    fixture = demos_module.FIXTURE_DIR / "d02_causal_layers.json"
+    return json.loads(fixture.read_text(encoding="utf-8"))
+
+
+def test_d02_checker_reports_each_causal_invariant_separately(tmp_path: Path) -> None:
+    result = run_demo("D02", tmp_path)
+    checks = result["checks"]
+    assert all(checks[invariant] is True for invariant in _D02_INVARIANTS)
+    assert checks["pixels_checked"] == 8
+    assert checks["sound_events_checked"] == 4
+    d02 = next(demo for demo in demo_catalog() if demo.demo_id == "D02")
+    assert list(d02.expected) == list(_D02_INVARIANTS)
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    assert all(name in manifest["checks"] for name in d02.expected)
+
+
+def test_d02_writes_measurement_report_artifact(tmp_path: Path) -> None:
+    result = run_demo("D02", tmp_path)
+    artifacts = {artifact["path"]: artifact for artifact in result["artifacts"]}
+    report_name = demos_module._D02_MEASUREMENT_ARTIFACT
+    assert report_name in artifacts
+    report_path = Path(result["manifest"]).parent / report_name
+    assert report_path.is_file()
+    assert artifacts[report_name]["bytes"] == report_path.stat().st_size
+    assert artifacts[report_name]["sha256"] == demos_module._sha256(report_path)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["schema"] == "comfy_studio.d02_measurement.v2"
+    assert report["evidence_scope"] == "synthetic_cpu_only"
+    assert report["gpu_used"] is False
+    for name in (
+        "D02_actor_before.png",
+        "D02_actor_after.png",
+        "D02_audio_before.wav",
+        "D02_audio_after.wav",
+    ):
+        assert report["media"]["artifacts"][name] == {
+            "sha256": artifacts[name]["sha256"],
+            "bytes": artifacts[name]["bytes"],
+        }
+    assert report["fixture_sha256"] == demos_module._sha256(
+        demos_module.FIXTURE_DIR / "d02_causal_layers.json"
+    )
+    assert report["seed"] == report["checks"]["heldout"]["seed"]
+    assert report["checks"]["fixture"]["pixels_checked"] == 8
+    assert report["checks"]["fixture"]["sound_events_checked"] == 4
+    assert report["checks"]["heldout"]["pixels_checked"] == 32
+    assert report["checks"]["heldout"]["sound_events_checked"] == 4
+    for section in ("fixture", "heldout"):
+        invariants = report["checks"][section]["invariants"]
+        assert invariants
+        assert all(value is True for value in invariants.values())
+
+
+def test_d02_materializes_and_measures_actual_png_and_pcm_outputs(tmp_path: Path) -> None:
+    result = run_demo("D02", tmp_path)
+    artifact_map = {item["path"]: item for item in result["artifacts"]}
+    media_names = {
+        "D02_actor_before.png",
+        "D02_actor_after.png",
+        "D02_audio_before.wav",
+        "D02_audio_after.wav",
+    }
+    assert media_names <= artifact_map.keys()
+
+    from PIL import Image
+
+    out_dir = Path(result["manifest"]).parent
+    fixture = _d02_fixture_data()
+    with Image.open(out_dir / "D02_actor_before.png") as before_image:
+        before_image.load()
+        before_pixels = list(before_image.convert("RGB").getdata())
+        before_size = before_image.size
+    with Image.open(out_dir / "D02_actor_after.png") as after_image:
+        after_image.load()
+        after_pixels = list(after_image.convert("RGB").getdata())
+        after_size = after_image.size
+    assert before_size == after_size == (fixture["frame_width"], fixture["frame_height"])
+    assert len(before_pixels) == len(after_pixels) == fixture["pixels"]
+    for index in range(fixture["pixels"]):
+        assert before_pixels[index] == (fixture["before"][index],) * 3
+        assert after_pixels[index] == (fixture["after"][index],) * 3
+    for region_name in ("actor_region", "shadow_region", "reflection_region"):
+        region = fixture[region_name]
+        assert all(before_pixels[i] != after_pixels[i] for i, active in enumerate(region) if active)
+    assert all(
+        before_pixels[i] == after_pixels[i]
+        for i, active in enumerate(fixture["intact_region"])
+        if active
+    )
+
+    def read_pcm(name: str) -> tuple[int, list[int]]:
+        with wave.open(str(out_dir / name), "rb") as stream:
+            assert stream.getnchannels() == 1
+            assert stream.getsampwidth() == 2
+            sample_rate = stream.getframerate()
+            raw = stream.readframes(stream.getnframes())
+        return sample_rate, [item[0] for item in struct.iter_unpack("<h", raw)]
+
+    before_rate, before_samples = read_pcm("D02_audio_before.wav")
+    after_rate, after_samples = read_pcm("D02_audio_after.wav")
+    audio = fixture["audio"]
+    sample_rate = audio["sample_rate_hz"]
+    sample_count = round(audio["duration_s"] * sample_rate)
+
+    def expected_samples(presence_key: str, cause: str | None = None) -> list[int]:
+        result_samples = []
+        for index in range(sample_count):
+            time_s = index / sample_rate
+            value = sum(
+                event["amplitude"] * math.sin(2 * math.pi * event["frequency_hz"] * time_s)
+                for event in fixture["sound_events"]
+                if event[presence_key]
+                and (cause is None or event["caused_by"] == cause)
+                and event["start_s"] <= time_s < event["end_s"]
+            )
+            result_samples.append(round(value))
+        return result_samples
+
+    assert before_rate == after_rate == sample_rate
+    assert len(before_samples) == len(after_samples) == sample_count
+    assert before_samples == expected_samples("present_before")
+    assert after_samples == expected_samples("present_after")
+    actor_only = expected_samples("present_before", cause="actor")
+    assert sum(sample * sample for sample in actor_only) > 0
+    assert before_samples != after_samples
+
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    report = json.loads(
+        (out_dir / demos_module._D02_MEASUREMENT_ARTIFACT).read_text(encoding="utf-8")
+    )
+    for name in media_names:
+        file_bytes = (out_dir / name).read_bytes()
+        assert artifact_map[name]["sha256"] == demos_module._sha256(out_dir / name)
+        assert artifact_map[name]["bytes"] == len(file_bytes)
+        assert any(item["path"] == name for item in manifest["artifacts"])
+    assert report["evidence_scope"] == "synthetic_cpu_only"
+    assert report["gpu_used"] is False
+    assert report["media"]["image"]["intact_deviation_pixels"] == 0
+    assert report["media"]["audio"]["ambient_preservation_rmse"] == 0.0
+    assert report["media"]["audio"]["actor_removed_rms"] > 0
+
+
+def test_d02_resume_rejects_a_tampered_media_artifact(tmp_path: Path) -> None:
+    first = run_demo("D02", tmp_path)
+    out_dir = Path(first["manifest"]).parent
+    media_path = out_dir / "D02_audio_after.wav"
+    media_path.write_bytes(media_path.read_bytes() + b"tamper")
+
+    resumed = run_demo("D02", tmp_path, resume=True)
+
+    assert resumed["resumed"] is False
+    artifact = next(item for item in resumed["artifacts"] if item["path"] == media_path.name)
+    assert artifact["sha256"] == demos_module._sha256(media_path)
+    assert media_path.read_bytes().endswith(b"tamper") is False
+
+
+def _d02_mutations() -> dict[str, Callable[[dict], None]]:
+    """Each mutation breaks exactly one invariant of the valid fixture."""
+
+    def actor(data: dict) -> None:
+        data["after"][1] = data["background"][1] + 1
+
+    def shadow(data: dict) -> None:
+        data["after"][3] = data["background"][3] + 1
+
+    def reflection(data: dict) -> None:
+        data["after"][4] = data["background"][4] + 1
+
+    def intact(data: dict) -> None:
+        data["after"][0] = data["before"][0] + 7
+
+    def actor_sound(data: dict) -> None:
+        data["sound_events"][0]["present_after"] = True
+
+    def ambient_sound(data: dict) -> None:
+        data["sound_events"][2]["present_after"] = False
+
+    return {
+        "actor_removed": actor,
+        "shadow_removed": shadow,
+        "reflection_removed": reflection,
+        "intact_pixels_invariant": intact,
+        "actor_sound_removed": actor_sound,
+        "ambient_sound_preserved": ambient_sound,
+    }
+
+
+@pytest.mark.parametrize("invariant", list(_D02_INVARIANTS))
+def test_d02_mutation_reports_only_its_invariant_false(invariant: str) -> None:
+    data = _d02_fixture_data()
+    _d02_mutations()[invariant](data)
+    checks = demos_module._check_d02_causal_layers(data)
+    assert checks[invariant] is False
+    assert all(checks[name] is True for name in _D02_INVARIANTS if name != invariant)
+
+
+def test_d02_requires_at_least_one_actor_caused_sound_event() -> None:
+    data = _d02_fixture_data()
+    data["sound_events"] = [
+        event for event in data["sound_events"] if event["caused_by"] != "actor"
+    ]
+    checks = demos_module._check_d02_causal_layers(data)
+    assert checks["actor_sound_removed"] is False
+
+
+def _d02_malformations() -> dict[str, Callable[[dict], None]]:
+    """Each malformation must be rejected with DemoError, not silently checked."""
+
+    def missing_pixels(data: dict) -> None:
+        del data["pixels"]
+
+    def short_before(data: dict) -> None:
+        data["before"] = data["before"][:-1]
+
+    def bool_pixel(data: dict) -> None:
+        data["background"] = [True, *data["background"][1:]]
+
+    def out_of_range_pixel(data: dict) -> None:
+        data["after"][2] = 256
+
+    def integer_region(data: dict) -> None:
+        data["shadow_region"] = [int(value) for value in data["shadow_region"]]
+
+    def empty_region(data: dict) -> None:
+        data["reflection_region"] = [False] * data["pixels"]
+
+    def overlapping_regions(data: dict) -> None:
+        data["intact_region"][1] = True
+
+    def occludes_nothing(data: dict) -> None:
+        data["before"][3] = data["background"][3]
+
+    def integer_sound_presence(data: dict) -> None:
+        data["sound_events"][0]["present_before"] = 1
+
+    def unknown_cause(data: dict) -> None:
+        data["sound_events"][0]["caused_by"] = "prop"
+
+    def duplicate_sound_id(data: dict) -> None:
+        data["sound_events"].append(dict(data["sound_events"][0]))
+
+    def empty_sound_events(data: dict) -> None:
+        data["sound_events"] = []
+
+    def zero_length_sound(data: dict) -> None:
+        data["sound_events"][1]["end_s"] = data["sound_events"][1]["start_s"]
+
+    def mismatched_image_dimensions(data: dict) -> None:
+        data["frame_width"] += 1
+
+    def excessive_sample_count(data: dict) -> None:
+        data["audio"]["duration_s"] = 30
+        data["audio"]["sample_rate_hz"] = 48000
+
+    def out_of_range_audio_frequency(data: dict) -> None:
+        data["sound_events"][0]["frequency_hz"] = 4000
+
+    def too_many_sound_events(data: dict) -> None:
+        data["sound_events"] = data["sound_events"] * 33
+
+    return {
+        "missing_pixels": missing_pixels,
+        "short_before": short_before,
+        "bool_pixel": bool_pixel,
+        "out_of_range_pixel": out_of_range_pixel,
+        "integer_region": integer_region,
+        "empty_region": empty_region,
+        "overlapping_regions": overlapping_regions,
+        "occludes_nothing": occludes_nothing,
+        "integer_sound_presence": integer_sound_presence,
+        "unknown_cause": unknown_cause,
+        "duplicate_sound_id": duplicate_sound_id,
+        "empty_sound_events": empty_sound_events,
+        "zero_length_sound": zero_length_sound,
+        "mismatched_image_dimensions": mismatched_image_dimensions,
+        "excessive_sample_count": excessive_sample_count,
+        "out_of_range_audio_frequency": out_of_range_audio_frequency,
+        "too_many_sound_events": too_many_sound_events,
+    }
+
+
+@pytest.mark.parametrize("malformation", sorted(_d02_malformations()))
+def test_d02_malformed_fixtures_raise_demo_error(malformation: str) -> None:
+    data = _d02_fixture_data()
+    _d02_malformations()[malformation](data)
+    with pytest.raises(DemoError, match="D02"):
+        demos_module._check_d02_causal_layers(data)
+
+
+def test_d02_runner_rejects_broken_invariant_and_malformed_buffer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = demos_module.FIXTURE_DIR / "d02_causal_layers.json"
+
+    broken = _d02_fixture_data()
+    broken["after"][1] = broken["background"][1] + 1  # el actor no se elimina
+    monkeypatch.setattr(
+        demos_module, "_load_fixture", lambda demo: (fixture, broken)
+    )
+    with pytest.raises(DemoError, match="failed fixture checks: .*actor_removed"):
+        run_demo("D02", tmp_path)
+
+    malformed = _d02_fixture_data()
+    malformed["before"] = malformed["before"][:-1]
+    monkeypatch.setattr(
+        demos_module, "_load_fixture", lambda demo: (fixture, malformed)
+    )
+    with pytest.raises(DemoError, match="buffer before malformado"):
+        run_demo("D02", tmp_path)
 

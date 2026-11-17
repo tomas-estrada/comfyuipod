@@ -66,6 +66,21 @@ def _next_replan_tier(current: ReplanTier | None) -> ReplanTier | None:
     return None
 
 
+class ProductionTerminalReason(StrEnum):
+    """Razón terminal tipada de la PRODUCCIÓN entera (legible por máquina, P1).
+
+    Misma doctrina que `PlanTerminalReason` y `EngineReason`: una producción que
+    no puede terminarse acaba en `failed` con una razón tipada persistida, no
+    con un `done` ficticio ni con un `max_steps` inespecífico. A diferencia del
+    motivo del plan (que solo describe el nodo `plan`), esta razón cubre el
+    ciclo completo (ejecutar/evaluar/ensamblar) y VIAJA en el checkpoint.
+    """
+
+    #: el presupuesto REPORTADO de la misión está agotado y no queda escalón ni
+    #: receta factible que comprar: ningún intento adicional puede producir nada.
+    BUDGET_EXHAUSTED = "budget_exhausted"
+
+
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
@@ -74,7 +89,7 @@ def _new_id(prefix: str) -> str:
 #: la forma persistida, y `migrate_state_dict` adapta los checkpoints viejos al
 #: cargarlos, para que un corte a mitad de un despliegue previo se reanude en vez
 #: de romper (plan Ultra, W04: «extender schemas con migraciones»).
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def migrate_state_dict(data: dict[str, Any]) -> dict[str, Any]:
@@ -91,6 +106,29 @@ def migrate_state_dict(data: dict[str, Any]) -> dict[str, Any]:
         # viejo simplemente no tiene lineage todavía; se inicia vacío.
         migrated.setdefault("lineage", {"nodes": []})
         version = 2
+    if version < 3:
+        # v2 -> v3: spend de misión/terminal reason y marcador persistente de
+        # agotamiento. Los checkpoints viejos son conservadores: gasto global
+        # desconocido (service conserva el agregado por shot) y ningún fallo de
+        # shot se presume causado por presupuesto.
+        migrated.setdefault("cost_spent_usd", 0.0)
+        migrated.setdefault("spend_reported", False)
+        migrated.setdefault("terminal_reason", None)
+        sequences = migrated.get("sequences", [])
+        if isinstance(sequences, list):
+            for sequence in sequences:
+                if not isinstance(sequence, dict):
+                    continue
+                shots = sequence.get("shots", [])
+                if not isinstance(shots, list):
+                    continue
+                for shot in shots:
+                    if not isinstance(shot, dict):
+                        continue
+                    shot.setdefault("cost_spent_usd", 0.0)
+                    shot.setdefault("spend_reported", False)
+                    shot.setdefault("budget_exhausted", False)
+        version = 3
     migrated["schema_version"] = version
     return migrated
 
@@ -136,6 +174,12 @@ class Shot:
     #: False => `cost_spent_usd` es un límite inferior vacío (0.0), no una
     #: medición: la superficie de estado lo expone como gasto desconocido (P1).
     spend_reported: bool = False
+    #: True si este shot agotó su presupuesto REMANENTE y con él su escalera de
+    #: replan completa (local→template→global): ninguna receta siguiente era
+    #: factible. Marca PERSISTIDA en el checkpoint que distingue este fallo de
+    #: uno de calidad — el ensamblador la usa para NO maquillar una producción
+    #: sin clips como `done` (termina `failed`/`budget_exhausted`, P1).
+    budget_exhausted: bool = False
     output_path: str | None = None
     error: str | None = None
 
@@ -182,6 +226,17 @@ class ProductionState:
     phase: str = "planning"
     #: cost cap total de la producción (se reparte por shot).
     cost_cap_usd: float = 0.0
+    #: gasto REPORTADO acumulado de la MISIÓN entera (todos los shots, todos los
+    #: escalones de replan) en USD. Lo mantiene en sincronía el executor cuando
+    #: un runner reporta `cost_usd`; viaja en el checkpoint, así que el
+    #: presupuesto de la misión es un hecho persistido, no un cálculo de API.
+    #: Si ningún runner reporta gasto queda 0.0 con `spend_reported=False`.
+    cost_spent_usd: float = 0.0
+    #: True si algún runner reportó `cost_usd` en algún intento de la misión.
+    spend_reported: bool = False
+    #: razón terminal tipada persistida (p.ej. 'budget_exhausted'); None hasta
+    #: que la producción termina en `failed` por una causa tipada.
+    terminal_reason: str | None = None
     #: ¿el borrador barato pasó la StoryboardGate humana?
     storyboard_approved: bool = False
     #: ruta del reel final ensamblado.
@@ -225,6 +280,18 @@ class ProductionState:
         self.log.append(entry)
         self.updated_at = time.time()
 
+    def mark_terminal_failure(self, reason: str, **fields: Any) -> None:
+        """Termina la producción en `failed` con razón terminal tipada PERSISTIDA.
+
+        La razón viaja en el checkpoint (`terminal_reason`), así que un reinicio
+        del pod después del corte no confunde el estado terminal con un `done`
+        ficticio: el status surface la reporta tal cual. Idempotente en cuanto a
+        la fase; cada invocación anota su entrada en la bitácora.
+        """
+        self.phase = "failed"
+        self.terminal_reason = reason
+        self.record("production_terminal", reason=reason, **fields)
+
     # -- serialización (checkpointer / API) ----------------------------------
 
     def to_dict(self) -> dict[str, Any]:
@@ -235,6 +302,9 @@ class ProductionState:
             "idea": self.idea,
             "phase": self.phase,
             "cost_cap_usd": self.cost_cap_usd,
+            "cost_spent_usd": self.cost_spent_usd,
+            "spend_reported": self.spend_reported,
+            "terminal_reason": self.terminal_reason,
             "storyboard_approved": self.storyboard_approved,
             "final_output_path": self.final_output_path,
             "created_at": self.created_at,
@@ -262,6 +332,7 @@ class ProductionState:
                             "cost_cap_usd": sh.cost_cap_usd,
                             "cost_spent_usd": sh.cost_spent_usd,
                             "spend_reported": sh.spend_reported,
+                            "budget_exhausted": sh.budget_exhausted,
                             "output_path": sh.output_path,
                             "error": sh.error,
                             "layers": [
@@ -295,6 +366,9 @@ class ProductionState:
             id=data.get("id") or _new_id("prod"),
             phase=data.get("phase", "planning"),
             cost_cap_usd=float(data.get("cost_cap_usd", 0.0)),
+            cost_spent_usd=float(data.get("cost_spent_usd", 0.0)),
+            spend_reported=bool(data.get("spend_reported", False)),
+            terminal_reason=data.get("terminal_reason"),
             storyboard_approved=bool(data.get("storyboard_approved", False)),
             final_output_path=data.get("final_output_path"),
             created_at=float(data.get("created_at", time.time())),
@@ -323,6 +397,7 @@ class ProductionState:
                     cost_cap_usd=float(sh_d.get("cost_cap_usd", 0.0)),
                     cost_spent_usd=float(sh_d.get("cost_spent_usd", 0.0)),
                     spend_reported=bool(sh_d.get("spend_reported", False)),
+                    budget_exhausted=bool(sh_d.get("budget_exhausted", False)),
                     output_path=sh_d.get("output_path"),
                     error=sh_d.get("error"),
                 )

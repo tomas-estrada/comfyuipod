@@ -25,6 +25,7 @@ from pathlib import Path
 
 from comfy_studio.blender import (
     FAILURE_INVALID_OUTPUT,
+    BlenderCameraKeyframe,
     BlenderCameraView,
     BlenderExportSpec,
     BlenderRenderSpec,
@@ -402,6 +403,15 @@ class BlenderEngine(Engine):
                     light_rig=view.get("light_rig"),
                 )
                 for view in job.get("camera_views", [])
+            ),
+            camera_trajectory=tuple(
+                BlenderCameraKeyframe(
+                    frame=keyframe["frame"],
+                    position=tuple(float(value) for value in keyframe["position"]),
+                    target=tuple(float(value) for value in keyframe["target"]),
+                    fov_deg=float(keyframe.get("fov_deg", 50.0)),
+                )
+                for keyframe in job.get("camera_trajectory", [])
             ),
             asset_transform=tuple(
                 tuple(float(value) for value in row)

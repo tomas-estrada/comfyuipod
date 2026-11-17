@@ -34,6 +34,8 @@ EXPECTED_M2_TEMPLATE_IDS: tuple[str, ...] = (
     "latentsync",
     "minimax_r2v",
     "wan_animate_cont",
+    "qwen_image_layered",
+    "ace_step_music",
 )
 
 # Mapa de parámetro *_asset_id -> parámetro de archivo en nodo ComfyUI (*_input)
@@ -67,6 +69,17 @@ MINIMAX_WEIGHTS_UNAVAILABLE = (
     "y LoRA turbo), que no están presentes en este pod. Descárgalos con "
     "STUDIO_INCLUDE_MINIMAX=1 y reinicia el pod."
 )
+QWEN_LAYERED_TEMPLATE_IDS: frozenset[str] = frozenset({"qwen_image_layered"})
+QWEN_LAYERED_WEIGHTS_UNAVAILABLE = (
+    "La plantilla 'qwen_image_layered' requiere el grupo Qwen-Image-Layered FP8 "
+    "(30,172,079,117 bytes). Descárgalo mediante STUDIO_INCLUDE_QWEN_LAYERED=1."
+)
+MUSIC_TEMPLATE_IDS: frozenset[str] = frozenset({"ace_step_music"})
+MUSIC_WEIGHTS_UNAVAILABLE = (
+    "La plantilla 'ace_step_music' requiere el checkpoint ACE-Step 1.5 Turbo AIO "
+    "(10,025,478,736 bytes), que no está presente en este pod. Descárgalo con "
+    "STUDIO_INCLUDE_MUSIC=1 y reinicia el pod."
+)
 ANIMATE_WEIGHTS_UNAVAILABLE = (
     "La plantilla 'wan_animate' requiere los pesos de Wan 2.2 Animate 14B "
     "(wan2.2_animate_14B_int8_convrot.safetensors, +17.15 GiB), que no están "
@@ -89,6 +102,14 @@ def template_requires_minimax(tpl: dict[str, Any]) -> bool:
     return str(tpl.get("id")) in MINIMAX_TEMPLATE_IDS
 
 
+def template_requires_qwen_layered(tpl: dict[str, Any]) -> bool:
+    return str(tpl.get("id")) in QWEN_LAYERED_TEMPLATE_IDS
+
+
+def template_requires_music(tpl: dict[str, Any]) -> bool:
+    return str(tpl.get("id")) in MUSIC_TEMPLATE_IDS
+
+
 def template_weights_unavailable_reason(tpl: dict[str, Any]) -> str | None:
     """Razón de indisponibilidad por pesos opt-in (3D/Animate/MiniMax), si aplica."""
     if template_requires_minimax(tpl):
@@ -97,6 +118,10 @@ def template_weights_unavailable_reason(tpl: dict[str, Any]) -> str | None:
         return ANIMATE_WEIGHTS_UNAVAILABLE
     if template_requires_three_d(tpl):
         return THREE_D_WEIGHTS_UNAVAILABLE
+    if template_requires_qwen_layered(tpl):
+        return QWEN_LAYERED_WEIGHTS_UNAVAILABLE
+    if template_requires_music(tpl):
+        return MUSIC_WEIGHTS_UNAVAILABLE
     return None
 
 
@@ -148,6 +173,8 @@ def build_json_schema_from_parameters(
             prop["maximum"] = spec["max"]
         if "min_length" in spec and spec["min_length"] is not None:
             prop["minLength"] = spec["min_length"]
+        if "choices" in spec:
+            prop["enum"] = list(spec["choices"])
         if "asset_kind" in spec and spec["asset_kind"]:
             prop["x-asset-kind"] = spec["asset_kind"]
 
@@ -187,6 +214,13 @@ def _coerce_and_validate_param_value(
             raise TemplateParamError(
                 f"El parámetro {param_name!r} debe tener al menos {min_len} caracteres.",
                 errors=[{"field": param_name, "reason": "value_error.min_length"}],
+            )
+        choices = spec.get("choices")
+        if choices is not None and val_str not in choices:
+            raise TemplateParamError(
+                f"El parámetro {param_name!r} debe ser uno de: "
+                f"{', '.join(map(str, choices))}.",
+                errors=[{"field": param_name, "reason": "value_error.enum"}],
             )
         return val_str
 
@@ -306,6 +340,8 @@ class TemplateRegistry:
         three_d_available: bool = True,
         animate_available: bool = True,
         minimax_available: bool = True,
+        qwen_layered_available: bool = True,
+        music_available: bool = True,
     ) -> dict[str, Any]:
         params_schema = build_json_schema_from_parameters(tpl["id"], tpl["parameters"])
         weights_reason = template_weights_unavailable_reason(tpl)
@@ -314,6 +350,10 @@ class TemplateRegistry:
         ) or (template_requires_three_d(tpl) and three_d_available) or (
             template_requires_minimax(tpl) and minimax_available
         )
+        available = available or (
+            template_requires_qwen_layered(tpl) and qwen_layered_available
+        )
+        available = available or (template_requires_music(tpl) and music_available)
         entry: dict[str, Any] = {
             "id": tpl["id"],
             "name": tpl["name"],
@@ -341,6 +381,8 @@ class TemplateRegistry:
         three_d_available: bool = True,
         animate_available: bool = True,
         minimax_available: bool = True,
+        qwen_layered_available: bool = True,
+        music_available: bool = True,
         include_unavailable: bool = True,
     ) -> list[dict[str, Any]]:
         entries = [
@@ -350,6 +392,8 @@ class TemplateRegistry:
                 three_d_available=three_d_available,
                 animate_available=animate_available,
                 minimax_available=minimax_available,
+                qwen_layered_available=qwen_layered_available,
+                music_available=music_available,
             )
             for tid in self.list_ids()
         ]
@@ -365,6 +409,8 @@ class TemplateRegistry:
         three_d_available: bool = True,
         animate_available: bool = True,
         minimax_available: bool = True,
+        qwen_layered_available: bool = True,
+        music_available: bool = True,
     ) -> dict[str, Any]:
         raw = self.get_raw_definition(template_id)
         return self._format_entry(
@@ -373,6 +419,8 @@ class TemplateRegistry:
             three_d_available=three_d_available,
             animate_available=animate_available,
             minimax_available=minimax_available,
+            qwen_layered_available=qwen_layered_available,
+            music_available=music_available,
         )
 
     def validate_params(
@@ -472,6 +520,8 @@ class TemplateRegistry:
         three_d_available: bool = True,
         animate_available: bool = True,
         minimax_available: bool = True,
+        qwen_layered_available: bool = True,
+        music_available: bool = True,
     ) -> dict[str, Any]:
         """Valida params, sube assets de entrada y crea el job en SQLite (SIN ejecutarlo).
 
@@ -488,6 +538,8 @@ class TemplateRegistry:
             (template_requires_animate(tpl) and animate_available)
             or (template_requires_three_d(tpl) and three_d_available)
             or (template_requires_minimax(tpl) and minimax_available)
+            or (template_requires_qwen_layered(tpl) and qwen_layered_available)
+            or (template_requires_music(tpl) and music_available)
         )
         if weights_reason is not None and not weights_ok:
             raise TemplateParamError(
@@ -534,6 +586,30 @@ class TemplateRegistry:
                     f"pero la plantilla {template_id!r} requiere {expected_kind!r}.",
                     errors=[{"field": asset_param, "reason": "value_error.asset_wrong_kind"}],
                 )
+            if template_id == "qwen_image_layered" and asset_param == "image_asset_id":
+                from PIL import Image
+
+                try:
+                    with Image.open(asset_path) as source_image:
+                        width, height = source_image.size
+                except (OSError, ValueError, Image.DecompressionBombError) as exc:
+                    raise TemplateParamError(
+                        "La imagen de entrada de Qwen-Image-Layered no se puede leer.",
+                        errors=[{
+                            "field": asset_param,
+                            "reason": "value_error.invalid_image",
+                        }],
+                    ) from exc
+                if width % 16 or height % 16:
+                    raise TemplateParamError(
+                        "Qwen-Image-Layered requiere que el ancho y alto de la imagen "
+                        f"sean múltiplos de 16; se recibió {width}×{height}. "
+                        "Redimensiona la imagen y vuelve a enviarla.",
+                        errors=[{
+                            "field": asset_param,
+                            "reason": "value_error.image_dimensions_multiple_of_16",
+                        }],
+                    )
             assets_to_upload.append((input_param, asset, asset_path))
 
         # Subir assets de entrada validados a ComfyUI
@@ -669,6 +745,8 @@ class TemplateRegistry:
         three_d_available: bool = True,
         animate_available: bool = True,
         minimax_available: bool = True,
+        qwen_layered_available: bool = True,
+        music_available: bool = True,
     ) -> dict[str, Any]:
         """Modo síncrono (compatibilidad): encola el render y espera a que termine.
 
@@ -686,6 +764,8 @@ class TemplateRegistry:
             three_d_available=three_d_available,
             animate_available=animate_available,
             minimax_available=minimax_available,
+            qwen_layered_available=qwen_layered_available,
+            music_available=music_available,
         )
         return await self.execute_render_job(
             enqueued["job_id"],

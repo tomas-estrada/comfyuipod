@@ -1,0 +1,13 @@
+{
+  "name": "comfyuipod-gltf-validator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned Khronos glTF validator runtime for project-owned GLB files",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "dependencies": {
+    "gltf-validator": "2.0.0-dev.3.10"
+  }
+}

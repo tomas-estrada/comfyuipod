@@ -83,20 +83,9 @@ class StubPlannerLLM:
         idea_l = idea.lower()
         wants_depth = any(h in idea_l for h in self._DEPTH_HINTS)
         wants_relight = any(h in idea_l for h in self._RELIGHT_HINTS)
-        atlas_ctx = (context or {}).get("atlas")
-
         def _layers() -> list[dict[str, Any]]:
             params: dict[str, Any] = {"prompt": idea[:200]}
-            if atlas_ctx:
-                # el contexto geográfico NO se pierde: viaja en los params de la
-                # capa gen (serializable con el checkpoint) y el ejecutor lo
-                # resuelve contra el atlas local real.
-                params["atlas"] = atlas_ctx
             gen_layer: dict[str, Any] = {"kind": "gen", "engine": "comfyui", "params": params}
-            if atlas_ctx:
-                # el fondo del atlas sólo llega al grafo si la plantilla declara
-                # entrada de imagen (wan_i2v); t2v no la consumiría
-                gen_layer["template_id"] = "wan_i2v"
             layers: list[dict[str, Any]] = [gen_layer]
             if wants_depth:
                 layers.append({"kind": "depth", "engine": "comfyui", "params": {}})
@@ -151,6 +140,7 @@ def plan_production(
     state: ProductionState,
     llm: PlannerLLM | None = None,
     *,
+    extra_context: dict[str, Any] | None = None,
     vbench_min: float = DEFAULT_VBENCH_MIN,
     semantic_min: float = DEFAULT_SEMANTIC_MIN,
 ) -> ProductionState:
@@ -163,45 +153,11 @@ def plan_production(
         return state
 
     planner = llm or StubPlannerLLM()
-    # Contexto estructurado para el planner: si la producción ya trae atlas en
-    # metadata (p.ej. vía atlas_prepare_shot) se respeta; si no, se intenta
-    # resolver desde la idea con el atlas local (selección activa o mejor
-    # cobertura). Nunca bloquea el plan si el atlas no está disponible.
-    context: dict[str, Any] = {"idea": state.idea, "atlas": state.metadata.get("atlas")}
-    if not context["atlas"]:
-        try:
-            from comfy_studio.atlas.agent_tools import shared_atlas_service
-
-            svc = shared_atlas_service()
-            if svc.available():
-                # una ubicación EXPLÍCITA en el prompt prevalece sobre la
-                # selección previa del panel (nunca se sustituye en silencio)
-                hint_pid = svc.extract_place_hint(state.idea)
-                if hint_pid:
-                    shot = svc.prepare_shot(place_id=hint_pid, prompt=state.idea,
-                                            verify_file=False)
-                else:
-                    shot = svc.prepare_shot(prompt=state.idea, verify_file=False)
-                if shot.get("status") == "ok":
-                    context["atlas"] = {
-                        "place_id": shot["place_id"],
-                        "view_id": shot["view_id"],
-                        "ref_id": shot["ref_id"],
-                        "background_path": shot["background_path"],
-                        "atlas_version": shot["atlas_version"],
-                        "camera": shot["camera"],
-                        "limitations": shot["limitations"],
-                        "selection": "auto",
-                    }
-                    state.metadata["atlas"] = context["atlas"]
-                    state.record(
-                        "atlas_resolve",
-                        place_id=shot["place_id"],
-                        view_id=shot["view_id"],
-                        ref_id=shot["ref_id"],
-                    )
-        except Exception:  # noqa: BLE001
-            context["atlas"] = None
+    context: dict[str, Any] = {"idea": state.idea}
+    if extra_context:
+        # Additional project-local context is supplied by the service only for
+        # this planning call; it is not copied wholesale into every checkpoint.
+        context.update(extra_context)
     raw = planner.plan(state.idea, context=context)
 
     # construir la jerarquía tipada desde el dict del planner.

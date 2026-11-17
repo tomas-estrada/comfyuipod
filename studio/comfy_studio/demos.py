@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -129,7 +130,7 @@ def _stage(name: str, neural: bool) -> DemoStage:
 def demo_catalog() -> list[Demo]:
     """Five scenarios from the Ultra plan; neural work is never implied done."""
     return [
-        Demo("D01", "Coche en lugar real del Aburrá, varias cámaras/luces/sonido",
+        Demo("D01", "Coche en escena de fixture, varias cámaras/luces/sonido",
              ["fixtures/d01_vehicle_cameras.json"],
              ["reprojection_rmse_below_fixture_limit", "logo_mask_unchanged"],
              ["heldout_views"], 3,
@@ -137,7 +138,9 @@ def demo_catalog() -> list[Demo]:
               _stage("relight", True), _stage("foley", False), _stage("finishing_4k", True)]),
         Demo("D02", "Eliminar una causa y sus consecuencias (omnimatte)",
              ["fixtures/d02_causal_layers.json"],
-             ["unaffected_region_unchanged", "removed_region_revealed"],
+             ["actor_removed", "shadow_removed", "reflection_removed",
+              "intact_pixels_invariant", "actor_sound_removed",
+              "ambient_sound_preserved"],
              ["actor_on_off"], 2,
              [_stage("matting", True), _stage("causal_delete", False)]),
         Demo("D03", "Producto articulado con cambio de material y varias cámaras",
@@ -209,7 +212,7 @@ def clean_demo_output(demo_id: str, output_root: Path) -> bool:
 
 
 def _prepare_demo_output(demo_id: str, output_root: Path) -> tuple[Path, Path]:
-    """Create a contained output directory and reject symlinked run files."""
+    """Create a contained output directory and reject aliased run files."""
     root = output_root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     out_dir = root / demo_id
@@ -221,48 +224,82 @@ def _prepare_demo_output(demo_id: str, output_root: Path) -> tuple[Path, Path]:
 
     manifest = out_dir / "run_manifest.json"
     generated = [manifest, out_dir / "editable_project.json"]
+    if demo_id == "D01":
+        generated.append(out_dir / _D01_REPORT_ARTIFACT)
+    if demo_id == "D02":
+        generated.extend(out_dir / name for name in _D02_ALL_ARTIFACTS)
     if demo_id == "D05":
         generated.extend(out_dir / name for name in (
             "D05_delivery_package.zip", "D05_master_16x9.mp4", "D05_master_9x16.mp4"))
         generated.append(out_dir / "D05_asset_inventory.json")
-    if any(path.is_symlink() for path in generated):
-        raise DemoError("refusing to overwrite a demo output symlink")
+    for path in generated:
+        if path.is_symlink():
+            raise DemoError("refusing to overwrite a demo output symlink")
+        try:
+            file_stat = path.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise DemoError("refusing to overwrite a non-file demo output path")
+        if file_stat.st_nlink > 1:
+            raise DemoError("refusing to overwrite a hard-linked output file")
     return out_dir, manifest
+
+
+def _execution_fingerprint(demo_id: str) -> dict[str, Any]:
+    """Identify the runner and external tools used to produce resumable evidence."""
+    fingerprint: dict[str, Any] = {
+        "runner_sha256": _sha256(Path(__file__)),
+        "python_version": sys.version.split()[0],
+        "tool_versions": {},
+    }
+    if demo_id != "D05":
+        return fingerprint
+
+    for name, executable in (("ffmpeg", find_ffmpeg()), ("ffprobe", find_ffprobe())):
+        try:
+            result = subprocess.run(
+                [executable, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise DemoError(f"unable to identify {name} version: {exc}") from exc
+        first_line = result.stdout.splitlines()[0] if result.stdout.splitlines() else ""
+        if result.returncode or not first_line:
+            raise DemoError(f"unable to identify {name} version")
+        fingerprint["tool_versions"][name] = first_line
+    return fingerprint
+
+
+def _expected_artifact_names(demo_id: str) -> set[str]:
+    if demo_id == "D01":
+        return {_D01_REPORT_ARTIFACT}
+    if demo_id == "D02":
+        return set(_D02_ALL_ARTIFACTS)
+    if demo_id == "D03":
+        return {_D03_REPORT_ARTIFACT}
+    if demo_id == "D05":
+        return {
+            "D05_delivery_package.zip",
+            "D05_master_16x9.mp4",
+            "D05_master_9x16.mp4",
+            "D05_asset_inventory.json",
+            "editable_project.json",
+        }
+    return set()
 
 
 def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
     """Run small, explicit fixture integrity checks; these do not validate ML."""
-    if demo_id == "D01":
-        cameras = data["cameras"]
-        errors = []
-        for camera in cameras:
-            for point in camera["points"]:
-                x, y, z = point["xyz"]
-                u, v = point["uv"]
-                fx, fy, cx, cy = camera["intrinsics"]
-                projected = (fx * x / z + cx, fy * y / z + cy)
-                errors.append(math.dist(projected, (u, v)))
-        rmse = math.sqrt(sum(err * err for err in errors) / len(errors))
-        logos_same = data["logo_mask_before"] == data["logo_mask_after"]
-        limit = float(data["max_reprojection_rmse_px"])
-        return {"reprojection_rmse_px": rmse, "fixture_limit_px": limit,
-                "reprojection_fixture_check": rmse <= limit, "logo_mask_unchanged": logos_same}
     if demo_id == "D02":
-        before, after, mask = data["before"], data["after"], data["causal_mask"]
-        if not (len(before) == len(after) == len(mask)):
-            raise DemoError("D02: buffers de capas con longitud diferente")
-        unaffected = all(before[i] == after[i] for i, m in enumerate(mask) if not m)
-        revealed = all(after[i] == data["background"][i] for i, m in enumerate(mask) if m)
-        return {"unaffected_region_unchanged": unaffected, "removed_region_revealed": revealed,
-                "pixels_checked": len(mask)}
+        return _check_d02_causal_layers(data)
+    if demo_id == "D01":
+        return _check_d01_vehicle_cameras(data)
     if demo_id == "D03":
-        parts = {part["id"] for part in data["parts"]}
-        joints = data["joints"]
-        valid = all(j["parent"] in parts and j["child"] in parts and j["parent"] != j["child"]
-                    for j in joints)
-        return {"joint_graph_valid": valid, "parts": len(parts),
-                "heldout_views_present": bool(data["heldout_views"]),
-                "heldout_view_count": len(data["heldout_views"])}
+        return _check_d03_articulated_product(data)
     if demo_id == "D04":
         refs = data["identity_reference_ids"]
         consistent = len(refs) >= 2 and len(set(refs)) == 1
@@ -283,6 +320,1624 @@ def _check_fixture(demo_id: str, data: dict[str, Any]) -> dict[str, Any]:
                     row.get("license") and row.get("source") for row in credits
                 ), "render": data["render"]}
     raise DemoError(f"demo desconocida: {demo_id}")
+
+
+_D01_REPORT_ARTIFACT = "D01_reprojection_coverage.json"
+_D01_FIXTURE_SCHEMA = "comfy_studio.demo_fixture.d01.v2"
+_D01_REPORT_SCHEMA = "comfy_studio.d01_reprojection_coverage.v1"
+_D01_WORLD_UP = (0.0, 0.0, 1.0)
+_D01_EVIDENCE_SCOPE = "synthetic_cpu_only"
+
+
+def _d01_finite_list(value: Any, length: int, name: str) -> list[float]:
+    """Strict finite-number list: exact length, no bool/int coercion surprises."""
+    if (
+        not isinstance(value, list)
+        or len(value) != length
+        or any(
+            isinstance(component, bool)
+            or not isinstance(component, (int, float))
+            or not math.isfinite(component)
+            for component in value
+        )
+    ):
+        raise DemoError(f"D01: {name} malformado")
+    return [float(component) for component in value]
+
+
+def _d01_sub(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _d01_cross(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
+def _d01_dot(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _d01_normalize(
+    a: tuple[float, float, float], name: str
+) -> tuple[float, float, float]:
+    norm = math.sqrt(_d01_dot(a, a))
+    if not math.isfinite(norm) or norm <= 1e-12:
+        raise DemoError(f"D01: vector {name} degenerado")
+    return (a[0] / norm, a[1] / norm, a[2] / norm)
+
+
+def _d01_camera_basis(
+    position: tuple[float, float, float], look_at: tuple[float, float, float]
+) -> tuple[tuple[float, float, float], ...]:
+    """Deterministic look-at basis: right = forward x world_up, up = right x forward."""
+    forward = _d01_normalize(_d01_sub(look_at, position), "forward")
+    right = _d01_normalize(_d01_cross(forward, _D01_WORLD_UP), "right")
+    up = _d01_cross(right, forward)
+    return (right, up, forward)
+
+
+def _d01_project(
+    point: tuple[float, float, float],
+    position: tuple[float, float, float],
+    basis: tuple[tuple[float, float, float], ...],
+    intrinsics: tuple[float, float, float, float],
+) -> tuple[float, float, float] | None:
+    """Pinhole projection (u, v, depth); None when the point is behind the camera."""
+    right, up, forward = basis
+    delta = _d01_sub(point, position)
+    depth = _d01_dot(delta, forward)
+    if depth <= 1e-9:
+        return None
+    fx, fy, cx, cy = intrinsics
+    u = fx * _d01_dot(delta, right) / depth + cx
+    v = fy * _d01_dot(delta, up) / depth + cy
+    return (u, v, depth)
+
+
+def _d01_ray_hits_box(
+    origin: tuple[float, float, float],
+    direction: tuple[float, float, float],
+    box_min: tuple[float, float, float],
+    box_max: tuple[float, float, float],
+) -> bool:
+    """Segment (origin, origin + direction) vs axis-aligned box via the slab method."""
+    t_enter = 0.0
+    t_exit = 1.0
+    for axis in range(3):
+        o = origin[axis]
+        d = direction[axis]
+        lo = box_min[axis]
+        hi = box_max[axis]
+        if abs(d) < 1e-12:
+            if o < lo or o > hi:
+                return False
+            continue
+        t0 = (lo - o) / d
+        t1 = (hi - o) / d
+        if t0 > t1:
+            t0, t1 = t1, t0
+        t_enter = max(t_enter, t0)
+        t_exit = min(t_exit, t1)
+        if t_enter > t_exit:
+            return False
+    return True
+
+
+@dataclass(slots=True)
+class _D01Landmark:
+    landmark_id: str
+    xyz: tuple[float, float, float]
+
+
+@dataclass(slots=True)
+class _D01Occluder:
+    occluder_id: str
+    box_min: tuple[float, float, float]
+    box_max: tuple[float, float, float]
+
+
+@dataclass(slots=True)
+class _D01View:
+    view_id: str
+    split: str
+    position: tuple[float, float, float]
+    look_at: tuple[float, float, float]
+    intrinsics: tuple[float, float, float, float]
+    image_size: tuple[int, int]
+    observations: dict[str, tuple[float, float]]
+
+
+@dataclass(slots=True)
+class _D01Scene:
+    landmarks: list[_D01Landmark]
+    views: list[_D01View]
+    occluders: list[_D01Occluder]
+    max_rmse_px: float
+    logo_mask_unchanged: bool
+
+
+def _d01_intrinsics(value: Any, view_id: str) -> tuple[float, float, float, float]:
+    """Strict calibration: exactly four finite numbers with positive focal lengths."""
+    components = _d01_finite_list(value, 4, f"calibración de {view_id}")
+    fx, fy, cx, cy = components
+    if fx <= 0.0 or fy <= 0.0:
+        raise DemoError(f"D01: calibración de {view_id} con foco no positivo")
+    return (fx, fy, cx, cy)
+
+
+def _d01_parse_fixture(data: dict[str, Any]) -> _D01Scene:
+    """Validate the strict D01 scene; malformed input raises DemoError."""
+    if not isinstance(data, dict) or data.get("schema") != _D01_FIXTURE_SCHEMA:
+        raise DemoError("D01: esquema de fixture no reconocido")
+    limit = data.get("max_reprojection_rmse_px")
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, (int, float))
+        or not math.isfinite(limit)
+        or limit <= 0
+    ):
+        raise DemoError("D01: límite de RMSE malformado")
+
+    raw_landmarks = data.get("landmarks")
+    if not isinstance(raw_landmarks, list) or not raw_landmarks:
+        raise DemoError("D01: landmarks ausentes o vacíos")
+    landmarks: list[_D01Landmark] = []
+    seen_landmarks: set[str] = set()
+    for landmark in raw_landmarks:
+        if not isinstance(landmark, dict):
+            raise DemoError("D01: hito malformado")
+        landmark_id = landmark.get("id")
+        if (
+            not isinstance(landmark_id, str)
+            or not landmark_id
+            or landmark_id in seen_landmarks
+        ):
+            raise DemoError(f"D01: hito malformado: {landmark_id!r}")
+        seen_landmarks.add(landmark_id)
+        xyz = _d01_finite_list(landmark.get("xyz"), 3, f"hito {landmark_id} xyz")
+        landmarks.append(_D01Landmark(landmark_id, (xyz[0], xyz[1], xyz[2])))
+
+    raw_views = data.get("views")
+    if not isinstance(raw_views, list) or not raw_views:
+        raise DemoError("D01: vistas ausentes o vacías")
+    views: list[_D01View] = []
+    seen_views: set[str] = set()
+    for view in raw_views:
+        if not isinstance(view, dict):
+            raise DemoError("D01: vista malformada")
+        view_id = view.get("id")
+        if not isinstance(view_id, str) or not view_id or view_id in seen_views:
+            raise DemoError(f"D01: vista malformada: {view_id!r}")
+        seen_views.add(view_id)
+        split = view.get("split")
+        if split not in ("train", "heldout"):
+            raise DemoError(f"D01: vista {view_id} con split inválido")
+        position = tuple(
+            _d01_finite_list(view.get("position"), 3, f"vista {view_id} position")
+        )
+        look_at = tuple(
+            _d01_finite_list(view.get("look_at"), 3, f"vista {view_id} look_at")
+        )
+        if position == look_at:
+            raise DemoError(f"D01: vista {view_id} con posición igual al objetivo")
+        intrinsics = _d01_intrinsics(view.get("intrinsics"), view_id)
+        raw_size = view.get("image_size")
+        if (
+            not isinstance(raw_size, list)
+            or len(raw_size) != 2
+            or any(
+                isinstance(side, bool) or not isinstance(side, int) or side <= 0
+                for side in raw_size
+            )
+        ):
+            raise DemoError(f"D01: vista {view_id} con image_size malformado")
+        raw_observations = view.get("observations")
+        if not isinstance(raw_observations, dict):
+            raise DemoError(f"D01: vista {view_id} sin observaciones")
+        if set(raw_observations) != {lm.landmark_id for lm in landmarks}:
+            raise DemoError(f"D01: vista {view_id} no observa exactamente todos los hitos")
+        observations: dict[str, tuple[float, float]] = {}
+        for landmark_id, uv in raw_observations.items():
+            parsed_uv = _d01_finite_list(
+                uv, 2, f"vista {view_id} observación {landmark_id}"
+            )
+            observations[landmark_id] = (parsed_uv[0], parsed_uv[1])
+        views.append(
+            _D01View(
+                view_id,
+                split,
+                position,  # type: ignore[arg-type]
+                look_at,  # type: ignore[arg-type]
+                intrinsics,
+                (raw_size[0], raw_size[1]),
+                observations,
+            )
+        )
+    if not any(view.split == "train" for view in views):
+        raise DemoError("D01: falta al menos una vista train")
+    if not any(view.split == "heldout" for view in views):
+        raise DemoError("D01: falta al menos una vista heldout")
+
+    raw_occluders = data.get("occluders")
+    if not isinstance(raw_occluders, list):
+        raise DemoError("D01: occluders malformado")
+    occluders: list[_D01Occluder] = []
+    seen_occluders: set[str] = set()
+    for occluder in raw_occluders:
+        if not isinstance(occluder, dict):
+            raise DemoError("D01: oclusor malformado")
+        occluder_id = occluder.get("id")
+        if (
+            not isinstance(occluder_id, str)
+            or not occluder_id
+            or occluder_id in seen_occluders
+        ):
+            raise DemoError(f"D01: oclusor malformado: {occluder_id!r}")
+        seen_occluders.add(occluder_id)
+        box_min = tuple(_d01_finite_list(occluder.get("min"), 3, f"oclusor {occluder_id} min"))
+        box_max = tuple(_d01_finite_list(occluder.get("max"), 3, f"oclusor {occluder_id} max"))
+        if any(lo >= hi for lo, hi in zip(box_min, box_max, strict=True)):
+            raise DemoError(f"D01: oclusor {occluder_id} con caja degenerada")
+        occluders.append(_D01Occluder(occluder_id, box_min, box_max))  # type: ignore[arg-type]
+
+    before = data.get("logo_mask_before")
+    after = data.get("logo_mask_after")
+    for mask in (before, after):
+        if (
+            not isinstance(mask, list)
+            or not mask
+            or any(isinstance(pixel, bool) or not isinstance(pixel, int) for pixel in mask)
+        ):
+            raise DemoError("D01: logo mask malformado")
+    logo_mask_unchanged = bool(before == after)
+
+    return _D01Scene(
+        landmarks=landmarks,
+        views=views,
+        occluders=occluders,
+        max_rmse_px=float(limit),
+        logo_mask_unchanged=logo_mask_unchanged,
+    )
+
+
+def _d01_measure_scene(scene: _D01Scene) -> dict[str, Any]:
+    """Project every landmark in every view and measure errors and visibility.
+
+    Observed pixels come from the fixture; projected pixels are recomputed from
+    the fixture calibrations (position, look-at route, intrinsics). Visibility
+    is ray/AABB occlusion plus image-bounds membership; it is never stored in
+    the fixture. Held-out views are aggregated separately.
+    """
+    split_errors: dict[str, list[float]] = {"train": [], "heldout": []}
+    views_report: dict[str, dict[str, Any]] = {}
+    occluded_pairs: list[str] = []
+    for view in scene.views:
+        basis = _d01_camera_basis(view.position, view.look_at)
+        width, height = view.image_size
+        visible = 0
+        landmark_report: dict[str, dict[str, Any]] = {}
+        for landmark in scene.landmarks:
+            projected = _d01_project(landmark.xyz, view.position, basis, view.intrinsics)
+            if projected is None:
+                raise DemoError(
+                    f"D01: hito {landmark.landmark_id} detrás de la cámara {view.view_id}"
+                )
+            u, v, _depth = projected
+            direction = _d01_sub(landmark.xyz, view.position)
+            occluded = any(
+                _d01_ray_hits_box(
+                    view.position, direction, occluder.box_min, occluder.box_max
+                )
+                for occluder in scene.occluders
+            )
+            in_bounds = 0.0 <= u < width and 0.0 <= v < height
+            observed = view.observations[landmark.landmark_id]
+            error_px = math.hypot(u - observed[0], v - observed[1])
+            if occluded:
+                occluded_pairs.append(f"{view.view_id}/{landmark.landmark_id}")
+            if not occluded and in_bounds:
+                visible += 1
+            split_errors[view.split].append(error_px)
+            landmark_report[landmark.landmark_id] = {
+                "observed_uv": [round(observed[0], 6), round(observed[1], 6)],
+                "projected_uv": [round(u, 6), round(v, 6)],
+                "error_px": round(error_px, 6),
+                "occluded": occluded,
+                "in_bounds": in_bounds,
+            }
+        views_report[view.view_id] = {
+            "split": view.split,
+            "visible_landmarks": visible,
+            "coverage": round(visible / len(scene.landmarks), 6),
+            "landmarks": landmark_report,
+        }
+
+    def rmse(errors: list[float]) -> float:
+        if not errors:
+            raise DemoError("D01: sin observaciones para el RMSE")
+        return math.sqrt(sum(err * err for err in errors) / len(errors))
+
+    heldout_views = [view for view in scene.views if view.split == "heldout"]
+    heldout_coverage_mean = round(
+        sum(views_report[view.view_id]["coverage"] for view in heldout_views)
+        / len(heldout_views),
+        6,
+    )
+    return {
+        "views": views_report,
+        "rmse_px": {
+            "train": round(rmse(split_errors["train"]), 6),
+            "heldout": round(rmse(split_errors["heldout"]), 6),
+            "overall": round(
+                rmse(split_errors["train"] + split_errors["heldout"]), 6
+            ),
+        },
+        "coverage_by_view": {
+            view_id: detail["coverage"] for view_id, detail in views_report.items()
+        },
+        "occluded_ids": sorted(occluded_pairs),
+        "heldout_aggregate": {
+            "view_count": len(heldout_views),
+            "rmse_px": round(rmse(split_errors["heldout"]), 6),
+            "coverage_mean": heldout_coverage_mean,
+            "landmarks_visible": sum(
+                views_report[view.view_id]["visible_landmarks"]
+                for view in heldout_views
+            ),
+            "landmarks_total": len(heldout_views) * len(scene.landmarks),
+        },
+    }
+
+
+def _check_d01_vehicle_cameras(data: dict[str, Any]) -> dict[str, Any]:
+    """D01 scene-to-report contract over the synthetic CPU fixture.
+
+    Projects the six 3D landmarks through every calibrated view of the explicit
+    position/look-at route, measures reprojection RMSE against the observed
+    pixels, and derives ray/AABB visibility against the box occluders.
+    Held-out views are aggregated separately. This is synthetic CPU-only
+    evidence: no real camera calibration, no GPU, no neural-quality claim.
+    """
+    scene = _d01_parse_fixture(data)
+    measurement = _d01_measure_scene(scene)
+    limit = scene.max_rmse_px
+    heldout = measurement["heldout_aggregate"]
+    return {
+        "evidence_scope": _D01_EVIDENCE_SCOPE,
+        "reprojection_rmse_px": measurement["rmse_px"]["overall"],
+        "train_reprojection_rmse_px": measurement["rmse_px"]["train"],
+        "heldout_reprojection_rmse_px": measurement["rmse_px"]["heldout"],
+        "fixture_limit_px": limit,
+        "reprojection_rmse_below_fixture_limit": (
+            measurement["rmse_px"]["overall"] <= limit
+        ),
+        "heldout_rmse_below_fixture_limit": measurement["rmse_px"]["heldout"] <= limit,
+        "logo_mask_unchanged": scene.logo_mask_unchanged,
+        "landmark_count": len(scene.landmarks),
+        "train_view_count": sum(1 for view in scene.views if view.split == "train"),
+        "heldout_view_count": heldout["view_count"],
+        "occluder_count": len(scene.occluders),
+        "coverage_by_view": measurement["coverage_by_view"],
+        "heldout_coverage_mean": heldout["coverage_mean"],
+        "heldout_landmarks_visible": heldout["landmarks_visible"],
+        "occluded_ids": measurement["occluded_ids"],
+    }
+
+
+def _write_d01_reprojection_report(
+    fixture: Path, data: dict[str, Any], out_dir: Path
+) -> Path:
+    """Write the D01 reprojection/coverage report (synthetic CPU evidence only).
+
+    Contents: fixture SHA-256, per-view route/calibration, observed vs
+    projected pixels with per-landmark errors, coverage, occluded landmark IDs,
+    train/held-out RMSE aggregates, explicit ``evidence_scope:
+    synthetic_cpu_only`` and ``gpu_used: false``. No GPU or model-quality claim.
+    """
+    scene = _d01_parse_fixture(data)
+    measurement = _d01_measure_scene(scene)
+    report = {
+        "schema": _D01_REPORT_SCHEMA,
+        "evidence_scope": _D01_EVIDENCE_SCOPE,
+        "gpu_used": False,
+        "scope": (
+            "synthetic CPU reprojection and visibility evidence only: fixture "
+            "calibration consistency; no real camera calibration, no GPU, no "
+            "neural reconstruction quality claim"
+        ),
+        "fixture_sha256": _sha256(fixture),
+        "fixture_limit_px": scene.max_rmse_px,
+        "landmarks": [landmark.landmark_id for landmark in scene.landmarks],
+        "occluders": [occluder.occluder_id for occluder in scene.occluders],
+        "views": [
+            {
+                "id": view.view_id,
+                "split": view.split,
+                "position": list(view.position),
+                "look_at": list(view.look_at),
+                "intrinsics": list(view.intrinsics),
+                "image_size": list(view.image_size),
+                "coverage": measurement["views"][view.view_id]["coverage"],
+                "visible_landmarks": (
+                    measurement["views"][view.view_id]["visible_landmarks"]
+                ),
+                "landmarks": measurement["views"][view.view_id]["landmarks"],
+            }
+            for view in scene.views
+        ],
+        "rmse_px": measurement["rmse_px"],
+        "coverage_by_view": measurement["coverage_by_view"],
+        "heldout_aggregate": measurement["heldout_aggregate"],
+        "occluded_ids": measurement["occluded_ids"],
+        "logo_mask_unchanged": scene.logo_mask_unchanged,
+    }
+    path = out_dir / _D01_REPORT_ARTIFACT
+    path.write_text(
+        json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+_D02_REGIONS = ("actor_region", "shadow_region", "reflection_region", "intact_region")
+_D02_MEDIA_FILES = (
+    "D02_actor_before.png",
+    "D02_actor_after.png",
+    "D02_audio_before.wav",
+    "D02_audio_after.wav",
+)
+_D02_MEASUREMENT_ARTIFACT = "D02_causal_layer_measurement.json"
+_D02_ALL_ARTIFACTS = (*_D02_MEDIA_FILES, _D02_MEASUREMENT_ARTIFACT)
+
+
+def _d02_buffer(buffer: Any, pixels: int, name: str) -> list[int]:
+    """Strict D02 layer buffer: exact length, 8-bit ints, no bool/int coercion."""
+    if (
+        not isinstance(buffer, list)
+        or len(buffer) != pixels
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= 255
+            for value in buffer
+        )
+    ):
+        raise DemoError(f"D02: buffer {name} malformado")
+    return buffer
+
+
+def _d02_region(data: dict[str, Any], pixels: int, name: str) -> list[bool]:
+    """Strict D02 region mask: exact length, real booleans, non-empty."""
+    region = data.get(name)
+    if (
+        not isinstance(region, list)
+        or len(region) != pixels
+        or not all(isinstance(value, bool) for value in region)
+        or not any(region)
+    ):
+        raise DemoError(f"D02: región {name} malformada")
+    return region
+
+
+@dataclass(slots=True)
+class _D02Scene:
+    """Parsed D02 scene: strict buffers, disjoint regions, typed sound events."""
+
+    pixels: int
+    frame_width: int
+    frame_height: int
+    sample_rate_hz: int
+    duration_s: float
+    background: list[int]
+    before: list[int]
+    after: list[int]
+    regions: dict[str, list[bool]]
+    events: list[tuple[str, str, bool, bool, int, int, float, float]]
+
+
+def _d02_parse_scene(data: dict[str, Any]) -> _D02Scene:
+    """Validate the strict D02 scene structure; malformed input raises DemoError."""
+    pixels = data.get("pixels")
+    if not isinstance(pixels, int) or isinstance(pixels, bool) or pixels <= 0:
+        raise DemoError("D02: contador de píxeles inválido")
+    frame_width = data.get("frame_width")
+    frame_height = data.get("frame_height")
+    if (
+        not isinstance(frame_width, int)
+        or isinstance(frame_width, bool)
+        or frame_width <= 0
+        or not isinstance(frame_height, int)
+        or isinstance(frame_height, bool)
+        or frame_height <= 0
+        or frame_width * frame_height != pixels
+    ):
+        raise DemoError("D02: dimensiones de imagen inválidas")
+    audio = data.get("audio")
+    if not isinstance(audio, dict):
+        raise DemoError("D02: configuración de audio inválida")
+    sample_rate_hz = audio.get("sample_rate_hz")
+    duration_s = audio.get("duration_s")
+    if (
+        not isinstance(sample_rate_hz, int)
+        or isinstance(sample_rate_hz, bool)
+        or not 8000 <= sample_rate_hz <= 48000
+        or isinstance(duration_s, bool)
+        or not isinstance(duration_s, (int, float))
+        or not math.isfinite(duration_s)
+        or not 0 < duration_s <= 30
+    ):
+        raise DemoError("D02: parámetros de audio inválidos")
+    if duration_s * sample_rate_hz > 250_000:
+        raise DemoError("D02: duración excede el límite de muestras CPU")
+    background = _d02_buffer(data.get("background"), pixels, "background")
+    before = _d02_buffer(data.get("before"), pixels, "before")
+    after = _d02_buffer(data.get("after"), pixels, "after")
+
+    regions = {name: _d02_region(data, pixels, name) for name in _D02_REGIONS}
+    for i in range(pixels):
+        if sum(region[i] for region in regions.values()) > 1:
+            raise DemoError(f"D02: regiones solapadas en el píxel {i}")
+    for name in ("actor_region", "shadow_region", "reflection_region"):
+        if all(before[i] == background[i] for i, flag in enumerate(regions[name]) if flag):
+            raise DemoError(f"D02: la región {name} no oculta nada en before")
+
+    raw_events = data.get("sound_events")
+    if not isinstance(raw_events, list) or not 1 <= len(raw_events) <= 128:
+        raise DemoError("D02: sound_events ausente o vacío")
+    parsed: list[tuple[str, str, bool, bool, int, int, float, float]] = []
+    seen_ids: set[str] = set()
+    for event in raw_events:
+        if not isinstance(event, dict):
+            raise DemoError("D02: evento de sonido malformado")
+        event_id = event.get("id")
+        cause = event.get("caused_by")
+        presence = (event.get("present_before"), event.get("present_after"))
+        start_s = event.get("start_s")
+        end_s = event.get("end_s")
+        frequency_hz = event.get("frequency_hz")
+        amplitude = event.get("amplitude")
+        timing_valid = not any(isinstance(t, bool) for t in (start_s, end_s)) and all(
+            isinstance(t, (int, float)) and math.isfinite(t) for t in (start_s, end_s)
+        )
+        waveform_valid = (
+            isinstance(frequency_hz, int)
+            and not isinstance(frequency_hz, bool)
+            and 1 <= frequency_hz < sample_rate_hz // 2
+            and isinstance(amplitude, int)
+            and not isinstance(amplitude, bool)
+            and 1 <= amplitude <= 32767
+        )
+        if (
+            not isinstance(event_id, str)
+            or not event_id
+            or event_id in seen_ids
+            or cause not in ("actor", "ambient")
+            or not all(isinstance(value, bool) for value in presence)
+            or not timing_valid
+            or not 0 <= start_s < end_s  # type: ignore[operator]
+            or end_s > duration_s
+            or not waveform_valid
+        ):
+            raise DemoError(f"D02: evento de sonido malformado: {event_id!r}")
+        seen_ids.add(event_id)
+        parsed.append((
+            event_id,
+            cause,
+            presence[0],
+            presence[1],
+            frequency_hz,
+            amplitude,
+            float(start_s),
+            float(end_s),
+        ))
+
+    if sum(event[5] for event in parsed) > 32767:
+        raise DemoError("D02: amplitudes simultáneas exceden PCM de 16 bits")
+
+    return _D02Scene(
+        pixels=pixels,
+        frame_width=frame_width,
+        frame_height=frame_height,
+        sample_rate_hz=sample_rate_hz,
+        duration_s=float(duration_s),
+        background=background,
+        before=before,
+        after=after,
+        regions=regions,
+        events=parsed,
+    )
+
+
+def _d02_measure_scene(scene: _D02Scene) -> dict[str, Any]:
+    """Per-invariant error counts and totals over an already-parsed scene.
+
+    Removal errors count removed-cause pixels whose `after` value deviates from
+    the background; the intact deviation counts changed pixels in the intact
+    region; sound errors count events that violate their expected presence.
+    """
+    background, before, after = scene.background, scene.before, scene.after
+    regions = scene.regions
+    removal_errors: dict[str, int] = {}
+    for name in ("actor_region", "shadow_region", "reflection_region"):
+        region = regions[name]
+        removal_errors[name] = sum(
+            1 for i, flag in enumerate(region) if flag and after[i] != background[i]
+        )
+    intact_region = regions["intact_region"]
+    actor_events = [event for event in scene.events if event[1] == "actor"]
+    ambient_events = [event for event in scene.events if event[1] == "ambient"]
+    return {
+        "removal_errors_by_region": removal_errors,
+        "intact_deviation_errors": sum(
+            1 for i, flag in enumerate(intact_region) if flag and before[i] != after[i]
+        ),
+        "actor_sound_errors": sum(
+            1 for event in actor_events if not (event[2] and not event[3])
+        ),
+        "actor_sound_total": len(actor_events),
+        "ambient_sound_errors": sum(
+            1 for event in ambient_events if not (event[2] and event[3])
+        ),
+        "ambient_sound_total": len(ambient_events),
+    }
+
+
+def _d02_invariants(measurement: dict[str, Any]) -> dict[str, bool]:
+    """Derive the six D02 booleans from structured per-check error counts."""
+    removal = measurement["removal_errors_by_region"]
+    return {
+        "actor_removed": removal["actor_region"] == 0,
+        "shadow_removed": removal["shadow_region"] == 0,
+        "reflection_removed": removal["reflection_region"] == 0,
+        "intact_pixels_invariant": measurement["intact_deviation_errors"] == 0,
+        "actor_sound_removed": (
+            measurement["actor_sound_total"] > 0 and measurement["actor_sound_errors"] == 0
+        ),
+        "ambient_sound_preserved": (
+            measurement["ambient_sound_total"] > 0
+            and measurement["ambient_sound_errors"] == 0
+        ),
+    }
+
+
+def _d02_scene_measurement(data: dict[str, Any]) -> dict[str, Any]:
+    """Structured measurement of one D02 scene: invariants, counts and errors."""
+    scene = _d02_parse_scene(data)
+    measurement = _d02_measure_scene(scene)
+    return {
+        "pixels_checked": scene.pixels,
+        "sound_events_checked": len(scene.events),
+        "invariants": _d02_invariants(measurement),
+        "errors": measurement,
+    }
+
+
+def _check_d02_causal_layers(data: dict[str, Any]) -> dict[str, Any]:
+    """Run D02's six separate causal-layer invariants over the synthetic fixture.
+
+    Each invariant is an independent boolean: actor, shadow, and reflection
+    removal (the deleted cause reveals the background), intact pixel invariance
+    in the logo/prop region, actor-caused sound removal, and ambient sound
+    preservation. Malformed buffers, regions, or sound events raise DemoError.
+    The same strict validation also measures the deterministic held-out scene
+    written to the D02 measurement report. All evidence is synthetic CPU
+    fixture consistency; it is not omnimatte or model-quality evidence.
+    """
+    checks = _d02_scene_measurement(data)
+    result: dict[str, Any] = dict(checks["invariants"])
+    result["pixels_checked"] = checks["pixels_checked"]
+    result["sound_events_checked"] = checks["sound_events_checked"]
+    return result
+
+
+_D02_HELDOUT_SEED = 0x00D02CA1  # fixed in code: reproducible held-out scene
+_D02_HELDOUT_PIXELS = 32
+
+
+def _d02_heldout_data() -> dict[str, Any]:
+    """Deterministic held-out synthetic scene: 32 values per buffer, CPU only.
+
+    The seed drives an integer LCG so the scene is byte-identical on every
+    run without depending on stdlib RNG stability. Disjoint actor/shadow/
+    reflection/intact spans cover all 32 values; removed-cause pixels reveal
+    the background in `after`, and intact pixels stay invariant. Four sound
+    events: two actor-caused (removed) and two ambient (retained).
+    """
+    pixels = _D02_HELDOUT_PIXELS
+    spans = {
+        "actor_region": (0, 8),
+        "shadow_region": (8, 16),
+        "reflection_region": (16, 24),
+        "intact_region": (24, pixels),
+    }
+    state = _D02_HELDOUT_SEED & 0xFFFFFFFFFFFFFFFF
+
+    def noise(modulus: int) -> int:
+        nonlocal state
+        state = (state * 6364136223846793005 + 1442695040888963407) & 0xFFFFFFFFFFFFFFFF
+        return (state >> 33) % modulus
+
+    background = [noise(256) for _ in range(pixels)]
+    occlusion = {
+        name: 17 + noise(64)
+        for name, (_start, _end) in spans.items()
+        if name != "intact_region"
+    }
+
+    def cause_region(index: int) -> str | None:
+        for name, (start, end) in spans.items():
+            if name != "intact_region" and start <= index < end:
+                return name
+        return None
+
+    before: list[int] = []
+    after: list[int] = []
+    for index in range(pixels):
+        cause = cause_region(index)
+        if cause is None:
+            before.append(background[index])
+            after.append(background[index])
+        else:
+            before.append((background[index] + occlusion[cause]) % 256)
+            after.append(background[index])
+    sound_events = [
+        {"id": "heldout-actor-step", "caused_by": "actor",
+         "present_before": True, "present_after": False,
+         "start_s": 0.0, "end_s": 0.5, "frequency_hz": 660, "amplitude": 1200},
+        {"id": "heldout-actor-vocal", "caused_by": "actor",
+         "present_before": True, "present_after": False,
+         "start_s": 0.5, "end_s": 1.0, "frequency_hz": 440, "amplitude": 1400},
+        {"id": "heldout-ambient-wind", "caused_by": "ambient",
+         "present_before": True, "present_after": True,
+         "start_s": 0.0, "end_s": 1.0, "frequency_hz": 110, "amplitude": 1600},
+        {"id": "heldout-ambient-birds", "caused_by": "ambient",
+         "present_before": True, "present_after": True,
+         "start_s": 0.25, "end_s": 0.75, "frequency_hz": 880, "amplitude": 900},
+    ]
+    return {
+        "pixels": pixels,
+        "frame_width": 8,
+        "frame_height": 4,
+        "audio": {"sample_rate_hz": 8000, "duration_s": 1.0},
+        "background": background,
+        "before": before,
+        "after": after,
+        **{name: [start <= i < end for i in range(pixels)]
+           for name, (start, end) in spans.items()},
+        "sound_events": sound_events,
+    }
+
+
+def _d02_heldout_measurement() -> dict[str, Any]:
+    """Measure the held-out scene with the same strict rules as the fixture."""
+    scene = _d02_parse_scene(_d02_heldout_data())
+    measurement = _d02_measure_scene(scene)
+    return {
+        "seed": _D02_HELDOUT_SEED,
+        "pixels_checked": scene.pixels,
+        "sound_events_checked": len(scene.events),
+        "invariants": _d02_invariants(measurement),
+        "errors": measurement,
+        "metrics": {
+            "removal_error_pixels": sum(measurement["removal_errors_by_region"].values()),
+            "intact_deviation_pixels": measurement["intact_deviation_errors"],
+            "ambient_sound_retained": (
+                measurement["ambient_sound_total"] - measurement["ambient_sound_errors"]
+            ),
+            "ambient_sound_total": measurement["ambient_sound_total"],
+            "actor_sound_removed": (
+                measurement["actor_sound_total"] - measurement["actor_sound_errors"]
+            ),
+            "actor_sound_total": measurement["actor_sound_total"],
+        },
+    }
+
+
+def _d02_png_chunk(kind: bytes, payload: bytes) -> bytes:
+    body = kind + payload
+    return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body))
+
+
+def _d02_write_png(path: Path, scene: _D02Scene, values: list[int]) -> None:
+    """Write one valid RGB frame from the fixture's scalar grayscale pixels."""
+    if len(values) != scene.pixels:
+        raise DemoError("D02: buffer PNG no coincide con dimensiones declaradas")
+    rows = []
+    for row in range(scene.frame_height):
+        start = row * scene.frame_width
+        row_values = values[start : start + scene.frame_width]
+        rows.append(b"\x00" + b"".join(bytes((value, value, value)) for value in row_values))
+    header = struct.pack(">IIBBBBB", scene.frame_width, scene.frame_height, 8, 2, 0, 0, 0)
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + _d02_png_chunk(b"IHDR", header)
+        + _d02_png_chunk(b"IDAT", zlib.compress(b"".join(rows), level=9))
+        + _d02_png_chunk(b"IEND", b"")
+    )
+
+
+def _d02_wave_samples(
+    scene: _D02Scene, *, presence_index: int, cause: str | None = None
+) -> list[int]:
+    total_samples = round(scene.duration_s * scene.sample_rate_hz)
+    output: list[int] = []
+    for sample_index in range(total_samples):
+        time_s = sample_index / scene.sample_rate_hz
+        value = sum(
+            event[5] * math.sin(2.0 * math.pi * event[4] * time_s)
+            for event in scene.events
+            if event[presence_index]
+            and (cause is None or event[1] == cause)
+            and event[6] <= time_s < event[7]
+        )
+        sample = round(value)
+        if not -32768 <= sample <= 32767:
+            raise DemoError("D02: mezcla de audio excede PCM de 16 bits")
+        output.append(sample)
+    return output
+
+
+def _d02_write_wav(path: Path, sample_rate_hz: int, samples: list[int]) -> None:
+    with wave.open(str(path), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(sample_rate_hz)
+        stream.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+
+
+def _d02_rms(values: list[int]) -> float:
+    if not values:
+        return 0.0
+    return math.sqrt(sum(value * value for value in values) / len(values))
+
+
+def _write_d02_causal_media(data: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+    """Materialize deterministic synthetic RGB and PCM before/after artifacts."""
+    scene = _d02_parse_scene(data)
+    image_paths = {
+        "before": out_dir / _D02_MEDIA_FILES[0],
+        "after": out_dir / _D02_MEDIA_FILES[1],
+    }
+    _d02_write_png(image_paths["before"], scene, scene.before)
+    _d02_write_png(image_paths["after"], scene, scene.after)
+
+    before_samples = _d02_wave_samples(scene, presence_index=2)
+    after_samples = _d02_wave_samples(scene, presence_index=3)
+    actor_samples = _d02_wave_samples(scene, presence_index=2, cause="actor")
+    ambient_samples = _d02_wave_samples(scene, presence_index=3, cause="ambient")
+    wave_paths = {
+        "before": out_dir / _D02_MEDIA_FILES[2],
+        "after": out_dir / _D02_MEDIA_FILES[3],
+    }
+    _d02_write_wav(wave_paths["before"], scene.sample_rate_hz, before_samples)
+    _d02_write_wav(wave_paths["after"], scene.sample_rate_hz, after_samples)
+
+    ambient_errors = [
+        actual - expected
+        for actual, expected in zip(after_samples, ambient_samples, strict=True)
+    ]
+    actor_errors = [
+        (before - after) - actor
+        for before, after, actor in zip(
+            before_samples, after_samples, actor_samples, strict=True
+        )
+    ]
+    removal_errors = {
+        name: sum(
+            1
+            for index, active in enumerate(scene.regions[name])
+            if active and scene.after[index] != scene.background[index]
+        )
+        for name in ("actor_region", "shadow_region", "reflection_region")
+    }
+    image_metrics = {
+        "width": scene.frame_width,
+        "height": scene.frame_height,
+        "channels": 3,
+        "frame_count": 1,
+        "changed_pixels": sum(
+            before != after
+            for before, after in zip(scene.before, scene.after, strict=True)
+        ),
+        "removal_errors_by_region": removal_errors,
+        "intact_deviation_pixels": sum(
+            1
+            for index, active in enumerate(scene.regions["intact_region"])
+            if active and scene.before[index] != scene.after[index]
+        ),
+    }
+    audio_metrics = {
+        "sample_rate_hz": scene.sample_rate_hz,
+        "channels": 1,
+        "sample_width_bytes": 2,
+        "sample_count": len(before_samples),
+        "actor_removed_rms": _d02_rms(actor_samples),
+        "ambient_preservation_rmse": _d02_rms(ambient_errors),
+        "actor_subtraction_rmse": _d02_rms(actor_errors),
+        "before_rms": _d02_rms(before_samples),
+        "after_rms": _d02_rms(after_samples),
+        "events_checked": len(scene.events),
+    }
+    artifacts = {
+        path.name: {"sha256": _sha256(path), "bytes": path.stat().st_size}
+        for path in (*image_paths.values(), *wave_paths.values())
+    }
+    return {"image": image_metrics, "audio": audio_metrics, "artifacts": artifacts}
+
+
+def _write_d02_measurement_report(
+    fixture: Path, data: dict[str, Any], media: dict[str, Any], out_dir: Path
+) -> Path:
+    """Write D02 scalar and materialized-media measurements (synthetic CPU only).
+
+    The report includes source fixture SHA-256, deterministic heldout checks,
+    measured PNG/WAV artifacts and ``gpu_used: false``. It makes no model claim.
+    """
+    report = {
+        "schema": "comfy_studio.d02_measurement.v2",
+        "evidence_scope": "synthetic_cpu_only",
+        "scope": (
+            "synthetic CPU evidence only: fixture consistency and a deterministic "
+            "held-out scene; no GPU, no omnimatte or model-quality claim"
+        ),
+        "gpu_used": False,
+        "fixture_sha256": _sha256(fixture),
+        "seed": _D02_HELDOUT_SEED,
+        "media": media,
+        "checks": {
+            "fixture": _d02_scene_measurement(data),
+            "heldout": _d02_heldout_measurement(),
+        },
+    }
+    path = out_dir / _D02_MEASUREMENT_ARTIFACT
+    path.write_text(
+        json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+_D03_FIXTURE_SCHEMA = "comfy_studio.demo_fixture.d03.v2"
+_D03_REPORT_ARTIFACT = "D03_articulated_measurement.json"
+_D03_REPORT_SCHEMA = "comfy_studio.d03_articulated_measurement.v1"
+_D03_EVIDENCE_SCOPE = "synthetic_cpu_only"
+_D03_WORLD_UP = (0.0, 0.0, 1.0)
+_D03_MAX_PARTS = 64
+_D03_MAX_JOINTS = 64
+_D03_MAX_VIEWS = 64
+_D03_MAX_ANGLE_DEG = 180.0
+_D03Mat = tuple[tuple[float, float, float], ...]
+
+
+def _d03_finite(value: Any, name: str) -> float:
+    """Strict finite scalar: no bool/int coercion surprises."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
+        raise DemoError(f"D03: {name} malformado")
+    return float(value)
+
+
+def _d03_finite_list(value: Any, length: int, name: str) -> list[float]:
+    """Strict finite-number list: exact length, no bool/int coercion surprises."""
+    if (
+        not isinstance(value, list)
+        or len(value) != length
+        or any(
+            isinstance(component, bool)
+            or not isinstance(component, (int, float))
+            or not math.isfinite(component)
+            for component in value
+        )
+    ):
+        raise DemoError(f"D03: {name} malformado")
+    return [float(component) for component in value]
+
+
+def _d03_mat_vec(
+    mat: _D03Mat, vec: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (
+        mat[0][0] * vec[0] + mat[0][1] * vec[1] + mat[0][2] * vec[2],
+        mat[1][0] * vec[0] + mat[1][1] * vec[1] + mat[1][2] * vec[2],
+        mat[2][0] * vec[0] + mat[2][1] * vec[1] + mat[2][2] * vec[2],
+    )
+
+
+def _d03_mat_mat(a: _D03Mat, b: _D03Mat) -> _D03Mat:
+    return tuple(
+        tuple(
+            a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j] for j in range(3)
+        )
+        for i in range(3)
+    )
+
+
+def _d03_rodrigues(
+    axis: tuple[float, float, float], angle_deg: float, name: str
+) -> _D03Mat:
+    """Rotation matrix for one hinge: Rodrigues' formula on a normalized axis."""
+    norm = math.sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2])
+    if not math.isfinite(norm) or norm <= 1e-12:
+        raise DemoError(f"D03: eje de {name} degenerado")
+    x, y, z = axis[0] / norm, axis[1] / norm, axis[2] / norm
+    radians = math.radians(angle_deg)
+    cos_a, sin_a = math.cos(radians), math.sin(radians)
+    one_minus_cos = 1.0 - cos_a
+    return (
+        (cos_a + x * x * one_minus_cos, x * y * one_minus_cos - z * sin_a,
+         x * z * one_minus_cos + y * sin_a),
+        (y * x * one_minus_cos + z * sin_a, cos_a + y * y * one_minus_cos,
+         y * z * one_minus_cos - x * sin_a),
+        (z * x * one_minus_cos - y * sin_a, z * y * one_minus_cos + x * sin_a,
+         cos_a + z * z * one_minus_cos),
+    )
+
+
+def _d03_sub(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _d03_cross(
+    a: tuple[float, float, float], b: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
+def _d03_dot(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _d03_normalize(
+    a: tuple[float, float, float], name: str
+) -> tuple[float, float, float]:
+    norm = math.sqrt(_d03_dot(a, a))
+    if not math.isfinite(norm) or norm <= 1e-12:
+        raise DemoError(f"D03: vector {name} degenerado")
+    return (a[0] / norm, a[1] / norm, a[2] / norm)
+
+
+def _d03_camera_basis(
+    position: tuple[float, float, float], look_at: tuple[float, float, float]
+) -> tuple[tuple[float, float, float], ...]:
+    """Deterministic look-at basis: right = forward x world_up, up = right x forward."""
+    forward = _d03_normalize(_d03_sub(look_at, position), "forward")
+    right = _d03_normalize(_d03_cross(forward, _D03_WORLD_UP), "right")
+    up = _d03_cross(right, forward)
+    return (right, up, forward)
+
+
+def _d03_project(
+    point: tuple[float, float, float],
+    position: tuple[float, float, float],
+    basis: tuple[tuple[float, float, float], ...],
+    intrinsics: tuple[float, float, float, float],
+) -> tuple[float, float, float] | None:
+    """Pinhole projection (u, v, depth); None when the point is behind the camera."""
+    right, up, forward = basis
+    delta = _d03_sub(point, position)
+    depth = _d03_dot(delta, forward)
+    if depth <= 1e-9:
+        return None
+    fx, fy, cx, cy = intrinsics
+    u = fx * _d03_dot(delta, right) / depth + cx
+    v = fy * _d03_dot(delta, up) / depth + cy
+    return (u, v, depth)
+
+
+@dataclass(slots=True)
+class _D03Part:
+    part_id: str
+    material: str
+    asset_id: str
+    local_center: tuple[float, float, float]
+
+
+@dataclass(slots=True)
+class _D03Joint:
+    parent: str
+    child: str
+    axis: tuple[float, float, float]
+    origin: tuple[float, float, float]
+
+
+@dataclass(slots=True)
+class _D03View:
+    view_id: str
+    split: str
+    position: tuple[float, float, float]
+    look_at: tuple[float, float, float]
+    intrinsics: tuple[float, float, float, float]
+    image_size: tuple[int, int]
+
+
+@dataclass(slots=True)
+class _D03Scene:
+    """Parsed D03 scene: typed part/joint tree, angles, views and declared truth."""
+
+    root_part: str
+    parts: list[_D03Part]
+    joints: list[_D03Joint]
+    angles_deg: dict[str, float]
+    views: list[_D03View]
+    ground_truth_transforms: dict[str, tuple[tuple[float, float, float], _D03Mat]]
+    heldout_ground_truth_coverage: dict[str, list[str]]
+    max_translation_error: float
+    max_rotation_error: float
+    min_material_count: int
+    min_asset_count: int
+
+
+def _d03_positive_int(value: Any, name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise DemoError(f"D03: {name} malformado")
+    return value
+
+
+def _d03_nonempty_str(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise DemoError(f"D03: {name} malformado")
+    return value
+
+
+def _d03_parse_part(raw: Any) -> _D03Part:
+    if not isinstance(raw, dict):
+        raise DemoError("D03: parte malformada")
+    part_id = raw.get("id")
+    if not isinstance(part_id, str) or not part_id:
+        raise DemoError(f"D03: parte malformada: {part_id!r}")
+    center = _d03_finite_list(raw.get("local_center"), 3, f"parte {part_id} local_center")
+    return _D03Part(
+        part_id=part_id,
+        material=_d03_nonempty_str(raw.get("material"), f"parte {part_id} material"),
+        asset_id=_d03_nonempty_str(raw.get("asset_id"), f"parte {part_id} asset_id"),
+        local_center=(center[0], center[1], center[2]),
+    )
+
+
+def _d03_parse_joint(raw: Any) -> _D03Joint:
+    if not isinstance(raw, dict):
+        raise DemoError("D03: junta malformada")
+    parent = raw.get("parent")
+    child = raw.get("child")
+    if (
+        not isinstance(parent, str)
+        or not parent
+        or not isinstance(child, str)
+        or not child
+        or parent == child
+    ):
+        raise DemoError(f"D03: junta malformada: {parent!r} -> {child!r}")
+    if raw.get("type") != "hinge":
+        raise DemoError(f"D03: junta {child} con tipo no soportado")
+    axis = _d03_finite_list(raw.get("axis"), 3, f"junta {child} axis")
+    origin = _d03_finite_list(raw.get("origin"), 3, f"junta {child} origin")
+    if math.sqrt(_d03_dot((axis[0], axis[1], axis[2]), (axis[0], axis[1], axis[2]))) <= 1e-12:
+        raise DemoError(f"D03: eje de {child} degenerado")
+    return _D03Joint(parent, child, (axis[0], axis[1], axis[2]), (origin[0], origin[1], origin[2]))
+
+
+def _d03_parse_view(raw: Any) -> _D03View:
+    if not isinstance(raw, dict):
+        raise DemoError("D03: vista malformada")
+    view_id = raw.get("id")
+    if not isinstance(view_id, str) or not view_id:
+        raise DemoError(f"D03: vista malformada: {view_id!r}")
+    split = raw.get("split")
+    if split not in ("train", "heldout"):
+        raise DemoError(f"D03: vista {view_id} con split inválido")
+    position = _d03_finite_list(raw.get("position"), 3, f"vista {view_id} position")
+    look_at = _d03_finite_list(raw.get("look_at"), 3, f"vista {view_id} look_at")
+    if tuple(position) == tuple(look_at):
+        raise DemoError(f"D03: vista {view_id} con posición igual al objetivo")
+    intrinsics = _d03_finite_list(raw.get("intrinsics"), 4, f"vista {view_id} intrinsics")
+    if intrinsics[0] <= 0.0 or intrinsics[1] <= 0.0:
+        raise DemoError(f"D03: vista {view_id} con foco no positivo")
+    width_raw, height_raw = raw.get("image_size") or [None, None]
+    width = _d03_positive_int(width_raw, f"vista {view_id} ancho")
+    height = _d03_positive_int(height_raw, f"vista {view_id} alto")
+    return _D03View(
+        view_id, split, (position[0], position[1], position[2]),
+        (look_at[0], look_at[1], look_at[2]),
+        (intrinsics[0], intrinsics[1], intrinsics[2], intrinsics[3]),
+        (width, height),
+    )
+
+
+def _d03_parse_ground_truth(
+    data: dict[str, Any], root_part: str, part_ids: set[str], heldout_view_ids: set[str]
+) -> tuple[
+    dict[str, tuple[tuple[float, float, float], _D03Mat]],
+    dict[str, list[str]],
+    float,
+    float,
+]:
+    """Validate the independently declared held-out ground truth block."""
+    truth = data.get("heldout_ground_truth")
+    if not isinstance(truth, dict):
+        raise DemoError("D03: heldout_ground_truth ausente")
+    max_translation_error = _d03_finite(
+        truth.get("max_translation_error"), "max_translation_error"
+    )
+    max_rotation_error = _d03_finite(truth.get("max_rotation_error"), "max_rotation_error")
+    if max_translation_error <= 0.0 or max_rotation_error <= 0.0:
+        raise DemoError("D03: tolerancias de ground truth no positivas")
+
+    raw_transforms = truth.get("part_transforms")
+    expected_parts = part_ids - {root_part}
+    if not isinstance(raw_transforms, dict) or set(raw_transforms) != expected_parts:
+        raise DemoError("D03: part_transforms no cubre exactamente las partes articuladas")
+    transforms: dict[str, tuple[tuple[float, float, float], _D03Mat]] = {}
+    for part_id, entry in raw_transforms.items():
+        if not isinstance(entry, dict):
+            raise DemoError(f"D03: transform de {part_id} malformado")
+        translation = _d03_finite_list(entry.get("translation"), 3, f"GT {part_id} translation")
+        matrix = entry.get("rotation_matrix")
+        if not isinstance(matrix, list) or len(matrix) != 3:
+            raise DemoError(f"D03: GT {part_id} rotation_matrix malformada")
+        rows = []
+        for row in matrix:
+            components = _d03_finite_list(row, 3, f"GT {part_id} rotation_matrix")
+            rows.append((components[0], components[1], components[2]))
+        transforms[part_id] = (
+            (translation[0], translation[1], translation[2]),
+            (rows[0], rows[1], rows[2]),
+        )
+
+    raw_coverage = truth.get("heldout_view_coverage")
+    if not isinstance(raw_coverage, dict) or set(raw_coverage) != heldout_view_ids:
+        raise DemoError("D03: heldout_view_coverage no cubre exactamente las vistas heldout")
+    coverage: dict[str, list[str]] = {}
+    for view_id, part_list in raw_coverage.items():
+        if (
+            not isinstance(part_list, list)
+            or not part_list
+            or any(not isinstance(part, str) or part not in part_ids for part in part_list)
+            or len(set(part_list)) != len(part_list)
+        ):
+            raise DemoError(f"D03: cobertura de {view_id} malformada")
+        coverage[view_id] = list(part_list)
+    return transforms, coverage, max_translation_error, max_rotation_error
+
+
+def _d03_parse_fixture(data: dict[str, Any]) -> _D03Scene:
+    """Validate the strict D03 v2 scene; malformed input raises DemoError."""
+    if not isinstance(data, dict) or data.get("schema") != _D03_FIXTURE_SCHEMA:
+        raise DemoError("D03: esquema de fixture no reconocido")
+    root_part = _d03_nonempty_str(data.get("root_part"), "root_part")
+    min_material_count = _d03_positive_int(data.get("min_material_count"), "min_material_count")
+    min_asset_count = _d03_positive_int(data.get("min_asset_count"), "min_asset_count")
+
+    raw_parts = data.get("parts")
+    if not isinstance(raw_parts, list) or not 1 <= len(raw_parts) <= _D03_MAX_PARTS:
+        raise DemoError("D03: parts ausente o fuera de rango")
+    parts = [_d03_parse_part(raw) for raw in raw_parts]
+    part_ids = {part.part_id for part in parts}
+    if len(part_ids) != len(parts):
+        raise DemoError("D03: partes con ids duplicados")
+    if root_part not in part_ids:
+        raise DemoError("D03: root_part no está entre las partes")
+
+    raw_joints = data.get("joints")
+    if not isinstance(raw_joints, list) or not 1 <= len(raw_joints) <= _D03_MAX_JOINTS:
+        raise DemoError("D03: joints ausente o fuera de rango")
+    joints = [_d03_parse_joint(raw) for raw in raw_joints]
+    joint_children = [joint.child for joint in joints]
+    if len(set(joint_children)) != len(joint_children):
+        raise DemoError("D03: una parte tiene más de una junta padre")
+    for joint in joints:
+        if joint.parent not in part_ids or joint.child not in part_ids:
+            raise DemoError(
+                "D03: junta referencia partes desconocidas: "
+                f"{joint.parent}->{joint.child}"
+            )
+    # Tree check: walking children from the root must reach every part exactly once.
+    children: dict[str, list[_D03Joint]] = {}
+    for joint in joints:
+        children.setdefault(joint.parent, []).append(joint)
+    reached: list[str] = [root_part]
+    frontier = [root_part]
+    while frontier:
+        current = frontier.pop()
+        for joint in children.get(current, []):
+            reached.append(joint.child)
+            frontier.append(joint.child)
+    if len(reached) != len(part_ids) or set(reached) != part_ids:
+        raise DemoError("D03: el grafo de juntas no es un árbol con raíz root_part")
+
+    raw_angles = data.get("joint_angles_deg")
+    if not isinstance(raw_angles, dict) or set(raw_angles) != set(joint_children):
+        raise DemoError("D03: joint_angles_deg no cubre exactamente las juntas")
+    angles_deg = {
+        child: _d03_finite(angle, f"ángulo de {child}") for child, angle in raw_angles.items()
+    }
+    if any(abs(angle) > _D03_MAX_ANGLE_DEG for angle in angles_deg.values()):
+        raise DemoError("D03: ángulo de junta fuera de rango")
+
+    raw_views = data.get("views")
+    if not isinstance(raw_views, list) or not 2 <= len(raw_views) <= _D03_MAX_VIEWS:
+        raise DemoError("D03: views ausente o fuera de rango")
+    views = [_d03_parse_view(raw) for raw in raw_views]
+    view_ids = {view.view_id for view in views}
+    if len(view_ids) != len(views):
+        raise DemoError("D03: vistas con ids duplicados")
+    if not any(view.split == "train" for view in views):
+        raise DemoError("D03: falta al menos una vista train")
+    heldout_views = [view for view in views if view.split == "heldout"]
+    if not heldout_views:
+        raise DemoError("D03: falta al menos una vista heldout")
+
+    truth_transforms, truth_coverage, max_t_err, max_r_err = _d03_parse_ground_truth(
+        data, root_part, part_ids, {view.view_id for view in heldout_views}
+    )
+    return _D03Scene(
+        root_part=root_part,
+        parts=parts,
+        joints=joints,
+        angles_deg=angles_deg,
+        views=views,
+        ground_truth_transforms=truth_transforms,
+        heldout_ground_truth_coverage=truth_coverage,
+        max_translation_error=max_t_err,
+        max_rotation_error=max_r_err,
+        min_material_count=min_material_count,
+        min_asset_count=min_asset_count,
+    )
+
+
+def _d03_forward_kinematics(
+    scene: _D03Scene,
+) -> dict[str, tuple[tuple[float, float, float], _D03Mat]]:
+    """Deterministic forward kinematics: parent chain of hinge rotations."""
+    children: dict[str, list[_D03Joint]] = {}
+    for joint in scene.joints:
+        children.setdefault(joint.parent, []).append(joint)
+    identity: _D03Mat = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+    transforms: dict[str, tuple[tuple[float, float, float], _D03Mat]] = {
+        scene.root_part: ((0.0, 0.0, 0.0), identity)
+    }
+    frontier = [scene.root_part]
+    while frontier:
+        parent = frontier.pop()
+        t_parent, r_parent = transforms[parent]
+        for joint in children.get(parent, []):
+            offset = _d03_mat_vec(r_parent, joint.origin)
+            t_child = (
+                t_parent[0] + offset[0], t_parent[1] + offset[1], t_parent[2] + offset[2]
+            )
+            r_child = _d03_mat_mat(
+                r_parent,
+                _d03_rodrigues(joint.axis, scene.angles_deg[joint.child], joint.child),
+            )
+            transforms[joint.child] = (t_child, r_child)
+            frontier.append(joint.child)
+    return transforms
+
+
+def _d03_measure_scene(scene: _D03Scene) -> dict[str, Any]:
+    """Measure FK transforms and view coverage against the declared ground truth.
+
+    Part transforms are recomputed from the declared joint axes, origins and
+    angles and compared with the independently specified held-out ground truth.
+    Coverage recomputes part-center projections per calibrated view; held-out
+    views are compared with the declared held-out coverage. No render, GPU or
+    model-quality measurement is performed.
+    """
+    transforms = _d03_forward_kinematics(scene)
+    transform_errors: dict[str, dict[str, float]] = {}
+    for part_id, (translation, rotation) in sorted(transforms.items()):
+        if part_id == scene.root_part:
+            continue
+        gt_translation, gt_rotation = scene.ground_truth_transforms[part_id]
+        translation_error = math.sqrt(
+            sum((translation[k] - gt_translation[k]) ** 2 for k in range(3))
+        )
+        rotation_error = max(
+            abs(rotation[i][j] - gt_rotation[i][j]) for i in range(3) for j in range(3)
+        )
+        transform_errors[part_id] = {
+            "translation_error": round(translation_error, 12),
+            "rotation_error": round(rotation_error, 12),
+        }
+    transforms_match = all(
+        error["translation_error"] <= scene.max_translation_error
+        and error["rotation_error"] <= scene.max_rotation_error
+        for error in transform_errors.values()
+    )
+
+    views_report: dict[str, dict[str, Any]] = {}
+    for view in scene.views:
+        basis = _d03_camera_basis(view.position, view.look_at)
+        width, height = view.image_size
+        covered: list[str] = []
+        detail: dict[str, dict[str, Any]] = {}
+        for part in scene.parts:
+            local = _d03_mat_vec(transforms[part.part_id][1], part.local_center)
+            world = tuple(
+                transforms[part.part_id][0][k] + local[k] for k in range(3)
+            )
+            projected = _d03_project(world, view.position, basis, view.intrinsics)
+            if projected is None:
+                covered_flag = False
+                uv: list[float] | None = None
+                depth: float | None = None
+            else:
+                u, v, depth_value = projected
+                covered_flag = 0.0 <= u < width and 0.0 <= v < height
+                uv = [round(u, 6), round(v, 6)]
+                depth = round(depth_value, 6)
+            if covered_flag:
+                covered.append(part.part_id)
+            detail[part.part_id] = {
+                "world_center": [round(value, 9) for value in world],
+                "projected_uv": uv,
+                "depth": depth,
+                "covered": covered_flag,
+            }
+        views_report[view.view_id] = {
+            "split": view.split,
+            "covered_parts": sorted(covered),
+            "coverage": round(len(covered) / len(scene.parts), 6),
+            "parts": detail,
+        }
+
+    heldout_views = [view for view in scene.views if view.split == "heldout"]
+    coverage_match = all(
+        views_report[view.view_id]["covered_parts"]
+        == sorted(scene.heldout_ground_truth_coverage[view.view_id])
+        for view in heldout_views
+    )
+    materials = {part.material for part in scene.parts}
+    assets = {part.asset_id for part in scene.parts}
+    heldout_coverage_mean = round(
+        sum(views_report[view.view_id]["coverage"] for view in heldout_views)
+        / len(heldout_views),
+        6,
+    )
+    return {
+        "joint_graph_valid": True,  # el parser exige un árbol con raíz root_part
+        "transforms_match": transforms_match,
+        "coverage_match": coverage_match,
+        "transform_errors": transform_errors,
+        "views": views_report,
+        "heldout_view_count": len(heldout_views),
+        "train_view_count": len(scene.views) - len(heldout_views),
+        "heldout_coverage_mean": heldout_coverage_mean,
+        "material_count": len(materials),
+        "asset_count": len(assets),
+        "material_variation_present": len(materials) >= scene.min_material_count,
+        "asset_variation_present": len(assets) >= scene.min_asset_count,
+        "part_count": len(scene.parts),
+        "joint_count": len(scene.joints),
+    }
+
+
+def _check_d03_articulated_product(data: dict[str, Any]) -> dict[str, Any]:
+    """Run D03's typed fixture checks over the synthetic CPU scene.
+
+    Forward kinematics recomputed from the declared joint graph is compared
+    against the independently declared held-out ground truth (part transforms
+    and per-view coverage of part centers), and material/asset variation is
+    measured. Synthetic CPU-only evidence: no render, no GPU, no neural
+    reconstruction or material-transfer quality claim.
+    """
+    measurement = _d03_measure_scene(_d03_parse_fixture(data))
+    return {
+        "joint_graph_valid": measurement["joint_graph_valid"],
+        "heldout_views_present": measurement["heldout_view_count"] > 0,
+        "fk_transforms_match_ground_truth": measurement["transforms_match"],
+        "heldout_coverage_matches_ground_truth": measurement["coverage_match"],
+        "material_variation_present": measurement["material_variation_present"],
+        "asset_variation_present": measurement["asset_variation_present"],
+        "part_count": measurement["part_count"],
+        "joint_count": measurement["joint_count"],
+        "train_view_count": measurement["train_view_count"],
+        "heldout_view_count": measurement["heldout_view_count"],
+        "heldout_coverage_mean": measurement["heldout_coverage_mean"],
+        "material_count": measurement["material_count"],
+        "asset_count": measurement["asset_count"],
+    }
+
+
+def _write_d03_articulated_report(
+    fixture: Path, data: dict[str, Any], out_dir: Path
+) -> Path:
+    """Write the D03 articulated measurement report (synthetic CPU evidence only).
+
+    Contents: fixture SHA-256, joint tree and angles, per-view calibrated
+    coverage of part centers, FK-vs-ground-truth transform errors, held-out
+    coverage comparison, asset/material variation counts, explicit
+    ``evidence_scope: synthetic_cpu_only`` and ``gpu_used: false``. It makes no
+    GPU, render or model-quality claim.
+    """
+    scene = _d03_parse_fixture(data)
+    measurement = _d03_measure_scene(scene)
+    report = {
+        "schema": _D03_REPORT_SCHEMA,
+        "evidence_scope": _D03_EVIDENCE_SCOPE,
+        "gpu_used": False,
+        "scope": (
+            "synthetic CPU kinematics and coverage evidence only: deterministic "
+            "forward kinematics and part-center projections against declared "
+            "ground truth; no render, no GPU, no reconstruction or "
+            "material-transfer quality claim"
+        ),
+        "fixture_sha256": _sha256(fixture),
+        "ground_truth_declaration": (
+            "independently specified in the fixture: transforms and held-out "
+            "coverage were declared without running this runner"
+        ),
+        "root_part": scene.root_part,
+        "parts": [
+            {"id": part.part_id, "material": part.material, "asset_id": part.asset_id}
+            for part in scene.parts
+        ],
+        "joints": [
+            {"parent": joint.parent, "child": joint.child, "axis": list(joint.axis),
+             "origin": list(joint.origin)}
+            for joint in scene.joints
+        ],
+        "joint_angles_deg": dict(sorted(scene.angles_deg.items())),
+        "fk_vs_ground_truth": {
+            "max_translation_error": scene.max_translation_error,
+            "max_rotation_error": scene.max_rotation_error,
+            "per_part_errors": measurement["transform_errors"],
+            "transforms_match_ground_truth": measurement["transforms_match"],
+        },
+        "views": [
+            {
+                "id": view.view_id,
+                "split": view.split,
+                "position": list(view.position),
+                "look_at": list(view.look_at),
+                "intrinsics": list(view.intrinsics),
+                "image_size": list(view.image_size),
+                "covered_parts": measurement["views"][view.view_id]["covered_parts"],
+                "coverage": measurement["views"][view.view_id]["coverage"],
+                "parts": measurement["views"][view.view_id]["parts"],
+            }
+            for view in scene.views
+        ],
+        "heldout_ground_truth_coverage": {
+            view_id: sorted(parts)
+            for view_id, parts in sorted(scene.heldout_ground_truth_coverage.items())
+        },
+        "heldout_coverage_matches_ground_truth": measurement["coverage_match"],
+        "heldout_aggregate": {
+            "view_count": measurement["heldout_view_count"],
+            "coverage_mean": measurement["heldout_coverage_mean"],
+        },
+        "variation": {
+            "material_count": measurement["material_count"],
+            "asset_count": measurement["asset_count"],
+            "material_variation_present": measurement["material_variation_present"],
+            "asset_variation_present": measurement["asset_variation_present"],
+        },
+    }
+    path = out_dir / _D03_REPORT_ARTIFACT
+    path.write_text(
+        json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _png_fixture(path: Path, seed: int) -> None:
@@ -432,7 +2087,17 @@ def _make_d05_inventory(root: Path, ffmpeg: str) -> dict[str, Any]:
     }
 
 
-def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, Any]]:
+def _render_d05(
+    data: dict[str, Any],
+    out_dir: Path,
+    *,
+    source_video: Path | None = None,
+    brief: str | None = None,
+    transcript: str | None = None,
+    transcript_start: float = 0.0,
+    transcript_end: float | None = None,
+    source_license: str | None = None,
+) -> tuple[Path, dict[str, Any]]:
     ffmpeg = find_ffmpeg()
     ffprobe = find_ffprobe()
     if not ffmpeg or not ffprobe:
@@ -454,72 +2119,137 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
     checkpoints: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="d05-workspace-", dir=out_dir) as workspace:
         root = Path(workspace)
-        source = root / "source.mp4"
-        command = [
-            ffmpeg,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc2=size=320x180:rate=12:duration=2",
-            "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-pix_fmt",
-            "yuv420p",
-            str(source),
-        ]
-        try:
-            made = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise DemoError(f"D05 source fixture generation failed: {exc}") from exc
-        if made.returncode or not source.is_file():
-            raise DemoError(f"D05 source fixture generation failed: {made.stderr[-1200:]}")
-        inventory = _make_d05_inventory(root, ffmpeg)
+        real_source = source_video is not None
+        if real_source:
+            try:
+                source = source_video.expanduser().resolve(strict=True)
+            except OSError as exc:
+                raise DemoError(f"D05 source video is unavailable: {exc}") from exc
+            if not source.is_file() or source.stat().st_size > 512 * 1024 * 1024:
+                raise DemoError("D05 source must be a regular video file no larger than 512 MiB")
+            active_brief = (brief or "").strip()
+            active_transcript = (transcript or "").strip()
+            if len(active_brief) < 3 or not active_transcript:
+                raise DemoError("D05 real-source mode requires --brief and --transcript")
+            if (
+                not math.isfinite(transcript_start)
+                or transcript_start < 0
+                or transcript_end is None
+                or not math.isfinite(transcript_end)
+                or transcript_end <= transcript_start
+            ):
+                raise DemoError("D05 real-source mode requires a valid transcript time range")
+            if not (source_license or "").strip():
+                raise DemoError("D05 real-source mode requires a source license or rights label")
+            inventory = {
+                "input_count": 1,
+                "real_project_source": True,
+                "source_filename": source.name,
+                "source_sha256": _sha256(source),
+                "source_bytes": source.stat().st_size,
+            }
+            effective_brief = active_brief
+            effective_transcript = active_transcript
+            effective_license = source_license.strip()
+            (out_dir / "D05_asset_inventory.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "comfy_studio.d05_asset_inventory.v1",
+                        "mode": "user_project_source",
+                        "source": {
+                            "filename": source.name,
+                            "sha256": inventory["source_sha256"],
+                            "bytes": inventory["source_bytes"],
+                            "caller_asserted_rights_label": effective_license,
+                            "rights_verified": False,
+                        },
+                        "brief": active_brief,
+                        "transcript_sha256": hashlib.sha256(
+                            active_transcript.encode("utf-8")
+                        ).hexdigest(),
+                        "transcript_time_range_sec": [transcript_start, transcript_end],
+                        "weights_available": False,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                ) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            source = root / "source.mp4"
+            command = [
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                "-i", "testsrc2=size=320x180:rate=12:duration=2", "-an", "-c:v", "libx264",
+                "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(source),
+            ]
+            try:
+                made = subprocess.run(
+                    command, capture_output=True, text=True, timeout=60, check=False
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise DemoError(f"D05 source fixture generation failed: {exc}") from exc
+            if made.returncode or not source.is_file():
+                raise DemoError(f"D05 source fixture generation failed: {made.stderr[-1200:]}")
+            inventory = _make_d05_inventory(root, ffmpeg)
+            effective_brief = "bosque amanecer"
+            effective_transcript = "bosque amanecer paisaje de prueba"
+            effective_license = "CC0-1.0"
         checkpoints.append(
             {
-                "stage": "100_asset_ingest",
+                "stage": "project_source_ingest" if real_source else "100_asset_ingest",
                 "status": "done",
-                "failed_items_isolated": inventory["corrupt"] + inventory["unsupported"],
+                "failed_items_isolated": (
+                    inventory.get("corrupt", 0) + inventory.get("unsupported", 0)
+                ),
             }
         )
 
         store = ProjectStore(root / "studio-data")
         project = store.create_project(
-            data["project_name"], description="Synthetic CPU acceptance fixture"
+            data["project_name"],
+            description=(
+                "User-provided CPU input" if real_source else "Synthetic CPU acceptance fixture"
+            ),
         )
+        source_mime = {
+            ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm",
+            ".mov": "video/quicktime", ".qt": "video/quicktime", ".mkv": "video/x-matroska",
+        }.get(source.suffix.lower())
+        if source_mime is None:
+            raise DemoError(
+                "D05 source must use a supported video extension: mp4, m4v, webm, mov, qt, mkv"
+            )
         uploaded = store.save_upload(
             project["id"],
-            filename="source.mp4",
-            content_type="video/mp4",
+            filename=source.name,
+            content_type=source_mime,
             data=source.read_bytes(),
-            max_upload_bytes=8 * 1024 * 1024,
+            max_upload_bytes=512 * 1024 * 1024,
             category="uploads",
-            metadata={"license": "CC0-1.0"},
+            metadata={"license": effective_license},
         )
+        stored_source_path = store.get_asset_path(project["id"], uploaded["id"])
+        if stored_source_path is None or _sha256(stored_source_path) != _sha256(source):
+            raise DemoError("D05 project ingest did not preserve the source video bytes")
         store.save_transcription(
             project["id"],
             asset_id=uploaded["id"],
             language="es",
-            backend="fixture",
+            backend="user_provided" if real_source else "fixture",
             segments=[
                 {
                     "id": "seg-001",
-                    "start": 0.0,
-                    "end": 1.5,
-                    "text": "bosque amanecer paisaje de prueba",
+                    "end": transcript_end if real_source else 1.5,
+                    "start": transcript_start,
+                    "text": effective_transcript,
                 }
             ],
         )
         plan = plan_montage_from_brief(
             store,
             project["id"],
-            brief="bosque amanecer",
+            brief=effective_brief,
             target_duration_sec=1.0,
             max_cuts=2,
             min_segment_sec=0.2,
@@ -585,6 +2315,18 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         if source_path is None:
             raise DemoError("D05 source asset was not retained")
         selected = plan["cuts"][0]
+        source_probe = subprocess.run(
+            [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height", "-of", "json", str(source_path)],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if source_probe.returncode:
+            raise DemoError(f"D05 could not inspect source video: {source_probe.stderr[-1200:]}")
+        source_streams = json.loads(source_probe.stdout).get("streams", [])
+        if not source_streams:
+            raise DemoError("D05 source has no video stream")
+        source_width = int(source_streams[0]["width"])
+        source_height = int(source_streams[0]["height"])
         timeline = TimelineSpec(
             name=data["project_name"],
             aspect="16:9",
@@ -595,11 +2337,14 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
                     str(source_path),
                     selected["in_sec"],
                     selected["out_sec"],
-                    license="CC0-1.0",
-                    src_width=320,
-                    src_height=180,
+                    license=effective_license,
+                    src_width=source_width,
+                    src_height=source_height,
                     source_asset_id=uploaded["id"],
-                    reason="brief evidence: bosque/amanecer",
+                    reason=(
+                        f"user brief evidence: {effective_brief}"
+                        if real_source else "fixture evidence: bosque/amanecer"
+                    ),
                 )
             ],
             titles=[Title(data["titles"][0]["id"], data["titles"][0]["text"], 0.0, 1.0)],
@@ -617,16 +2362,25 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
                     "metadata": {
                         "aspect": aspect,
                         "dimensions": list(dimensions[aspect]),
-                        "synthetic_cpu_fixture": True,
+                        "synthetic_cpu_fixture": not real_source,
                     },
                 }
                 for aspect, path in masters.items()
             ],
         )
         reopened = load_editable_package(package)
-        delivery_manifest = json.loads((package / "delivery-manifest.json").read_text())
-        credits_verified = bool(delivery_manifest.get("credits")) and all(
-            credit.get("license") == "CC0-1.0"
+        delivery_manifest_path = package / "delivery-manifest.json"
+        delivery_manifest = json.loads(delivery_manifest_path.read_text())
+        delivery_manifest["rights_assertion"] = {
+            "caller_asserted_label": effective_license,
+            "rights_verified": False,
+        }
+        delivery_manifest_path.write_text(
+            json.dumps(delivery_manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        credit_metadata_retained = bool(delivery_manifest.get("credits")) and all(
+            credit.get("license") == effective_license
             and credit.get("source_asset_id") == uploaded["id"]
             for credit in delivery_manifest["credits"]
         )
@@ -644,8 +2398,8 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         )
         if not editable_ok:
             raise DemoError("D05 editable project changed approved clip data during title edit")
-        if not credits_verified:
-            raise DemoError("D05 delivery package did not retain source credit and license")
+        if not credit_metadata_retained:
+            raise DemoError("D05 delivery package did not retain caller-provided credit metadata")
         archive = out_dir / "D05_delivery_package.zip"
         from zipfile import ZIP_STORED, ZipFile
 
@@ -661,7 +2415,9 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
         "brief_to_edl": {
             "cuts": len(plan["cuts"]),
             "simulated_ml": plan["simulated"],
-            "evidence_mode": "CPU fixture transcript",
+            "evidence_mode": (
+                "user-provided transcript" if real_source else "CPU fixture transcript"
+            ),
         },
         "ffmpeg_encode": {
             "dimensions_verified": {aspect: True for aspect in dimensions},
@@ -678,17 +2434,21 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
                 aspect: detail["probed_color_range"] == "tv"
                 for aspect, detail in delivery_verifications.items()
             },
-            "synthetic_fixture": True,
+            "synthetic_fixture": not real_source,
+            "real_project_source": real_source,
             "quality_claim": False,
         },
         "editable_roundtrip": {
             "reopened": True,
             "title_edit_preserved_clips": editable_ok,
-            "credits_verified": credits_verified,
+            "credit_metadata_retained": credit_metadata_retained,
+            "rights_verified": False,
         },
         "recovery": {
             "partial_failures_isolated": True,
-            "successful_inputs_retained": inventory["valid_assets_survived_partial_failures"],
+            "successful_inputs_retained": inventory.get(
+                "valid_assets_survived_partial_failures", real_source
+            ),
         },
         "duration_s": round(time.monotonic() - started, 3),
         "checkpoints": checkpoints + [{"stage": "delivery_package", "status": "done"}],
@@ -701,7 +2461,18 @@ def _render_d05(data: dict[str, Any], out_dir: Path) -> tuple[Path, dict[str, An
     }
 
 
-def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[str, Any]:
+def run_demo(
+    demo_id: str,
+    output_root: Path,
+    *,
+    resume: bool = False,
+    source_video: Path | None = None,
+    brief: str | None = None,
+    transcript: str | None = None,
+    transcript_start: float = 0.0,
+    transcript_end: float | None = None,
+    source_license: str | None = None,
+) -> dict[str, Any]:
     demos = {demo.demo_id: demo for demo in demo_catalog()}
     if demo_id not in demos:
         raise DemoError(f"demo desconocida: {demo_id}; disponibles: {', '.join(demos)}")
@@ -709,6 +2480,49 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
     fixture, fixture_data = _load_fixture(demo)
     out_dir, manifest_path = _prepare_demo_output(demo_id, output_root)
     input_hash = _sha256(fixture)
+    checks = _check_fixture(demo_id, fixture_data)
+    inputs = [{
+        "kind": "fixture",
+        "path": f"fixtures/{fixture.name}",
+        "sha256": input_hash,
+    }]
+    if source_video is not None:
+        if demo_id != "D05":
+            raise DemoError("--source-video is supported only for D05")
+        try:
+            source_path = source_video.expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise DemoError(f"D05 source video is unavailable: {exc}") from exc
+        if not source_path.is_file() or source_path.stat().st_size > 512 * 1024 * 1024:
+            raise DemoError("D05 source must be a regular video file no larger than 512 MiB")
+        if source_path.suffix.lower() not in {
+            ".mp4", ".m4v", ".webm", ".mov", ".qt", ".mkv"
+        }:
+            raise DemoError("D05 source must use a supported video extension")
+        if (
+            not math.isfinite(transcript_start)
+            or transcript_start < 0
+            or transcript_end is None
+            or not math.isfinite(transcript_end)
+            or transcript_end <= transcript_start
+        ):
+            raise DemoError(
+                "D05 real-source mode requires --transcript-start and --transcript-end "
+                "with start < end"
+            )
+        inputs.append({
+            "kind": "project_source_video",
+            "path": source_path.name,
+            "sha256": _sha256(source_path),
+            "bytes": source_path.stat().st_size,
+            "brief": (brief or "").strip(),
+            "transcript_sha256": hashlib.sha256((transcript or "").encode("utf-8")).hexdigest(),
+            "transcript_start_s": transcript_start,
+            "transcript_end_s": transcript_end,
+            "caller_asserted_rights_label": source_license,
+            "rights_verified": False,
+        })
+    execution_fingerprint = _execution_fingerprint(demo_id)
     if resume and manifest_path.is_file():
         def artifact_is_valid(item: dict[str, Any]) -> bool:
             name = item.get("path")
@@ -720,15 +2534,30 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
                 and candidate.is_file()
                 and candidate.resolve().parent == out_dir
                 and _sha256(candidate) == item.get("sha256")
+                and candidate.stat().st_size == item.get("bytes")
             )
 
         try:
             prior = json.loads(manifest_path.read_text(encoding="utf-8"))
             valid = (
-                prior.get("schema") == "comfy_studio.demo_run.v2"
-                and prior.get("inputs", [{}])[0].get("sha256") == input_hash
-                and isinstance(prior.get("artifacts", []), list)
-                and all(artifact_is_valid(item) for item in prior.get("artifacts", []))
+                prior.get("schema") == "comfy_studio.demo_run.v3"
+                and prior.get("result") == (
+                    "cpu_real_input_flow_completed" if source_video is not None
+                    else "cpu_fixture_checks_passed"
+                )
+                and prior.get("inputs") == inputs
+                and prior.get("execution_fingerprint") == execution_fingerprint
+                and isinstance(prior.get("artifacts"), list)
+                and {
+                    item.get("path")
+                    for item in prior["artifacts"]
+                    if isinstance(item, dict)
+                } == _expected_artifact_names(demo_id)
+                and len(prior["artifacts"]) == len(_expected_artifact_names(demo_id))
+                and all(
+                    isinstance(item, dict) and artifact_is_valid(item)
+                    for item in prior["artifacts"]
+                )
             )
         except (OSError, json.JSONDecodeError, IndexError, KeyError, TypeError):
             valid = False
@@ -737,22 +2566,63 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
             return {"result": prior["result"], "manifest": str(manifest_path),
                     "artifacts": prior.get("artifacts", []), "checks": prior.get("checks", {}),
                     "resumed": True}
-    checks = _check_fixture(demo_id, fixture_data)
     artifact: Path | None = None
     project_artifact: Path | None = None
-    if demo_id == "D05":
-        artifact, render_checks = _render_d05(fixture_data, out_dir)
+    measurement_report: Path | None = None
+    media_artifacts: list[Path] = []
+    if demo_id == "D02":
+        media = _write_d02_causal_media(fixture_data, out_dir)
+        media_artifacts = [out_dir / name for name in _D02_MEDIA_FILES]
+        measurement_report = _write_d02_measurement_report(
+            fixture, fixture_data, media, out_dir
+        )
+    elif demo_id == "D01":
+        measurement_report = _write_d01_reprojection_report(fixture, fixture_data, out_dir)
+    elif demo_id == "D03":
+        measurement_report = _write_d03_articulated_report(fixture, fixture_data, out_dir)
+    elif demo_id == "D05":
+        if source_video is None:
+            artifact, render_checks = _render_d05(fixture_data, out_dir)
+        else:
+            artifact, render_checks = _render_d05(
+                fixture_data, out_dir, source_video=source_video, brief=brief,
+                transcript=transcript, transcript_start=transcript_start,
+                transcript_end=transcript_end, source_license=source_license,
+            )
         checks.update(render_checks)
         project_artifact = out_dir / "editable_project.json"
     failed = [name for name, value in checks.items() if isinstance(value, bool) and not value]
     if failed:
         raise DemoError(f"{demo_id} failed fixture checks: {', '.join(failed)}")
     manifest: dict[str, Any] = {
-        "schema": "comfy_studio.demo_run.v2",
+        "schema": "comfy_studio.demo_run.v3",
         "demo": demo.to_dict(),
-        "result": "cpu_fixture_checks_passed",
-        "claim_scope": "fixture consistency/toolchain only; no model quality or capability proof",
-        "inputs": [{"path": f"fixtures/{fixture.name}", "sha256": _sha256(fixture)}],
+        "result": "cpu_real_input_flow_completed" if source_video is not None
+        else "cpu_fixture_checks_passed",
+        "claim_scope": (
+            "synthetic CPU pixel/audio fixture evidence only; no model quality, "
+            "real-footage, or GPU capability proof"
+            if demo_id == "D02"
+            else (
+                "fixture consistency/toolchain only; no real camera "
+                "calibration, scene coverage, model quality, or capability proof"
+                if demo_id == "D01"
+            else (
+                "user-provided source and transcript processed through project ingest, montage, "
+                "FFmpeg delivery and editable package; CPU/toolchain evidence only, no model "
+                "quality or capability proof"
+                if source_video is not None
+                else (
+                    "synthetic CPU kinematics and calibrated-view coverage only; no render, GPU, "
+                    "reconstruction or material-transfer quality claim"
+                    if demo_id == "D03"
+                    else "fixture consistency/toolchain only; no model quality or capability proof"
+                )
+            )
+            )
+        ),
+        "inputs": inputs,
+        "execution_fingerprint": execution_fingerprint,
         "checks": checks,
         "checkpoints": checks.get("checkpoints", []),
         "stages": [
@@ -764,7 +2634,8 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
                 "level": str(s.level),
                 "neural": s.neural,
                 "pending_reason": s.pending_reason,
-                "evidence": "CPU fixture check only"
+                "evidence": "CPU real-input flow only" if source_video is not None
+                else "CPU fixture check only"
                 if s.status is StageStatus.READY_CPU
                 else None,
             }
@@ -773,6 +2644,9 @@ def run_demo(demo_id: str, output_root: Path, *, resume: bool = False) -> dict[s
         "artifacts": [],
     }
     generated_artifacts = [artifact] if artifact else []
+    generated_artifacts.extend(media_artifacts)
+    if measurement_report is not None:
+        generated_artifacts.append(measurement_report)
     if demo_id == "D05":
         generated_artifacts.extend(out_dir / name for name in (
             "D05_master_16x9.mp4", "D05_master_9x16.mp4", "D05_asset_inventory.json"))
@@ -797,6 +2671,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-root", type=Path, default=Path("./demo-runs"))
     parser.add_argument("--resume", action="store_true", help="reuse verified prior artifacts")
     parser.add_argument("--clean", action="store_true", help="remove only the selected demo output")
+    parser.add_argument(
+        "--source-video", type=Path,
+        help="D05: ingest a project-owned video instead of generating a fixture",
+    )
+    parser.add_argument("--brief", help="D05 real-source mode: montage brief")
+    parser.add_argument(
+        "--transcript", help="D05 real-source mode: transcript text for the selected source range"
+    )
+    parser.add_argument("--transcript-start", type=float, default=0.0)
+    parser.add_argument("--transcript-end", type=float)
+    parser.add_argument(
+        "--source-license",
+        help=(
+            "D05: caller-asserted rights/credit label to retain as metadata; "
+            "not independently verified"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.list:
         print(json.dumps([d.to_dict() for d in demo_catalog()], ensure_ascii=False, indent=2))
@@ -808,7 +2699,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"removed": clean_demo_output(args.demo, args.output_root)}))
             return 0
         print(json.dumps(
-            run_demo(args.demo, args.output_root, resume=args.resume),
+            run_demo(
+                args.demo, args.output_root, resume=args.resume,
+                source_video=args.source_video, brief=args.brief, transcript=args.transcript,
+                transcript_start=args.transcript_start, transcript_end=args.transcript_end,
+                source_license=args.source_license,
+            ),
             ensure_ascii=False,
             indent=2,
         ))

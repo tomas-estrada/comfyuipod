@@ -6,16 +6,9 @@
 # API pública accionada por el usuario. El agente LLM NUNCA ve `approve`
 # (ver BELT_TOOLS_EXPOSED en mcp_server.py).
 #
-# `approve` es SÍNCRONO a propósito: devuelve el resultado completo del lazo
-# (fase, assets, reel), y dos tests E2E se apoyan en ese contrato para verificar
-# la canalización entera — incluido que el MP4 final existe y es válido.
-#
-# `run_in_threadpool` NO evita que Nginx se cuelgue: solo saca el trabajo del
-# event loop. Lo que evita el 504 es `proxy_read_timeout 3600s` de
-# `location /studio/api/` (config/nginx.conf). Consecuencia documentada: una
-# producción de más de 1 h haría 504. Convertirla en 202 + job-id (con el panel
-# sondeando por SSE) liberaría la conexión, pero rompería ese contrato y esos
-# tests; se deja anotado como alternativa, no implementado.
+# La ruta responde con un handle 202 y persiste la fase antes de encolar el
+# grafo. El llamador observa progreso y resultado en `/status`; una repetición
+# de aprobación devuelve el mismo handle y no inicia un segundo grafo.
 
 
 
@@ -42,7 +35,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from comfy_studio.orchestration.service import (
@@ -50,6 +43,7 @@ from comfy_studio.orchestration.service import (
     ProductionNotApprovedError,
     ProductionNotFoundError,
     ProductionPlanNotEditableError,
+    ProductionQueueFullError,
     ProductionService,
 )
 from comfy_studio.webutil import (
@@ -86,6 +80,7 @@ def register_routes(app: FastAPI) -> None:
                 body.idea,
                 cost_cap_usd=body.cost_cap_usd,
                 project_id=body.project_id,
+                brief=body.brief,
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -113,25 +108,24 @@ def register_routes(app: FastAPI) -> None:
     async def approve_production_route(
         production_id: str,
         request: Request,
+        response: Response,
     ) -> dict[str, Any]:
-        """Aprobación HUMANA de la puerta de gasto: corre el lazo y devuelve el resultado.
-
-        Síncrono a propósito (ver la nota de gobernanza del módulo): el llamador
-        recibe la fase final y los assets. `run_in_threadpool` solo saca el
-        trabajo del event loop; el límite real de duración lo pone
-        `proxy_read_timeout 3600s` de `location /studio/api/`.
-        """
+        """Human approval returns a durable job handle; poll status for completion."""
         service: ProductionService = request.app.state.production_service
         try:
-            # Saca el grafo del event loop (no de la petición HTTP: el límite de
-            # duración lo fija proxy_read_timeout, ver la nota del módulo).
-            return await run_in_threadpool(service.approve_plan, production_id)
+            result = await run_in_threadpool(service.approve_plan_background, production_id)
+            response.status_code = 202 if result["phase"] == "executing" else 200
+            return result
         except ProductionNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ProductionNotApprovedError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ProductionAlreadyTerminalError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ProductionQueueFullError as exc:
+            raise HTTPException(
+                status_code=503, detail=str(exc), headers={"Retry-After": "5"}
+            ) from exc
     @app.patch("/studio/api/productions/{production_id}/plan")
     async def update_plan_route(
         production_id: str,

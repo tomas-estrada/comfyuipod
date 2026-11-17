@@ -20,6 +20,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from comfy_studio.agent import OpenAICompatibleLLMClient, StudioAgent, create_default_tool_belt
 from comfy_studio.comfyui_client import ComfyUIClient
@@ -143,6 +144,14 @@ def create_app(
 
         async def _run_job_recovery() -> None:
             try:
+                resumed_productions = await run_in_threadpool(
+                    _app.state.production_service.resume_interrupted_approvals
+                )
+                if resumed_productions:
+                    logger.info(
+                        "Recuperación de producciones aprobadas tras reinicio: %d",
+                        len(resumed_productions),
+                    )
                 report = await recover_interrupted_jobs(
                     store=store,
                     comfyui_client=_app.state.comfyui_client,
@@ -275,12 +284,6 @@ def create_app(
     app.state.render_tasks = set()
     app.state.ad_tasks = set()  # jobs `ad_variants` en segundo plano (routers/ads.py)
     app.state.render_semaphore = asyncio.Semaphore(cfg.max_concurrent_renders)
-    # Atlas georreferenciado del Valle de Aburrá (raíz $STUDIO_ATLAS_DIR o
-    # /opt/studio-atlas en la imagen). Si no hay catálogo, los endpoints del
-    # atlas responden 503 tipado y el resto del estudio sigue intacto.
-    from comfy_studio.atlas.agent_tools import shared_atlas_service
-
-    app.state.atlas = shared_atlas_service()
     # (El ProductionService se arma más abajo, tras construir app.state.llm_client,
     # porque el cableado de motores reales lo necesita — M6-AGT-001.)
     # M1.2: la construcción de la percepción vectorial NO puede tumbar la app. Si
@@ -511,7 +514,7 @@ def create_app(
                 qa_engine=QaEngine(),
                 editor_engine=EditorEngine(backend="remotion"),
                 template_registry=app.state.template_registry,
-                atlas_service=app.state.atlas,
+                project_store=store,
                 comfyui_input_dir=os.environ.get("STUDIO_COMFYUI_INPUT_DIR")
                 or "/workspace/comfyui-data/input",
                 # Confinamiento de rutas de motor bajo el directorio de datos
@@ -549,7 +552,6 @@ def create_app(
         collaborators=orch_collaborators,
         store=store,
         broker=broker,
-        atlas_service=app.state.atlas,
         resource_vram_budget_mb=orch_resource_vram_budget_mb,
     )
     app.state.orchestration_mode = orch_mode

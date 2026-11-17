@@ -8,6 +8,7 @@ datos necesarios. Solo CPU, fixture sintético: no GPU, pesos ni red.
 
 from __future__ import annotations
 
+import json
 import math
 import subprocess
 import tempfile
@@ -148,6 +149,96 @@ def sample_camera_path(
             }
         )
     return samples
+
+
+def encode_camera_trajectory_frames(
+    frames: list[str | Path],
+    output_path: str | Path,
+    *,
+    fps: float,
+    width: int,
+    height: int,
+) -> dict[str, Any]:
+    """Encode Blender camera frames as a verified MP4; never trusts file names alone."""
+    fps, width, height = float(fps), int(width), int(height)
+    if not 1 <= fps <= MAX_ANIMATIC_FPS:
+        raise AnimaticError(f"fps debe estar entre 1 y {MAX_ANIMATIC_FPS}.")
+    if width < 16 or height < 16 or width > 3840 or height > 2160 or width % 2 or height % 2:
+        raise AnimaticError("dimensiones inválidas para codificación yuv420p.")
+    if not 1 <= len(frames) <= MAX_ANIMATIC_FRAMES:
+        raise AnimaticError(f"se requiere de 1 a {MAX_ANIMATIC_FRAMES} fotogramas.")
+    try:
+        from PIL import Image
+
+        for frame in frames:
+            with Image.open(frame) as image:
+                image.verify()
+            with Image.open(frame) as image:
+                if image.size != (width, height):
+                    raise AnimaticError(
+                        f"PNG de cámara inválido: {frame} mide {image.width}x{image.height}."
+                    )
+    except AnimaticError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise AnimaticError(f"PNG de cámara inválido: {exc}") from exc
+
+    ffmpeg, ffprobe = find_ffmpeg(), find_ffprobe()
+    if not ffmpeg or not ffprobe:
+        raise AnimaticError("se requiere ffmpeg y ffprobe en PATH")
+    output = Path(output_path).expanduser()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="comfy_camera_encode_") as tmp:
+        sequence = Path(tmp)
+        for index, frame in enumerate(frames, start=1):
+            (sequence / f"frame_{index:04d}.png").write_bytes(Path(frame).read_bytes())
+        cmd = [
+            ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-framerate", str(fps),
+            "-i", str(sequence / "frame_%04d.png"), "-frames:v", str(len(frames)),
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", str(output),
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise AnimaticError(f"ffmpeg falló: {exc}") from exc
+        if result.returncode != 0:
+            raise AnimaticError(f"ffmpeg falló (exit {result.returncode}): {result.stderr[-1200:]}")
+    probe = probe_media_info(output)
+    if not probe.get("probe_ok") or not probe.get("has_video"):
+        raise AnimaticError(f"ffprobe no pudo verificar el animatic: {probe}")
+    if int(probe.get("width", 0)) != width or int(probe.get("height", 0)) != height:
+        raise AnimaticError("ffprobe devolvió dimensiones inesperadas")
+    count_command = [
+        ffprobe,
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-count_frames",
+        "-show_entries", "stream=nb_read_frames",
+        "-of", "json",
+        str(output),
+    ]
+    try:
+        count_result = subprocess.run(
+            count_command, capture_output=True, text=True, timeout=60, check=False
+        )
+        counted = json.loads(count_result.stdout) if count_result.returncode == 0 else {}
+        decoded_frames = int((counted.get("streams") or [{}])[0].get("nb_read_frames", 0))
+    except (OSError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError) as exc:
+        raise AnimaticError(f"ffprobe no pudo contar fotogramas: {exc}") from exc
+    if decoded_frames != len(frames):
+        raise AnimaticError(
+            f"ffprobe contó {decoded_frames} fotogramas; se esperaban {len(frames)}"
+        )
+    expected_duration = len(frames) / fps
+    duration = float(probe.get("duration_sec", probe.get("duration_s", 0.0)))
+    if duration <= 0 or abs(duration - expected_duration) > max(0.1, 1.0 / fps):
+        raise AnimaticError(f"ffprobe devolvió duración inesperada: {duration}")
+    return {
+        "output": str(output), "probe_ok": True, "frame_count": decoded_frames,
+        "duration_s": duration, "fps": fps, "width": width, "height": height,
+        "has_video": True, "has_audio": bool(probe.get("has_audio")), "probe": probe,
+    }
 
 
 def check_animatic_preflight(

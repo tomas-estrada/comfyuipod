@@ -119,6 +119,40 @@ class BlenderCameraView:
                     raise ValueError(f"camera view {self.name}: valores del light {name} inválidos")
 
 
+@dataclass(frozen=True, slots=True)
+class BlenderCameraKeyframe:
+    """A sampled animation-frame camera pose in the asset's declared coordinates."""
+
+    frame: int
+    position: tuple[float, float, float]
+    target: tuple[float, float, float]
+    fov_deg: float = 50.0
+
+    def validate(self) -> None:
+        if isinstance(self.frame, bool) or not isinstance(self.frame, int) or self.frame < 1:
+            raise ValueError("camera trajectory frame debe ser un entero positivo")
+        if (
+            len(self.position) != 3
+            or len(self.target) != 3
+            or any(
+                not isinstance(value, (int, float)) or not math.isfinite(value)
+                for value in (*self.position, *self.target)
+            )
+        ):
+            raise ValueError("camera trajectory position and target must be finite 3D values")
+        if all(
+            math.isclose(a, b, abs_tol=1e-9)
+            for a, b in zip(self.position, self.target, strict=True)
+        ):
+            raise ValueError("camera trajectory position and target cannot coincide")
+        if (
+            not isinstance(self.fov_deg, (int, float))
+            or not math.isfinite(self.fov_deg)
+            or not 1.0 <= self.fov_deg <= 175.0
+        ):
+            raise ValueError("camera trajectory fov_deg must be between 1 and 175")
+
+
 def find_blender_bin() -> str | None:
     """Localiza el binario de Blender: env STUDIO_BLENDER_BIN, PATH o /opt/blender."""
     env_bin = (os.environ.get("STUDIO_BLENDER_BIN") or "").strip()
@@ -152,6 +186,7 @@ class BlenderRenderSpec:
     device: str = "gpu"  # gpu | cpu; CPU is required for deterministic engine fixtures.
     output_format: str = "png"  # png | exr (secuencia) — el MP4 se compone con ffmpeg
     camera_views: tuple[BlenderCameraView, ...] = ()
+    camera_trajectory: tuple[BlenderCameraKeyframe, ...] = ()
     asset_transform: tuple[tuple[float, ...], ...] = (
         (1.0, 0.0, 0.0, 0.0),
         (0.0, 1.0, 0.0, 0.0),
@@ -184,6 +219,34 @@ class BlenderRenderSpec:
             raise ValueError("camera_views contiene nombres duplicados")
         for view in self.camera_views:
             view.validate()
+        for keyframe in self.camera_trajectory:
+            keyframe.validate()
+        if self.camera_trajectory:
+            frames = [keyframe.frame for keyframe in self.camera_trajectory]
+            if any(
+                current <= previous
+                for previous, current in zip(frames, frames[1:], strict=False)
+            ):
+                raise ValueError("camera trajectory frames must be strictly increasing")
+            if frames[-1] > self.frames:
+                raise ValueError("camera_trajectory frame cannot exceed render frames")
+            if len(self.camera_trajectory) < 2 or len(self.camera_trajectory) != self.frames:
+                raise ValueError(
+                    "camera_trajectory requires one camera pose for every render frame"
+                )
+            if frames[0] != 1 or frames[-1] != self.frames:
+                raise ValueError("camera_trajectory must cover frames 1 through render frames")
+            if self.camera_views:
+                raise ValueError("camera_trajectory cannot be combined with camera_views")
+            if (
+                self.frames < 2
+                or self.output_format != "png"
+                or self.engine != "cycles"
+                or self.device != "cpu"
+            ):
+                raise ValueError(
+                    "camera_trajectory requires animation PNG with Cycles CPU"
+                )
         if self.camera_views and (
             self.frames != 1
             or self.output_format != "png"
@@ -419,6 +482,97 @@ print("[BlenderRunner] camera views rendered:", len(camera_views))
 """
 
 
+def _camera_trajectory_render_script(spec: BlenderRenderSpec) -> str:
+    """Render one sampled, project-coordinate camera pose per integer frame."""
+    trajectory = repr([asdict(keyframe) for keyframe in spec.camera_trajectory])
+    transform = json.dumps([list(row) for row in spec.asset_transform])
+    up_axis = json.dumps(spec.up_axis)
+    return f'''\
+import math
+from mathutils import Matrix, Vector
+
+camera_trajectory = {trajectory}
+asset_matrix = Matrix({transform})
+asset_up_axis = {up_axis}
+
+for obj in list(scene.objects):
+    if obj.type in {{"MESH", "EMPTY", "ARMATURE"}} and obj.parent is None:
+        obj.matrix_world = asset_matrix @ obj.matrix_world
+
+mesh_objects = [obj for obj in scene.objects if obj.type == "MESH"]
+if not mesh_objects:
+    raise RuntimeError("camera trajectory render requires mesh geometry")
+depsgraph = bpy.context.evaluated_depsgraph_get()
+world_corners = [
+    obj.evaluated_get(depsgraph).matrix_world @ Vector(corner)
+    for obj in mesh_objects
+    for corner in obj.evaluated_get(depsgraph).bound_box
+]
+bounds_min = Vector(tuple(min(point[i] for point in world_corners) for i in range(3)))
+bounds_max = Vector(tuple(max(point[i] for point in world_corners) for i in range(3)))
+asset_center = (bounds_min + bounds_max) * 0.5
+asset_radius = max((bounds_max - bounds_min).length * 0.5, 0.1)
+
+def to_blender_space(values):
+    point = Vector(values)
+    if asset_up_axis == "y_up":
+        point = Vector((point.x, -point.z, point.y))
+    return asset_matrix @ point
+
+camera_data = bpy.data.cameras.new("ComfyCameraTrajectory")
+camera_data.sensor_fit = "HORIZONTAL"
+camera_data.sensor_width = 36.0
+camera_obj = bpy.data.objects.new(camera_data.name, camera_data)
+scene.collection.objects.link(camera_obj)
+scene.camera = camera_obj
+camera_data.clip_start = max(asset_radius * 0.001, 0.001)
+camera_data.clip_end = max(asset_radius * 1000.0, 100.0)
+
+if scene.world is None:
+    scene.world = bpy.data.worlds.new("ComfyCameraTrajectoryWorld")
+scene.world.use_nodes = True
+background = scene.world.node_tree.nodes.get("Background")
+if background is not None:
+    background.inputs["Color"].default_value = (0.055, 0.065, 0.08, 1.0)
+    background.inputs["Strength"].default_value = 0.8
+if not any(obj.type == "LIGHT" for obj in scene.objects):
+    for light_name, direction, energy_scale, size_scale in (
+        ("ComfyTrajectoryKey", (1.4, -2.0, 2.2), 500.0, 2.0),
+        ("ComfyTrajectoryFill", (-2.0, -1.0, 0.8), 220.0, 2.5),
+        ("ComfyTrajectoryRim", (0.4, 2.0, 1.6), 350.0, 1.8),
+    ):
+        light_data = bpy.data.lights.new(light_name, type="AREA")
+        light_data.energy = energy_scale * asset_radius * asset_radius
+        light_data.shape = "DISK"
+        light_data.size = size_scale * asset_radius
+        light_obj = bpy.data.objects.new(light_name, light_data)
+        scene.collection.objects.link(light_obj)
+        light_obj.location = asset_center + Vector(direction) * (3.0 * asset_radius)
+        light_obj.rotation_euler = (
+            (asset_center - light_obj.location).to_track_quat("-Z", "Y").to_euler()
+        )
+
+for keyframe in camera_trajectory:
+    scene.frame_set(keyframe["frame"])
+    camera_obj.location = to_blender_space(keyframe["position"])
+    target = to_blender_space(keyframe["target"])
+    direction = target - camera_obj.location
+    if direction.length < 1e-9:
+        raise RuntimeError("camera trajectory position and target coincide")
+    camera_obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+    camera_data.lens = camera_data.sensor_width / (
+        2.0 * math.tan(math.radians(float(keyframe["fov_deg"])) * 0.5)
+    )
+    camera_obj.keyframe_insert(data_path="location", frame=keyframe["frame"])
+    camera_obj.keyframe_insert(data_path="rotation_euler", frame=keyframe["frame"])
+    camera_data.keyframe_insert(data_path="lens", frame=keyframe["frame"])
+
+scene.frame_set(1)
+bpy.ops.render.render(animation=True, write_still=True)
+print("[BlenderRunner] camera trajectory frames rendered:", len(camera_trajectory))
+'''
+
+
 def build_render_script(spec: BlenderRenderSpec) -> str:
     """Genera el script Python que Blender ejecuta en modo `-b`."""
     scene_literal = json.dumps(str(spec.scene_path).replace("\\", "/"))
@@ -463,7 +617,9 @@ scene.render.engine = eevee_engine"""
             else:
                 d.use = False""".replace("DEVICE_INDEX", str(spec.device_index))
     render_invocation = (
-        _camera_view_render_script(spec)
+        _camera_trajectory_render_script(spec)
+        if spec.camera_trajectory
+        else _camera_view_render_script(spec)
         if spec.camera_views
         else f"bpy.ops.render.render(animation={spec.frames > 1}, write_still=True)"
     )
@@ -749,6 +905,7 @@ def write_unreal_manifest(manifest: dict[str, Any], dest: Path) -> Path:
 __all__ = [
     "BLENDER_LOG_NAME",
     "FAILURE_INVALID_OUTPUT",
+    "BlenderCameraKeyframe",
     "BlenderExportSpec",
     "BlenderRenderSpec",
     "BlenderResult",

@@ -1,5 +1,7 @@
 # 00 — Inventario
 
+> **Snapshot histórico:** conserva conteos de la auditoría MAAD de 2026-11-10. No describe el roster actual; para estado vigente, consulta [`../HANDOFF-17NOV.md`](../HANDOFF-17NOV.md) y el código desde `docs/ARCHITECTURE.md`.
+
 **Rama:** `docs/maad-architecture-2026-11-10` · **Base:** `main` `b7f21de`
 **Fecha:** 2026-11-10 · **Fase:** 1 de 4 (inventario)
 
@@ -38,18 +40,17 @@ biblioteca usada por los tests de integración (`comfyctl/tests/`).
 
 ### 1.2 `studio/comfy_studio/` — servidor FastAPI y agente (Python)
 
-44 módulos de nivel superior (~25 000 líneas) y 16 subpaquetes.
+44 módulos de nivel superior (~25 000 líneas) y 15 subpaquetes.
 
 | Subpaquete | Ficheros `.py` | Responsabilidad | Confianza |
 |---|---|---|---|
 | `routers/` | 16 | Rutas `/studio/api/*` registradas por `register_all_routes` | confirmado |
-| `engines/` | 31 | Motores de render (comfyui, editor, upscaler, qa, …) | confirmado |
+| `engines/` | 30 | Motores de render (comfyui, editor, upscaler, qa, …) | confirmado |
 | `orchestration/` | 18 | Grafo de producción, planner, checkpointer, lease de GPU | confirmado |
-| `atlas/` | 19 | Atlas georreferenciado (adquisición, dedupe, composición) | confirmado |
 | `creative/` | 8 | Brief, guion, storyboard, variantes | confirmado |
 | `perception/` | 5 | Índice CLIP, índice facial, detección | confirmado |
 | `asr/` | 3 | Transcripción y diarización | confirmado |
-| `agent/` | 4 | Bucle del agente, cliente LLM, cinturón de 54 herramientas | confirmado |
+| `agent/` | 4 | Bucle del agente, cliente LLM, cinturón de 46 herramientas | confirmado |
 | `agent_brain/` | 4 | Memoria y capacidades del agente | confirmado |
 | `ml/` | 5 | Workers ML en subproceso aislado | confirmado |
 | `edl/` | 4 | Listas de decisión de edición | confirmado |
@@ -106,12 +107,7 @@ Node con un DOM mínimo.
 `tools/mac/comfy:1` — helper Bash para alquilar y operar el pod desde macOS.
 Pasa credenciales por stdin a `curl -K -` para no exponerlas en `ps`.
 
-### 1.7 `atlas/` — datos del atlas
-
-Base de datos SQLite del atlas georreferenciado del Valle de Aburrá
-(`atlas/catalog.db`, binario versionado).
-
-### 1.8 `Dockerfile` y `.github/workflows/`
+### 1.7 `Dockerfile` y `.github/workflows/`
 
 `Dockerfile:1` construye la imagen en 6 bloques comentados.
 `.github/workflows/docker-publish.yml:1` define el pipeline con 3 jobs.
@@ -220,7 +216,6 @@ Python.
 ### 3.3 Documentación por área
 
 `docs/plantillas.md`, `docs/estudio_anuncios.md`, `docs/cinematic-studio.md`,
-`docs/atlas.md`, `docs/atlas-merge-runbook.md`, `docs/atlas-casos-aceptacion.md`,
 `docs/walkthrough.md`, `docs/engines/` (5 motores), `docs/contratos/` (esquemas
 JSON congelados).
 

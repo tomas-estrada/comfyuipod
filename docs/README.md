@@ -1,11 +1,12 @@
 # Documentación de ComfyUIPod
 
-Este índice orienta la documentación del repositorio y señala cuál es la fuente de verdad para cada tema. Para el comportamiento actual, contrasta el código de `main` y la CI con el README raíz, la política de recursos y el perfil de hardware; los planes y reportes de campañas son registros fechados, no estado vivo. `docs/ultra/status.json` es un snapshot histórico que todavía apunta a `f5c29dc`; el `main` actual es más reciente.
+Este índice orienta la documentación del repositorio y señala cuál es la fuente de verdad para cada tema. Para el comportamiento actual, contrasta el código de `main` y la CI con el README raíz, la política de recursos y el perfil de hardware; los planes y reportes de campañas son registros fechados, no estado vivo. El [handoff del 17 de noviembre](HANDOFF-17NOV.md) es la guía de continuación de esta revisión y su snapshot debe revalidarse antes de actuar.
 
 ## Empieza aquí
 
 | Necesidad | Documento |
 |---|---|
+| Retomar el trabajo pendiente con estado, blockers, evidencia, riesgos y orden de ejecución | [HANDOFF-17NOV](HANDOFF-17NOV.md) |
 | Entender capacidades, perfiles de modelos, variables de entorno y uso general | [`README.md`](../README.md) |
 | Contribuir, orientarse en el hardware actual y ejecutar las comprobaciones | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
 | Desplegar y operar el servicio paso a paso, desde cualquier sistema cliente | [Guía Markdown](GUIA_PASO_A_PRODUCCION.md) · [PDF](GUIA_PASO_A_PRODUCCION.pdf) |

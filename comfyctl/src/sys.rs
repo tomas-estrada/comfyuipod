@@ -1,9 +1,9 @@
 #![allow(unsafe_code)]
 //! `sys` — Único módulo autorizado a contener bloques `unsafe` (§4.4).
 //! Encapsula llamadas POSIX (`statvfs`, `kill`, manejadores `SIGTERM`/`SIGINT`),
-//! escritura atómica (`tmp` + `fsync` + `rename`) y formato de fechas UTC (`chrono`).
+//! escritura atómica (`tmp` + `fsync` + `rename`) y formato de fechas UTC (`jiff`).
 
-use chrono::{DateTime, Datelike, Timelike};
+use jiff::{tz::TimeZone, Timestamp};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -294,28 +294,31 @@ pub fn now_unix_secs() -> i64 {
 
 /// Formatea un timestamp Unix en ISO-8601 UTC (`YYYY-MM-DDTHH:MM:SSZ`).
 pub fn format_utc_iso8601(epoch_secs: i64) -> String {
-    let dt = DateTime::from_timestamp(epoch_secs, 0).unwrap_or(DateTime::UNIX_EPOCH);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        dt.year(),
-        dt.month(),
-        dt.day(),
-        dt.hour(),
-        dt.minute(),
-        dt.second()
-    )
+    Timestamp::from_second(epoch_secs)
+        .unwrap_or(Timestamp::UNIX_EPOCH)
+        .to_zoned_datetime(TimeZone::UTC)
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string()
 }
 
 /// Formatea un timestamp Unix para logs (`YYYY-MM-DD HH:MM:SS`).
 pub fn format_utc_log_ts(epoch_secs: i64) -> String {
-    let dt = DateTime::from_timestamp(epoch_secs, 0).unwrap_or(DateTime::UNIX_EPOCH);
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-        dt.year(),
-        dt.month(),
-        dt.day(),
-        dt.hour(),
-        dt.minute(),
-        dt.second()
-    )
+    Timestamp::from_second(epoch_secs)
+        .unwrap_or(Timestamp::UNIX_EPOCH)
+        .to_zoned_datetime(TimeZone::UTC)
+        .strftime("%Y-%m-%d %H:%M:%S")
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_utc_iso8601, format_utc_log_ts};
+
+    #[test]
+    fn utc_timestamp_formatting_preserves_epoch_leap_day_and_negative_time() {
+        assert_eq!(format_utc_iso8601(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_utc_log_ts(0), "1970-01-01 00:00:00");
+        assert_eq!(format_utc_iso8601(1_709_164_800), "2024-02-29T00:00:00Z");
+        assert_eq!(format_utc_log_ts(-1), "1969-12-31 23:59:59");
+    }
 }

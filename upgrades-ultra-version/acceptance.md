@@ -19,7 +19,7 @@ Una capacidad obligatoria requiere L2 para integración verificable; L3 exige ej
 - Mostrar remoto/branch/SHA y cambios existentes sin sobrescribirlos.
 - Obtener estado actual de PR/CI, no del documento histórico.
 - Resumen material inicial en diez minutos activos.
-- Evidencia de qué PR existente se reutiliza, repara o queda fuera. No duplicar atlas ni UI.
+- Evidencia de qué PR existente se reutiliza, repara o queda fuera. No duplicar UI.
 - No acceder ni publicar medios personales para este inventario.
 
 ### A01. Adquisición e integridad
@@ -120,18 +120,6 @@ Pruebas obligatorias con fixture pequeño, sin descargar modelos reales:
 - MiniMax cloud o 2K no publicado no cierra la ruta 4K. Upscale local sí forma parte del plan.
 - GPU performance y calidad pendientes explícitamente hasta A29.
 
-### A11. Atlas offline y verdad geográfica
-
-- Cortar DNS/red y ejecutar búsqueda/detalle/preview/prepare/render CPU con el bundle incluido.
-- Cada referencia usable tiene archivo presente, hash, autor/licencia y metadata de calidad.
-- Distinguir 10.209 lugares del catálogo, 152 con vistas y reconstrucciones validadas; publicar conteos nuevos reales por nivel.
-- Municipio/lugar nombrado en prompt tiene prioridad sobre selección previa de proyecto.
-- Caso de nombre repetido, geotag lejano, 0°/180°, rumbo desconocido, FOV desconocido y view_id incompatible.
-- Evaluar exactamente la vista solicitada, no una vista distinta elegida por select_view.
-- El fondo del atlas llega al nodo de imagen o a una composición explícita. Una plantilla incompatible devuelve razón y alternativa, sin ignorarlo.
-- Muestra visual estratificada por municipio/tipo de lugar detecta thumbnails, comida/insectos/otros municipios y contenido irrelevante.
-- Contadores de expansión solo suman evidencia aceptada; reportar datos faltantes y no generar referencias falsas para alcanzar cuota.
-
 ### A12. Geometría y ajuste físico
 
 - Malla/partes/materiales/cámaras reabribles, units/transforms explícitos y asset ID persistente.
@@ -193,7 +181,7 @@ Pruebas obligatorias con fixture pequeño, sin descargar modelos reales:
 - A→B→A conserva anclas y registra drift, con baseline sin memoria.
 - Reconstrucción 4D produce objetos/poses/cámaras temporales editables; no solo una carpeta de frames.
 - Reencuadre/retiming de fixture sintético desde esa representación, comparado con ground truth.
-- Ninguna imagen generada se promociona a evidencia del atlas.
+- Ninguna imagen generada se presenta como observación factual.
 - Límites de escena/duración/contexto por receta y memoria se respetan.
 
 ### A20. Sonido y música
@@ -202,6 +190,7 @@ Pruebas obligatorias con fixture pequeño, sin descargar modelos reales:
 - Cambio causal de actor elimina su sonido sin perder voz/ambiente.
 - Sample rate, clipping, loudness y true peak se miden en salida.
 - Beat map y estructura de música editables; stems solo si existen en la ruta.
+- Para `generate_music`, reportar el BPM solicitado como una cuadrícula; afirmar alineación al audio solo con medición de onsets, y no atribuir stems separados al workflow ACE-Step.
 - El resultado conjunto de Foley-Omni no se anuncia como edición arbitraria de stems ni duración ilimitada.
 
 ### A21. Español y pronunciación
@@ -281,7 +270,7 @@ Para el estado `ACCEPTED_PRE_GPU` debían cumplirse todas:
 2. PRs integradas/reconciliadas y SHA final exacto en main.
 3. CI de esa revisión verde con regresiones semánticas y pruebas pertinentes, sin confundir skips GPU con validación.
 4. Imagen de producción del mismo repo construida/publicada con digest real y provenance de código/locks; no solo un tag mutable.
-5. Atlas físico, medios/licencias y UI/fonts internos; smoke offline desde la imagen descargada.
+5. Medios/licencias y UI/fonts internos; smoke offline desde la imagen descargada.
 6. Sin instalación runtime de engines, sin descarga de catálogo al boot y sin secretos/medios privados.
 7. Inventario por engine/recipe y sizing real, con incompatibilidades/condicionales precisos.
 8. D01–D05 y campaña GPU preparados, presupuesto actual respetado: cero pod/API facturada nuevos.
@@ -309,7 +298,7 @@ W26 ejecutó una demo SDXL acotada por USD 0.59 y destruyó el pod. Se probó un
 
 | Demo | Entrega | Fixture CPU y ground truth | Validación GPU posterior |
 | --- | --- | --- | --- |
-| D01 | Coche en lugar real verificable del Aburrá, varias cámaras, luces y sonido | Escena sintética calibrada + vistas reales autorizadas del atlas; ruta/oclusiones/cámara/coverage | Reconstrucción/guías→generación→relight→Foley→4K; logos, fondo, reproyección y movimiento contra baselines |
+| D01 | Coche en un lugar real solicitado por el usuario, varias cámaras, luces y sonido | Escena sintética calibrada; contexto del lugar consultado bajo demanda con fuentes; ruta/oclusiones/cámara/coverage | Reconstrucción/guías→generación→relight→Foley→4K; logos, fondo, reproyección y movimiento contra baselines |
 | D02 | Eliminar una causa y sus consecuencias | Render actor-on/off con sombra/reflejo/sonido y partes intactas | VOID/omnimatte vs borrado solo de máscara, error revelado/residual, invariantes y costes |
 | D03 | Producto articulado con cambio de material y varias cámaras | CAD/partes sintéticas, joints/mallas/PBR/convs conocidas, Mitsuba ajuste | Reconstrucción/partes/material y transferencia neural, heldout multivista y consistencia |
 | D04 | Actor que interactúa y habla español con identidad persistente | Rig autorizado, contactos, frase/voz fixture, lipsync temporal y reencuadre | Recuperación/generación/retarget/Audio2Face/InfiniteTalk; identidad/contactos/turnos/sonido |

@@ -982,11 +982,34 @@ class ProjectStore:
         merged = dict(current.get("metadata") or {})
         if metadata:
             for key, value in metadata.items():
+                if str(key) == "inspiration_analysis_cache_v1":
+                    raise ValueError("analysis cache metadata is reserved")
                 merged[str(key)] = value
         if tags is not None:
             cleaned = [str(t).strip() for t in tags if str(t).strip()]
             existing = [str(t) for t in (merged.get("tags") or []) if str(t).strip()]
             merged["tags"] = list(dict.fromkeys([*existing, *cleaned]))
+        with self._connection() as conn:
+            conn.execute(
+                "UPDATE assets SET metadata_json = ? WHERE id = ? AND project_id = ?",
+                (
+                    json.dumps(merged, ensure_ascii=False),
+                    current["id"],
+                    current["project_id"],
+                ),
+            )
+            conn.commit()
+        return self.get_asset(project_id, asset_id)
+
+    def save_reference_analysis_cache(
+        self, project_id: str, asset_id: str, cache: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Persist analyzer-owned cache without exposing it to generic metadata writes."""
+        current = self.get_asset(project_id, asset_id)
+        if current is None:
+            return None
+        merged = dict(current.get("metadata") or {})
+        merged["inspiration_analysis_cache_v1"] = cache
         with self._connection() as conn:
             conn.execute(
                 "UPDATE assets SET metadata_json = ? WHERE id = ? AND project_id = ?",

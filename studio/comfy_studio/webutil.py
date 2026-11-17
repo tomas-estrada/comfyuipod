@@ -62,7 +62,8 @@ class ProductionPlanRequest(BaseModel):
     """Cuerpo para planificar una producción (borrador barato, pre-aprobación)."""
 
     idea: str = Field(..., min_length=1, max_length=4000)
-    cost_cap_usd: float = Field(default=0.0, ge=0.0, le=1000.0)
+    cost_cap_usd: float | None = Field(default=None, ge=0.0, le=1000.0)
+    brief: dict[str, Any] | None = None
     project_id: str | None = Field(
         default=None,
         description=(
@@ -274,6 +275,10 @@ class EdlBuildRequest(BaseModel):
     source_asset_id: str | None = None
     fps: int = Field(default=24, ge=12, le=60)
     color_range: Literal["limited", "full"] = "limited"
+    # A22: política de color de entrega explícita. `None` conserva el
+    # comportamiento heredado (sin etiquetado BT.709); cualquier valor distinto
+    # de 'bt709' falla cerrado en `execute_edl_ffmpeg` antes de renderizar.
+    color_space: Literal["bt709"] | None = None
     picture_inset_percent: float = Field(default=0.0, ge=0.0, le=25.0)
     cuts: list[EdlCutItem] | None = Field(default=None, max_length=200)  # M3-SCR-005
 

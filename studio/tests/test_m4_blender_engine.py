@@ -99,6 +99,32 @@ def test_camera_view_job_builds_eevee_cpu_spec(tmp_path: Path) -> None:
     assert spec.up_axis == "z_up"
 
 
+def test_camera_trajectory_job_builds_bounded_cpu_animation_spec(tmp_path: Path) -> None:
+    job = _render_job(tmp_path)
+    job.update(
+        {
+            "engine": "cycles",
+            "device": "cpu",
+            "frames": 2,
+            "camera_trajectory": [
+                {"frame": 1, "position": [0, -4, 0], "target": [0, 0, 0], "fov_deg": 50},
+                {"frame": 2, "position": [1, -3, 0], "target": [0, 0, 0], "fov_deg": 55},
+            ],
+            "asset_transform": [
+                [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]
+            ],
+            "up_axis": "z_up",
+        }
+    )
+
+    spec = BlenderEngine._build_spec(job)
+    assert spec.frames == 2
+    assert spec.device == "cpu"
+    assert [keyframe.frame for keyframe in spec.camera_trajectory] == [1, 2]
+    assert spec.camera_trajectory[1].fov_deg == 55
+    assert spec.up_axis == "z_up"
+
+
 def test_camera_render_script_uses_python_none_literal() -> None:
     spec = BlenderRenderSpec(
         scene_path=Path("scene.glb"),

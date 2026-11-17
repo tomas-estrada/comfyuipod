@@ -3,7 +3,7 @@
 > **Registro histórico de cierre W25.** Su estado refleja el corte pre-GPU y no
 > es el estado actual del proyecto. W26 ejecutó una demo SDXL limitada; el nivel
 > global sigue parcial. Consulta [resultados W26](W26_GPU_RESULTS.md) y contrasta
-> el `main` actual (`5850191`), ya que `status.json` aún apunta a `f5c29dc`.
+> el baseline de aplicación capturado en [`HANDOFF-17NOV.md`](../HANDOFF-17NOV.md). Este archivo conserva evidencia W25 fechada y no sustituye el estado actual.
 
 Estado al cierre de W25: **BLOCKED_PRE_GPU** (arquitectura y contratos completos;
 faltaban integración L2 con engines reales y la campaña GPU W26).
@@ -20,10 +20,9 @@ Este reporte consolida el estado por capacidad (C), programa (P) y alternativa
   preparado en imagen + adapter + prueba CPU · **L3** ejecución GPU real · **L4**
   reproducido con holdouts.
 - Pre-GPU exige L2 por capacidad obligatoria; esta entrega alcanza **L1 en todos
-  los contratos** y **L2 parcial** donde el engine ya estaba horneado (atlas,
-  percepción, EDL). L3/L4 = campaña GPU (W26).
+  los contratos** y **L2 parcial** donde había integración de engine (percepción, EDL). L3/L4 = campaña GPU (W26).
 
-## Estado por capacidad (C01–C34)
+## Estado de las capacidades activas
 
 | C | Capacidad | Paquete / módulo | Nivel | Nota |
 |---|-----------|------------------|-------|------|
@@ -33,7 +32,6 @@ Este reporte consolida el estado por capacidad (C), programa (P) y alternativa
 | C04 | Producción conectada | W22 + chain | L1 | planner→receta→executor→lease |
 | C05 | Cámaras | W11 `cinematography.py` | L1 | animatic visible = render GPU |
 | C06 | Memoria espacial | W17 `spatial_memory.py` | L1 | — |
-| C07 | Atlas verificable | W09 `atlas/` | L2 | medios offline en imagen |
 | C08 | Reconstrucción/encuadre | W11 | L1 | — |
 | C09 | Activos 3D | W10 `assets3d.py` | L1 | Trellis/PartCrafter = L2+ |
 | C10 | Partes / física producto | W10 + W12 `physics.py` | L1 | — |
@@ -54,7 +52,7 @@ Este reporte consolida el estado por capacidad (C), programa (P) y alternativa
 | C33 | Banco de evaluación | W23 `researcher.py`, W24 `demos.py` | L1 | — |
 | C34 | Aprendizaje selectivo | W23 | L1 | training = no ejecutado (A26) |
 
-Todas las C01–C34 tienen un contrato ejecutable con tests (L1); ninguna queda
+Las 33 capacidades activas tienen un contrato ejecutable con tests (L1); ninguna queda
 en catálogo/wrapper vacío. La elevación a L2 (adapter+engine real por capacidad)
 y L3 (GPU) es el trabajo restante.
 
@@ -62,7 +60,7 @@ y L3 (GPU) es el trabajo restante.
 
 Los programas de investigación están representados por los contratos que los
 sostienen (compilador de intención → W22; grafo causal → W04/W15/W16/W18;
-adquisición de vista → W09/W17; multi-fidelidad → W08/W02; Pareto → W23). Su
+adquisición de vista → W17; multi-fidelidad → W08/W02; Pareto → W23). Su
 afirmación científica (mejora medida) exige **L4** y por tanto la campaña GPU.
 
 ## Alternativas N01–N30
@@ -84,8 +82,8 @@ declarados** (fijar los locks por familia es trabajo de integración pendiente).
 
 ## Imagen candidata
 
-Construida y publicada por el workflow GHCR con digest real, atlas offline
-físicamente incluido, smoke E2E + MODEL_PROFILE=studio verde. Ver
+Construida y publicada por el workflow GHCR con digest real, smoke E2E +
+MODEL_PROFILE=studio verde. Ver
 `status.json` → `candidate_image_current` para el tag/digest vigentes.
 
 ## Bloqueos para `ACCEPTED_PRE_GPU` pleno
@@ -105,8 +103,8 @@ destruir el pod y verificar 0 instancias.
 
 ## Veredicto honesto
 
-La arquitectura completa de ComfyUIPod Ultra (34 capacidades, infraestructura,
-orquestación, atlas, demos) existe como **contratos verificables con tests
+La arquitectura de ComfyUIPod Ultra (33 capacidades activas, infraestructura,
+orquestación, demos) existe como **contratos verificables con tests
 reales y sin mocks**, con una **imagen candidata reproducible con digest**. Esto
 es implementación **preparada** (L1/L2), no capacidad **validada** (L3/L4). El
 éxito neuronal se decide por medición en GPU, que es la fase siguiente.

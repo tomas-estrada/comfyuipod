@@ -30,7 +30,7 @@ def main() -> int:
     parser.add_argument("--model-id", required=True)
     parser.add_argument("--role", default="primary")
     parser.add_argument("--tools", default="")
-    parser.add_argument("--max-iterations", type=int, default=12)
+    parser.add_argument("--max-iterations", type=int, default=24)
     parser.add_argument("--max-llm-calls", type=int, default=24)
     parser.add_argument("--max-context-chars", type=int, default=4000000)
     parser.add_argument("--max-wall-seconds", type=float, default=1800)

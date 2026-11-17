@@ -42,6 +42,11 @@ class AVRecipe:
     max_frames: int
     #: VRAM estimada (MB) para el caso nominal; estimación, no medición.
     est_vram_mb: int
+    #: Solo True cuando existen en el repo un workflow, assets y adapter verificados.
+    runtime_supported: bool = False
+    #: Número de imágenes de referencia que el workflow expone como entradas.
+    #: Esto es un límite de interfaz del grafo, no una garantía de calidad.
+    max_image_references: int = 0
     #: componentes que la receta necesita (para el resolvedor de assets, W01).
     components: dict[str, str] = field(default_factory=dict)
     notes: str = ""
@@ -81,6 +86,8 @@ class AVRecipe:
             "max_height": self.max_height,
             "max_frames": self.max_frames,
             "est_vram_mb": self.est_vram_mb,
+            "runtime_supported": self.runtime_supported,
+            "max_image_references": self.max_image_references,
             "est_vram_note": "estimación declarada, NO medición (A10)",
             "components": dict(self.components),
             "notes": self.notes,
@@ -113,6 +120,7 @@ _RECIPES: tuple[AVRecipe, ...] = (
         max_height=480,
         max_frames=81,
         est_vram_mb=24000,
+        runtime_supported=True,
         components={"vae": "wan_2.1_vae", "encoder": "umt5_xxl"},
         notes="Wan 2.2 control especifico; menor VRAM, menor resolucion.",
     ),
@@ -125,6 +133,8 @@ _RECIPES: tuple[AVRecipe, ...] = (
         max_height=720,
         max_frames=81,
         est_vram_mb=36000,
+        runtime_supported=True,
+        max_image_references=1,
         components={"vae": "wan_2.1_vae", "encoder": "umt5_xxl"},
         notes="Wan 2.2 imagen->video.",
     ),
@@ -173,6 +183,18 @@ def recipes_for(capability: str) -> list[AVRecipe]:
     return sorted(matches, key=lambda r: r.est_vram_mb)
 
 
+def max_image_references_for(
+    capability: str, *, template_id: str | None = None
+) -> int:
+    """Maximum image refs exposed by a runnable recipe for this request."""
+    matching = [
+        recipe
+        for recipe in recipes_for(capability)
+        if recipe.runtime_supported and (template_id is None or recipe.template_id == template_id)
+    ]
+    return max((recipe.max_image_references for recipe in matching), default=0)
+
+
 @dataclass(slots=True)
 class SelectionResult:
     """Resultado de seleccionar una receta para una petición y un presupuesto."""
@@ -213,6 +235,14 @@ def select_recipe(
     viable: list[AVRecipe] = []
 
     for recipe in candidates:
+        if not recipe.runtime_supported:
+            rejected.append(
+                {
+                    "recipe": recipe.recipe_id,
+                    "reason": "workflow, assets o adapter runtime no implementados/verificados",
+                }
+            )
+            continue
         ok_req, why_req = recipe.fits_request(width=width, height=height, frames=frames)
         if not ok_req:
             rejected.append({"recipe": recipe.recipe_id, "reason": why_req or "limite"})
@@ -245,10 +275,16 @@ def catalog() -> list[dict[str, Any]]:
     return [r.to_public_dict() for r in _RECIPES]
 
 
+def recipe_by_id(recipe_id: str) -> AVRecipe | None:
+    """Busca una receta por identidad estable, incluso si no está implementada."""
+    return next((recipe for recipe in _RECIPES if recipe.recipe_id == recipe_id), None)
+
+
 __all__ = [
     "AVRecipe",
     "SelectionResult",
     "catalog",
     "recipes_for",
+    "recipe_by_id",
     "select_recipe",
 ]

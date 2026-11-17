@@ -12,9 +12,11 @@ No publica nada en redes: preparar la pieza y publicarla son acciones distintas.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
+from ..edl.otio_export import edl_to_otio_text
 from .provenance import linked_transcriptions
 
 DELIVERY_SCHEMA = "comfy_studio.delivery.v1"
@@ -173,8 +175,25 @@ def build_delivery_package(
 
     # EDL editable (última versión, con o sin render).
     edl_summary = None
+    otio_error = None
+    otio_requires_relink = False
     if final_edl is not None:
         edl_doc = final_edl.get("edl") or {}
+        otio_document = None
+        try:
+            otio_text = edl_to_otio_text(edl_doc, project_id=project_id)
+            otio_bytes = otio_text.encode("utf-8")
+            otio_document = {
+                "filename": f"{final_edl.get('id') or 'timeline'}.otio",
+                "sha256": hashlib.sha256(otio_bytes).hexdigest(),
+                "content": otio_text,
+                "media_reference_policy": (
+                    "Studio project API URLs; external editors may require relinking."
+                ),
+            }
+            otio_requires_relink = True
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            otio_error = f"No se pudo exportar el EDL a OpenTimelineIO: {exc}"
         edl_summary = {
             "edl_id": final_edl.get("id"),
             "version": final_edl.get("version"),
@@ -188,6 +207,7 @@ def build_delivery_package(
                 f"/studio/api/projects/{project_id}/edl/"
                 f"{final_edl.get('version')}/render"
             ),
+            "otio": otio_document,
         }
 
     # Assets generados (salidas) con procedencia.
@@ -206,6 +226,13 @@ def build_delivery_package(
     evidence = brief_row.get("evidence") or {}
     simulated_facts = sum(1 for f in (brief.get("asset_facts") or []) if f.get("simulated"))
     limitations = list(evidence.get("limitations") or [])
+    if otio_error:
+        limitations.append(otio_error)
+    if otio_requires_relink:
+        limitations.append(
+            "El OTIO conserva referencias a los assets por la API del proyecto; no incluye los "
+            "medios y puede requerir relink en otro editor."
+        )
     if simulated_facts:
         limitations.append(
             f"{simulated_facts} hecho(s) de asset_facts provienen de backends ML simulados "

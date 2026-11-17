@@ -39,6 +39,8 @@ DEFAULT_STUDIO_RECOVERY_DRAIN_S = 10.0
 # lo que hacía fallar cualquier EDL con clips largos. Ahora son configurables.
 DEFAULT_STUDIO_FFMPEG_TIMEOUT_S = 60.0
 DEFAULT_STUDIO_FFPROBE_TIMEOUT_S = 20.0
+DEFAULT_STUDIO_INGEST_MAX_ASSETS = 1000
+DEFAULT_STUDIO_INGEST_MAX_TOTAL_BYTES = 10 * 1024 * 1024 * 1024
 # M7-SCR-001: techo de renders en segundo plano ejecutándose a la vez contra ComfyUI
 # (ComfyUI serializa la ejecución, pero cada tarea en vuelo retiene su sondeo WS/poll).
 DEFAULT_MAX_CONCURRENT_RENDERS = 2
@@ -496,6 +498,8 @@ class StudioConfig:
     studio_include_animate: bool = False
     studio_include_3d: bool = False
     studio_include_minimax: bool = False
+    studio_include_qwen_layered: bool = False
+    studio_include_music: bool = False
     comfy_user: str = "admin"
     comfy_pass: str | None = field(default=None, repr=False)
     vast_api_key: str | None = field(default=None, repr=False)
@@ -513,6 +517,8 @@ class StudioConfig:
     studio_reconcile_interval_s: float = 30.0
     studio_ffmpeg_timeout_s: float = DEFAULT_STUDIO_FFMPEG_TIMEOUT_S
     studio_ffprobe_timeout_s: float = DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
+    studio_ingest_max_assets: int = DEFAULT_STUDIO_INGEST_MAX_ASSETS
+    studio_ingest_max_total_bytes: int = DEFAULT_STUDIO_INGEST_MAX_TOTAL_BYTES
     max_concurrent_renders: int = DEFAULT_MAX_CONCURRENT_RENDERS
     # Política (puntos 3 y 5): descargar modelos de VRAM cuando no queda trabajo.
     unload_models_when_idle: bool = True
@@ -686,6 +692,12 @@ class StudioConfig:
             studio_include_minimax=_parse_bool(
                 source.get("STUDIO_INCLUDE_MINIMAX"), default=False
             ),
+            studio_include_qwen_layered=_parse_bool(
+                source.get("STUDIO_INCLUDE_QWEN_LAYERED"), default=False
+            ),
+            studio_include_music=_parse_bool(
+                source.get("STUDIO_INCLUDE_MUSIC"), default=False
+            ),
             comfy_user=(
                 source.get("COMFY_USER", "").strip()
                 or source.get("STUDIO_AUTH_USER", "").strip()
@@ -709,6 +721,12 @@ class StudioConfig:
             ),
             studio_ffprobe_timeout_s=_positive_float(
                 "STUDIO_FFPROBE_TIMEOUT_S", DEFAULT_STUDIO_FFPROBE_TIMEOUT_S
+            ),
+            studio_ingest_max_assets=_positive_int(
+                "STUDIO_INGEST_MAX_ASSETS", DEFAULT_STUDIO_INGEST_MAX_ASSETS
+            ),
+            studio_ingest_max_total_bytes=_positive_int(
+                "STUDIO_INGEST_MAX_TOTAL_BYTES", DEFAULT_STUDIO_INGEST_MAX_TOTAL_BYTES
             ),
             max_concurrent_renders=_positive_int(
                 "STUDIO_MAX_CONCURRENT_RENDERS", DEFAULT_MAX_CONCURRENT_RENDERS
@@ -825,6 +843,25 @@ class StudioConfig:
             "STUDIO_INCLUDE_3D", env
         )
 
+    def qwen_layered_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """True only when the Qwen layered opt-in group was requested and is on disk."""
+        return self.qwen_layered_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_QWEN_LAYERED", env
+        )
+
+    def qwen_layered_weights_expected(self) -> bool:
+        return bool(self.studio_include_qwen_layered)
+
+    def music_weights_expected(self) -> bool:
+        """Whether the optional ACE-Step 1.5 AIO checkpoint was requested."""
+        return bool(self.studio_include_music)
+
+    def music_weights_available(self, env: Mapping[str, str] | None = None) -> bool:
+        """True only when requested ACE-Step weights are present on disk."""
+        return self.music_weights_expected() and model_assets.flag_present(
+            "STUDIO_INCLUDE_MUSIC", env
+        )
+
     def redactor(self) -> SecretRedactor:
         return SecretRedactor.from_config(self)
 
@@ -854,6 +891,10 @@ class StudioConfig:
             "STUDIO_INCLUDE_ANIMATE": "1" if self.studio_include_animate else "0",
             "STUDIO_INCLUDE_3D": "1" if self.studio_include_3d else "0",
             "STUDIO_INCLUDE_MINIMAX": "1" if self.studio_include_minimax else "0",
+            "STUDIO_INCLUDE_QWEN_LAYERED": (
+                "1" if self.studio_include_qwen_layered else "0"
+            ),
+            "STUDIO_INCLUDE_MUSIC": "1" if self.studio_include_music else "0",
             "COMFY_USER": self.comfy_user,
             "COMFY_PASS": self.masked_comfy_pass_status(),
             "VAST_API_KEY": "<definida>" if self.vast_api_key else "<no definida>",
@@ -866,6 +907,8 @@ class StudioConfig:
             "STUDIO_RECOVERY_DRAIN_S": str(self.studio_recovery_drain_s),
             "STUDIO_FFMPEG_TIMEOUT_S": str(self.studio_ffmpeg_timeout_s),
             "STUDIO_FFPROBE_TIMEOUT_S": str(self.studio_ffprobe_timeout_s),
+            "STUDIO_INGEST_MAX_ASSETS": str(self.studio_ingest_max_assets),
+            "STUDIO_INGEST_MAX_TOTAL_BYTES": str(self.studio_ingest_max_total_bytes),
             "STUDIO_MAX_CONCURRENT_RENDERS": str(self.max_concurrent_renders),
             "STUDIO_UNLOAD_WHEN_IDLE": "1" if self.unload_models_when_idle else "0",
             "STUDIO_HARDWARE_PROFILE": str(self.hardware_profile_name),

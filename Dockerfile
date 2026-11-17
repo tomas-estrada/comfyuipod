@@ -49,15 +49,25 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # 1. Dependencias del sistema: ffmpeg completo (libx264 + nvenc), Nginx, ttyd, tini, git, openssl
 #    y build-essential + python3-dev conservados (ALTA-03) para que torch.compile (Triton)
 #    y la instalación en 1 clic de nodos con extensiones C/C++ desde ComfyUI-Manager funcionen en runtime.
+# A07 (ffmpeg): el paquete exacto va fijado por versión apt (7:6.1.1-3ubuntu5) y por
+# SHA-256 del .deb del pool y de su copyright
+# (lock: upgrades-ultra-version/locks/ffmpeg-ubuntu24.04-amd64.lock.json).
+# Un .deb, versión o copyright distinto rompe ESTE build.
+# Bootstrap: curl y ca-certificados primero, para poder descargar y verificar el .deb exacto.
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
+        -o /tmp/ffmpeg.deb \
+        https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/ffmpeg_6.1.1-3ubuntu5_amd64.deb \
+    && echo "1a23baace5f2688a47e28119aedae6993cd638e6279a7227dfc52d9a337a1c17  /tmp/ffmpeg.deb" | sha256sum --check --strict
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
         git \
         unzip \
         tini \
         openssl \
         procps \
-        ffmpeg \
+        /tmp/ffmpeg.deb \
         nginx \
         apache2-utils \
         ttyd \
@@ -94,8 +104,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libasound2t64 \
         libpango-1.0-0 \
         libcairo2 \
+    && test "$(dpkg-query -W ffmpeg | awk '{print $2}')" = "7:6.1.1-3ubuntu5" \
+    && mkdir -p /usr/share/licenses/comfyuipod/ffmpeg \
+    && cp /usr/share/doc/ffmpeg/copyright /usr/share/licenses/comfyuipod/ffmpeg/copyright \
+    && echo "2be0250f940dc7137c2fb48abdfa3aa09c5900c7e3614127306f0774309d182f  /usr/share/licenses/comfyuipod/ffmpeg/copyright" | sha256sum --check --strict \
     && ffmpeg -version \
     && ttyd --version \
+    && rm -f /tmp/ffmpeg.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # 1b. Blender LTS headless renderer, pinned by the official release archive SHA-256.
@@ -270,10 +285,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && node --version && npm --version \
     && rm -rf /var/lib/apt/lists/*
+COPY studio/gltf-validator/ /opt/gltf-validator/
+RUN npm ci --prefix /opt/gltf-validator --ignore-scripts --no-audit --no-fund --loglevel=error
+ENV STUDIO_GLTF_VALIDATOR_DIR=/opt/gltf-validator
 COPY studio/remotion/ /opt/remotion/
 WORKDIR /opt/remotion
 RUN npm ci --no-audit --no-fund --loglevel=error \
     && npx remotion browser ensure \
+    && install -D -m 0644 node_modules/remotion/LICENSE.md /usr/share/doc/remotion/LICENSE.md \
     && npm cache clean --force
 # Restaurar el WORKDIR a /opt/ComfyUI: el warm-up posterior ejecuta `python3 main.py`
 # relativo a ese directorio (no a /). (fix: el build V-editor dejó CWD en / y el
@@ -502,6 +521,7 @@ COPY config/models-core.json /etc/comfyui/models-core.json
 COPY upgrades-ultra-version/engines.json /etc/comfyui/engines.json
 COPY docs/licenses/blender.md /usr/share/doc/blender/
 COPY docs/licenses/mitsuba.md /usr/share/doc/mitsuba/copyright
+COPY docs/licenses/remotion.md /usr/share/doc/remotion/THIRD-PARTY-NOTICES.md
 COPY scripts/storage_requirement.py /usr/local/bin/storage_requirement.py
 COPY scripts/triage_patterns.json /etc/comfyui/triage_patterns.json
 COPY scripts/download-models.sh /usr/local/bin/download-models.sh
@@ -550,18 +570,32 @@ RUN sed -i 's/\r$//' \
 
 COPY studio/ /opt/studio/
 COPY panel/ /etc/comfyui/panel/
+COPY upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json /tmp/llm-server.lock.json
+COPY docs/licenses/llama-cpp-notices.md /tmp/llama-cpp-notices.md
+COPY scripts/build_llm_server.py /usr/local/bin/build_llm_server.py
 COPY scripts/smoke_blender_cpu.py /tmp/smoke_blender_cpu.py
 COPY scripts/smoke_blender_physics.py /tmp/smoke_blender_physics.py
 COPY scripts/smoke_mitsuba_cpu_fit.py /tmp/smoke_mitsuba_cpu_fit.py
+COPY scripts/smoke_otio_export.py /tmp/smoke_otio_export.py
 
 # Código de aplicación (studio/panel): capa separada para no rehacer el warmup.
-RUN find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json" \) -exec sed -i 's/\r$//' {} + && \
+RUN python3 /usr/local/bin/build_llm_server.py --lock /tmp/llm-server.lock.json --supplemental-license /tmp/llama-cpp-notices.md && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* && \
+    rm -f /usr/local/bin/build_llm_server.py /tmp/llm-server.lock.json /tmp/llama-cpp-notices.md && \
+    /usr/local/bin/llama-server --version && \
+    test -s /usr/share/licenses/llama.cpp/LICENSE && \
+    test -s /usr/share/licenses/llama.cpp/Third-Party-LICENSES.md && \
+    test -s /usr/share/licenses/llama.cpp/system-libraries/manifest.json && \
+    find /usr/share/licenses/llama.cpp -type f -print | sort && \
+    find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json" \) -exec sed -i 's/\r$//' {} + && \
     sed -i 's/\r$//' \
         /etc/comfyui/panel/index.html \
         /etc/comfyui/panel/style.css \
         /etc/comfyui/panel/app.js && \
     python3 -m venv /opt/venvs/studio && \
     /opt/venvs/studio/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    /opt/venvs/studio/bin/pip install --no-cache-dir --require-hashes \
+        -r /opt/studio/locks/opentimelineio-cp312-linux-amd64.lock && \
     /opt/venvs/studio/bin/pip install --no-cache-dir /opt/studio && \
     /opt/venvs/studio/bin/pip install --no-cache-dir --require-hashes \
         -r /opt/studio/locks/mitsuba-cp312-linux-amd64.lock && \
@@ -570,15 +604,8 @@ RUN find /opt/studio -type f \( -name "*.py" -o -name "*.toml" -o -name "*.json"
     /opt/venvs/studio/bin/python /tmp/smoke_blender_cpu.py && \
     /opt/venvs/studio/bin/python /tmp/smoke_blender_physics.py && \
     /opt/venvs/studio/bin/python /tmp/smoke_mitsuba_cpu_fit.py && \
-    rm -f /tmp/smoke_blender_cpu.py /tmp/smoke_blender_physics.py /tmp/smoke_mitsuba_cpu_fit.py
-
-# Atlas audiovisual georreferenciado del Valle de Aburrá: los BYTES REALES del
-# bundle (catálogo SQLite, fotos, licencias, OSM) dentro de la imagen en una ruta
-# inmutable. Capa tardía a propósito: cambiar una fotografía no reconstruye los
-# motores pesados. El build FALLA si el bundle está incompleto o sin licencias.
-COPY atlas/ /opt/studio-atlas/
-ENV STUDIO_ATLAS_DIR=/opt/studio-atlas
-RUN /opt/venvs/studio/bin/python -m comfy_studio.atlas verify-bundle --root /opt/studio-atlas     && /opt/venvs/studio/bin/python -m comfy_studio.atlas stats --root /opt/studio-atlas | head -n 30
+    /opt/venvs/studio/bin/python /tmp/smoke_otio_export.py && \
+    rm -f /tmp/smoke_blender_cpu.py /tmp/smoke_blender_physics.py /tmp/smoke_mitsuba_cpu_fit.py /tmp/smoke_otio_export.py
 
 EXPOSE 8188
 

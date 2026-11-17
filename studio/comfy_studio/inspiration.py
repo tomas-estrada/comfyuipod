@@ -12,10 +12,12 @@ import hashlib
 import math
 import re
 import shutil
+import sqlite3
 import struct
 import subprocess
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from .media_bins import find_ffmpeg
@@ -63,6 +65,8 @@ class ReferenceAnalysis:
     titles: list[dict[str, Any]] = field(default_factory=list)
     #: movimiento de cámara aproximado por corte, or ``unknown`` without evidence.
     camera_moves: list[str] = field(default_factory=list)
+    #: Evidencia por corte para los movimientos estimados localmente.
+    camera_move_evidence: list[dict[str, Any]] = field(default_factory=list)
     #: de dónde salió la referencia (biblioteca propia / conector permitido).
     source: str = "own_library"
     limitations: list[str] = field(default_factory=list)
@@ -89,10 +93,41 @@ class ReferenceAnalysis:
             "beat_interval_s": self.beat_interval_s(),
             "titles": list(self.titles),
             "camera_moves": list(self.camera_moves),
+            "camera_move_evidence": [dict(item) for item in self.camera_move_evidence],
             "media_sha256": self.media_sha256,
             "media_duration_s": self.media_duration_s,
             "limitations": list(self.limitations),
         }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> ReferenceAnalysis:
+        """Restore the JSON-safe analysis cache stored on its owned source asset."""
+        cuts = [
+            Cut(
+                start_s=float(item["start_s"]),
+                end_s=float(item["end_s"]),
+                origin=Origin(item.get("origin", Origin.OBSERVED)),
+            )
+            for item in value.get("cuts", [])
+        ]
+        return cls(
+            reference_id=str(value["reference_id"]),
+            cuts=cuts,
+            beats=[float(item) for item in value.get("beats", [])],
+            titles=[dict(item) for item in value.get("titles", [])],
+            camera_moves=[str(item) for item in value.get("camera_moves", [])],
+            camera_move_evidence=[
+                dict(item) for item in value.get("camera_move_evidence", [])
+            ],
+            source=str(value.get("source", "own_library")),
+            limitations=[str(item) for item in value.get("limitations", [])],
+            media_sha256=value.get("media_sha256"),
+            media_duration_s=(
+                float(value["media_duration_s"])
+                if value.get("media_duration_s") is not None
+                else None
+            ),
+        )
 
 
 @dataclass(slots=True)
@@ -149,15 +184,26 @@ def derive_recipe(
     recipe = EditableRecipe(reference_id=analysis.reference_id)
 
     for i, cut in enumerate(analysis.cuts):
+        camera_move = analysis.camera_moves[i] if i < len(analysis.camera_moves) else "unknown"
+        move_evidence = (
+            dict(analysis.camera_move_evidence[i])
+            if i < len(analysis.camera_move_evidence)
+            else {
+                "move": camera_move,
+                "origin": "inferred" if camera_move != "unknown" else "unknown",
+                "method": "unspecified",
+                "confidence": None,
+            }
+        )
         recipe.steps.append(
             RecipeStep(
                 kind="shot",
                 detail={
                     "index": i,
                     "duration_s": round(cut.duration_s, 3),
-                    "camera_move": (
-                        analysis.camera_moves[i] if i < len(analysis.camera_moves) else "unknown"
-                    ),
+                    "camera_move": camera_move,
+                    "camera_move_origin": move_evidence.get("origin", "unknown"),
+                    "camera_move_evidence": move_evidence,
                 },
                 origin=cut.origin,
             )
@@ -297,21 +343,56 @@ def analyze_reference_asset(
     """
     # Import lazily: perception.__init__ loads several index backends and may
     # itself be imported by engine registration during application startup.
+    from .perception.camera_motion import (
+        FRAME_HEIGHT,
+        FRAME_WIDTH,
+        CameraMotionEstimate,
+        decode_grayscale_frames,
+        estimate_camera_motion,
+    )
     from .perception.keyframes import extract_video_keyframes, probe_media_info
 
     asset = store.get_asset(project_id, asset_id)
-    path = store.get_asset_path(project_id, asset_id)
-    if asset is None or path is None:
+    if asset is None:
         raise LookupError(f"Referencia {asset_id!r} no disponible en el proyecto.")
     if asset.get("kind") != "video":
         raise ValueError("El análisis local de referencia requiere un video.")
+    cache_key = "inspiration_analysis_cache_v1"
+    cache = (asset.get("metadata") or {}).get(cache_key)
+    cached_analysis: ReferenceAnalysis | None = None
+    if (
+        isinstance(cache, dict)
+        and cache.get("schema") == "comfyuipod.reference-analysis-cache/2"
+        and cache.get("project_id") == project_id
+        and cache.get("asset_id") == asset_id
+        and cache.get("asset_version") == asset.get("version")
+        and cache.get("source_size_bytes") == asset.get("size_bytes")
+        and cache.get("scene_threshold") == scene_threshold
+        and cache.get("interval_sec") == interval_sec
+        and isinstance(cache.get("analysis"), dict)
+    ):
+        try:
+            candidate = ReferenceAnalysis.from_dict(cache["analysis"])
+        except (KeyError, TypeError, ValueError):
+            candidate = None
+        if (
+            candidate is not None
+            and candidate.reference_id == asset_id
+            and candidate.media_sha256 == cache.get("source_sha256")
+        ):
+            cached_analysis = candidate
+
+    path = store.get_asset_path(project_id, asset_id)
+    if cached_analysis is not None and path is None:
+        return cached_analysis
+    if path is None:
+        raise LookupError(f"Referencia {asset_id!r} no disponible en el proyecto.")
+    media_sha256 = _sha256_path(path)
+    if cached_analysis is not None and media_sha256 == cached_analysis.media_sha256:
+        return cached_analysis
     probe = probe_media_info(path)
     if not probe.get("probe_ok") or not probe.get("has_video"):
         raise ValueError("ffprobe no pudo validar una pista de video real para la referencia.")
-    media_hash = hashlib.sha256()
-    with path.open("rb") as media_file:
-        for chunk in iter(lambda: media_file.read(1024 * 1024), b""):
-            media_hash.update(chunk)
 
     keyframes = extract_video_keyframes(
         store,
@@ -352,7 +433,45 @@ def analyze_reference_asset(
     if duration_s > 600:
         limitations.append("beats analizados solo en los primeros 600 segundos de audio")
     camera_moves = ["unknown"] * len(cuts)
-    limitations.append("movimiento de cámara no estimado: falta un estimador local de flujo")
+    camera_move_evidence = [
+        CameraMotionEstimate("unknown", 0.0, 0, 0).to_dict() for _ in cuts
+    ]
+    ffmpeg = find_ffmpeg()
+    motion_sampling_failed = ffmpeg is None
+    if ffmpeg:
+        try:
+            motion_frames, _ = decode_grayscale_frames(
+                path,
+                ffmpeg_bin=ffmpeg,
+                duration_s=duration_s,
+            )
+            for index, cut in enumerate(cuts):
+                shot_frames = [
+                    frame
+                    for timestamp, frame in motion_frames
+                    if cut.start_s <= timestamp < cut.end_s
+                ]
+                estimate = estimate_camera_motion(
+                    shot_frames,
+                    FRAME_WIDTH,
+                    FRAME_HEIGHT,
+                )
+                camera_moves[index] = estimate.move
+                camera_move_evidence[index] = estimate.to_dict()
+        except (OSError, subprocess.SubprocessError, ValueError):
+            motion_sampling_failed = True
+            camera_moves = ["unknown"] * len(cuts)
+            camera_move_evidence = [
+                CameraMotionEstimate("unknown", 0.0, 0, 0).to_dict() for _ in cuts
+            ]
+    if motion_sampling_failed:
+        limitations.append(
+            "estimador local de movimiento de cámara no disponible; se conserva unknown"
+        )
+    elif "unknown" in camera_moves:
+        limitations.append(
+            "movimiento de cámara no concluyente en uno o más planos; se conserva unknown"
+        )
 
     titles: list[dict[str, Any]] = []
     tesseract = shutil.which("tesseract")
@@ -428,17 +547,49 @@ def analyze_reference_asset(
     else:
         limitations.append("la referencia no contiene audio; beat map no disponible")
 
-    return ReferenceAnalysis(
+    analysis = ReferenceAnalysis(
         reference_id=asset_id,
         cuts=cuts,
         beats=beats,
         titles=titles,
         camera_moves=camera_moves,
+        camera_move_evidence=camera_move_evidence,
         source="own_library",
-        media_sha256=media_hash.hexdigest(),
+        media_sha256=media_sha256,
         media_duration_s=duration_s or None,
         limitations=limitations,
     )
+    try:
+        updated = store.save_reference_analysis_cache(
+            project_id,
+            asset_id,
+            {
+                "schema": "comfyuipod.reference-analysis-cache/2",
+                "project_id": project_id,
+                "asset_id": asset_id,
+                "asset_version": asset.get("version"),
+                "source_size_bytes": asset.get("size_bytes"),
+                "source_sha256": media_sha256,
+                "scene_threshold": scene_threshold,
+                "interval_sec": interval_sec,
+                "analysis": analysis.to_dict(),
+            },
+        )
+        if updated is None:
+            analysis.limitations.append(
+                "el análisis local no pudo guardarse en la caché del activo"
+            )
+    except (OSError, sqlite3.Error):
+        analysis.limitations.append("el análisis local no pudo guardarse en la caché del activo")
+    return analysis
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as media_file:
+        for chunk in iter(lambda: media_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass(slots=True)

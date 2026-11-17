@@ -2,9 +2,9 @@
   "schema_version": "1.0",
   "purpose": "Research-backed engine selection, not a runtime installed-engine manifest.",
   "counts": {
-    "engines": 89,
+    "engines": 88,
     "additional_candidates": 30,
-    "capabilities": 34
+    "capabilities": 33
   },
   "policy": {
     "required": "Engine code/environment/entrypoints must be built and integrated before pre-GPU acceptance; weights may await runtime and explicit terms, status remains accurate.",
@@ -33,12 +33,12 @@
         "K21"
       ],
       "scope": "FFmpeg/ffprobe locales, proxies, transcode, frame hashes, stems, mezcla y encode final.",
-      "terms_review": "Formato/rotación/VFR a timebase del proyecto; salida real decodificable; font/codec/avisos del build.",
+      "terms_review": "El adaptador local ejecuta ffmpeg/ffprobe sin shell y con timeout. El lock SHA-256 identifica y el build instala ese .deb Ubuntu 24.04 amd64; el copyright clasifica el binario por defecto como GPL-2+. Redistribución condicional a cumplir las obligaciones de la fuente correspondiente; este repo no afirma cumplir por sí solo esa oferta. El lock cubre el paquete ffmpeg, no sus dependencias apt transitivas.",
       "hardware_notes": "CPU; encoder GPU participa en admisión si se utiliza.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C01",
@@ -46,9 +46,19 @@
         "C31",
         "C32"
       ],
-      "code_revision": "n9.0.2",
+      "code_revision": "e38092ef9395d7049f871ef4d5411eb410e283e0",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/ffmpeg-ubuntu24.04-amd64.lock.json": "6d0452ce5e025f44bc3157fe655aff0e0b884b082523d284b24d2ad5032dccfb"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
+      "dependency_packages": [
+        "ffmpeg=7:6.1.1-3ubuntu5 (Ubuntu 24.04 noble amd64, universe)"
+      ],
+      "evidence_entrypoint": "studio/comfy_studio/engines/ffmpeg.py",
+      "evidence_test": "studio/tests/test_engine_contract_sweep.py",
       "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+      "release_gate": "source_and_lock_pinned; Unicode notice review and actual image build; no GPU validation claim"
     },
     {
       "id": "whisperx",
@@ -58,7 +68,7 @@
         "K22"
       ],
       "scope": "Mantener ASR/diarización existentes detrás del contrato temporal.",
-      "terms_review": "Modelos alineador/ASR separados; idiomas y términos de componentes; no inferir datos comerciales por voz dudosa.",
+      "terms_review": "WhisperX source at 3ccc17b8de34f305300f8a3fd3c9f76ba820c0d0 declares BSD-2-Clause; upstream license text must be carried with any redistribution. ASR and alignment model terms remain separate; do not infer commercial claims from uncertain speech.",
       "hardware_notes": "Tarea GPU programada o CPU con presupuesto; no carga silenciosa al boot.",
       "build_selected": true,
       "runtime_installs_allowed": false,
@@ -69,7 +79,7 @@
         "C01",
         "C27"
       ],
-      "code_revision": "v3.8.6",
+      "code_revision": "3ccc17b8de34f305300f8a3fd3c9f76ba820c0d0",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -104,20 +114,27 @@
         "S43"
       ],
       "scope": "Desarrollo propio en la orquestación existente: brief→hipótesis→constraints→DAG.",
-      "terms_review": "Esquemas versionados, evidencia, presupuestos, idempotencia y errores tipados; no otra autoridad de estado.",
+      "terms_review": "Original project code is covered by the repository MIT License. No third-party code, models, assets, or new external package are redistributed by this compiler; it uses the existing pinned Studio runtime dependencies recorded in studio/pyproject.toml.",
       "hardware_notes": "CPU; LangGraph fijado y probado en la imagen de producción.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C03",
         "C08"
       ],
-      "code_revision": null,
+      "code_revision": "cdda33fd344666534c2bd2d2a5ae27fe8a937aba",
       "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/mission-compiler.lock.json": "cf0d61245a9870e14ffa594a4db1881cefdfaf2996be636731cb1536c1d230a1"
+      },
+      "redistribution_decision": "allowed",
+      "notices_reviewed": true,
+      "evidence_entrypoint": "studio/comfy_studio/mission_compiler.py",
+      "evidence_test": "studio/tests/test_mission_compiler.py"
     },
     {
       "id": "production-memory",
@@ -127,18 +144,27 @@
         "S43"
       ],
       "scope": "Memoria de escenas/recetas/preferencias, separada de los checkpoints y los hechos observados.",
-      "terms_review": "Ámbito por proyecto, revisión/corrección, retención y exportación sin secretos.",
+      "terms_review": "Código propio del repositorio bajo MIT (LICENSE). No añade dependencias externas, pesos ni servicios. Los secretos se eliminan antes de persistir/devolver texto del agente; el registro privado y las correcciones quedan por proyecto.",
       "hardware_notes": "CPU/SQLite existente; no servicio externo obligatorio.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C04",
         "C06"
       ],
-      "code_revision": null,
+      "code_revision": "8de272798924116b383e6802868dc0dfeab5b4ff",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/production-memory.lock.json": "48643842ced9d4e334eb33c03387ca743989ae4274bdcf6e4663f2c05dfbd724"
+      },
+      "redistribution_decision": "allowed",
+      "notices_reviewed": true,
+      "evidence_entrypoint": "studio/comfy_studio/agent/tools.py",
+      "evidence_test": "studio/tests/agent/test_tools.py",
+      "upstream_url": "https://github.com/tomas-estrada/comfyuipod",
+      "license_source_url": "https://github.com/tomas-estrada/comfyuipod/blob/main/LICENSE",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -150,17 +176,24 @@
         "S26"
       ],
       "scope": "FFmpeg + cortes/ASR/OCR/flujo/beat map + LLM/VLM configurado → receta editable.",
-      "terms_review": "Entradas autorizadas; máscaras/OCR/tempos con confianza; red opcional con caché/quotas; no HyperFrames cloud.",
+      "terms_review": "Entradas autorizadas; máscaras/OCR/tempos con confianza; red opcional con caché/quotas; no HyperFrames cloud. Adaptador de código propio (commit 1a11cec5a95144578e5fdaad4c2901ad14d55911); su única dependencia binaria es ffmpeg/ffprobe, ya fijado en el lock de Ubuntu 24.04 amd64: binario por defecto GPL-2+ según su copyright, redistribución condicional a cumplir la oferta de fuente correspondiente (este repo no la cumple por sí solo); no introduce componentes nuevos con términos propios.",
       "hardware_notes": "CPU o stages GPU acotados según análisis.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C02"
       ],
-      "code_revision": "local-cpu-v1",
+      "code_revision": "1a11cec5a95144578e5fdaad4c2901ad14d55911",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/ffmpeg-ubuntu24.04-amd64.lock.json": "6d0452ce5e025f44bc3157fe655aff0e0b884b082523d284b24d2ad5032dccfb"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
+      "evidence_entrypoint": "studio/comfy_studio/engines/reference_local.py",
+      "evidence_test": "studio/tests/test_engine_reference_local.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -197,17 +230,26 @@
         "S40"
       ],
       "scope": "Mantener/ampliar engine y proyectos editables propios, sin usar packs comerciales como requisito.",
-      "terms_review": "Licencia propia: uso individual elegible no significa permiso genérico de redistribución/relicencia; conservar términos y revisar bundle.",
+      "terms_review": "Remotion License v4.0.541: uso gratis limitado a personas, organizaciones con hasta 3 empleados, entidades sin ánimo de lucro o evaluación; uso comercial para crear vídeos/imágenes permitido dentro de esos grupos. Otros usos requieren Company License. No hay permiso genérico para sublicenciar un derivado de Remotion. Se conserva el texto de licencia y los avisos de kiwi-schema; la redistribución de la imagen queda condicionada a elegibilidad/licencia y revisión del destinatario.",
       "hardware_notes": "Node/browser en build; rendering CPU y/o ruta GPU bajo scheduler.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C31"
       ],
-      "code_revision": "v4.0.541",
+      "code_revision": "e6df941441f3a2c8b4677a3dc5f1326746ac9db3",
+      "dependency_lock_hashes": {
+        "studio/remotion/package-lock.json": "f96f2bb0c79e7891960f2c2911502dcdada1b6a1e9c16e00fa510ceace17e930"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
+      "evidence_entrypoint": "studio/comfy_studio/engines/editor.py",
+      "evidence_test": "studio/tests/test_m4_editor_engine.py",
+      "upstream_url": "https://github.com/remotion-dev/remotion",
+      "license_source_url": "https://github.com/remotion-dev/remotion/blob/v4.0.541/LICENSE.md",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -224,7 +266,6 @@
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
       "gpu_validation": "not_run",
       "capabilities": [
         "C05",
@@ -238,11 +279,13 @@
       ],
       "code_revision": "cd5dc428cce1993a4b35986f227c6a24e42a365c",
       "dependency_lock_hashes": {
-        "official_linux_x86_64_release_archive": "2fd14c50987426897ba60237ee996edf2b4151f4b1a72a460ca20be58c1d2d86"
+        "upgrades-ultra-version/locks/blender-linux-x64-5.2.4.lock.json": "a12966eeb6e475ed8d254b21710421c230ff816411f7e7eafe5f382e11072f99"
       },
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
       "implementation_status": "implemented",
+      "evidence_entrypoint": "studio/comfy_studio/engines/blender.py",
+      "evidence_test": "studio/tests/test_m4_blender_engine.py",
       "upstream_url": "https://projects.blender.org/blender/blender",
       "binary_artifact_url": "https://download.blender.org/release/Blender5.2/blender-5.2.4-linux-x64.tar.xz",
       "binary_artifact_sha256": "2fd14c50987426897ba60237ee996edf2b4151f4b1a72a460ca20be58c1d2d86",
@@ -279,19 +322,30 @@
         "S28"
       ],
       "scope": "EDL/OTIO como exportación/importación comprobada, con mapa de efectos soportados.",
-      "terms_review": "No prometer roundtrip perfecto de efectos ajenos; conservar fuentes/manifiesto propio.",
+      "terms_review": "OpenTimelineIO 0.18.1 usa Apache-2.0. El wheel instalado incluye LICENSE.txt y NOTICE.txt; la redistribución queda condicionada a conservarlos. El export soporta cortes y referencias de medios del proyecto; no promete roundtrip de efectos ajenos.",
       "hardware_notes": "CPU.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C32"
       ],
-      "code_revision": "v0.18.1",
+      "code_revision": "44236713c1db295a6ffc66189ae98dbdfd0cb9c4",
+      "dependency_lock_hashes": {
+        "studio/locks/opentimelineio-cp312-linux-amd64.lock": "45658097cf37acc008330312ed228909fc1b6a53a0ed99fc793b8b72e08f7992"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
+      "dependency_packages": [
+        "opentimelineio==0.18.1 (Apache-2.0; wheel carries LICENSE.txt and NOTICE.txt)"
+      ],
+      "evidence_entrypoint": "studio/comfy_studio/edl/otio_export.py",
+      "evidence_test": "studio/tests/test_creative_delivery_provenance.py",
       "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "revision_policy": "official release tag resolved to immutable commit; do not follow a moving branch"
     },
     {
       "id": "opencolorio",
@@ -311,31 +365,10 @@
       "capabilities": [
         "C32"
       ],
-      "code_revision": "v2.6.0",
+      "code_revision": "10a43ec1df03d072ca9a9e2fb3f26e454b0900d8",
       "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
-    },
-    {
-      "id": "atlas-offline",
-      "name": "Biblioteca de lugares del Aburrá",
-      "disposition": "required",
-      "source_ids": [
-        "R02"
-      ],
-      "scope": "Catálogo + medios + licencias + geometría cuando exista + selector de cobertura dentro de la imagen.",
-      "terms_review": "OSM no es fachada; cada archivo con origen/autor/licencia/hash; strict_exact no acepta datos de cámara desconocidos.",
-      "hardware_notes": "CPU; adquisición baseline en desarrollo/build; expansión validada y versionada por PR.",
-      "build_selected": true,
-      "runtime_installs_allowed": false,
-      "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
-      "gpu_validation": "not_run",
-      "capabilities": [
-        "C07"
-      ],
-      "code_revision": "packaging-v1",
-      "lock_required_before_build": true,
-      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
+      "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
+      "revision_policy": "official release tag resolved to immutable commit; do not follow a moving branch"
     },
     {
       "id": "depth-anything3",
@@ -352,9 +385,7 @@
       "weights_policy": "exact_components_on_demand",
       "implementation_status": "specified_not_implemented_here",
       "gpu_validation": "not_run",
-      "capabilities": [
-        "C07"
-      ],
+      "capabilities": [],
       "code_revision": null,
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
@@ -927,17 +958,25 @@
         "S35"
       ],
       "scope": "Base/XL según receta, estructura musical y variantes con beat map.",
-      "terms_review": "Términos de componentes y datos/outputs en aprendizaje; no etiquetar stems sintéticos como separación exacta.",
-      "hardware_notes": "No ejecutar XL y generador video simultáneos; benchmark por variante.",
+      "terms_review": "El checkpoint ACE-Step 1.5 Turbo AIO está identificado en el manifiesto como Apache-2.0; el archivo es opt-in y no se hornea por defecto. No etiquetar stems sintéticos como separación exacta.",
+      "hardware_notes": "Generación requiere ComfyUI/GPU; runtime, VRAM/RAM, calidad y alineación musical pendientes de medición en GPU objetivo.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C26"
       ],
-      "code_revision": null,
+      "code_revision": "bdc63e72f5ab29fde448c161db3057827148c0ef",
+      "dependency_lock_hashes": {
+        "config/nodes.lock": "d82654ad0720e7eeb744ec12c79c42633630734c5814ce3e8941c6f7c4c1c5d8"
+      },
+      "redistribution_decision": "allowed",
+      "notices_reviewed": true,
+      "upstream_url": "https://github.com/Comfy-Org/ComfyUI",
+      "evidence_entrypoint": "studio/comfy_studio/agent/tools.py",
+      "evidence_test": "studio/tests/test_c26_ace_step_tool.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -1204,17 +1243,31 @@
         "N17"
       ],
       "scope": "Desarrollo propio para cámara/luz/posición con restricciones y gradientes o búsqueda.",
-      "terms_review": "Unidad/frames/oclusiones y variable bounds explícitos; baseline + heldout.",
+      "terms_review": "Código del proyecto bajo MIT. El camino de preparación usa la distribución oficial Blender 5.2.4 GPL-3.0 y Mitsuba 3.9.1/Dr.Jit 1.5.0 BSD-3-Clause; locks de artefactos/dependencias fijados y notices de Blender/Mitsuba incluidos en la imagen. No redistribuye pesos ni assets del usuario. La evidencia CPU cubre composición y búsqueda heurística; diferenciabilidad, saliencia semántica y GPU siguen pendientes.",
       "hardware_notes": "CPU/Mitsuba CUDA bajo lease; optimización acotada.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C20"
       ],
-      "code_revision": "scene-opt-v1",
+      "code_revision": "b00f2c1f6ffdebfbd96a13bab3b054119106934a",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/blender-linux-x64-5.2.4.lock.json": "a12966eeb6e475ed8d254b21710421c230ff816411f7e7eafe5f382e11072f99",
+        "studio/locks/mitsuba-cp312-linux-amd64.lock": "1ef47e5e4d6ea31473f44b0b1208770031c7ea59133f3017338bdb31ee4222ca"
+      },
+      "redistribution_decision": "allowed",
+      "notices_reviewed": true,
+      "dependency_packages": [
+        "Blender 5.2.4",
+        "mitsuba==3.9.1",
+        "drjit==1.5.0",
+        "typing_extensions==4.16.0"
+      ],
+      "evidence_entrypoint": "studio/comfy_studio/engines/scene_optimizer.py",
+      "evidence_test": "studio/tests/test_engine_scene_optimizer.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -1538,9 +1591,7 @@
       "weights_policy": "exact_components_on_demand",
       "implementation_status": "specified_not_implemented_here",
       "gpu_validation": "not_run",
-      "capabilities": [
-        "C07"
-      ],
+      "capabilities": [],
       "code_revision": null,
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim",
@@ -1680,8 +1731,13 @@
       "redistribution_decision": "allowed",
       "notices_reviewed": true,
       "upstream_url": "https://github.com/mitsuba-renderer/mitsuba3",
-      "dependency_packages": ["mitsuba==3.9.1", "drjit==1.5.0", "typing_extensions==4.15.0"],
+      "dependency_packages": [
+        "mitsuba==3.9.1",
+        "drjit==1.5.0",
+        "typing_extensions==4.16.0"
+      ],
       "evidence_entrypoint": "scripts/smoke_mitsuba_cpu_fit.py",
+      "evidence_test": "scripts/smoke_mitsuba_cpu_fit.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     },
@@ -1977,19 +2033,26 @@
       "source_ids": [
         "LOCAL-LLM-01"
       ],
-      "scope": "llama-server (llama.cpp) en 127.0.0.1: chat completions OpenAI-compatibles para el agente sin APIs facturadas; binario horneado pinned, modelo .gguf como dependencia de tarea en runtime.",
-      "terms_review": "Codigo MIT verificado via API (ggml-org/llama.cpp, MIT License). Release v0.9.0 (2026-11-04, https://github.com/ggml-org/llama.cpp/releases/tag/v0.9.0). Sin redistribucion de pesos en la imagen; loopback-only.",
+      "scope": "llama-server CPU (llama.cpp) fijado y compilado en la imagen; el adaptador OpenAI-compatible se conecta solo a 127.0.0.1. El proceso no se supervisa ni se inicia automáticamente; el usuario configura sus propios pesos .gguf en runtime.",
+      "terms_review": "llama.cpp v0.9.0 (commit cd959bae99ff4bed22bef2604f45241c09bbb8c8) está bajo MIT. El lock selecciona CPU, desactiva CUDA, HTTPS, UI precompilada y descargas de conectores. Los avisos Unicode License V3 y las licencias vendorizadas de miniaudio (MIT-0), stb_image (MIT) y sheredom/subprocess.h (Unlicense) se preservan en Third-Party-LICENSES.md; cpp-httplib, nlohmann y los avisos fuente del upstream se copian desde el pin. El build deriva las bibliotecas ELF finales con ldd y copia el copyright del paquete Debian propietario en el mismo árbol de avisos, con inventario y SHA-256. No se redistribuyen pesos.",
       "hardware_notes": "CPU u offload GPU segun modelo; binario de decenas de MB; WARM sin residencia VRAM por defecto.",
       "build_selected": true,
       "runtime_installs_allowed": false,
       "weights_policy": "exact_components_on_demand",
-      "implementation_status": "specified_not_implemented_here",
+      "implementation_status": "implemented",
       "gpu_validation": "not_run",
       "capabilities": [
         "C03",
         "C08"
       ],
-      "code_revision": "v0.9.0",
+      "code_revision": "cd959bae99ff4bed22bef2604f45241c09bbb8c8",
+      "dependency_lock_hashes": {
+        "upgrades-ultra-version/locks/llm-server-ubuntu24.04-amd64.lock.json": "bc47670adc05a14de12522b802d285ffdad1926ca0334948b1c2c007c3d9658a"
+      },
+      "redistribution_decision": "conditional",
+      "notices_reviewed": true,
+      "evidence_entrypoint": "studio/comfy_studio/engines/llm_server.py",
+      "evidence_test": "studio/tests/test_engine_llm_server.py",
       "lock_required_before_build": true,
       "release_gate": "code_and_dependency_redistribution_checked; actual image build; no GPU validation claim"
     }

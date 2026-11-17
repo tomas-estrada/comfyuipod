@@ -34,6 +34,10 @@ class MotionError(ValueError):
 
 
 Vec3 = tuple[float, float, float]
+MAX_SKELETON_BONES = 256
+MAX_CLIP_FRAMES = 600
+MAX_FRAME_BONES = 256
+MAX_IDENTIFIER_LENGTH = 128
 
 
 @dataclass(slots=True)
@@ -58,25 +62,52 @@ class Bone:
 
 @dataclass(slots=True)
 class Skeleton:
-    """Esqueleto: jerarquía de huesos + escala y raíz declaradas."""
+    """Esqueleto: jerarquía de huesos + escala, raíz y bind pose declaradas."""
 
     name: str
     bones: list[Bone]
     root: str
     scale: float = 1.0
+    #: bind pose en grados por hueso; sin declaración la bind efectiva es 0.0.
+    bind: dict[str, float] = field(default_factory=dict)
+    body_class: str = "humanoid"
+    identity_id: str | None = None
 
     def bone_names(self) -> set[str]:
         return {b.name for b in self.bones}
 
     def validate(self) -> None:
         names = self.bone_names()
+        if len(self.bones) > MAX_SKELETON_BONES:
+            raise MotionError(f"skeleton exceeds {MAX_SKELETON_BONES} bones")
+        if any(not b.name or len(b.name) > MAX_IDENTIFIER_LENGTH for b in self.bones):
+            raise MotionError(f"bone names must be 1..{MAX_IDENTIFIER_LENGTH} characters")
+        if len(self.name) > MAX_IDENTIFIER_LENGTH or len(self.body_class) > 64:
+            raise MotionError("skeleton name or body_class exceeds its length limit")
+        if self.identity_id is not None and len(self.identity_id) > MAX_IDENTIFIER_LENGTH:
+            raise MotionError("skeleton identity_id exceeds its length limit")
         if len(names) != len(self.bones):
             raise MotionError("nombre de hueso duplicado")
         if self.root not in names:
             raise MotionError(f"raíz {self.root!r} no está entre los huesos")
         if not math.isfinite(self.scale) or self.scale <= 0:
             raise MotionError("scale del esqueleto debe ser finito y > 0")
+        if not self.body_class.strip():
+            raise MotionError("body_class del esqueleto no puede estar vacío")
         bones = {bone.name: bone for bone in self.bones}
+        for bone, degrees in self.bind.items():
+            if bone not in names:
+                raise MotionError(
+                    f"bind pose: hueso inexistente {bone!r} (debe declarar huesos existentes)"
+                )
+            if not math.isfinite(degrees):
+                raise MotionError(f"bind pose: hueso {bone!r} con grados no finitos")
+            declared_bone = bones[bone]
+            if not declared_bone.min_deg <= degrees <= declared_bone.max_deg:
+                raise MotionError(
+                    f"bind pose: hueso {bone!r} con {degrees}° fuera de sus límites "
+                    f"[{declared_bone.min_deg}°, {declared_bone.max_deg}°]"
+                )
         if bones[self.root].parent is not None:
             raise MotionError("la raíz del esqueleto no puede tener padre")
         for b in self.bones:
@@ -119,6 +150,12 @@ class MotionClip:
         """Comprueba timebase, pistas y que cada canal pertenezca al esqueleto."""
         if self.fps <= 0:
             raise MotionError("fps debe ser > 0")
+        if not self.name or len(self.name) > MAX_IDENTIFIER_LENGTH:
+            raise MotionError(f"clip name must be 1..{MAX_IDENTIFIER_LENGTH} characters")
+        if len(self.frames) > MAX_CLIP_FRAMES:
+            raise MotionError(f"clip exceeds {MAX_CLIP_FRAMES} frames")
+        if any(len(frame) > MAX_FRAME_BONES for frame in self.frames):
+            raise MotionError(f"a frame exceeds {MAX_FRAME_BONES} bone keys")
         if self.root_track and len(self.root_track) != len(self.frames):
             raise MotionError("root_track debe tener un vector por frame")
         for index, frame in enumerate(self.frames):
@@ -291,11 +328,28 @@ def retarget(
     - `mapping`: {hueso_fuente: hueso_destino}. Debe cubrir los huesos usados.
     - conserva la trayectoria de la RAÍZ (escalada por target.scale/source.scale)
       y los TIEMPOS (mismo fps, mismos frames).
-    - aplica los límites de ángulo del DESTINO (clamp) — un retarget no viola el
-      rango físico del esqueleto destino.
+    - los ángulos se interpretan como OFFSET respecto a la bind pose del hueso
+      fuente (ángulo − bind), se suman a la bind pose del hueso destino y se
+      recortan a los límites del DESTINO — un clip en la bind del fuente
+      produce la bind del destino, y sin bind declarada (0.0 por hueso) el
+      resultado es el retarget absoluto previo.
     """
     source.validate()
     target.validate()
+    if len(mapping) > MAX_SKELETON_BONES:
+        raise MotionError(f"mapping exceeds {MAX_SKELETON_BONES} bone pairs")
+    if any(
+        not isinstance(src, str)
+        or not isinstance(dst, str)
+        or len(src) > MAX_IDENTIFIER_LENGTH
+        or len(dst) > MAX_IDENTIFIER_LENGTH
+        for src, dst in mapping.items()
+    ):
+        raise MotionError(f"mapping identifiers must be <= {MAX_IDENTIFIER_LENGTH} characters")
+    if source.body_class != target.body_class:
+        raise MotionError(
+            f"incompatible body class: {source.body_class!r} to {target.body_class!r}"
+        )
     clip.validate(source)
     src_names = source.bone_names()
     tgt_names = target.bone_names()
@@ -307,6 +361,8 @@ def retarget(
             raise MotionError(f"mapping: hueso destino inexistente {t!r}")
 
     tgt_limits = {b.name: (b.min_deg, b.max_deg) for b in target.bones}
+    src_bind = {bone: value for bone, value in source.bind.items()}
+    tgt_bind = {bone: value for bone, value in target.bind.items()}
     unmapped = sorted({bone for frame in clip.frames for bone in frame} - mapping.keys())
     if unmapped:
         raise MotionError(f"mapping incompleto; huesos usados sin destino: {', '.join(unmapped)}")
@@ -320,7 +376,12 @@ def retarget(
             if tgt_bone is None:  # defensive; completeness is checked above.
                 raise MotionError(f"mapping incompleto para hueso {src_bone!r}")
             lo, hi = tgt_limits[tgt_bone]
-            new_frame[tgt_bone] = max(lo, min(hi, angle))
+            # El ángulo es un OFFSET respecto a la bind del fuente: se resta la
+            # bind de origen, se suma la bind del destino y se recorta al rango
+            # físico del destino. Sin bind declarada (0.0) es el retarget
+            # absoluto previo.
+            offset = angle - src_bind.get(src_bone, 0.0)
+            new_frame[tgt_bone] = max(lo, min(hi, tgt_bind.get(tgt_bone, 0.0) + offset))
         out.frames.append(new_frame)
     # la raíz se conserva, escalada por la razón de escalas de los esqueletos.
     out.root_track = [

@@ -1,29 +1,43 @@
 # Motores del estudio
 
-Tabla maestra de los **20 motores** registrados en `comfy_studio/engines/registry.py`.
+El roster activo se obtiene de `build_default_registry()` en [`studio/comfy_studio/engines/registry.py`](../../studio/comfy_studio/engines/registry.py). En el snapshot revisado contiene 20 nombres. `wired=true` es una declaración de ruta conectada al registro; **no** prueba que el software esté instalado, que existan pesos, que el hardware sea compatible ni que haya una ejecución validada. Para esos hechos consulta `engines/preparedness.py`, el resultado del verbo `verify` y una ejecución/artifact de la ruta correspondiente.
 
-| Nombre | Tier | Wired | Ruta real (CPU) | Módulo reutilizado | Semántica simulada |
-|--------|------|-------|-----------------|-------------------|--------------------|
-| comfyui | resident | sí | async HTTP | comfyui_client | No simulable; si no hay GPU, el verb falla tipificado |
-| blender | warm | sí | subproceso headless | blender.py | `STUDIO_STUB_BLENDER=1` |
-| editor | warm | sí | npx remotion | (stub F6) | stub con manifiesto vacío |
-| ffmpeg | warm | sí | shutil.which | media_bins | No simulable; herramienta base |
-| heavy_video | installable | sí | cliente HTTP | ml/runner | stub con artefacto vacío |
-| audio | warm | sí | Kokoro / worker ASR | audio.py | `STUDIO_STUB_AUDIO=1` |
-| voice_clone | warm | sí | RVC (venv runtime) | ml/runner | stub con WAV vacío |
-| indextts | warm | sí | IndexTTS (venv) | ml/runner | stub con WAV vacío |
-| music_gen | warm | sí | MusicGen (venv) | ml/runner | stub con WAV vacío |
-| lipsync | warm | sí | Wav2Lip (venv) | ml/runner | stub con MP4 vacío |
-| upscaler | warm | sí | Real-ESRGAN | ml/runner | stub con PNG vacío |
-| capture3d | installable | sí | nerfstudio | ml/runner | stub con PLY vacío |
-| compositor | warm | sí | Natron | ml/runner | stub con EXR vacío |
-| qa | warm | sí | FFmpeg + VBench | ml/runner | nivel 1 (stub) |
-| roto | warm | sí | SAM 3 | ml/runner | stub con PNG vacío |
-| ad_studio | warm | sí | composición ffmpeg+audio | ad_studio | stub con MP4 vacío |
-| **reference-local** | **warm** | **sí** | **CPU puro** | **inspiration.py** | **`STUDIO_STUB_REFERENCE_LOCAL=1`** |
-| **atlas-offline** | **warm** | **sí** | **CPU puro** | **atlas/packaging.py** | **no; real si la raíz existe** |
-| **scene-optimizer** | **warm** | **sí** | **CPU puro** | **cinematography.py** | **`STUDIO_STUB_SCENE_OPTIMIZER=1`** |
-| **chrono** | **warm** | **sí** | **proxy CPU** | **physics.py** | **`STUDIO_STUB_CHRONO=1`** |
+| Motor | Tier | Ruta declarada / condición importante |
+|---|---|---|
+| `ad_studio` | warm | Brief, guion, storyboard y variantes con los componentes locales configurados; el render depende de FFmpeg/TTS/música disponibles. |
+| `audio` | warm | TTS Kokoro y worker ASR; STT real necesita el paquete y pesos faster-whisper. |
+| `blender` | warm | Blender 5.2.4 headless fijado en la imagen; los assets/pesos externos no están garantizados. |
+| `capture3d` | installable | Ruta Nerfstudio; preparación y requisitos de runtime/hardware se verifican por separado. |
+| `chrono` | warm | Proxy cinemático CPU determinista de `physics.py`; **no** es el solver Project Chrono. |
+| `comfyui` | resident | Cliente HTTP al ComfyUI del pod por loopback; GPU/receta se verifica al ejecutar. |
+| `compositor` | warm | Integración de composición Natron preparada por la imagen; render no acreditado por el registro. |
+| `editor` | warm | Remotion local mediante `npx`; su paquete/lock y los tests del editor son la evidencia relevante. |
+| `ffmpeg` | warm | Binarios locales `ffmpeg`/`ffprobe`, usados también por otros motores. |
+| `heavy_video` | installable | Cliente MiniMax configurable mediante `STUDIO_HEAVY_VIDEO_*`; no implica una llamada facturada automática. |
+| `indextts` | warm | Entorno aislado y pesos por tarea; revisar disponibilidad antes de prometer clonación de voz. |
+| `lipsync` | warm | Código preparado; el checkpoint Wav2Lip se comprueba aparte y puede faltar. |
+| `llm_server` | warm | `llama-server` CPU incluido; pesos GGUF son del usuario y el proceso no se inicia/supervisa automáticamente. |
+| `music_gen` | warm | AudioCraft/servicios asociados; dependencias pesadas y pesos no equivalen a disponibilidad inmediata. |
+| `qa` | warm | FFmpeg local; VBench necesita el entorno aislado opcional. |
+| `reference-local` | warm | Análisis local de cortes/beats/OCR/cámara en CPU; es heurístico y no reemplaza un análisis semántico VLM. |
+| `roto` | warm | Ruta SAM 3; los pesos HF-gated deben estar disponibles y autorizados. |
+| `scene-optimizer` | warm | Validación CPU de composición y cámara; no demuestra calidad de render neural. |
+| `upscaler` | warm | Ruta Real-ESRGAN; comprobar el modelo exacto y la receta antes de declarar listo. |
+| `voice_clone` | warm | RVC puede requerir fairseq, que no se hornea en la imagen; IndexTTS es una ruta separada. |
+
+La taxonomía de `preparedness.py` separa `installed`, integración, pesos, hardware, modelo cargado y ejecución validada. Un check de salud no simula una ejecución exitosa ni carga una GPU. El estado del roster y el manifiesto de motores seleccionados `upgrades-ultra-version/engines.json` son contratos distintos: el primero describe herramientas registradas en Studio; el segundo aplica el gate de build A07.
+
+`generate_music` usa el flujo nativo de ComfyUI `ace_step_music`, descrito en
+[`ace-step.md`](ace-step.md). El motor del registro `music_gen` es una vía
+separada; no representa la implementación activa de esa herramienta.
+
+La compilación CPU de briefs aprobados a planes DAG está descrita en
+[`mission-compiler.md`](mission-compiler.md). Es parte de la orquestación de
+producciones y no es un motor de render del registro anterior.
+
+La memoria durable de decisiones y recetas del agente vive en ProjectStore y no
+es un proceso de engine separado; su alcance, límites y lock están en
+[`production-memory.md`](production-memory.md).
 
 ## Política de invarianza
 

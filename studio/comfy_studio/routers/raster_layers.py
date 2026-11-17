@@ -2,41 +2,153 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from comfy_studio.projects import MediaValidationError, ProjectStore
 from comfy_studio.raster_layers import (
     RasterLayer,
     RasterLayerError,
+    RasterLayerIntegrityUnknownError,
+    RasterLayerStaleError,
     affected_by,
     canonical_manifest,
     composite_layers,
+    integrity_unknown_layer_ids,
     parse_manifest,
-    validate_asset_references,
+    pin_asset_sources,
+    rgba_roundtrip,
+    stale_layer_ids,
+)
+from comfy_studio.video_matting import (
+    DEFAULT_BLEND,
+    DEFAULT_SIMILARITY,
+    ChromaKeyError,
+    chroma_key_video,
+)
+from comfy_studio.video_restyle import (
+    DEFAULT_STRENGTH,
+    LutGradeError,
+    lut_grade,
+    lut_grade_batch,
 )
 
 _META_KEY = "ultra_raster_layer_set_v1"
 _OUTPUT_META_KEY = "ultra_raster_layer_output_v1"
+_CHROMA_OUTPUT_META_KEY = "ultra_chroma_key_output_v1"
+_LUT_OUTPUT_META_KEY = "ultra_lut_grade_output_v1"
 
 
 class RasterLayerRequest(BaseModel):
-    layer_id: str
-    asset_id: str
-    caused_by: str | None = None
-    region: str = "full"
-    order: int
+    layer_id: str = Field(min_length=1, max_length=64)
+    asset_id: str = Field(min_length=1, max_length=64)
+    caused_by: str | None = Field(default=None, max_length=64)
+    region: str = Field(default="full", min_length=1, max_length=128)
+    order: int = Field(ge=0, lt=32)
 
 
 class RasterLayerSetRequest(BaseModel):
-    layers: list[RasterLayerRequest]
+    layers: list[RasterLayerRequest] = Field(max_length=32)
 
 
 class RasterLayerEditRequest(BaseModel):
     asset_id: str
+
+
+class RgbaRoundtripRequest(BaseModel):
+    """Descomposición RGBA exacta: la semántica debe declararse explícitamente."""
+
+    asset_id: str
+    semantics: str
+    source_sha256: str | None = None
+
+
+class ChromaKeyRequest(BaseModel):
+    """Chroma-key declarado: UN color plano elegido explícitamente por el usuario."""
+
+    asset_id: str
+    key_color: str | list[int]
+    similarity: float = DEFAULT_SIMILARITY
+    blend: float = DEFAULT_BLEND
+
+
+class LutGradeRequest(BaseModel):
+    """Gradación con LUT declarada: el usuario aporta el contenido ``.cube``."""
+
+    asset_id: str
+    lut_cube: str
+    strength: float = DEFAULT_STRENGTH
+    mask_asset_id: str | None = None
+
+
+class LutGradeBatchVariant(BaseModel):
+    """Una variante con nombre del lote C22: LUT ``.cube`` inline."""
+
+    name: str = Field(min_length=1, max_length=64)
+    lut_cube: str
+    strength: float = DEFAULT_STRENGTH
+
+
+class LutGradeBatchRequest(BaseModel):
+    """Lote C22: un vídeo, una máscara de proyecto y tres variantes con nombre."""
+
+    asset_id: str
+    variants: list[LutGradeBatchVariant] = Field(max_length=8)
+    mask_asset_id: str | None = None
+
+
+def _variant_filename(name: str) -> str:
+    """Nombre de archivo seguro derivado del nombre declarado de la variante."""
+    slug = "".join(ch if ch.isalnum() else "-" for ch in name.strip().lower())
+    slug = slug.strip("-") or "variant"
+    return f"lut-grade-batch-{slug[:48]}.mkv"
+
+
+def _mark_previous_lut_output_stale(
+    store: ProjectStore, project_id: str, current: dict[str, Any]
+) -> list[str]:
+    """Marca los assets de la ejecución previa de gradación LUT como obsoletos.
+
+    Sigue el patrón de ``_mark_previous_chroma_output_stale``: si la fuente
+    (asset o sha256), el LUT, la fuerza o la máscara cambian entre ejecuciones,
+    la salida y el frame previos dejan de ser frescos.
+    """
+    previous = store.get_meta(project_id, _LUT_OUTPUT_META_KEY)
+    if not isinstance(previous, dict) or not previous.get("asset_id"):
+        return []
+    tracked = (
+        "source_asset_id",
+        "source_sha256",
+        "lut_sha256",
+        "strength",
+        "mask_asset_id",
+        "mask_sha256",
+    )
+    changed = [field for field in tracked if previous.get(field) != current.get(field)]
+    stale_metadata = {
+        "stale": True,
+        "stale_reason": (
+            "lut_grade_input_changed" if changed else "lut_grade_rerun_superseded"
+        ),
+    }
+    if changed:
+        stale_metadata["lut_grade_changed_fields"] = sorted(changed)
+    invalidated: list[str] = []
+    for asset_id in (previous.get("asset_id"), previous.get("frame_asset_id")):
+        if not asset_id:
+            continue
+        updated = store.update_asset_metadata(
+            project_id, str(asset_id), metadata=stale_metadata
+        )
+        if updated is not None:
+            invalidated.append(str(asset_id))
+    store.set_meta(project_id, _LUT_OUTPUT_META_KEY, {**previous, "status": "stale"})
+    return invalidated
 
 
 def _mark_previous_output_stale(
@@ -61,6 +173,63 @@ def _mark_previous_output_stale(
     )
 
 
+def _mark_previous_output_integrity_unknown(
+    store: ProjectStore, project_id: str, unknown: set[str]
+) -> None:
+    previous_output = store.get_meta(project_id, _OUTPUT_META_KEY)
+    if not isinstance(previous_output, dict) or not previous_output.get("asset_id"):
+        return
+    store.update_asset_metadata(
+        project_id,
+        str(previous_output["asset_id"]),
+        metadata={
+            "stale": True,
+            "stale_reason": "raster_layer_source_hash_missing",
+            "integrity_status": "unknown",
+            "integrity_unknown_layer_ids": sorted(unknown),
+        },
+    )
+    store.set_meta(
+        project_id,
+        _OUTPUT_META_KEY,
+        {**previous_output, "status": "integrity_unknown"},
+    )
+
+
+def _mark_previous_chroma_output_stale(
+    store: ProjectStore, project_id: str, current: dict[str, Any]
+) -> list[str]:
+    """Marca los assets de la ejecución previa de chroma-key como obsoletos.
+
+    Sigue el patrón de ``_mark_previous_output_stale``: si la fuente (asset o
+    sha256) o los parámetros declarados cambian entre ejecuciones, la salida y
+    el frame previos dejan de ser frescos. Devuelve los ids invalidados.
+    """
+    previous = store.get_meta(project_id, _CHROMA_OUTPUT_META_KEY)
+    if not isinstance(previous, dict) or not previous.get("asset_id"):
+        return []
+    tracked = ("source_asset_id", "source_sha256", "key_color", "similarity", "blend")
+    changed = [field for field in tracked if previous.get(field) != current.get(field)]
+    if not changed:
+        return []
+    stale_metadata = {
+        "stale": True,
+        "stale_reason": "chroma_key_input_changed",
+        "chroma_key_changed_fields": sorted(changed),
+    }
+    invalidated: list[str] = []
+    for asset_id in (previous.get("asset_id"), previous.get("frame_asset_id")):
+        if not asset_id:
+            continue
+        updated = store.update_asset_metadata(
+            project_id, str(asset_id), metadata=stale_metadata
+        )
+        if updated is not None:
+            invalidated.append(str(asset_id))
+    store.set_meta(project_id, _CHROMA_OUTPUT_META_KEY, {**previous, "status": "stale"})
+    return invalidated
+
+
 def _store(request: Request) -> ProjectStore:
     return request.app.state.store
 
@@ -79,8 +248,8 @@ def register_routes(app: FastAPI) -> None:
         _require_project(store, project_id)
         layers = [RasterLayer(**item.model_dump()) for item in body.layers]
         try:
+            layers = pin_asset_sources(store, project_id, layers)
             manifest = canonical_manifest(layers)
-            validate_asset_references(store, project_id, layers)
             previous = store.get_meta(project_id, _META_KEY)
             old_layers = parse_manifest(previous) if previous is not None else []
             old_by_id = {layer.layer_id: layer for layer in old_layers}
@@ -119,7 +288,18 @@ def register_routes(app: FastAPI) -> None:
             manifest = canonical_manifest(parse_manifest(raw))
         except RasterLayerError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {**manifest, "render_validation": "not_run"}
+        stale = stale_layer_ids(store, project_id, parse_manifest(raw))
+        unknown = integrity_unknown_layer_ids(parse_manifest(raw))
+        if stale:
+            _mark_previous_output_stale(store, project_id, set(stale))
+        if unknown:
+            _mark_previous_output_integrity_unknown(store, project_id, set(unknown))
+        return {
+            **manifest,
+            "render_validation": "not_run",
+            "stale_layer_ids": stale,
+            "integrity_unknown_layer_ids": unknown,
+        }
 
     @app.patch("/studio/api/projects/{project_id}/raster-layers/{layer_id}")
     async def edit_raster_layer(
@@ -137,11 +317,14 @@ def register_routes(app: FastAPI) -> None:
             )
             if existing_layer is None:
                 raise RasterLayerError(f"capa inexistente: {layer_id}")
-            replacement = replace(existing_layer, asset_id=body.asset_id)
-            validate_asset_references(store, project_id, [replacement])
+            replacement = pin_asset_sources(
+                store,
+                project_id,
+                [replace(existing_layer, asset_id=body.asset_id)],
+            )[0]
             affected = affected_by(layers, layer_id)
             edited = [
-                replace(layer, asset_id=body.asset_id)
+                replacement
                 if layer.layer_id == layer_id
                 else layer
                 for layer in layers
@@ -165,7 +348,22 @@ def register_routes(app: FastAPI) -> None:
         _require_project(store, project_id)
         try:
             layers = parse_manifest(store.get_meta(project_id, _META_KEY))
-            png, evidence = composite_layers(store, project_id, layers)
+            stale = stale_layer_ids(store, project_id, layers)
+            unknown = integrity_unknown_layer_ids(layers)
+            if stale:
+                _mark_previous_output_stale(store, project_id, set(stale))
+                raise RasterLayerStaleError(
+                    "fuente cambió desde que se guardó la capa: " + ", ".join(stale)
+                )
+            if unknown:
+                _mark_previous_output_integrity_unknown(store, project_id, set(unknown))
+                raise RasterLayerIntegrityUnknownError(
+                    "integrity unknown for layers without a pinned source hash: "
+                    + ", ".join(unknown)
+                )
+            png, evidence = await run_in_threadpool(
+                composite_layers, store, project_id, layers
+            )
             config = request.app.state.config
             asset = store.save_upload(
                 project_id,
@@ -197,8 +395,405 @@ def register_routes(app: FastAPI) -> None:
             }
         except MediaValidationError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        except RasterLayerStaleError as exc:
+            current_layers = parse_manifest(store.get_meta(project_id, _META_KEY))
+            stale = stale_layer_ids(store, project_id, current_layers)
+            if stale:
+                _mark_previous_output_stale(store, project_id, set(stale))
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RasterLayerIntegrityUnknownError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RasterLayerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post(
+        "/studio/api/projects/{project_id}/raster-layers/rgba-roundtrip", status_code=201
+    )
+    async def rgba_roundtrip_project_asset(
+        project_id: str, body: RgbaRoundtripRequest, request: Request
+    ) -> dict[str, Any]:
+        """Descomposición RGBA exacta y verificada de un PNG del proyecto (C28).
+
+        La semántica debe declararse explícitamente (alpha recto de 8 bits, no
+        premultiplicado). Entrega dos planos PNG —color con alpha opaco y alpha
+        aislado— y prueba la exactitud decodificando los planos entregados y
+        reconstruyendo el RGBA: cualquier divergencia byte a byte con la fuente
+        es un error, nunca una afirmación relajada. No edita el manifiesto de
+        capas: es una conversión sin estado con provenance (sha256 de fuente).
+        """
+        store = _store(request)
+        _require_project(store, project_id)
+        config = request.app.state.config
+        try:
+            color_png, alpha_png, evidence = await run_in_threadpool(
+                rgba_roundtrip,
+                store,
+                project_id,
+                body.asset_id,
+                semantics=body.semantics,
+                source_sha256=body.source_sha256,
+            )
+            roundtrip_meta = {
+                "artifact_kind": "rgba_roundtrip_plane",
+                "exact_rgba_roundtrip": True,
+                "semantics": evidence["semantics"]["declared"],
+                "source_asset_id": evidence["source"]["asset_id"],
+                "source_sha256": evidence["source"]["sha256"],
+                "source_rgba_sha256": evidence["source_rgba_sha256"],
+                "renderer": evidence["renderer"],
+                "matting": evidence["matting"],
+            }
+            color_asset = store.save_upload(
+                project_id,
+                filename="rgba-roundtrip-color-plane.png",
+                content_type="image/png",
+                data=color_png,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={**roundtrip_meta, "plane": "color"},
+            )
+            alpha_asset = store.save_upload(
+                project_id,
+                filename="rgba-roundtrip-alpha-plane.png",
+                content_type="image/png",
+                data=alpha_png,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={**roundtrip_meta, "plane": "alpha"},
+            )
+        except RasterLayerStaleError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RasterLayerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MediaValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        evidence = {
+            **evidence,
+            "color_plane": color_asset,
+            "alpha_plane": alpha_asset,
+        }
+        return {
+            "color_plane": color_asset,
+            "alpha_plane": alpha_asset,
+            "evidence": evidence,
+            "matting": evidence["matting"],
+            "claim": "descomposición RGBA exacta verificada sobre los planos "
+            "PNG entregados; no matting semántico",
+        }
+
+    @app.post(
+        "/studio/api/projects/{project_id}/raster-layers/chroma-key", status_code=201
+    )
+    async def chroma_key_project_video(
+        project_id: str, body: ChromaKeyRequest, request: Request
+    ) -> dict[str, Any]:
+        """Chroma-key CPU real sobre un vídeo del proyecto (C29/A17).
+
+        Produce una secuencia portadora de alpha (ffv1 rgba/bgra lossless) y un
+        frame RGBA de referencia, con provenance (sha256 de la fuente), probe de
+        ffprobe y cobertura medida sobre frames decodificados. NO es matting
+        semántico ni general: solo el color plano explícito elegido se vuelve
+        transparente.
+        """
+        store = _store(request)
+        _require_project(store, project_id)
+        config = request.app.state.config
+        try:
+            video_bytes, frame_png, evidence = await run_in_threadpool(
+                chroma_key_video,
+                store,
+                project_id,
+                body.asset_id,
+                body.key_color,
+                similarity=body.similarity,
+                blend=body.blend,
+                ffmpeg_timeout_s=config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=config.studio_ffprobe_timeout_s,
+            )
+        except ChromaKeyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MediaValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+        output_sha256 = hashlib.sha256(video_bytes).hexdigest()
+        chroma_meta = {
+            "artifact_kind": "chroma_key_alpha_sequence",
+            "renderer": evidence["renderer"],
+            "matting": evidence["matting"],
+            "semantic_matting": evidence["semantic_matting"],
+            "key_color": evidence["key_color"],
+            "similarity": evidence["similarity"],
+            "blend": evidence["blend"],
+            "source_asset_id": evidence["source"]["asset_id"],
+            "source_sha256": evidence["source"]["sha256"],
+            "output_sha256": output_sha256,
+        }
+        asset = store.save_upload(
+            project_id,
+            filename="chroma-key-alpha.mkv",
+            content_type="video/x-matroska",
+            data=video_bytes,
+            max_upload_bytes=config.max_upload_bytes,
+            category="outputs",
+            metadata={"chroma_key": chroma_meta, "pixel_render": "ffmpeg-colorkey-cpu"},
+        )
+        frame_asset = store.save_upload(
+            project_id,
+            filename="chroma-key-frame-0000.png",
+            content_type="image/png",
+            data=frame_png,
+            max_upload_bytes=config.max_upload_bytes,
+            category="outputs",
+            metadata={
+                "chroma_key": chroma_meta,
+                "artifact_kind": "chroma_key_frame",
+                "pixel_render": "ffmpeg-colorkey-cpu",
+            },
+        )
+        current_chroma_inputs = {
+            "source_asset_id": body.asset_id,
+            "source_sha256": evidence["source"]["sha256"],
+            "key_color": evidence["key_color"],
+            "similarity": evidence["similarity"],
+            "blend": evidence["blend"],
+        }
+        invalidated_outputs = _mark_previous_chroma_output_stale(
+            store, project_id, current_chroma_inputs
+        )
+        store.set_meta(
+            project_id,
+            _CHROMA_OUTPUT_META_KEY,
+            {
+                **current_chroma_inputs,
+                "asset_id": asset["id"],
+                "frame_asset_id": frame_asset["id"],
+                "status": "current",
+            },
+        )
+        return {
+            "asset": asset,
+            "frame_asset": frame_asset,
+            "evidence": evidence,
+            "invalidated_outputs": invalidated_outputs,
+            "matting": evidence["matting"],
+            "semantic_matting": evidence["semantic_matting"],
+            "claim": "chroma-key de un color plano explícito; no matting semántico",
+        }
+
+    @app.post(
+        "/studio/api/projects/{project_id}/raster-layers/lut-grade", status_code=201
+    )
+    async def lut_grade_project_asset(
+        project_id: str, body: LutGradeRequest, request: Request
+    ) -> dict[str, Any]:
+        """Gradación con LUT 3D CPU real sobre un asset del proyecto (C22).
+
+        El usuario declara el contenido ``.cube`` del LUT y opcionalmente una
+        máscara (asset de imagen del proyecto). Produce un artefacto real (ffv1
+        bgr0 lossless para vídeo, PNG para imagen) y un frame de referencia,
+        con provenance (sha256 de fuente, LUT y máscara), probe de ffprobe y
+        métrica temporal de estabilidad medida sobre píxeles decodificados. NO
+        es transferencia de estilo neuronal: solo la transformación de color
+        declarada por el usuario.
+        """
+        store = _store(request)
+        _require_project(store, project_id)
+        config = request.app.state.config
+        try:
+            output_bytes, frame_png, evidence = await run_in_threadpool(
+                lut_grade,
+                store,
+                project_id,
+                body.asset_id,
+                body.lut_cube,
+                strength=body.strength,
+                mask_asset_id=body.mask_asset_id,
+                ffmpeg_timeout_s=config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=config.studio_ffprobe_timeout_s,
+            )
+        except LutGradeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MediaValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+        is_video = evidence["source"]["kind"] == "video"
+        output_sha256 = evidence["output"]["sha256"]
+        lut_meta = {
+            "artifact_kind": "lut_grade_output",
+            "renderer": evidence["renderer"],
+            "style": evidence["style"],
+            "neural_style_transfer": evidence["neural_style_transfer"],
+            "lut_grid": evidence["lut"]["grid"],
+            "lut_sha256": evidence["lut"]["sha256"],
+            "strength": evidence["strength"],
+            "source_asset_id": evidence["source"]["asset_id"],
+            "source_sha256": evidence["source"]["sha256"],
+            "output_sha256": output_sha256,
+        }
+        if "mask" in evidence:
+            lut_meta["mask_asset_id"] = evidence["mask"]["asset_id"]
+            lut_meta["mask_sha256"] = evidence["mask"]["sha256"]
+        renderer_meta = {"lut_grade": lut_meta, "pixel_render": evidence["renderer"]}
+        if is_video:
+            asset = store.save_upload(
+                project_id,
+                filename="lut-grade.mkv",
+                content_type="video/x-matroska",
+                data=output_bytes,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata=renderer_meta,
+            )
+            frame_asset = store.save_upload(
+                project_id,
+                filename="lut-grade-frame-0000.png",
+                content_type="image/png",
+                data=frame_png,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={
+                    **renderer_meta,
+                    "artifact_kind": "lut_grade_frame",
+                },
+            )
+        else:
+            asset = store.save_upload(
+                project_id,
+                filename="lut-grade.png",
+                content_type="image/png",
+                data=output_bytes,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata=renderer_meta,
+            )
+            frame_asset = store.save_upload(
+                project_id,
+                filename="lut-grade-frame.png",
+                content_type="image/png",
+                data=frame_png,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={
+                    **renderer_meta,
+                    "artifact_kind": "lut_grade_frame",
+                },
+            )
+        current_inputs = {
+            "source_asset_id": body.asset_id,
+            "source_sha256": evidence["source"]["sha256"],
+            "lut_sha256": evidence["lut"]["sha256"],
+            "strength": evidence["strength"],
+            "mask_asset_id": evidence.get("mask", {}).get("asset_id"),
+            "mask_sha256": evidence.get("mask", {}).get("sha256"),
+        }
+        invalidated_outputs = _mark_previous_lut_output_stale(
+            store, project_id, current_inputs
+        )
+        store.set_meta(
+            project_id,
+            _LUT_OUTPUT_META_KEY,
+            {
+                **current_inputs,
+                "asset_id": asset["id"],
+                "frame_asset_id": frame_asset["id"],
+                "status": "current",
+            },
+        )
+        return {
+            "asset": asset,
+            "frame_asset": frame_asset,
+            "evidence": evidence,
+            "invalidated_outputs": invalidated_outputs,
+            "style": evidence["style"],
+            "neural_style_transfer": evidence["neural_style_transfer"],
+            "claim": "gradación con LUT 3D declarada por el usuario; "
+            "no transferencia de estilo neuronal",
+        }
+
+    @app.post(
+        "/studio/api/projects/{project_id}/raster-layers/lut-grade/batch",
+        status_code=201,
+    )
+    async def lut_grade_batch_project_video(
+        project_id: str, body: LutGradeBatchRequest, request: Request
+    ) -> dict[str, Any]:
+        """Lote C22: tres variantes de estilo desde la misma actuación (CPU).
+
+        Un solo asset de vídeo, una máscara de proyecto y exactamente tres
+        LUTs ``.cube`` con nombre único. Cada variante usa la misma ruta
+        ``ffmpeg-lut3d-cpu`` (ffv1 bgr0 lossless) y se exige: mismo nº de
+        frames que la fuente, línea temporal idéntica medida con ffprobe
+        (digest de instantes PTS normalizados como fracciones exactas) y
+        píxeles decodificados exactos en la región ``mask==0`` contra la
+        fuente. El provenance de cada variante (hash de LUT, fuente y máscara,
+        métrica temporal y alineación) se persiste en el metadato del asset de
+        salida. El ``time_base`` del contenedor se reporta aparte: NO se
+        afirma que el string de contenedor de la salida (Matroska) permanezca
+        idéntico al de la fuente. Sin inferencia neuronal ni reclamos de
+        calidad de modelo/GPU.
+        """
+        store = _store(request)
+        _require_project(store, project_id)
+        config = request.app.state.config
+        try:
+            variant_results, alignment, protected_pixels = await run_in_threadpool(
+                lut_grade_batch,
+                store,
+                project_id,
+                body.asset_id,
+                [item.model_dump() for item in body.variants],
+                mask_asset_id=body.mask_asset_id,
+                ffmpeg_timeout_s=config.studio_ffmpeg_timeout_s,
+                ffprobe_timeout_s=config.studio_ffprobe_timeout_s,
+            )
+        except LutGradeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except MediaValidationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+        variants: list[dict[str, Any]] = []
+        for name, output_bytes, evidence in variant_results:
+            batch_meta = {
+                "artifact_kind": "lut_grade_batch_output",
+                "variant_name": name,
+                "renderer": evidence["renderer"],
+                "style": evidence["style"],
+                "neural_style_transfer": evidence["neural_style_transfer"],
+                "lut_sha256": evidence["lut"]["sha256"],
+                "strength": evidence["strength"],
+                "source_asset_id": evidence["source"]["asset_id"],
+                "source_sha256": evidence["source"]["sha256"],
+                "mask_asset_id": evidence["mask"]["asset_id"],
+                "mask_sha256": evidence["mask"]["sha256"],
+                "output_sha256": evidence["output"]["sha256"],
+                "temporal_stability": evidence["temporal_stability"],
+                "alignment": alignment,
+                "protected_pixels": protected_pixels["per_variant"].get(name, {}),
+            }
+            asset = store.save_upload(
+                project_id,
+                filename=_variant_filename(name),
+                content_type="video/x-matroska",
+                data=output_bytes,
+                max_upload_bytes=config.max_upload_bytes,
+                category="outputs",
+                metadata={
+                    "lut_grade_batch": batch_meta,
+                    "pixel_render": evidence["renderer"],
+                },
+            )
+            variants.append({"name": name, "asset": asset, "evidence": evidence})
+
+        style = variant_results[0][2]["style"]
+        return {
+            "variants": variants,
+            "alignment": alignment,
+            "protected_pixels": protected_pixels,
+            "style": style,
+            "neural_style_transfer": "not_claimed",
+            "claim": "tres variantes de gradación LUT declaradas por el usuario "
+            "desde la misma actuación; no transferencia de estilo neuronal",
+        }
 
 
 __all__ = ["register_routes"]

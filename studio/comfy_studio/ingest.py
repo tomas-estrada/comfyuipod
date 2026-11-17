@@ -59,6 +59,7 @@ class AssetStatus(StrEnum):
     UNSUPPORTED = "unsupported"
     #: clasificado y encolado, pero la extracción semántica espera pesos.
     PENDING_WEIGHTS = "pending_weights"
+    LIMIT_EXCEEDED = "limit_exceeded"
 
 
 def classify(path: Path) -> MediaKind:
@@ -132,6 +133,7 @@ class IngestReport:
 
     assets: list[IngestedAsset] = field(default_factory=list)
     project_id: str | None = None
+    omitted_assets: int = 0
 
     def by_status(self, status: AssetStatus) -> list[IngestedAsset]:
         return [a for a in self.assets if a.status == status]
@@ -140,6 +142,10 @@ class IngestReport:
         out: dict[str, int] = {}
         for asset in self.assets:
             out[str(asset.status)] = out.get(str(asset.status), 0) + 1
+        if self.omitted_assets:
+            out[str(AssetStatus.LIMIT_EXCEEDED)] = (
+                out.get(str(AssetStatus.LIMIT_EXCEEDED), 0) + self.omitted_assets
+            )
         return out
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,6 +153,7 @@ class IngestReport:
             "project_id": self.project_id,
             "counts": self.counts(),
             "assets": [a.to_dict() for a in self.assets],
+            "omitted_assets": self.omitted_assets,
         }
 
 
@@ -287,8 +294,14 @@ def _source_time_range(
     if matching is None:
         return None
     try:
-        start = float(matching.get("start_time", media_info.get("format_start_time_sec")))
-        duration = float(matching.get("duration", media_info.get("duration_sec")))
+        start_value = matching.get("start_time")
+        if start_value is None:
+            start_value = media_info.get("format_start_time_sec")
+        duration_value = matching.get("duration")
+        if duration_value is None:
+            duration_value = media_info.get("duration_sec")
+        start = float(start_value)
+        duration = float(duration_value)
     except (TypeError, ValueError):
         return None
     if not (start == start and duration == duration and duration >= 0):
@@ -340,9 +353,16 @@ def _observed_video_transforms(media_info: dict[str, Any] | None) -> dict[str, A
     return observed
 
 
-def _batched(items: list[Path], size: int) -> Iterator[list[Path]]:
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
+def _batched(items: Iterable[Path], size: int) -> Iterator[list[Path]]:
+    """Buffer at most `size` paths so iterable inputs retain backpressure."""
+    block: list[Path] = []
+    for item in items:
+        block.append(item)
+        if len(block) == size:
+            yield block
+            block = []
+    if block:
+        yield block
 
 
 def ingest_assets(
@@ -353,6 +373,8 @@ def ingest_assets(
     inflight: int = DEFAULT_INFLIGHT,
     verify_media: bool = False,
     ffprobe_timeout_s: float = 8.0,
+    max_assets: int | None = None,
+    max_total_bytes: int | None = None,
 ) -> IngestReport:
     """Ingiere un lote de assets de forma determinista y tolerante a fallos.
 
@@ -363,10 +385,36 @@ def ingest_assets(
     """
     report = IngestReport(project_id=project_id)
     seen_hashes: dict[str, str] = {}  # sha -> asset_id canónico
-    all_paths = [Path(p) for p in paths]
+    if max_assets is not None and max_assets < 1:
+        raise ValueError("max_assets debe ser mayor que cero")
+    if max_total_bytes is not None and max_total_bytes < 1:
+        raise ValueError("max_total_bytes debe ser mayor que cero")
+    considered = 0
+    total_bytes = 0
 
-    for block in _batched(all_paths, max(1, inflight)):
+    for block in _batched((Path(p) for p in paths), max(1, inflight)):
         for path in block:
+            if max_assets is not None and considered >= max_assets:
+                report.omitted_assets += 1
+                continue
+            considered += 1
+            try:
+                path_bytes = path.stat().st_size
+            except OSError:
+                path_bytes = 0
+            if max_total_bytes is not None and total_bytes + path_bytes > max_total_bytes:
+                report.assets.append(
+                    IngestedAsset(
+                        asset_id=_path_asset_id("limited", path),
+                        source_path=str(path),
+                        kind=classify(path),
+                        status=AssetStatus.LIMIT_EXCEEDED,
+                        bytes=path_bytes,
+                        error="asset exceeds configured ingest byte budget",
+                    )
+                )
+                continue
+            total_bytes += path_bytes
             kind = classify(path)
             if not _probe_header(path):
                 report.assets.append(

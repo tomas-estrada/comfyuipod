@@ -102,7 +102,7 @@ def probe_media_info(
         "-v",
         "error",
         "-show_entries",
-        "format=duration:stream=codec_type,codec_name,width,height,duration,r_frame_rate,avg_frame_rate,color_range,color_space,color_transfer,color_primaries",
+        "format=duration:stream=codec_type,codec_name,width,height,duration,r_frame_rate,avg_frame_rate,color_range,color_space,color_transfer,color_primaries:stream_side_data=rotation",
         "-of",
         "json",
         str(file_path),
@@ -154,6 +154,9 @@ def probe_media_info(
 
     width = 320
     height = 180
+    source_width = 320
+    source_height = 180
+    rotation_degrees = 0
     has_video = False
     has_audio = False
     codec_name = "h264"
@@ -172,9 +175,20 @@ def probe_media_info(
             if st.get("codec_name"):
                 codec_name = str(st["codec_name"])
             if st.get("width"):
-                width = int(st["width"])
+                source_width = int(st["width"])
             if st.get("height"):
-                height = int(st["height"])
+                source_height = int(st["height"])
+            for side_data in st.get("side_data_list", []):
+                if isinstance(side_data, dict) and side_data.get("rotation") is not None:
+                    try:
+                        rotation_degrees = int(round(float(side_data["rotation"]))) % 360
+                    except (TypeError, ValueError):
+                        rotation_degrees = 0
+                    break
+            if rotation_degrees in {90, 270}:
+                width, height = source_height, source_width
+            else:
+                width, height = source_width, source_height
             if st.get("r_frame_rate"):
                 r_frame_rate = str(st["r_frame_rate"])
             if st.get("avg_frame_rate"):
@@ -229,6 +243,9 @@ def probe_media_info(
         "duration_sec": round(max(0.0, duration), 3),
         "width": width,
         "height": height,
+        "source_width": source_width,
+        "source_height": source_height,
+        "rotation_degrees": rotation_degrees,
         "has_video": has_video,
         "has_audio": has_audio,
         "codec_name": codec_name,

@@ -9,26 +9,14 @@ tools
 *.txt
 !config/constraints.txt
 .venv
+**/node_modules
 .kilo
 studio/tests
 **/__pycache__/
 **/.pytest_cache/
 **/.ruff_cache/
 **/*.egg-info/
-# El atlas sí entra completo (incluye *.md/*.txt de licencias y avisos):
-!atlas
-!atlas/**
-!atlas/**/*.md
-!atlas/**/*.txt
-!atlas/**/*.json
-!atlas/**/*.db
-!atlas/**/*.pbf
-!atlas/**/*.gz
-!atlas/**/*.jpg
-# estado mutable del atlas (selecciones): no entra a la imagen
-atlas/selection*.json
-atlas/catalog.db-wal
-atlas/catalog.db-shm
+
 
 # Blender and Mitsuba runtime components have required license notices copied into the image.
 !docs/
@@ -37,3 +25,5 @@ docs/*
 docs/licenses/*
 !docs/licenses/blender.md
 !docs/licenses/mitsuba.md
+!docs/licenses/remotion.md
+!docs/licenses/llama-cpp-notices.md
