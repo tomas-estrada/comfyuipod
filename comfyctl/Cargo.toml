@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+jiff = { version = "1.0", default-features = false, features = ["std"] }
 libc = "0.2"
 pico-args = "0.5"
 regex = { version = "1", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }

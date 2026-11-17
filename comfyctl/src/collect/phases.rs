@@ -14,7 +14,7 @@ use crate::collect::models::phase2_expected_count;
 use crate::collect::models::WeightStatus;
 use crate::collect::procfs::ComfyUiStatus;
 use crate::strict::StrictReport;
-use chrono::NaiveDateTime;
+use jiff::{civil::DateTime, tz::TimeZone};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -148,9 +148,10 @@ pub fn collect_phases_status(
 fn parse_log_line_timestamp(line: &str) -> Option<i64> {
     let rest = line.strip_prefix('[')?;
     let (ts_str, _) = rest.split_once(']')?;
-    NaiveDateTime::parse_from_str(ts_str.trim(), "%Y-%m-%d %H:%M:%S")
+    DateTime::strptime("%Y-%m-%d %H:%M:%S", ts_str.trim())
         .ok()
-        .map(|dt| dt.and_utc().timestamp())
+        .and_then(|dt| dt.to_zoned_datetime(TimeZone::UTC).ok())
+        .map(|dt| dt.timestamp().as_second())
 }
 
 fn basename_of(raw: &str) -> &str {
@@ -558,6 +559,30 @@ mod tests {
             last_exit: None,
             last_log_line: None,
         }
+    }
+
+    #[test]
+    fn parse_log_timestamp_preserves_utc_seconds_and_rejects_invalid_dates() {
+        assert_eq!(
+            parse_log_line_timestamp("[1970-01-01 00:00:01] event"),
+            Some(1)
+        );
+        assert_eq!(
+            parse_log_line_timestamp("[2024-02-29 12:34:56] event"),
+            Some(1_709_210_096)
+        );
+        assert_eq!(
+            parse_log_line_timestamp("[2023-02-29 12:34:56] event"),
+            None
+        );
+        assert_eq!(
+            parse_log_line_timestamp("[2024-2-09 12:34:56] event"),
+            Some(1_707_482_096)
+        );
+        assert_eq!(
+            parse_log_line_timestamp("[2016-12-31 23:59:60] event"),
+            Some(1_483_228_799)
+        );
     }
 
     #[test]
