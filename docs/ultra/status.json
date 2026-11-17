@@ -140,7 +140,7 @@
   },
   "current_work_candidate": {
     "branch": "codex/closure-ledger-refresh-20261117",
-    "head_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
+    "head_sha": "c3e81c9819590cd2901a6fe40ce24bb548fc6b09",
     "base_main_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
     "includes": "Production mission spend/cap terminal semantics and migration; conservative camera-motion confidence gate; D03 articulated-product synthetic CPU ground truth and report; refreshed mission-compiler source lock; closure evidence docs",
     "local_validation": "279 related Python tests passed, 1 skipped across mission-budget, camera-motion, inspiration, engine-reference, demos, A07 manifest, orchestration, mission compiler, production memory/restart and D05 API suites; Ruff and git diff --check passed. PR CI/candidate image pending.",
