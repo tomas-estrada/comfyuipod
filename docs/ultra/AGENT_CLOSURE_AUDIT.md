@@ -1,29 +1,27 @@
 # Capability Closure Audit and Agent Brief
 
-Snapshot date: 2026-11-17 UTC. Authoritative main SHA: `a1f847df6d270aed512a725b4705cc2a2089b768`.
+Snapshot date: 2026-11-17 UTC. Verified main SHA: `38b05270787f956c5c9a7b0690e9dc8cd58ba415`.
 
 ## Decision
 
-The project is **not production-ready**. PR #408 is merged and post-merge workflow [43983976860](https://github.com/tomas-estrada/comfyuipod/actions/runs/43983976860) passed all three jobs: repository/Python/panel checks, Rust checks, candidate build and both full-stack smoke paths. Candidate `ghcr.io/tomas-estrada/comfyuipod:sha-a1f847d` has manifest digest `sha256:76ebe67fdb7d98d7a78ee5280b4dda7c11d10a33202b0f2e7e5ede1c98c4a9b7`. It is not promoted to `latest`.
+The project is **not production-ready**. PR #409 is merged at `38b05270787f956c5c9a7b0690e9dc8cd58ba415`. Main workflow [44008741469](https://github.com/tomas-estrada/comfyuipod/actions/runs/44008741469) passed all three jobs: repository/Python/panel checks, Rust checks, candidate build and both full-stack smoke paths. Candidate `ghcr.io/tomas-estrada/comfyuipod:sha-38b0527` has manifest digest `sha256:315f52b4f3c5544b75c9245d89d4d28a326042cdeb8c1381757b77a53f6c62ca`. It is not promoted to `latest`.
 
 The A07 gate is active. In the main workflow it reported 233 blockers across 48 of 57 selected engines and skipped `latest`/semver promotion. The same-commit local checker reports 228 blockers across 46 engines. This disagreement is an open correctness issue; establish which manifest/input differs and make the check deterministic before using the number as a closure target. Do not conceal or “fix” the discrepancy with metadata edits or by shrinking the selected roster.
 
-PR #408 adds bounded CPU evidence for A19 temporal-scene, causal audio and BT.709 EDL delivery, and establishes the release-promotion guard. These changes do not satisfy all capability acceptance. A green repository CI is not proof of real provider connectivity, model quality, authorized-media quality, broad holdout evaluation, all engine adapter readiness, or target-GPU performance. The only acceptable end state for this goal is that all documented non-GPU criteria are verified closed and real-GPU measurements are the sole remaining gap.
+PR #408 adds bounded CPU evidence for A19 temporal-scene, causal audio and BT.709 EDL delivery, and establishes the release-promotion guard. PR #409 adds persisted mission-budget accounting and terminal behavior, conservative camera-motion confidence gating, and synthetic D03 articulated-product evidence. These changes do not satisfy all capability acceptance. A green repository CI is not proof of real provider connectivity, model quality, authorized-media quality, broad holdout evaluation, all engine adapter readiness, or target-GPU performance. The only acceptable end state for this goal is that all documented non-GPU criteria are verified closed and real-GPU measurements are the sole remaining gap.
 
-## Active workstreams
+## Merged work in this tranche
 
-Current local integration branch: `codex/closure-ledger-refresh-20261117`, based on main `a1f847df6d270aed512a725b4705cc2a2089b768`. Three independent changes are integrated locally and pass focused CPU checks; they are not yet committed, published, or CI-verified. The previous delegation status in this document was stale and has been replaced with this actual state.
+PR #409 is merged. Its branch passed required CI-01/CI-03 and Rust checks, plus candidate-image build, full-stack smoke, and `MODEL_PROFILE=studio` smoke on run 44004462639; the post-merge main workflow 44008741469 passed all three jobs. Local validation passed 279 related Python tests with 1 skipped, Ruff, and `git diff --check`.
 
-| Workstream | Scope | Integration evidence |
+| Workstream | Merged change | Evidence and remaining limit |
 |---|---|---|
-| Workstream | Local change | Evidence and limit |
-|---|---|---|
-| Production planner | Persistent mission spend, idempotent attempt accounting, remaining mission cap, typed budget terminal state and v2 checkpoint migration | Six focused tests pass; configured-provider behavior and full production-route acceptance remain open |
-| Audiovisual CPU | Camera-motion estimator now gates confidence on field coverage and rejects ambiguous dominant subject motion | 34 focused tests pass on deterministic synthetic clips; real-footage holdout accuracy remains open |
-| 3D/motion CPU | D03 articulated-product fixture adds FK/projection, held-out coverage, independent synthetic ground truth and a report artifact | 53 demo tests pass; synthetic CPU evidence only, no render/GPU/general reconstruction claim |
-| A07 release gate | Updated mission-compiler lock hashes for the two modified orchestration source files | Local checker remains 228 blockers/46 engines. CI on main `a1f847d` reported 233/48; the five-blocker mismatch remains unresolved |
+| Production planner | Persistent mission spend, idempotent attempt accounting, mission cap, typed budget terminal state, and v2 checkpoint migration | Six focused tests plus orchestration/restart suites pass. Real provider behavior and full configured LangGraph production-route acceptance remain open. |
+| Audiovisual CPU | Camera-motion confidence now requires adequate field coverage and rejects ambiguous dominant subject motion | Deterministic synthetic CPU tests pass; real-footage holdout accuracy remains open. |
+| 3D/motion CPU | D03 fixture adds forward kinematics, camera projection, held-out coverage, independent synthetic ground truth, and report artifact | Demo tests pass; synthetic CPU evidence only, with no render/GPU/general reconstruction claim. |
+| A07 evidence | Mission-compiler lock hashes refreshed for modified orchestration files | Main CI still reports 233 blockers/48 engines; a same-commit local checker reports 228/46. The mismatch is unresolved. |
 
-Integrated validation on this branch: 279 related Python tests passed, 1 skipped; Ruff passed, `git diff --check` passed. No PR CI or candidate image has run for this branch. Do not raise capability levels from synthetic fixtures where acceptance requires real-world or held-out data. Agent reviews attempted via `scripts/cmd-agent` could not connect to the model API; local review remains necessary.
+Do not elevate capability levels based only on synthetic fixtures where acceptance requires authorized real-world or held-out data. The attempted Command Code reviews did not produce usable independent findings; they are not counted as review approval.
 
 ## Required closure order
 
@@ -37,7 +35,7 @@ Integrated validation on this branch: 279 related Python tests passed, 1 skipped
 
 ## Current hard limits
 
-- No target-GPU run was part of PR #408 or workflow 43983976860.
-- No new image was promoted to `latest`; the A07 warning is the expected release gate outcome.
+- No target-GPU run was part of PR #408, PR #409, or workflow 44008741469.
+- No new image was promoted to `latest`; A07 reported 233 blockers across 48 of 57 selected engines and skipped promotion.
 - Historical GPU/profile results remain attached to their original images and do not transfer to this candidate.
 - No paid Modal run or external provider/API call is implied or authorized by local contracts/tests.
