@@ -1,5 +1,7 @@
 # Revisión y decisiones de investigación
 
+> Este dossier conserva investigación y lectura del repo capturadas en su fecha. No es un status actual: para `main`, PRs, CI, A07 y trabajo pendiente, usa [`docs/HANDOFF-17NOV.md`](../docs/HANDOFF-17NOV.md) y revalida las fuentes primarias antes de decidir.
+
 Fecha: 2026-11-05 UTC. Este archivo describe hechos leídos, reproducciones previas de CPU y propuestas de diseño por separado. Ninguna capacidad neuronal ha sido validada por este trabajo en una GPU.
 
 ## Punto de partida verificable

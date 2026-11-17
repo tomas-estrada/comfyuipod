@@ -5,6 +5,7 @@
 > SDXL real y acotada, y dos hallazgos de operaciones recibieron fixes posteriores
 > en `main`. Consulta [el reporte W26](W26_GPU_RESULTS.md); falta repetir la
 > verificación en una imagen actual y completar las demás recetas.
+> El estado y el orden de continuación vigentes están en [`HANDOFF-17NOV.md`](../HANDOFF-17NOV.md).
 
 Estado al cierre de ese corte: **BLOCKED_PRE_GPU** (entrega parcial sólida; el
 resto del backlog de capacidades quedó pendiente y visible).
