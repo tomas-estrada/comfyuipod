@@ -10,6 +10,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import httpx
@@ -164,10 +165,15 @@ def test_d05_cpu_project_upload_to_production_artifact_via_api(tmp_path: Path) -
         assert plan_body["plan"]["metadata"]["project_id"] == project_id
 
         approved = client.post(f"/studio/api/productions/{production_id}/approve")
-        assert approved.status_code == 200, approved.text
-        result = approved.json()
+        assert approved.status_code == 202, approved.text
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            result = client.get(f"/studio/api/productions/{production_id}/status").json()
+            if result["phase"] in {"done", "simulated", "failed", "cancelled", "halted"}:
+                break
+            time.sleep(0.02)
         assert result["phase"] == "done"
-        assert result["status"]["artifact_ready"] is True
+        assert result["artifact_ready"] is True
         final_path = Path(result["final_output_path"])
         assert final_path.is_file() and final_path.stat().st_size > 0
 
