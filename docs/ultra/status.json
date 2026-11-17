@@ -2,11 +2,11 @@
   "schema": "ultra-status/1",
   "goal_revision": "upgrades-ultra-version @ PR#64 (merged)",
   "baseline_sha": "b54195f0976d6c57b0ee04962e3059219db55d57",
-  "main_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
+  "main_sha": "38b05270787f956c5c9a7b0690e9dc8cd58ba415",
   "stage": "gpu_partial_L3",
   "overall": "GPU_L3_PARTIAL",
-  "overall_note": "PR #408 was squash-merged as a1f847df6d270aed512a725b4705cc2a2089b768. Main workflow 43983976860 completed all three jobs successfully: CI-01/CI-03, Rust, candidate image build, full-stack smoke, and Studio-profile smoke. The candidate tag sha-a1f847d has verified manifest digest sha256:76ebe67fdb7d98d7a78ee5280b4dda7c11d10a33202b0f2e7e5ede1c98c4a9b7. The strict A07 step passed as a gate but reported 233 blockers across 48/57 selected engines and skipped latest/semver promotion. Running the checker from the same commit in the local checkout reports 228 blockers; this five-blocker discrepancy is unresolved and must be explained before the count can be treated as reconciled. No target-GPU work was performed; many non-GPU capability criteria remain incomplete.",
-  "updated_utc": "2026-11-17T00:34:33Z",
+  "overall_note": "PR #409 was squash-merged as 38b05270787f956c5c9a7b0690e9dc8cd58ba415. Post-merge main workflow 44008741469 passed all three jobs: CI-01/CI-03, Rust, candidate image build, full-stack smoke, and Studio-profile smoke. Candidate image ghcr.io/tomas-estrada/comfyuipod:sha-38b0527@sha256:315f52b4f3c5544b75c9245d89d4d28a326042cdeb8c1381757b77a53f6c62ca has config digest sha256:42d0218ecdf4dec90577475b4cebbf35c92b0a00475c79eef76b9204e7177b54. A07 reported 233 blockers across 48/57 selected engines in CI; the same-commit local checker reports 228 across 46/57. The discrepancy remains unresolved and latest/semver promotion was skipped. Many non-GPU acceptance criteria remain open; no target-GPU revalidation was performed.",
+  "updated_utc": "2026-11-17T03:54:55Z",
   "merged": {
     "W00": "done",
     "W01": "#65",
@@ -35,7 +35,7 @@
     "W25": "#100",
     "capabilities_doc": "#94,#98"
   },
-  "capability_coverage": "PR #408 adds the A07 promotion gate, A19 temporal-scene CPU acceptance evidence, causal-audio deletion/rerender evidence, and explicit BT.709 EDL conversion/verification. These remain partial CPU/integration evidence; they do not close all A00-A28, active capability, D01-D05, or selected-engine A07 acceptance.",
+  "capability_coverage": "PR #408 adds the A07 promotion gate, A19 temporal-scene CPU evidence, causal-audio deletion/rerender evidence, and BT.709 EDL conversion/verification. PR #409 adds persistent mission-spend accounting and budget terminal behavior, conservative camera-motion confidence gating, and synthetic D03 articulated-product evidence. All are partial CPU/integration evidence; they do not close all A00-A28, active capability, D01-D05, selected-engine A07, real-media, or provider acceptance.",
   "pending_capabilities": [
     "Complete all applicable acceptance criteria for every active capability without elevating levels from partial evidence",
     "Resolve the 233 blockers reported by the A07 main workflow (and reconcile the same-commit local count of 228) through real source, dependency, license, notice, image and entrypoint evidence",
@@ -45,17 +45,17 @@
     "Only after these non-GPU criteria close: target-GPU recipe runs, quality/holdout baselines and current-image revalidation"
   ],
   "candidate_image_current": {
-    "main_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
-    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-a1f847d",
-    "candidate_manifest_digest": "sha256:76ebe67fdb7d98d7a78ee5280b4dda7c11d10a33202b0f2e7e5ede1c98c4a9b7",
-    "config_digest": "sha256:fc85982109c7ccadfc44abcda953062a0a3707960745a19d1317dfffb064f86c",
+    "main_sha": "38b05270787f956c5c9a7b0690e9dc8cd58ba415",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-38b0527",
+    "candidate_manifest_digest": "sha256:315f52b4f3c5544b75c9245d89d4d28a326042cdeb8c1381757b77a53f6c62ca",
+    "config_digest": "sha256:42d0218ecdf4dec90577475b4cebbf35c92b0a00475c79eef76b9204e7177b54",
     "latest_manifest_digest": null,
     "promoted_to_latest": false,
-    "build_run": "43983976860",
-    "smoke": "passed: repository validation and Python/panel suite, Rust fmt/Clippy/tests/dependency audit, candidate image build, full-stack E2E, MODEL_PROFILE=studio E2E, and requirements-lock artifact upload; strict A07 gate ran and skipped latest/semver promotion",
-    "contains": "main a1f847df, merged PR #408: strict A07 promotion gate, A19 temporal-scene CPU acceptance, causal audio acceptance, and BT.709 EDL delivery policy",
-    "a07_ci_report": "233 release blockers across 48 of 57 selected engines; the same-commit local checker reports 228 and the discrepancy remains under investigation",
-    "note": "Candidate digest is verified from Buildx output. Promotion was skipped, so this run does not provide a new latest digest. No target-GPU validation was run."
+    "build_run": "44008741469",
+    "smoke": "passed: all three main workflow jobs; CI-01/CI-03 and Studio/panel suite, Rust lint/tests/dependency audit, candidate image build, full-stack E2E, and MODEL_PROFILE=studio E2E",
+    "contains": "main 38b0527; merged PR #408 A07/A19/audio/EDL work and PR #409 mission-budget accounting, camera-motion confidence gating, synthetic D03 evidence",
+    "a07_ci_report": "233 release blockers across 48 of 57 selected engines; same-commit local checker reports 228 across 46 of 57; discrepancy unresolved and promotion skipped",
+    "note": "Image digests verified from Buildx output. No latest/semver promotion and no target-GPU revalidation. Non-GPU acceptance remains open."
   },
   "candidate_image_previous": {
     "main_sha": "fd444c7706a0455b5bd3af1c801b26341661741c",
@@ -90,8 +90,8 @@
       "baselines/holdouts",
       "perfiles 128 y 256 por separado"
     ],
-    "current_main_revalidation": "software/image CI passed and image promoted in run 43271938341; target-GPU revalidation not performed",
-    "current_main_image": "ghcr.io/tomas-estrada/comfyuipod:sha-fd444c7@sha256:c3a54db9b23d6bc277a3027132b745e17f22fb80eede0a81a7848515a1cc34f5"
+    "current_main_revalidation": "PR #409 main software/image CI passed in workflow 44008741469; target-GPU revalidation on this current main image was not performed",
+    "current_main_image": "ghcr.io/tomas-estrada/comfyuipod:sha-38b0527@sha256:315f52b4f3c5544b75c9245d89d4d28a326042cdeb8c1381757b77a53f6c62ca"
   },
   "ops_findings_W26": [
     "Historical W26 finding: Vast did not auto-start the service in that run. PR #108 added an idempotent start guard and an ENTRYPOINT regression; reproduction on the current main image remains part of real-pod revalidation.",
@@ -103,7 +103,7 @@
     "Los 7 fallos son sensibles al entorno POSIX: 3x test_mac_helper (fixture limpia os.environ -> sin SYSTEMROOT en Windows), 2x test_m5_capture3d (setenv PATH='' rompe el lanzamiento de subprocess en Windows). storage_requirement.py --profile studio --json ejecutado directo produce JSON valido.",
     "test_gpu_lease multiproceso y tests POSIX son sensibles a Windows; verificados en CI Linux."
   ],
-  "notes": "PR #408 is merged. Main candidate a1f847d passed CI but was not promoted because A07 is blocked. The current local branch combines three CPU changes and passes 93 focused tests; its CI and image are pending. All non-GPU requirements remain open until evidenced closed.",
+  "notes": "PR #409 is merged at 38b0527. Main workflow 44008741469 passed all three jobs and built the verified candidate image; A07 prevented promotion. Local validation for the merged changes passed 279 related Python tests (1 skipped), Ruff, and git diff --check. The CI/local A07 blocker mismatch remains unresolved. Non-GPU acceptance is still open; no current-image target-GPU validation was performed.",
   "integration_candidate": {
     "branch": "codex/non-gpu-integration-20261115",
     "head_sha": "54e29b7",
@@ -138,14 +138,41 @@
     "promoted_to_latest": false,
     "target_gpu_evidence": false
   },
-  "current_work_candidate": {
-    "branch": "codex/closure-ledger-refresh-20261117",
-    "head_sha": "c3e81c9819590cd2901a6fe40ce24bb548fc6b09",
-    "base_main_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
+  "candidate_image_a1f847d": {
+    "main_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
+    "candidate_tag": "ghcr.io/tomas-estrada/comfyuipod:sha-a1f847d",
+    "candidate_manifest_digest": "sha256:76ebe67fdb7d98d7a78ee5280b4dda7c11d10a33202b0f2e7e5ede1c98c4a9b7",
+    "config_digest": "sha256:fc85982109c7ccadfc44abcda953062a0a3707960745a19d1317dfffb064f86c",
+    "latest_manifest_digest": null,
+    "promoted_to_latest": false,
+    "build_run": "43983976860",
+    "smoke": "passed: repository validation and Python/panel suite, Rust fmt/Clippy/tests/dependency audit, candidate image build, full-stack E2E, MODEL_PROFILE=studio E2E, and requirements-lock artifact upload; strict A07 gate ran and skipped latest/semver promotion",
+    "contains": "main a1f847df, merged PR #408: strict A07 promotion gate, A19 temporal-scene CPU acceptance, causal audio acceptance, and BT.709 EDL delivery policy",
+    "a07_ci_report": "233 release blockers across 48 of 57 selected engines; the same-commit local checker reports 228 and the discrepancy remains under investigation",
+    "note": "Candidate digest is verified from Buildx output. Promotion was skipped, so this run does not provide a new latest digest. No target-GPU validation was run."
+  },
+  "pr_409_merged_work": {
     "includes": "Production mission spend/cap terminal semantics and migration; conservative camera-motion confidence gate; D03 articulated-product synthetic CPU ground truth and report; refreshed mission-compiler source lock; closure evidence docs",
-    "local_validation": "279 related Python tests passed, 1 skipped across mission-budget, camera-motion, inspiration, engine-reference, demos, A07 manifest, orchestration, mission compiler, production memory/restart and D05 API suites; Ruff and git diff --check passed. PR CI/candidate image pending.",
-    "a07": "Local checker: 228 blockers across 46 of 57 selected engines after refreshing hashes for changed mission-compiler integration sources. Main CI on a1f847d reported 233 across 48; discrepancy remains unresolved.",
-    "candidate_image_built": false,
+    "local_validation": "279 related Python tests passed, 1 skipped across mission-budget, camera-motion, inspiration, engine-reference, demos, A07 manifest, orchestration, mission compiler, production memory/restart and D05 API suites; Ruff and git diff --check passed. PR and post-merge main CI passed.",
+    "a07": "Main CI on 38b0527 reports 233 blockers across 48/57 selected; same-commit local checker reports 228 blockers across 46/57. Discrepancy remains unresolved.",
+    "candidate_image_built": true,
+    "target_gpu_evidence": false,
+    "status": "merged as PR #409",
+    "merged_sha": "38b05270787f956c5c9a7b0690e9dc8cd58ba415",
+    "pr_ci_and_main_image_ci": "passed; main workflow 44008741469",
+    "candidate_image": "ghcr.io/tomas-estrada/comfyuipod:sha-38b0527@sha256:315f52b4f3c5544b75c9245d89d4d28a326042cdeb8c1381757b77a53f6c62ca"
+  },
+  "main_candidate_38b0527": {
+    "branch": "main",
+    "head_sha": "38b05270787f956c5c9a7b0690e9dc8cd58ba415",
+    "base_main_sha": "a1f847df6d270aed512a725b4705cc2a2089b768",
+    "merged_pr": "#409",
+    "includes": "PR #408 A07/A19/audio/EDL work plus PR #409 persistent mission spend/cap terminal semantics, camera-motion confidence gating, synthetic D03 articulated-product evidence, and mission-compiler lock refresh",
+    "local_validation": "279 related Python tests passed, 1 skipped; Ruff and git diff --check passed. Post-merge main workflow 44008741469 passed all three jobs, including candidate build and both smoke tests.",
+    "a07": "CI: 233 blockers across 48/57 selected; same-commit local: 228 blockers across 46/57; discrepancy unresolved, release_ready=false, latest/semver promotion skipped",
+    "candidate_image": "ghcr.io/tomas-estrada/comfyuipod:sha-38b0527@sha256:315f52b4f3c5544b75c9245d89d4d28a326042cdeb8c1381757b77a53f6c62ca",
+    "config_digest": "sha256:42d0218ecdf4dec90577475b4cebbf35c92b0a00475c79eef76b9204e7177b54",
+    "candidate_image_built": true,
     "promoted_to_latest": false,
     "target_gpu_evidence": false
   }
