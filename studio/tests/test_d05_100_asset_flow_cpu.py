@@ -13,6 +13,7 @@ import os
 import shutil
 import stat
 import subprocess
+import time
 import wave
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -418,11 +419,21 @@ def test_d05_100_asset_approved_brief_to_editable_package_cpu(tmp_path: Path, mo
         assert all(shot["layers"][0]["params"]["recipe_id"] == "wan22_i2v_720p" for shot in shots)
 
         result = client.post(f"/studio/api/productions/{plan['production_id']}/approve")
-        assert result.status_code == 200, result.text
+        assert result.status_code == 202, result.text
+        # Rendering a three shot Remotion composition can take several minutes
+        # on CPU only; the approval endpoint itself remains an immediate 202.
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            status = client.get(
+                f"/studio/api/productions/{plan['production_id']}/status"
+            ).json()
+            if status["phase"] in {"done", "simulated", "failed", "cancelled", "halted"}:
+                break
+            time.sleep(0.02)
         after = client.get(f"/studio/api/productions/{plan['production_id']}").json()["plan"]
-        assert result.json()["phase"] == "simulated", json.dumps(after["log"][-8:])
-        assert result.json()["status"]["simulated"] is True
-        assert result.json()["status"]["execution_mode"] == "simulated"
+        assert status["phase"] == "simulated", json.dumps(after["log"][-8:])
+        assert status["simulated"] is True
+        assert status["execution_mode"] == "simulated"
         assert len(fixture_comfy.submissions) == 3
         assert all("LoadImage" in json.dumps(item["graph"]) for item in fixture_comfy.submissions)
 
